@@ -6,7 +6,7 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [response, setResponse] = useState('');
 
-  async function handleSubmit(e: any) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setResponse('Loading...');
     const res = await fetch('/api/ask', {
