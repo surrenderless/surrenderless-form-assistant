@@ -1,5 +1,5 @@
-export const dynamic = 'force-dynamic';
 "use client";
+export const dynamic = "force-dynamic";
 import { SignIn } from "@clerk/nextjs";
 
 export default function Page() {
