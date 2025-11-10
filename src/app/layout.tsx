@@ -1,11 +1,7 @@
 import type { Metadata } from "next";
-import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 import { ClerkProvider } from "@clerk/nextjs";
-
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"], display: "swap" });
-const mono = Roboto_Mono({ variable: "--font-mono", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
   title: "Surrenderless Form Assistant",
@@ -15,7 +11,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${inter.variable} ${mono.variable}`}>
+      <html lang="en">
         <body className="antialiased">
           <Providers>{children}</Providers>
         </body>
