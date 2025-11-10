@@ -1,7 +1,7 @@
 // src/app/api/tasks/usps-submit/route.ts
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/utils/supabaseClient';
-import { runCrewBridge } from '@/server/crewBridge';
+import { runCrewBridge } from '@/server/CrewBridge';
 import { rateLimit } from '@/utils/rateLimiter';
 import { getUserOr401 } from '@/server/requireUser';
 

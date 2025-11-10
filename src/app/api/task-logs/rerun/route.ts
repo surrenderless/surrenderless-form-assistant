@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/utils/supabaseClient";
 import { getUserProfile } from "@/server/profile/getUserProfile";
-import { runCrewBridge } from "@/server/crewBridge";
+import { runCrewBridge } from "@/server/CrewBridge";
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
 
