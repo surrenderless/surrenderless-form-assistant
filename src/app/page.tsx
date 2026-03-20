@@ -24,6 +24,7 @@ export default function Home() {
           },
         });
         if (!res.ok) {
+          // non‑blocking: just log, don’t interrupt UX
           const txt = await res.text().catch(() => '');
           console.warn('profile/init failed:', res.status, txt);
         }
@@ -33,31 +34,19 @@ export default function Home() {
     })();
   }, [getToken]);
 
-  // ✅ ONLY THIS FUNCTION HAS BEEN UPDATED — EVERYTHING ELSE IS IDENTICAL
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setResponse('Loading...');
-
     try {
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: input }),
       });
-
       if (!res.ok) throw new Error('Failed');
-
       const data = await res.json();
-
-      // If ask() routed to forms/suggest — show full JSON output
-      if (data.mode === 'forms_suggest') {
-        setResponse(JSON.stringify(data, null, 2));
-      } else {
-        // Normal chat behavior
-        setResponse(data.result ?? JSON.stringify(data, null, 2));
-      }
-    } catch (err) {
-      console.error(err);
+      setResponse(data.result ?? '');
+    } catch {
       setResponse('Something went wrong. Try again later.');
     }
   }
