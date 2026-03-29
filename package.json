@@ -2,19 +2,19 @@
   "name": "surrenderless-form-assistant",
   "version": "0.1.0",
   "private": true,
- "scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "next start",
-  "lint": "next lint"
-},
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@clerk/nextjs": "^6.32.0",
     "@supabase/supabase-js": "^2.50.5",
     "@surrenderless/crew-js": "^1.0.0",
     "@upstash/redis": "^1.35.6",
-    "next": "15.3.3",
+    "next": "15.3.8",
     "openai": "^4.104.0",
     "playwright": "^1.55.1",
     "playwright-core": "^1.54.2",
