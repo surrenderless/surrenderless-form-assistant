@@ -4,7 +4,9 @@ import path from "path";
 const nextConfig = {
   reactStrictMode: true,
 
-  // ✅ allow build to pass despite eslint/ts “any” errors (staging only)
+  turbopack: {},
+
+  // keep build leniency
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
 
