@@ -6,7 +6,7 @@ import { getUserOr401 } from '@/server/requireUser';
 
 export async function POST(req: Request) {
   try {
-    const userId = getUserOr401();
+    const userId = getUserOr401(req);
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // rate limit (fail-open on Redis issues)
