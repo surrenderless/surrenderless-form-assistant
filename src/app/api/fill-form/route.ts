@@ -52,6 +52,9 @@ export async function POST(req: Request) {
     if (!process.env.SUPABASE_BUCKET || !process.env.SUPABASE_URL) {
       return NextResponse.json({ error: "Missing Supabase storage env vars" }, { status: 500 });
     }
+    if (!process.env.DEPLOY_PASSWORD) {
+      return NextResponse.json({ error: "Missing DEPLOY_PASSWORD" }, { status: 500 });
+    }
 
     console.log("\n✅ Received /api/fill-form request");
     console.log("➡️ URL:", url);
@@ -89,7 +92,9 @@ export async function POST(req: Request) {
     } catch (e: any) {
       throw new Error("Failed to connect to Browserless: " + (e?.message || e));
     }
-    context = await browser.newContext();
+    context = await browser.newContext({
+      httpCredentials: { username: "admin", password: process.env.DEPLOY_PASSWORD },
+    });
     page = await context.newPage();
 
     await page.goto(url, { timeout: 60000 });

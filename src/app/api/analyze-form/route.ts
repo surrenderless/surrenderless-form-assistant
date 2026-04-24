@@ -27,9 +27,12 @@ export async function POST(req: Request) {
     if (!process.env.BROWSERLESS_URL) {
       return NextResponse.json({ error: 'BROWSERLESS_URL not configured' }, { status: 500 });
     }
+    if (!process.env.DEPLOY_PASSWORD) {
+      return NextResponse.json({ error: 'DEPLOY_PASSWORD not configured' }, { status: 500 });
+    }
 
     const browser = await chromium.connectOverCDP(process.env.BROWSERLESS_URL);
-    const context = await browser.newContext();
+    const context = await browser.newContext({ httpCredentials: { username: 'admin', password: process.env.DEPLOY_PASSWORD } });
     const page = await context.newPage();
 
     try {
