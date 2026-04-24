@@ -23,12 +23,16 @@ export async function POST(req: Request) {
 
     const base = new URL(req.url).origin;
     const cookie = req.headers.get("cookie");
-    const authorization = req.headers.get("authorization");
+    const deployPassword = process.env.DEPLOY_PASSWORD;
+    const basicAuth =
+      deployPassword
+        ? `Basic ${Buffer.from(`admin:${deployPassword}`).toString("base64")}`
+        : undefined;
     const forwardedHeaders: Record<string, string> = {
       "Content-Type": "application/json",
     };
     if (cookie) forwardedHeaders.cookie = cookie;
-    if (authorization) forwardedHeaders.authorization = authorization;
+    if (basicAuth) forwardedHeaders.authorization = basicAuth;
 
     // 1) analyze
     const analyzeRes = await fetch(`${base}/api/analyze-form`, {
