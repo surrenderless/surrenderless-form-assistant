@@ -22,12 +22,18 @@ export async function POST(req: Request) {
     if (!url) return NextResponse.json({ error: "Missing url" }, { status: 400 });
 
     const base = new URL(req.url).origin;
-    const cookie = req.headers.get("cookie") ?? "";
+    const cookie = req.headers.get("cookie");
+    const authorization = req.headers.get("authorization");
+    const forwardedHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (cookie) forwardedHeaders.cookie = cookie;
+    if (authorization) forwardedHeaders.authorization = authorization;
 
     // 1) analyze
     const analyzeRes = await fetch(`${base}/api/analyze-form`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", cookie },
+      headers: forwardedHeaders,
       body: JSON.stringify({ url }),
     });
     if (!analyzeRes.ok) throw new Error("analyze-form failed");
@@ -36,7 +42,7 @@ export async function POST(req: Request) {
     // 2) match
     const matchRes = await fetch(`${base}/api/match-fields`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", cookie },
+      headers: forwardedHeaders,
       body: JSON.stringify({ fields, userData }),
     });
     if (!matchRes.ok) throw new Error("match-fields failed");
@@ -45,7 +51,7 @@ export async function POST(req: Request) {
     // 3) fill
     const fillRes = await fetch(`${base}/api/fill-form`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", cookie },
+      headers: forwardedHeaders,
       body: JSON.stringify({
         url,
         email: userData?.email || "",
