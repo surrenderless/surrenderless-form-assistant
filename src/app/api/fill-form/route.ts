@@ -27,7 +27,8 @@ export async function POST(req: Request) {
     if (await rateLimit(userId)) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }
-    catch (e: any) {
+  } catch (e: any) {
+    // existing error path kept intact
       console.error("FILL FORM ERROR:", e);
       return NextResponse.json(
         { error: e?.message || "fill-form failed" },
