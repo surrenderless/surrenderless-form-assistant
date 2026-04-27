@@ -27,9 +27,13 @@ export async function POST(req: Request) {
     if (await rateLimit(userId)) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }
-  } catch (e: any) {
-    console.warn("rateLimit failed, allowing:", e?.message);
-  }
+    catch (e: any) {
+      console.error("FILL FORM ERROR:", e);
+      return NextResponse.json(
+        { error: e?.message || "fill-form failed" },
+        { status: 500 }
+      );
+    }
 
   let browser: any;
   let page: any;
