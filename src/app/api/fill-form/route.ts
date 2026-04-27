@@ -19,7 +19,7 @@ type Decision = {
 
 export async function POST(req: Request) {
   // ---- auth ----
-  const userId = getUserOr401();
+  const userId = getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // ---- rate limit (fail-open on Redis issues) ----
