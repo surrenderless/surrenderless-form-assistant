@@ -28,13 +28,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }
   } catch (e: any) {
-    // existing error path kept intact
-      console.error("FILL FORM ERROR:", e);
-      return NextResponse.json(
-        { error: e?.message || "fill-form failed" },
-        { status: 500 }
-      );
-    }
+    console.warn("rateLimit failed, allowing:", e?.message || e);
+  }
 
   let browser: any;
   let page: any;
@@ -42,7 +37,15 @@ export async function POST(req: Request) {
 
   try {
     // ---- input + env validation ----
-    const { url, email, decision } = (await req.json()) as {
+    let body;
+    try {
+      body = await req.json();
+    } catch (e) {
+      console.error("JSON PARSE ERROR:", e);
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    
+    const { url, email, decision } = body as {
       url?: string;
       email?: string;
       decision?: Decision;
