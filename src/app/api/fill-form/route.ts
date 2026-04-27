@@ -39,6 +39,7 @@ export async function POST(req: Request) {
     // ---- input + env validation ----
     let body;
     try {
+      console.log("FILL MAIN TRY START");
       body = await req.json();
     } catch (e) {
       console.error("JSON PARSE ERROR:", e);
