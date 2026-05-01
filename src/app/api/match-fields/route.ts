@@ -1,12 +1,12 @@
 // src/app/api/match-fields/route.ts
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { rateLimit } from '@/utils/rateLimiter';
 import { getUserOr401 } from '@/server/requireUser';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     // auth (helper; same behavior as before)
-    const userId = getUserOr401();
+    const userId = getUserOr401(req);
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // rate limit (10/min). Fail-open if Redis issue.
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4-1106-preview',
+        model: 'gpt-4.1-mini',
         messages: [
           {
             role: 'system',

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -8,16 +9,16 @@ const openai = new OpenAI({
 export async function POST(req: Request) {
   const { pageData, userProfile } = await req.json()
 
-  const messages = [
+  const messages: ChatCompletionMessageParam[] = [
     {
       role: 'system',
       content:
-        'You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields.'
+        'You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields.',
     },
     {
       role: 'user',
-      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? Respond like this:\n{\n  fieldsToFill: [ { selector, value } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`
-    }
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? Respond like this:\n{\n  fieldsToFill: [ { selector, value } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
+    },
   ]
 
   const completion = await openai.chat.completions.create({

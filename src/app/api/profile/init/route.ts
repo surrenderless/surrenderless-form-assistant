@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/utils/supabaseClient";
 import { getAuth } from "@clerk/nextjs/server";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   console.log("🔄 /api/profile/init");
   const { userId, sessionClaims } = getAuth(req);
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });

@@ -1,15 +1,15 @@
 // src/app/api/tasks/usps-submit/route.ts
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/utils/supabaseClient';
 import { runCrewBridge } from '@/server/CrewBridge';
 import { rateLimit } from '@/utils/rateLimiter';
 import { getUserOr401 } from '@/server/requireUser';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     console.log('🚀 /api/tasks/usps-submit hit');
 
-    const userId = getUserOr401();
+    const userId = getUserOr401(request);
     if (!userId) {
       console.warn('⛔ Unauthorized');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

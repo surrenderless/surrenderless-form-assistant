@@ -1,5 +1,5 @@
 // src/middleware.ts
-import type { NextRequest } from "next/server";
+import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { clerkMiddleware } from "@clerk/nextjs/server";
 
@@ -8,18 +8,18 @@ const BYPASS = [/^\/_next\//, /^\/favicon\.ico$/, /^\/api\/healthz$/];
 // Create the Clerk-powered middleware function once
 const runClerk = clerkMiddleware();
 
-export function middleware(req: NextRequest) {
+export function middleware(req: NextRequest, event: NextFetchEvent) {
   const url = new URL(req.url);
 
   // Skip gating for assets/health
   if (BYPASS.some((r) => r.test(url.pathname))) {
-    return runClerk(req);
+    return runClerk(req, event);
   }
 
   // If no password set, just proceed to Clerk
   const pw = process.env.DEPLOY_PASSWORD;
   if (!pw) {
-    return runClerk(req);
+    return runClerk(req, event);
   }
 
   // Basic Auth gate
@@ -29,7 +29,7 @@ export function middleware(req: NextRequest) {
       const decoded = atob(h.slice(6).trim());
       const pass = decoded.split(":").slice(1).join(":");
       if (pass === pw) {
-        return runClerk(req);
+        return runClerk(req, event);
       }
     } catch {
       // fall through to 401

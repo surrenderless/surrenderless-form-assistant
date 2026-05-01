@@ -4,24 +4,18 @@ import path from "path";
 const nextConfig = {
   reactStrictMode: true,
 
-  // ✅ allow build to pass despite eslint/ts “any” errors (staging only)
+  turbopack: {},
+
+  // keep build leniency
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
 
   webpack(config) {
-    // keep your aliases
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
       "@": path.resolve("./src"),
       "crewai/src/crewai/cli/cli": false,
     };
-
-    // keep your css rule
-    config.module.rules.push({
-      test: /\.css$/,
-      use: ["style-loader", "css-loader", "postcss-loader"],
-    });
-
     return config;
   },
 };

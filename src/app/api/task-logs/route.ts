@@ -1,10 +1,10 @@
 // src/app/api/task-logs/route.ts
 import { getAuth } from '@clerk/nextjs/server';
 import { supabaseAdmin } from '@/utils/supabaseClient';
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { rateLimit } from '@/utils/rateLimiter'; // ⬅️ added
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const { userId } = getAuth(request);
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

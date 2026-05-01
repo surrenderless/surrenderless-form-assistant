@@ -1,15 +1,15 @@
 // src/app/api/task-logs/rerun/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin as supabase } from "@/utils/supabaseClient";
 import { getUserProfile } from "@/server/profile/getUserProfile";
 import { runCrewBridge } from "@/server/CrewBridge";
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     // auth
-    const userId = getUserOr401();
+    const userId = getUserOr401(req);
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // rate limit (10/min per user). Fail-open on Redis error.
