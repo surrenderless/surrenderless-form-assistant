@@ -1,13 +1,13 @@
 // (admin users route)
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin as supabase } from "@/utils/supabaseClient";
 import { assertAdmin } from "../_lib/isAdmin";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   // auth + admin
-  const userId = getUserOr401();
+  const userId = getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     if (await rateLimit(userId)) {

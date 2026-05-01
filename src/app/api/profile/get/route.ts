@@ -1,12 +1,12 @@
 // src/app/api/profile/get/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAdmin as supabase } from "@/utils/supabaseClient";
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const userId = getUserOr401();
+    const userId = getUserOr401(req);
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     try {

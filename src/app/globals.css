@@ -1,7 +1,6 @@
-/* ✅ Tailwind core imports */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind v4 + Next.js: use PostCSS plugin; load legacy JS config for content paths */
+@import "tailwindcss";
+@config "../../tailwind.config.js";
 
 
 /* ✅ Your custom variables */

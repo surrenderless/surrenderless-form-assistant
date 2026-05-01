@@ -1,5 +1,5 @@
 // src/app/api/fill-form/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { chromium } from "playwright";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
@@ -17,7 +17,7 @@ type Decision = {
   waitForNavigation?: boolean;
 };
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   // ---- auth ----
   const userId = getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -55,15 +55,11 @@ export async function POST(req: Request) {
     if (!url || !decision) {
       return NextResponse.json({ error: "Missing url or decision" }, { status: 400 });
     }
-    if (!process.env.BROWSERLESS_URL) {
-      return NextResponse.json({ error: "Missing BROWSERLESS_URL" }, { status: 500 });
-    }
-    if (!process.env.SUPABASE_BUCKET || !process.env.SUPABASE_URL) {
-      return NextResponse.json({ error: "Missing Supabase storage env vars" }, { status: 500 });
-    }
-    if (!process.env.DEPLOY_PASSWORD) {
-      return NextResponse.json({ error: "Missing DEPLOY_PASSWORD" }, { status: 500 });
-    }
+
+    const storageConfigured = !!(
+      process.env.SUPABASE_BUCKET &&
+      process.env.SUPABASE_URL
+    );
 
     console.log("\n✅ Received /api/fill-form request");
     console.log("➡️ URL:", url);
@@ -96,14 +92,26 @@ export async function POST(req: Request) {
     }
 
     // ---- browser/session ----
+    const browserlessUrl = process.env.BROWSERLESS_URL;
+    console.log("fill-form BROWSERLESS_URL:", browserlessUrl ? "(set)" : "(missing, using local chromium)");
     try {
-      browser = await chromium.connectOverCDP(process.env.BROWSERLESS_URL!);
+      if (browserlessUrl) {
+        browser = await chromium.connectOverCDP(browserlessUrl);
+      } else {
+        browser = await chromium.launch({ headless: true });
+      }
     } catch (e: any) {
-      throw new Error("Failed to connect to Browserless: " + (e?.message || e));
+      throw new Error(
+        "Failed to start browser: " +
+          (browserlessUrl ? "Browserless " : "local chromium ") +
+          (e?.message || e)
+      );
     }
-    context = await browser.newContext({
-      httpCredentials: { username: "admin", password: process.env.DEPLOY_PASSWORD },
-    });
+    const contextOpts =
+      process.env.DEPLOY_PASSWORD != null && process.env.DEPLOY_PASSWORD !== ""
+        ? { httpCredentials: { username: "admin", password: process.env.DEPLOY_PASSWORD } as const }
+        : {};
+    context = await browser.newContext(contextOpts);
     page = await context.newPage();
 
     await page.goto(url, { timeout: 60000 });
@@ -183,21 +191,26 @@ export async function POST(req: Request) {
 
         console.log("🧾 Full page context after execution:", JSON.stringify(pageData, null, 2));
 
-        const screenshotName = `${uuidv4()}.png`;
-        const screenshotPath = path.join(os.tmpdir(), screenshotName);
+        if (storageConfigured) {
+          const screenshotName = `${uuidv4()}.png`;
+          const screenshotPath = path.join(os.tmpdir(), screenshotName);
 
-        await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 60000 });
+          await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 60000 });
 
-        const fileBuffer = fs.readFileSync(screenshotPath);
-        const { data: uploaded, error: uploadError } = await supabase.storage
-          .from(process.env.SUPABASE_BUCKET!)
-          .upload(`screenshots/${screenshotName}`, fileBuffer, {
-            contentType: "image/png",
-            upsert: true,
-          });
+          const fileBuffer = fs.readFileSync(screenshotPath);
+          const bucket = process.env.SUPABASE_BUCKET!;
+          const { data: uploaded, error: uploadError } = await supabase.storage
+            .from(bucket)
+            .upload(`screenshots/${screenshotName}`, fileBuffer, {
+              contentType: "image/png",
+              upsert: true,
+            });
 
-        if (uploadError) throw new Error("Screenshot upload failed: " + uploadError.message);
-        screenshotUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/${uploaded?.path}`;
+          if (uploadError) throw new Error("Screenshot upload failed: " + uploadError.message);
+          screenshotUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/${uploaded?.path}`;
+        } else {
+          console.log("fill-form: skipping screenshot/upload (Supabase storage env not configured)");
+        }
       } catch (err: any) {
         console.warn("⚠️ Screenshot or context collection failed:", err?.message);
       }
@@ -216,7 +229,17 @@ export async function POST(req: Request) {
     });
     if (dbError) throw new Error("Database insert failed: " + dbError.message);
 
-    return NextResponse.json({ status: "success", screenshot: screenshotUrl, pageData });
+    return NextResponse.json({
+      status: "success",
+      screenshot: screenshotUrl,
+      pageData,
+      ...(storageConfigured
+        ? {}
+        : {
+            storageSkipped: true,
+            storageReason: "Missing Supabase storage env vars",
+          }),
+    });
   } catch (err: any) {
     console.error("❌ Error in /api/fill-form:\n", util.inspect(err, { depth: 5 }));
     return NextResponse.json({ error: err?.message || "Unknown error occurred" }, { status: 500 });
