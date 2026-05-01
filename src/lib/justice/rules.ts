@@ -25,3 +25,7 @@ export function computeFtcUnlocked(intake: JusticeIntake, manualEscalate: boolea
   if (manualEscalate) return true;
   return ftcUnlockedFromIntake(intake);
 }
+
+export function isMerchantResolved(intake: JusticeIntake): boolean {
+  return intake.already_contacted === "yes" && intake.merchant_response_type === "resolved";
+}

@@ -6,7 +6,7 @@ import Link from "next/link";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
-import { computeFtcUnlocked, paymentDisputeAvailable } from "@/lib/justice/rules";
+import { computeFtcUnlocked, isMerchantResolved, paymentDisputeAvailable } from "@/lib/justice/rules";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -71,29 +71,38 @@ export default function JusticePlanPage() {
   const paymentOk = paymentDisputeAvailable(intake);
   const ftcOpen = computeFtcUnlocked(intake, manualFtc);
   const contacted = intake.already_contacted === "yes";
+  const merchantResolved = isMerchantResolved(intake);
   const ftcPracticeDoneVisible = ftcCompleted && ftcOpen;
 
   const headline = `${intake.company_name} — ${intake.purchase_or_signup.slice(0, 80)}${intake.purchase_or_signup.length > 80 ? "…" : ""}`;
   const recommendationText = ftcPracticeDoneVisible
     ? "FTC practice completed. Next: consider payment dispute if money is still lost."
-    : !contacted
-      ? "Recommended next: contact the company first."
-      : ftcOpen
-        ? "Recommended next: escalate using your failed contact proof."
-        : "Recommended next: strengthen your merchant contact proof.";
+    : merchantResolved
+      ? "You marked this as resolved with the merchant. Keep any confirmations for your records."
+      : !contacted
+        ? "Recommended next: contact the company first."
+        : ftcOpen
+          ? "Recommended next: escalate using your failed contact proof."
+          : "Recommended next: strengthen your merchant contact proof.";
   const paymentRecommendedNext = ftcPracticeDoneVisible && paymentOk;
   const merchantBadge =
-    (!contacted || (contacted && !ftcOpen)) && !paymentRecommendedNext;
-  const merchantTitle = !contacted
-    ? "Step 1 — Contact the company"
-    : ftcOpen
-      ? "Optional — Send one final merchant follow-up"
-      : "Recommended — Final merchant follow-up";
-  const merchantDescription = !contacted
-    ? "This creates proof and often fixes the issue fastest."
-    : ftcOpen
-      ? "Use this only if you want one stronger written attempt before escalating."
-      : "Send one clear written request and save proof before escalation.";
+    !merchantResolved &&
+    (!contacted || (contacted && !ftcOpen)) &&
+    !paymentRecommendedNext;
+  const merchantTitle = merchantResolved
+    ? "Merchant contact — resolved"
+    : !contacted
+      ? "Step 1 — Contact the company"
+      : ftcOpen
+        ? "Optional — Send one final merchant follow-up"
+        : "Recommended — Final merchant follow-up";
+  const merchantDescription = merchantResolved
+    ? "You indicated the merchant fixed or resolved your issue. You can update your contact record if something changes."
+    : !contacted
+      ? "This creates proof and often fixes the issue fastest."
+      : ftcOpen
+        ? "Use this only if you want one stronger written attempt before escalating."
+        : "Send one clear written request and save proof before escalation.";
 
   function unlockFtcFromMerchant() {
     sessionStorage.setItem(STORAGE_FTC_MANUAL_UNLOCK, "1");
@@ -143,15 +152,17 @@ export default function JusticePlanPage() {
                   })
                 }
               >
-                Start
+                {merchantResolved ? "Update contact record" : "Start"}
               </Link>
-              <button
-                type="button"
-                onClick={unlockFtcFromMerchant}
-                className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800/50 dark:text-neutral-200 dark:hover:bg-neutral-800"
-              >
-                Merchant did not fix this / I’m ready to escalate
-              </button>
+              {!merchantResolved && (
+                <button
+                  type="button"
+                  onClick={unlockFtcFromMerchant}
+                  className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800/50 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                >
+                  Merchant did not fix this / I’m ready to escalate
+                </button>
+              )}
             </div>
           </li>
 
@@ -183,21 +194,30 @@ export default function JusticePlanPage() {
           </li>
 
           <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
+            {merchantResolved && (
+              <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-400">Case resolved</p>
+            )}
             {ftcPracticeDoneVisible && (
               <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-400">Practice completed</p>
             )}
-            {!ftcPracticeDoneVisible && contacted && ftcOpen && (
+            {!merchantResolved && !ftcPracticeDoneVisible && contacted && ftcOpen && (
               <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
             )}
             <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-              {ftcPracticeDoneVisible ? "FTC practice completed" : "Step 3 — Escalate to FTC"}
+              {merchantResolved
+                ? "Escalation not needed"
+                : ftcPracticeDoneVisible
+                  ? "FTC practice completed"
+                  : "Step 3 — Escalate to FTC"}
             </h2>
             <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-              {ftcPracticeDoneVisible
-                ? "Your internal practice FTC form was filled. This was not a real government submission."
-                : "Use this after merchant contact failed or the company refused to help."}
+              {merchantResolved
+                ? "You marked this case as resolved with the merchant. FTC escalation is not recommended on this plan."
+                : ftcPracticeDoneVisible
+                  ? "Your internal practice FTC form was filled. This was not a real government submission."
+                  : "Use this after merchant contact failed or the company refused to help."}
             </p>
-            {ftcOpen ? (
+            {merchantResolved ? null : ftcOpen ? (
               <Link
                 href="/justice/ftc-review"
                 className="mt-4 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"

@@ -264,6 +264,7 @@ export default function JusticeIntakePage() {
                   <option value="no_response">No response yet</option>
                   <option value="refused_help">They refused a refund or real help</option>
                   <option value="promised_but_did_not_fix">They said they would fix it but did not</option>
+                  <option value="resolved">Resolved — merchant fixed the issue</option>
                   <option value="partial_help">They gave partial refund or partial help</option>
                   <option value="asked_more_info">They asked for more information</option>
                   <option value="other">Other</option>
