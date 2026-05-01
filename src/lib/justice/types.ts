@@ -13,7 +13,8 @@ export type MerchantResponseType =
   | "promised_but_did_not_fix"
   | "partial_help"
   | "asked_more_info"
-  | "other";
+  | "other"
+  | "resolved";
 
 export type ContactProofType = "upload" | "paste" | "ticket" | "screenshot" | "none";
 
