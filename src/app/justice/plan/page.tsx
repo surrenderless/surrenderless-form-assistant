@@ -373,6 +373,12 @@ export default function JusticePlanPage() {
                               from: "destinations_engine",
                             });
                           }
+                          if (d.id === "state_ag") {
+                            void logEvent("state_ag_prep_opened", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
                         }}
                       >
                         Open

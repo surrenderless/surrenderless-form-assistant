@@ -87,6 +87,7 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     ftc_mock_lane_started: "FTC practice started",
     ftc_mock_lane_completed: "FTC practice completed",
     bbb_prep_opened: "BBB prep opened",
+    state_ag_prep_opened: "State AG prep opened",
   };
   return m[eventName];
 }
@@ -120,6 +121,17 @@ export function appendBbbPrepOpenedOnce(caseId: string): void {
     type: "bbb_prep_opened",
     label: "BBB prep opened",
     detail: "Reviewed complaint prep (manual filing next).",
+  });
+}
+
+export function appendStateAgPrepOpenedOnce(caseId: string): void {
+  if (!caseId) return;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "state_ag_prep_opened")) return;
+  appendTimelineEvent(caseId, {
+    type: "state_ag_prep_opened",
+    label: "State AG prep opened",
+    detail: "Reviewed AG complaint prep (manual filing next).",
   });
 }
 
