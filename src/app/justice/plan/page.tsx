@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
-import type { DestinationStatus, JusticeIntake } from "@/lib/justice/types";
+import type { DestinationStatus, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import {
   computeFtcUnlocked,
@@ -12,6 +12,7 @@ import {
   isMerchantResolved,
   paymentDisputeAvailable,
 } from "@/lib/justice/rules";
+import { appendActionPlanViewedOnce, appendTimelineEvent, readTimeline } from "@/lib/justice/timeline";
 
 function destinationStatusBadgeLabel(status: DestinationStatus): string {
   switch (status) {
@@ -42,12 +43,28 @@ async function logEvent(event_name: string, payload: Record<string, unknown>) {
   }
 }
 
+function formatTimelineTs(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 export default function JusticePlanPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [caseId, setCaseId] = useState<string>("");
   const [manualFtc, setManualFtc] = useState(false);
   const [ftcCompleted, setFtcCompleted] = useState(false);
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const loggedPlan = useRef(false);
 
   useEffect(() => {
@@ -78,6 +95,14 @@ export default function JusticePlanPage() {
       ftc_unlocked: computeFtcUnlocked(intake, manual),
     });
   }, [intake, caseId]);
+
+  useEffect(() => {
+    if (!intake) return;
+    const cid = caseId || sessionStorage.getItem(STORAGE_CASE_ID) || "";
+    if (!cid) return;
+    appendActionPlanViewedOnce(cid);
+    setTimeline(readTimeline(cid));
+  }, [intake, caseId, pathname]);
 
   if (!intake) {
     return (
@@ -129,6 +154,11 @@ export default function JusticePlanPage() {
   const destinations = computeJusticeDestinations(intake, { manualFtc });
 
   function unlockFtcFromMerchant() {
+    const cid = caseId || sessionStorage.getItem(STORAGE_CASE_ID) || "";
+    if (cid) {
+      appendTimelineEvent(cid, { type: "escalation_unlocked", label: "Escalation path unlocked" });
+      setTimeline(readTimeline(cid));
+    }
     sessionStorage.setItem(STORAGE_FTC_MANUAL_UNLOCK, "1");
     setManualFtc(true);
     void logEvent("escalation_unlocked", {
@@ -154,6 +184,37 @@ export default function JusticePlanPage() {
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{headline}</p>
         <p className="mt-1 text-xs text-neutral-500">{recommendationText}</p>
+
+        <section className="mt-6" aria-labelledby="case-timeline-heading">
+          <h2
+            id="case-timeline-heading"
+            className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+          >
+            Case timeline
+          </h2>
+          {timeline.length === 0 ? (
+            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">No activity recorded yet.</p>
+          ) : (
+            <ul className="mt-3 space-y-3">
+              {timeline.map((row) => (
+                <li
+                  key={row.id}
+                  className="rounded-xl border border-neutral-200/90 bg-white px-4 py-3 shadow-sm ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06]"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="font-medium text-neutral-900 dark:text-neutral-100">{row.label}</p>
+                    <time className="shrink-0 text-xs text-neutral-500 dark:text-neutral-400" dateTime={row.ts}>
+                      {formatTimelineTs(row.ts)}
+                    </time>
+                  </div>
+                  {row.detail ? (
+                    <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">{row.detail}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         <ul className="mt-8 space-y-5">
           <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">

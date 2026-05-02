@@ -9,6 +9,7 @@ import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { computeFtcUnlocked } from "@/lib/justice/rules";
 import { intakeToMockFtcUserData } from "@/lib/justice/ftc-user-data";
+import { appendTimelineEvent } from "@/lib/justice/timeline";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -83,6 +84,10 @@ export default function JusticeFtcReviewPage() {
     const mockUrl = `${window.location.origin}/mock/ftc-complaint`;
     const userData = intakeToMockFtcUserData(intake);
 
+    if (caseId) {
+      appendTimelineEvent(caseId, { type: "ftc_practice_started", label: "FTC practice started" });
+    }
+
     await logEvent("ftc_mock_lane_started", { case_id: caseId, mock_path: "/mock/ftc-complaint" });
 
     try {
@@ -99,6 +104,13 @@ export default function JusticeFtcReviewPage() {
       await logEvent("ftc_mock_lane_completed", { case_id: caseId, outcome: "success" });
       sessionStorage.setItem("justice_ftc_mock_completed", "1");
       const fillResult = (data as { fillResult?: { storageSkipped?: boolean } }).fillResult;
+      if (caseId) {
+        appendTimelineEvent(caseId, {
+          type: "ftc_practice_completed",
+          label: "FTC practice completed",
+          detail: fillResult?.storageSkipped ? "Screenshot storage skipped locally" : undefined,
+        });
+      }
       setStorageSkipped(fillResult?.storageSkipped === true);
       setTechnicalDetails(JSON.stringify(data, null, 2));
       setPracticeSuccess(true);
@@ -108,6 +120,13 @@ export default function JusticeFtcReviewPage() {
         outcome: "failed",
         error: (e?.message || "error").slice(0, 200),
       });
+      if (caseId) {
+        appendTimelineEvent(caseId, {
+          type: "ftc_practice_completed",
+          label: "FTC practice completed",
+          detail: "Did not complete",
+        });
+      }
       setError(e?.message || "Something went wrong.");
     } finally {
       setRunning(false);
