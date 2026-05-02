@@ -151,6 +151,7 @@ export function computeJusticeDestinations(
       rationale: "Revisit only if the issue returns or was not truly resolved.",
       status: "later",
       priority: 40,
+      internalRoute: "/justice/bbb",
     });
     push({
       id: "state_ag",
@@ -189,6 +190,7 @@ export function computeJusticeDestinations(
         : "Add a company name to see clearer next steps.",
       status: hasCompany ? "manual" : "later",
       priority: 40,
+      internalRoute: "/justice/bbb",
     });
     push({
       id: "state_ag",

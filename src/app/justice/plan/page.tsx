@@ -367,6 +367,12 @@ export default function JusticePlanPage() {
                               from: "destinations_engine",
                             });
                           }
+                          if (d.id === "bbb") {
+                            void logEvent("bbb_prep_opened", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
                         }}
                       >
                         Open

@@ -70,7 +70,8 @@ export type TimelineEntryType =
   | "escalation_unlocked"
   | "payment_checklist_viewed"
   | "ftc_practice_started"
-  | "ftc_practice_completed";
+  | "ftc_practice_completed"
+  | "bbb_prep_opened";
 
 export type TimelineEntry = {
   id: string;

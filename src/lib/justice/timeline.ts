@@ -86,6 +86,7 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     ftc_mock_review_opened: "FTC practice opened",
     ftc_mock_lane_started: "FTC practice started",
     ftc_mock_lane_completed: "FTC practice completed",
+    bbb_prep_opened: "BBB prep opened",
   };
   return m[eventName];
 }
@@ -111,6 +112,17 @@ export function appendPaymentChecklistViewedOnce(caseId: string): void {
 }
 
 /** When merchant save documents a response that unlocks FTC via intake rules; skips if escalation_unlocked already exists. */
+export function appendBbbPrepOpenedOnce(caseId: string): void {
+  if (!caseId) return;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "bbb_prep_opened")) return;
+  appendTimelineEvent(caseId, {
+    type: "bbb_prep_opened",
+    label: "BBB prep opened",
+    detail: "Reviewed complaint prep (manual filing next).",
+  });
+}
+
 export function appendEscalationUnlockedFromMerchantSaveOnce(
   caseId: string,
   intakeAfterSave: JusticeIntake
