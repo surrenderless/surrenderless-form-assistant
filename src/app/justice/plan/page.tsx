@@ -4,9 +4,31 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { DestinationStatus, JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
-import { computeFtcUnlocked, isMerchantResolved, paymentDisputeAvailable } from "@/lib/justice/rules";
+import {
+  computeFtcUnlocked,
+  computeJusticeDestinations,
+  isMerchantResolved,
+  paymentDisputeAvailable,
+} from "@/lib/justice/rules";
+
+function destinationStatusBadgeLabel(status: DestinationStatus): string {
+  switch (status) {
+    case "recommended":
+      return "Recommended";
+    case "available":
+      return "Available";
+    case "later":
+      return "Later";
+    case "manual":
+      return "Manual";
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -103,6 +125,8 @@ export default function JusticePlanPage() {
       : ftcOpen
         ? "Use this only if you want one stronger written attempt before escalating."
         : "Send one clear written request and save proof before escalation.";
+
+  const destinations = computeJusticeDestinations(intake, { manualFtc });
 
   function unlockFtcFromMerchant() {
     sessionStorage.setItem(STORAGE_FTC_MANUAL_UNLOCK, "1");
@@ -236,6 +260,67 @@ export default function JusticePlanPage() {
             )}
           </li>
         </ul>
+
+        <section className="mt-10" aria-labelledby="destinations-heading">
+          <h2
+            id="destinations-heading"
+            className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+          >
+            Other places this may go
+          </h2>
+          <ul className="mt-4 space-y-3">
+            {destinations.map((d) => (
+              <li
+                key={d.id}
+                className="rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-md shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                      {destinationStatusBadgeLabel(d.status)}
+                    </p>
+                    <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">{d.label}</p>
+                    <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{d.rationale}</p>
+                  </div>
+                  <div className="shrink-0 sm:pt-5">
+                    {d.internalRoute ? (
+                      <Link
+                        href={d.internalRoute}
+                        className="inline-flex rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-900/20 hover:bg-blue-700"
+                        onClick={() => {
+                          if (d.id === "merchant_resolution") {
+                            void logEvent("merchant_resolution_started", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
+                          if (d.id === "payment_dispute") {
+                            void logEvent("payment_dispute_started", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
+                          if (d.id === "ftc") {
+                            void logEvent("ftc_mock_review_opened", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
+                        }}
+                      >
+                        Open
+                      </Link>
+                    ) : d.status === "manual" ? (
+                      <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                        Manual for now
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       </main>
     </>
   );

@@ -37,6 +37,32 @@ export type JusticeIntake = {
   contact_proof_text?: string;
 };
 
+export type DestinationId =
+  | "merchant_resolution"
+  | "payment_dispute"
+  | "ftc"
+  | "bbb"
+  | "state_ag"
+  | "cfpb"
+  | "fcc"
+  | "dot"
+  | "small_claims";
+
+export type DestinationStatus = "recommended" | "available" | "later" | "manual";
+
+export type JusticeDestination = {
+  id: DestinationId;
+  label: string;
+  rationale: string;
+  status: DestinationStatus;
+  priority: number;
+  internalRoute?: string;
+};
+
+export type JusticeDestinationsContext = {
+  manualFtc: boolean;
+};
+
 export const STORAGE_INTAKE = "justice_intake_v1";
 export const STORAGE_CASE_ID = "justice_case_id";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
