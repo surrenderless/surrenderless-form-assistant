@@ -35,6 +35,8 @@ export type JusticeIntake = {
   merchant_response_type?: MerchantResponseType;
   contact_proof_type?: ContactProofType;
   contact_proof_text?: string;
+  /** Two-letter US state code (e.g. CA) for consumer / AG complaint context. */
+  consumer_us_state?: string;
 };
 
 export type DestinationId =
@@ -71,7 +73,8 @@ export type TimelineEntryType =
   | "payment_checklist_viewed"
   | "ftc_practice_started"
   | "ftc_practice_completed"
-  | "bbb_prep_opened";
+  | "bbb_prep_opened"
+  | "state_ag_prep_opened";
 
 export type TimelineEntry = {
   id: string;

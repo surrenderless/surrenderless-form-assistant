@@ -159,6 +159,7 @@ export function computeJusticeDestinations(
       rationale: "Revisit only if you need government help after resolution breaks down.",
       status: "later",
       priority: 50,
+      internalRoute: "/justice/state-ag",
     });
     push({
       id: "cfpb",
@@ -198,6 +199,7 @@ export function computeJusticeDestinations(
       rationale: "Many states take consumer complaints; filing is outside this app for now.",
       status: hasCompany ? "manual" : "later",
       priority: 50,
+      internalRoute: "/justice/state-ag",
     });
     const cfpbRel = cfpbLikelyRelevant(intake);
     push({
