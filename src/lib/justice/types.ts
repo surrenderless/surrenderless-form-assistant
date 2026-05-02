@@ -63,6 +63,26 @@ export type JusticeDestinationsContext = {
   manualFtc: boolean;
 };
 
+export type TimelineEntryType =
+  | "case_started"
+  | "action_plan_viewed"
+  | "merchant_contact_saved"
+  | "escalation_unlocked"
+  | "payment_checklist_viewed"
+  | "ftc_practice_started"
+  | "ftc_practice_completed";
+
+export type TimelineEntry = {
+  id: string;
+  case_id: string;
+  type: TimelineEntryType;
+  label: string;
+  ts: string;
+  detail?: string;
+};
+
 export const STORAGE_INTAKE = "justice_intake_v1";
 export const STORAGE_CASE_ID = "justice_case_id";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
+/** Session JSON: `Record<caseId, TimelineEntry[]>` */
+export const STORAGE_TIMELINE_V1 = "justice_timeline_v1";

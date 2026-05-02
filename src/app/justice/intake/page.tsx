@@ -6,6 +6,7 @@ import Link from "next/link";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import { appendTimelineEvent, clearTimelineForNewCase } from "@/lib/justice/timeline";
 
 function newCaseId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -116,9 +117,12 @@ export default function JusticeIntakePage() {
           : {}),
       };
 
+      const prev_case_id = sessionStorage.getItem(STORAGE_CASE_ID);
       const case_id = newCaseId();
+      clearTimelineForNewCase(prev_case_id, case_id);
       sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(intake));
       sessionStorage.setItem(STORAGE_CASE_ID, case_id);
+      appendTimelineEvent(case_id, { type: "case_started", label: "Case started" });
       sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
       sessionStorage.removeItem("justice_ftc_mock_completed");
 

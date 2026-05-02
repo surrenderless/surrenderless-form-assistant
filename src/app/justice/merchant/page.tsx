@@ -6,6 +6,7 @@ import Header from "@/app/components/Header";
 import { useRouter } from "next/navigation";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import { appendEscalationUnlockedFromMerchantSaveOnce, appendTimelineEvent } from "@/lib/justice/timeline";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -128,6 +129,16 @@ export default function JusticeMerchantPage() {
       sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(updated));
       sessionStorage.removeItem("justice_ftc_mock_completed");
       sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
+
+      const cid = sessionStorage.getItem(STORAGE_CASE_ID);
+      if (cid) {
+        appendTimelineEvent(cid, {
+          type: "merchant_contact_saved",
+          label: "Merchant contact saved",
+          detail: `Merchant response: ${merchantResponseType}`,
+        });
+        appendEscalationUnlockedFromMerchantSaveOnce(cid, updated);
+      }
 
       await logEvent("merchant_contact_saved", {
         case_id: sessionStorage.getItem(STORAGE_CASE_ID),

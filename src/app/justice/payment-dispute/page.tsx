@@ -4,10 +4,12 @@ import { useEffect } from "react";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { appendPaymentChecklistViewedOnce } from "@/lib/justice/timeline";
 
 export default function JusticePaymentDisputePage() {
   useEffect(() => {
     const cid = sessionStorage.getItem(STORAGE_CASE_ID);
+    if (cid) appendPaymentChecklistViewedOnce(cid);
     void fetch("/api/justice/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
