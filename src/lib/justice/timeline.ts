@@ -88,6 +88,7 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     ftc_mock_lane_completed: "FTC practice completed",
     bbb_prep_opened: "BBB prep opened",
     state_ag_prep_opened: "State AG prep opened",
+    cfpb_prep_opened: "CFPB prep opened",
   };
   return m[eventName];
 }
@@ -132,6 +133,17 @@ export function appendStateAgPrepOpenedOnce(caseId: string): void {
     type: "state_ag_prep_opened",
     label: "State AG prep opened",
     detail: "Reviewed AG complaint prep (manual filing next).",
+  });
+}
+
+export function appendCfpbPrepOpenedOnce(caseId: string): void {
+  if (!caseId) return;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "cfpb_prep_opened")) return;
+  appendTimelineEvent(caseId, {
+    type: "cfpb_prep_opened",
+    label: "CFPB prep opened",
+    detail: "Reviewed CFPB complaint prep (manual filing on official site next).",
   });
 }
 

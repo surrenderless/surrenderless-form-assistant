@@ -51,7 +51,7 @@ function matchesDotHints(intake: JusticeIntake): boolean {
   return hints.some((h) => t.includes(h));
 }
 
-function cfpbLikelyRelevant(intake: JusticeIntake): boolean {
+export function cfpbLikelyRelevant(intake: JusticeIntake): boolean {
   const cat = intake.problem_category;
   if (cat === "subscription" || cat === "charge_dispute") return true;
   return paymentDisputeAvailable(intake);
@@ -167,6 +167,7 @@ export function computeJusticeDestinations(
       rationale: "Less relevant while the case is marked resolved with the merchant.",
       status: "later",
       priority: 60,
+      internalRoute: "/justice/cfpb",
     });
     push({
       id: "fcc",
@@ -210,6 +211,7 @@ export function computeJusticeDestinations(
         : "Often relevant for bank/card or lending issues; confirm your facts match their scope.",
       status: cfpbRel ? "manual" : "later",
       priority: 60,
+      internalRoute: "/justice/cfpb",
     });
     push({
       id: "fcc",
