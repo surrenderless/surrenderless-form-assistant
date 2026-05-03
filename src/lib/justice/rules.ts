@@ -175,8 +175,14 @@ export function computeJusticeDestinations(
     ftcRationale = "Not recommended while you consider the issue resolved with the merchant.";
     ftcRoute = undefined;
   } else if (ftcOpen) {
-    ftcStatus = "recommended";
-    ftcRationale = "Practice complaint flow when merchant contact failed or was refused.";
+    if (cfpbRel) {
+      ftcStatus = "available";
+      ftcRationale =
+        "Practice complaint flow when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
+    } else {
+      ftcStatus = "recommended";
+      ftcRationale = "Practice complaint flow when merchant contact failed or was refused.";
+    }
     ftcRoute = "/justice/ftc-review";
   } else {
     ftcStatus = "later";
@@ -254,10 +260,10 @@ export function computeJusticeDestinations(
       id: "cfpb",
       label: "CFPB",
       rationale: cfpbRel
-        ? "May fit billing, subscriptions, or financial product problems."
-        : "Shows Open when your answers suggest billing, bank, loan, credit, or related financial issues.",
-      status: cfpbRel ? "manual" : "later",
-      priority: 60,
+        ? "Recommended for bank, credit, loan, payment, debt, billing, or financial account issues."
+        : "Not highlighted until your answers suggest bank, credit, loan, billing, or related financial issues.",
+      status: cfpbRel ? "recommended" : "later",
+      priority: cfpbRel ? 28 : 60,
       ...(cfpbRel ? { internalRoute: "/justice/cfpb" } : {}),
     });
     push({

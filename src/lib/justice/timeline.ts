@@ -1,4 +1,4 @@
-import { ftcUnlockedFromIntake } from "./rules";
+import { cfpbLikelyRelevant, ftcUnlockedFromIntake } from "./rules";
 import type { JusticeIntake, TimelineEntry, TimelineEntryType } from "./types";
 import { STORAGE_TIMELINE_V1 } from "./types";
 
@@ -155,9 +155,12 @@ export function appendEscalationUnlockedFromMerchantSaveOnce(
   if (!ftcUnlockedFromIntake(intakeAfterSave)) return;
   const entries = readTimeline(caseId);
   if (entries.some((e) => e.type === "escalation_unlocked")) return;
+  const detail = cfpbLikelyRelevant(intakeAfterSave)
+    ? "CFPB escalation became available."
+    : "FTC escalation became available.";
   appendTimelineEvent(caseId, {
     type: "escalation_unlocked",
     label: "Escalation path unlocked",
-    detail: "FTC escalation became available.",
+    detail,
   });
 }
