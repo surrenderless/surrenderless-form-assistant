@@ -51,10 +51,57 @@ function matchesDotHints(intake: JusticeIntake): boolean {
   return hints.some((h) => t.includes(h));
 }
 
+/** Text signals that a complaint may involve CFPB-regulated financial products/services (not ordinary retail goods alone). */
+function matchesCfpbFinancialHints(intake: JusticeIntake): boolean {
+  const t = intakeTextBlob(intake);
+  if (/\bapr\b/.test(t)) return true;
+  const hints = [
+    "billing",
+    "billed",
+    "invoice",
+    "recurring",
+    "autopay",
+    "auto-pay",
+    "renewal",
+    "credit card",
+    "debit card",
+    "bank",
+    "banking",
+    "checking account",
+    "savings account",
+    "overdraft",
+    "mortgage",
+    "student loan",
+    "auto loan",
+    "payday",
+    "lender",
+    "lending",
+    "interest rate",
+    "debt",
+    "collection",
+    "collector",
+    "credit report",
+    "credit score",
+    "equifax",
+    "experian",
+    "transunion",
+    "chargeback",
+    "wire transfer",
+    "ach",
+    "direct deposit",
+    "finance charge",
+    "late fee",
+    "minimum payment",
+    "unauthorized",
+    "overdraft fee",
+  ];
+  return hints.some((h) => t.includes(h));
+}
+
 export function cfpbLikelyRelevant(intake: JusticeIntake): boolean {
   const cat = intake.problem_category;
   if (cat === "subscription" || cat === "charge_dispute") return true;
-  return paymentDisputeAvailable(intake);
+  return matchesCfpbFinancialHints(intake);
 }
 
 export function computeJusticeDestinations(
@@ -66,6 +113,7 @@ export function computeJusticeDestinations(
   const ftcOpen = computeFtcUnlocked(intake, ctx.manualFtc);
   const contacted = intake.already_contacted === "yes";
   const hasCompany = intake.company_name.trim().length > 0;
+  const cfpbRel = cfpbLikelyRelevant(intake);
 
   const out: JusticeDestination[] = [];
 
@@ -167,7 +215,7 @@ export function computeJusticeDestinations(
       rationale: "Less relevant while the case is marked resolved with the merchant.",
       status: "later",
       priority: 60,
-      internalRoute: "/justice/cfpb",
+      ...(cfpbRel ? { internalRoute: "/justice/cfpb" } : {}),
     });
     push({
       id: "fcc",
@@ -202,16 +250,15 @@ export function computeJusticeDestinations(
       priority: 50,
       internalRoute: "/justice/state-ag",
     });
-    const cfpbRel = cfpbLikelyRelevant(intake);
     push({
       id: "cfpb",
       label: "CFPB",
       rationale: cfpbRel
         ? "May fit billing, subscriptions, or financial product problems."
-        : "Often relevant for bank/card or lending issues; confirm your facts match their scope.",
+        : "Shows Open when your answers suggest billing, bank, loan, credit, or related financial issues.",
       status: cfpbRel ? "manual" : "later",
       priority: 60,
-      internalRoute: "/justice/cfpb",
+      ...(cfpbRel ? { internalRoute: "/justice/cfpb" } : {}),
     });
     push({
       id: "fcc",
