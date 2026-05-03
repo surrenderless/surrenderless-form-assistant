@@ -74,7 +74,8 @@ export type TimelineEntryType =
   | "ftc_practice_started"
   | "ftc_practice_completed"
   | "bbb_prep_opened"
-  | "state_ag_prep_opened";
+  | "state_ag_prep_opened"
+  | "cfpb_prep_opened";
 
 export type TimelineEntry = {
   id: string;
