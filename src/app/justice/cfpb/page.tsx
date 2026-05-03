@@ -129,8 +129,8 @@ export default function JusticeCfpbPrepPage() {
   const desiredResolution = desiredResolutionPhrase(intake.problem_category);
 
   const fitNote = likelyFit
-    ? "Based on your answers (for example subscription or charge-related categories, or payment details you provided), a CFPB complaint may be in scope. This is only a rough guide — confirm your situation fits their rules before filing."
-    : "Your intake does not automatically signal a strong CFPB match (for example, missing payment/date details or a non-financial framing). The CFPB still covers many money and account problems — review consumerfinance.gov to see whether your issue fits before you file.";
+    ? "Based on your answers (subscription or charge dispute, or billing/bank/credit-related wording in your description), a CFPB complaint may be in scope. This is only a rough guide — confirm your situation fits their rules before filing."
+    : "Your intake does not automatically signal a strong CFPB match. Add clear billing, bank, loan, or credit details in your story, or use subscription / charge dispute if that fits — then revisit the action plan. You can also review consumerfinance.gov to see whether your issue fits.";
 
   const evidenceItems: string[] = [
     "Order number, confirmation email, or receipt (from your intake where applicable).",
