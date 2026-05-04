@@ -1,4 +1,4 @@
-import { cfpbLikelyRelevant, ftcUnlockedFromIntake } from "./rules";
+import { cfpbLikelyRelevant, fccLikelyRelevant, ftcUnlockedFromIntake } from "./rules";
 import type { JusticeIntake, TimelineEntry, TimelineEntryType } from "./types";
 import { STORAGE_TIMELINE_V1 } from "./types";
 
@@ -89,6 +89,7 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     bbb_prep_opened: "BBB prep opened",
     state_ag_prep_opened: "State AG prep opened",
     cfpb_prep_opened: "CFPB prep opened",
+    fcc_prep_opened: "FCC prep opened",
   };
   return m[eventName];
 }
@@ -147,6 +148,17 @@ export function appendCfpbPrepOpenedOnce(caseId: string): void {
   });
 }
 
+export function appendFccPrepOpenedOnce(caseId: string): void {
+  if (!caseId) return;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "fcc_prep_opened")) return;
+  appendTimelineEvent(caseId, {
+    type: "fcc_prep_opened",
+    label: "FCC prep opened",
+    detail: "Reviewed FCC complaint prep (manual filing on official site next).",
+  });
+}
+
 export function appendEscalationUnlockedFromMerchantSaveOnce(
   caseId: string,
   intakeAfterSave: JusticeIntake
@@ -157,7 +169,9 @@ export function appendEscalationUnlockedFromMerchantSaveOnce(
   if (entries.some((e) => e.type === "escalation_unlocked")) return;
   const detail = cfpbLikelyRelevant(intakeAfterSave)
     ? "CFPB escalation became available."
-    : "FTC escalation became available.";
+    : fccLikelyRelevant(intakeAfterSave)
+      ? "FCC escalation became available."
+      : "FTC escalation became available.";
   appendTimelineEvent(caseId, {
     type: "escalation_unlocked",
     label: "Escalation path unlocked",

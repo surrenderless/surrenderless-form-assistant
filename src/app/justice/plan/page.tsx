@@ -10,6 +10,7 @@ import {
   cfpbLikelyRelevant,
   computeFtcUnlocked,
   computeJusticeDestinations,
+  fccLikelyRelevant,
   isMerchantResolved,
   paymentDisputeAvailable,
 } from "@/lib/justice/rules";
@@ -121,11 +122,12 @@ export default function JusticePlanPage() {
   const contacted = intake.already_contacted === "yes";
   const merchantResolved = isMerchantResolved(intake);
   const cfpbRel = cfpbLikelyRelevant(intake);
+  const fccRel = fccLikelyRelevant(intake);
   const ftcPracticeDoneVisible = ftcCompleted && ftcOpen;
 
   const headline = `${intake.company_name} — ${intake.purchase_or_signup.slice(0, 80)}${intake.purchase_or_signup.length > 80 ? "…" : ""}`;
   const recommendationText =
-    ftcPracticeDoneVisible && !cfpbRel
+    ftcPracticeDoneVisible && !cfpbRel && !fccRel
       ? "FTC practice completed. Next: consider payment dispute if money is still lost."
       : merchantResolved
         ? "You marked this as resolved with the merchant. Keep any confirmations for your records."
@@ -134,7 +136,9 @@ export default function JusticePlanPage() {
           : ftcOpen
             ? cfpbRel
               ? "Recommended next: prepare your CFPB complaint (file manually on the official CFPB site when ready)."
-              : "Recommended next: escalate using your failed contact proof."
+              : fccRel
+                ? "Recommended next: prepare your FCC complaint (file manually on the official FCC site when ready)."
+                : "Recommended next: escalate using your failed contact proof."
             : "Recommended next: strengthen your merchant contact proof.";
   const paymentRecommendedNext = ftcPracticeDoneVisible && paymentOk;
   const merchantBadge =
@@ -322,6 +326,36 @@ export default function JusticePlanPage() {
                   </p>
                 )}
               </>
+            ) : fccRel ? (
+              <>
+                {contacted && ftcOpen ? (
+                  <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+                ) : null}
+                <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                  Step 3 — Escalate to FCC
+                </h2>
+                <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                  Use this for telecom, phone, internet, cable, broadcast, or unwanted-call or text issues.
+                </p>
+                {ftcOpen ? (
+                  <Link
+                    href="/justice/fcc"
+                    className="mt-4 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"
+                    onClick={() =>
+                      void logEvent("fcc_prep_opened", {
+                        case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                        from: "plan_step3",
+                      })
+                    }
+                  >
+                    Prepare FCC complaint
+                  </Link>
+                ) : (
+                  <p className="mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
+                    Complete merchant contact first or provide failed-contact proof.
+                  </p>
+                )}
+              </>
             ) : (
               <>
                 {ftcPracticeDoneVisible && (
@@ -421,6 +455,12 @@ export default function JusticePlanPage() {
                           }
                           if (d.id === "cfpb") {
                             void logEvent("cfpb_prep_opened", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
+                          if (d.id === "fcc") {
+                            void logEvent("fcc_prep_opened", {
                               case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
                               from: "destinations_engine",
                             });
