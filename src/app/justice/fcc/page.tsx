@@ -28,8 +28,16 @@ function desiredResolutionPhrase(category: JusticeIntake["problem_category"]): s
   }
 }
 
+/** For FCC-style framing: headline segment and draft labels (not raw intake problem_category). */
+function fccServiceSummarySegment(intake: JusticeIntake): string {
+  const svc = intake.purchase_or_signup.trim();
+  return svc || "communications service issue";
+}
+
 function buildFccComplaintDraft(intake: JusticeIntake): string {
-  const issue = intake.problem_category.replace(/_/g, " ");
+  const fccRel = fccLikelyRelevant(intake);
+  const intakeCategoryLabel = intake.problem_category.replace(/_/g, " ");
+  const serviceSummary = fccServiceSummarySegment(intake);
   const ask = desiredResolutionPhrase(intake.problem_category);
   const lines: string[] = [
     "DRAFT FOR FCC CONSUMER COMPLAINT",
@@ -38,12 +46,29 @@ function buildFccComplaintDraft(intake: JusticeIntake): string {
     `Company or provider: ${intake.company_name}`,
     intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",
     "",
-    "Type of issue (from my intake):",
-    issue,
-    "",
-    "Service or product:",
-    intake.purchase_or_signup,
-    "",
+  ];
+
+  if (fccRel) {
+    lines.push(
+      "Nature of complaint:",
+      "Communications service issue",
+      "",
+      "Service or product involved:",
+      serviceSummary,
+      ""
+    );
+  } else {
+    lines.push(
+      "Type of issue (from my intake):",
+      intakeCategoryLabel,
+      "",
+      "Service or product:",
+      intake.purchase_or_signup,
+      ""
+    );
+  }
+
+  lines.push(
     "What happened:",
     intake.story.trim(),
     "",
@@ -58,8 +83,8 @@ function buildFccComplaintDraft(intake: JusticeIntake): string {
     ask,
     "",
     "My contact:",
-    `${intake.user_display_name} <${intake.reply_email}>`,
-  ];
+    `${intake.user_display_name} <${intake.reply_email}>`
+  );
 
   if (intake.already_contacted === "yes" && intake.contact_method) {
     lines.push(
@@ -127,7 +152,9 @@ export default function JusticeFccPrepPage() {
     );
   }
 
-  const issueSummary = `${intake.company_name} — ${intake.problem_category.replace(/_/g, " ")}`;
+  const issueSummary = likelyFit
+    ? `${intake.company_name} — ${fccServiceSummarySegment(intake)}`
+    : `${intake.company_name} — ${intake.problem_category.replace(/_/g, " ")}`;
   const desiredResolution = desiredResolutionPhrase(intake.problem_category);
 
   const fitNote = likelyFit
@@ -228,9 +255,11 @@ export default function JusticeFccPrepPage() {
         <div className={`mt-5 ${cardCls}`}>
           <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Complaint summary</p>
           <p className="mt-2 text-sm text-neutral-800 dark:text-neutral-200">{issueSummary}</p>
-          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-            Service / product: {intake.purchase_or_signup}
-          </p>
+          {!likelyFit ? (
+            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+              Service / product: {intake.purchase_or_signup}
+            </p>
+          ) : null}
           <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
             Money (if any): {intake.money_involved} · Dates: {intake.pay_or_order_date}
           </p>
