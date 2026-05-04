@@ -41,8 +41,32 @@ function intakeTextBlob(intake: JusticeIntake): string {
 
 function matchesFccHints(intake: JusticeIntake): boolean {
   const t = intakeTextBlob(intake);
-  const hints = ["telecom", "isp", "internet service", "internet provider", "phone bill", "wireless", "carrier", "mobile plan", "cellular", "broadband", "cable tv", "robocall"];
+  const hints = [
+    "telecom",
+    "isp",
+    "internet service",
+    "internet provider",
+    "phone bill",
+    "wireless",
+    "carrier",
+    "mobile plan",
+    "cellular",
+    "broadband",
+    "cable tv",
+    "cable ",
+    "robocall",
+    "spam call",
+    "spam text",
+    "broadcast",
+    "radio ",
+    "tv service",
+    "telemarketing",
+  ];
   return hints.some((h) => t.includes(h));
+}
+
+export function fccLikelyRelevant(intake: JusticeIntake): boolean {
+  return matchesFccHints(intake);
 }
 
 function matchesDotHints(intake: JusticeIntake): boolean {
@@ -114,6 +138,7 @@ export function computeJusticeDestinations(
   const contacted = intake.already_contacted === "yes";
   const hasCompany = intake.company_name.trim().length > 0;
   const cfpbRel = cfpbLikelyRelevant(intake);
+  const fccRel = fccLikelyRelevant(intake);
 
   const out: JusticeDestination[] = [];
 
@@ -179,6 +204,10 @@ export function computeJusticeDestinations(
       ftcStatus = "available";
       ftcRationale =
         "Practice complaint flow when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
+    } else if (fccRel) {
+      ftcStatus = "available";
+      ftcRationale =
+        "Practice complaint flow when merchant contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step.";
     } else {
       ftcStatus = "recommended";
       ftcRationale = "Practice complaint flow when merchant contact failed or was refused.";
@@ -229,6 +258,7 @@ export function computeJusticeDestinations(
       rationale: "Typically for telecom issues — revisit if problems continue.",
       status: "later",
       priority: 70,
+      ...(fccRel ? { internalRoute: "/justice/fcc" } : {}),
     });
     push({
       id: "dot",
@@ -269,11 +299,12 @@ export function computeJusticeDestinations(
     push({
       id: "fcc",
       label: "FCC",
-      rationale: matchesFccHints(intake)
-        ? "May fit phone, internet, or TV service issues."
+      rationale: fccRel
+        ? "Recommended for phone, internet, cable, broadcast, telemarketing, or unwanted-call issues."
         : "Usually for telecom, broadcast, or related billing disputes.",
-      status: matchesFccHints(intake) ? "manual" : "later",
-      priority: 70,
+      status: fccRel ? "recommended" : "later",
+      priority: fccRel ? (cfpbRel ? 29 : 27) : 70,
+      ...(fccRel ? { internalRoute: "/justice/fcc" } : {}),
     });
     push({
       id: "dot",
