@@ -1,12 +1,18 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
-import { appendPaymentChecklistViewedOnce, appendTimelineEvent } from "@/lib/justice/timeline";
+import {
+  appendPaymentChecklistViewedOnce,
+  appendTimelineEvent,
+  readTimeline,
+  replaceTimelineForCase,
+} from "@/lib/justice/timeline";
 
 const PAYMENT_DRAFT_KEY = "justice_payment_dispute_checklist_draft_v1";
 
@@ -196,6 +202,7 @@ const cardCls =
 
 export default function JusticePaymentDisputePage() {
   const router = useRouter();
+  const { isSignedIn, isLoaded } = useAuth();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [caseId, setCaseId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>("credit_card");
@@ -314,6 +321,34 @@ export default function JusticePaymentDisputePage() {
         type: "payment_dispute_checklist_prepared",
         label: "Payment dispute checklist prepared",
       });
+
+      if (isLoaded && isSignedIn && caseId) {
+        try {
+          const timeline = readTimeline(caseId);
+          const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payment_dispute_draft: draft, timeline }),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as {
+              payment_dispute_draft?: unknown;
+              timeline?: unknown;
+            };
+            if (data.payment_dispute_draft != null) {
+              sessionStorage.setItem(PAYMENT_DRAFT_KEY, JSON.stringify(data.payment_dispute_draft));
+            }
+            if (Array.isArray(data.timeline)) {
+              replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+            }
+          } else {
+            console.warn("justice payment-dispute: PATCH /api/justice/cases/[id] failed", res.status);
+          }
+        } catch (e) {
+          console.warn("justice payment-dispute: PATCH /api/justice/cases/[id] error", e);
+        }
+      }
+
       await fetch("/api/justice/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
