@@ -1,13 +1,19 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { cfpbLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
-import { appendTimelineEvent, clearTimelineForNewCase } from "@/lib/justice/timeline";
+import {
+  appendTimelineEvent,
+  clearTimelineForNewCase,
+  readTimeline,
+  replaceTimelineForCase,
+} from "@/lib/justice/timeline";
 
 function newCaseId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -28,6 +34,7 @@ async function logEvent(event_name: string, payload: Record<string, unknown>) {
 
 export default function JusticeIntakePage() {
   const router = useRouter();
+  const { isSignedIn, isLoaded } = useAuth();
   const [submitting, setSubmitting] = useState(false);
 
   const [problem_category, setProblemCategory] = useState<JusticeIntake["problem_category"]>("online_purchase");
@@ -140,7 +147,43 @@ export default function JusticeIntakePage() {
       sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
       sessionStorage.removeItem("justice_ftc_mock_completed");
 
-      await logEvent("intake_completed", { case_id, already_contacted: intake.already_contacted });
+      let finalCaseId = case_id;
+      if (isLoaded && isSignedIn) {
+        const timeline = readTimeline(case_id);
+        try {
+          const res = await fetch("/api/justice/cases", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ intake, timeline }),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as {
+              id?: string;
+              intake?: JusticeIntake;
+              timeline?: unknown;
+            };
+            if (data?.id) {
+              finalCaseId = data.id;
+              sessionStorage.setItem(STORAGE_CASE_ID, data.id);
+              if (data.intake) {
+                sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
+              }
+              const serverTimeline = Array.isArray(data.timeline)
+                ? (data.timeline as TimelineEntry[])
+                : timeline;
+              replaceTimelineForCase(data.id, serverTimeline, { removeCaseIds: [case_id] });
+            } else {
+              console.warn("justice intake: POST /api/justice/cases succeeded but missing id");
+            }
+          } else {
+            console.warn("justice intake: POST /api/justice/cases failed", res.status);
+          }
+        } catch (e) {
+          console.warn("justice intake: POST /api/justice/cases error", e);
+        }
+      }
+
+      await logEvent("intake_completed", { case_id: finalCaseId, already_contacted: intake.already_contacted });
 
       router.push("/justice/plan");
     } finally {
