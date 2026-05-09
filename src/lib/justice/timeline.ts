@@ -86,6 +86,7 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     merchant_contact_saved: "Merchant contact saved",
     escalation_unlocked: "Escalation path unlocked",
     payment_dispute_checklist_viewed: "Payment checklist viewed",
+    payment_dispute_checklist_prepared: "Payment dispute checklist prepared",
     merchant_resolution_started: "Merchant flow opened",
     payment_dispute_started: "Payment dispute opened",
     ftc_mock_review_opened: "FTC practice opened",
