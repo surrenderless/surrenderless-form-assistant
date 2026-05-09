@@ -1,13 +1,14 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { cfpbLikelyRelevant } from "@/lib/justice/rules";
-import { appendCfpbPrepOpenedOnce } from "@/lib/justice/timeline";
+import { appendCfpbPrepOpenedOnce, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
 
 /** Matches merchant CFPB branch — financial resolution, not refund/replacement retail wording. */
 const CFPB_PREP_RESOLUTION_TEXT =
@@ -127,6 +128,7 @@ const cardCls =
 
 export default function JusticeCfpbPrepPage() {
   const router = useRouter();
+  const { isSignedIn, isLoaded } = useAuth();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
@@ -141,10 +143,33 @@ export default function JusticeCfpbPrepPage() {
       setIntake(data);
       const cid = sessionStorage.getItem(STORAGE_CASE_ID);
       if (cid) appendCfpbPrepOpenedOnce(cid);
+
+      if (isLoaded && isSignedIn && cid) {
+        void (async () => {
+          try {
+            const timeline = readTimeline(cid);
+            const res = await fetch(`/api/justice/cases/${encodeURIComponent(cid)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ timeline }),
+            });
+            if (res.ok) {
+              const payload = (await res.json()) as { timeline?: unknown };
+              if (Array.isArray(payload.timeline)) {
+                replaceTimelineForCase(cid, payload.timeline as TimelineEntry[]);
+              }
+            } else {
+              console.warn("justice cfpb: PATCH /api/justice/cases/[id] failed", res.status);
+            }
+          } catch (e) {
+            console.warn("justice cfpb: PATCH /api/justice/cases/[id] error", e);
+          }
+        })();
+      }
     } catch {
       router.replace("/justice/intake");
     }
-  }, [router]);
+  }, [router, isLoaded, isSignedIn]);
 
   const complaintText = useMemo(() => (intake ? buildCfpbComplaintDraft(intake) : ""), [intake]);
   const likelyFit = intake ? cfpbLikelyRelevant(intake) : false;
