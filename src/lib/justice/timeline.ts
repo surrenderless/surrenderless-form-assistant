@@ -1,4 +1,9 @@
-import { cfpbLikelyRelevant, fccLikelyRelevant, ftcUnlockedFromIntake } from "./rules";
+import {
+  cfpbLikelyRelevant,
+  cfpbPrepDocumentedFromIntake,
+  fccLikelyRelevant,
+  ftcUnlockedFromIntake,
+} from "./rules";
 import type { JusticeIntake, TimelineEntry, TimelineEntryType } from "./types";
 import { STORAGE_TIMELINE_V1 } from "./types";
 
@@ -159,12 +164,27 @@ export function appendFccPrepOpenedOnce(caseId: string): void {
   });
 }
 
+/** Skips if `merchant_contact_saved` already exists (e.g. intake + merchant save same case). */
+export function appendMerchantContactSavedOnce(caseId: string, intakeAfterSave: JusticeIntake): void {
+  if (!caseId) return;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "merchant_contact_saved")) return;
+  const r = intakeAfterSave.merchant_response_type;
+  if (!r) return;
+  const companyContact = cfpbLikelyRelevant(intakeAfterSave) || fccLikelyRelevant(intakeAfterSave);
+  appendTimelineEvent(caseId, {
+    type: "merchant_contact_saved",
+    label: companyContact ? "Company contact documented" : "Merchant contact saved",
+    detail: `${companyContact ? "Company" : "Merchant"} response: ${r}`,
+  });
+}
+
 export function appendEscalationUnlockedFromMerchantSaveOnce(
   caseId: string,
   intakeAfterSave: JusticeIntake
 ): void {
   if (!caseId) return;
-  if (!ftcUnlockedFromIntake(intakeAfterSave)) return;
+  if (!ftcUnlockedFromIntake(intakeAfterSave) && !cfpbPrepDocumentedFromIntake(intakeAfterSave)) return;
   const entries = readTimeline(caseId);
   if (entries.some((e) => e.type === "escalation_unlocked")) return;
   const detail = cfpbLikelyRelevant(intakeAfterSave)

@@ -1,5 +1,6 @@
 export type ProblemCategory =
   | "online_purchase"
+  | "financial_account_issue"
   | "subscription"
   | "service_failed"
   | "charge_dispute"
@@ -50,7 +51,7 @@ export type DestinationId =
   | "dot"
   | "small_claims";
 
-export type DestinationStatus = "recommended" | "available" | "later" | "manual";
+export type DestinationStatus = "recommended" | "available" | "later" | "manual" | "locked";
 
 export type JusticeDestination = {
   id: DestinationId;
@@ -63,6 +64,8 @@ export type JusticeDestination = {
 
 export type JusticeDestinationsContext = {
   manualFtc: boolean;
+  /** When true, FTC destination copy uses "company" instead of "merchant" where applicable. */
+  useCompanyContactLabels?: boolean;
 };
 
 export type TimelineEntryType =

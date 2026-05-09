@@ -8,13 +8,20 @@ import type { DestinationStatus, JusticeIntake, TimelineEntry } from "@/lib/just
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import {
   cfpbLikelyRelevant,
+  cfpbPrepDocumentedFromIntake,
+  cfpbPrepUnlockedFromIntake,
   computeFtcUnlocked,
   computeJusticeDestinations,
   fccLikelyRelevant,
   isMerchantResolved,
   paymentDisputeAvailable,
 } from "@/lib/justice/rules";
-import { appendActionPlanViewedOnce, appendTimelineEvent, readTimeline } from "@/lib/justice/timeline";
+import {
+  appendActionPlanViewedOnce,
+  appendEscalationUnlockedFromMerchantSaveOnce,
+  appendMerchantContactSavedOnce,
+  readTimeline,
+} from "@/lib/justice/timeline";
 
 function destinationStatusBadgeLabel(status: DestinationStatus): string {
   switch (status) {
@@ -26,6 +33,8 @@ function destinationStatusBadgeLabel(status: DestinationStatus): string {
       return "Later";
     case "manual":
       return "Manual";
+    case "locked":
+      return "Locked";
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -102,6 +111,10 @@ export default function JusticePlanPage() {
     if (!intake) return;
     const cid = caseId || sessionStorage.getItem(STORAGE_CASE_ID) || "";
     if (!cid) return;
+    if (intake.already_contacted === "yes" && cfpbPrepDocumentedFromIntake(intake)) {
+      appendMerchantContactSavedOnce(cid, intake);
+      appendEscalationUnlockedFromMerchantSaveOnce(cid, intake);
+    }
     appendActionPlanViewedOnce(cid);
     setTimeline(readTimeline(cid));
   }, [intake, caseId, pathname]);
@@ -123,6 +136,14 @@ export default function JusticePlanPage() {
   const merchantResolved = isMerchantResolved(intake);
   const cfpbRel = cfpbLikelyRelevant(intake);
   const fccRel = fccLikelyRelevant(intake);
+  const useCompanyContactLabels = cfpbRel || fccRel;
+  const cfpbPrepOpen = cfpbRel && cfpbPrepUnlockedFromIntake(intake, manualFtc);
+  const step3ContactLockMessage = useCompanyContactLabels
+    ? "Complete company contact first or provide failed-contact proof."
+    : "Complete merchant contact first or provide failed-contact proof.";
+  const strengthenProofHint = useCompanyContactLabels
+    ? "Recommended next: strengthen your company contact proof."
+    : "Recommended next: strengthen your merchant contact proof.";
   const ftcPracticeDoneVisible = ftcCompleted && ftcOpen;
 
   const headline = `${intake.company_name} — ${intake.purchase_or_signup.slice(0, 80)}${intake.purchase_or_signup.length > 80 ? "…" : ""}`;
@@ -133,48 +154,46 @@ export default function JusticePlanPage() {
         ? "You marked this as resolved with the merchant. Keep any confirmations for your records."
         : !contacted
           ? "Recommended next: contact the company first."
-          : ftcOpen
-            ? cfpbRel
+          : cfpbRel
+            ? cfpbPrepOpen
               ? "Recommended next: prepare your CFPB complaint (file manually on the official CFPB site when ready)."
-              : fccRel
-                ? "Recommended next: prepare your FCC complaint (file manually on the official FCC site when ready)."
-                : "Recommended next: escalate using your failed contact proof."
-            : "Recommended next: strengthen your merchant contact proof.";
+              : strengthenProofHint
+            : fccRel && ftcOpen
+              ? "Recommended next: prepare your FCC complaint (file manually on the official FCC site when ready)."
+              : ftcOpen
+                ? "Recommended next: escalate using your failed contact proof."
+                : strengthenProofHint;
   const paymentRecommendedNext = ftcPracticeDoneVisible && paymentOk;
   const merchantBadge =
     !merchantResolved &&
-    (!contacted || (contacted && !ftcOpen)) &&
+    (!contacted || (contacted && !ftcOpen) || (cfpbRel && contacted && !cfpbPrepOpen)) &&
     !paymentRecommendedNext;
   const merchantTitle = merchantResolved
     ? "Merchant contact — resolved"
     : !contacted
       ? "Step 1 — Contact the company"
-      : ftcOpen
-        ? "Optional — Send one final merchant follow-up"
-        : "Recommended — Final merchant follow-up";
+      : cfpbRel && !cfpbPrepOpen
+        ? useCompanyContactLabels
+          ? "Recommended — Update company contact record"
+          : "Recommended — Update merchant contact record"
+        : ftcOpen
+          ? useCompanyContactLabels
+            ? "Optional — Send one final company follow-up"
+            : "Optional — Send one final merchant follow-up"
+          : "Recommended — Final merchant follow-up";
   const merchantDescription = merchantResolved
     ? "You indicated the merchant fixed or resolved your issue. You can update your contact record if something changes."
     : !contacted
       ? "This creates proof and often fixes the issue fastest."
-      : ftcOpen
-        ? "Use this only if you want one stronger written attempt before escalating."
-        : "Send one clear written request and save proof before escalation.";
+      : cfpbRel && !cfpbPrepOpen
+        ? useCompanyContactLabels
+          ? "Add or fix contact details (including notes if you have no written proof) so CFPB prep can unlock."
+          : "Add or fix contact details so CFPB prep can unlock."
+        : ftcOpen
+          ? "Use this only if you want one stronger written attempt before escalating."
+          : "Send one clear written request and save proof before escalation.";
 
-  const destinations = computeJusticeDestinations(intake, { manualFtc });
-
-  function unlockFtcFromMerchant() {
-    const cid = caseId || sessionStorage.getItem(STORAGE_CASE_ID) || "";
-    if (cid) {
-      appendTimelineEvent(cid, { type: "escalation_unlocked", label: "Escalation path unlocked" });
-      setTimeline(readTimeline(cid));
-    }
-    sessionStorage.setItem(STORAGE_FTC_MANUAL_UNLOCK, "1");
-    setManualFtc(true);
-    void logEvent("escalation_unlocked", {
-      case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
-      reason: "user_confirmed_merchant_failed",
-    });
-  }
+  const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
 
   return (
     <>
@@ -249,13 +268,20 @@ export default function JusticePlanPage() {
                 {merchantResolved ? "Update contact record" : "Start"}
               </Link>
               {!merchantResolved && (
-                <button
-                  type="button"
-                  onClick={unlockFtcFromMerchant}
-                  className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800/50 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                <Link
+                  href="/justice/merchant"
+                  className="inline-flex justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-center text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800/50 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                  onClick={() =>
+                    void logEvent("merchant_resolution_started", {
+                      case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                      from: "plan_ready_to_escalate_cta",
+                    })
+                  }
                 >
-                  Merchant did not fix this / I’m ready to escalate
-                </button>
+                  {useCompanyContactLabels
+                    ? "Company did not fix this / I’m ready to escalate"
+                    : "Merchant did not fix this / I’m ready to escalate"}
+                </Link>
               )}
             </div>
           </li>
@@ -298,7 +324,7 @@ export default function JusticePlanPage() {
               </>
             ) : cfpbRel ? (
               <>
-                {contacted && ftcOpen ? (
+                {contacted && cfpbPrepOpen ? (
                   <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
                 ) : null}
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
@@ -307,7 +333,7 @@ export default function JusticePlanPage() {
                 <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
                   Use this for bank, credit, loan, payment, debt, billing, or financial account issues.
                 </p>
-                {ftcOpen ? (
+                {cfpbPrepOpen ? (
                   <Link
                     href="/justice/cfpb"
                     className="mt-4 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"
@@ -322,7 +348,7 @@ export default function JusticePlanPage() {
                   </Link>
                 ) : (
                   <p className="mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
-                    Complete merchant contact first or provide failed-contact proof.
+                    {step3ContactLockMessage}
                   </p>
                 )}
               </>
@@ -352,7 +378,7 @@ export default function JusticePlanPage() {
                   </Link>
                 ) : (
                   <p className="mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
-                    Complete merchant contact first or provide failed-contact proof.
+                    {step3ContactLockMessage}
                   </p>
                 )}
               </>
@@ -388,7 +414,7 @@ export default function JusticePlanPage() {
                   </Link>
                 ) : (
                   <p className="mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
-                    Complete merchant contact first or provide failed-contact proof.
+                    {step3ContactLockMessage}
                   </p>
                 )}
               </>
@@ -410,15 +436,25 @@ export default function JusticePlanPage() {
                 className="rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-md shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]"
               >
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 w-full flex-1">
                     <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
                       {destinationStatusBadgeLabel(d.status)}
                     </p>
-                    <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">{d.label}</p>
-                    <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{d.rationale}</p>
+                    <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">
+                      {d.id === "merchant_resolution" && useCompanyContactLabels
+                        ? "Company contact & proof"
+                        : d.label}
+                    </p>
+                    {d.status === "locked" ? (
+                      <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+                        {d.rationale}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{d.rationale}</p>
+                    )}
                   </div>
-                  <div className="shrink-0 sm:pt-5">
-                    {d.internalRoute ? (
+                  {d.internalRoute ? (
+                    <div className="shrink-0 sm:pt-5">
                       <Link
                         href={d.internalRoute}
                         className="inline-flex rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-900/20 hover:bg-blue-700"
@@ -469,12 +505,14 @@ export default function JusticePlanPage() {
                       >
                         Open
                       </Link>
-                    ) : d.status === "manual" ? (
+                    </div>
+                  ) : d.status === "manual" ? (
+                    <div className="shrink-0 sm:pt-5">
                       <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
                         Manual for now
                       </span>
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
                 </div>
               </li>
             ))}

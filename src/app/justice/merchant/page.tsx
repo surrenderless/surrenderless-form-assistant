@@ -6,6 +6,7 @@ import Header from "@/app/components/Header";
 import { useRouter } from "next/navigation";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import { cfpbLikelyRelevant, fccLikelyRelevant, isValidDocumentedContactDate } from "@/lib/justice/rules";
 import { appendEscalationUnlockedFromMerchantSaveOnce, appendTimelineEvent } from "@/lib/justice/timeline";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
@@ -37,9 +38,73 @@ function desiredResolutionPhrase(category: JusticeIntake["problem_category"]): s
   }
 }
 
+/** Merchant-facing line for CFPB-style cases (not raw intake problem_category). */
+function cfpbFinancialProductSummary(intake: JusticeIntake): string {
+  const s = intake.purchase_or_signup.trim();
+  return s || "financial product, account, or billing issue";
+}
+
+function isOrderPurchaseIntake(intake: JusticeIntake): boolean {
+  return intake.problem_category === "online_purchase";
+}
+
+const CFPB_MERCHANT_RESOLUTION_ASK =
+  "review the issue, correct any account error, refund or credit any improper charge, and provide written confirmation";
+
 function buildMerchantMessage(intake: JusticeIntake): string {
   const issueLabel = intake.problem_category.replace(/_/g, " ");
   const ask = desiredResolutionPhrase(intake.problem_category);
+  const serviceLine = intake.purchase_or_signup.trim() || "communications service";
+
+  if (fccLikelyRelevant(intake)) {
+    const aboutLine = intake.purchase_or_signup.trim() || serviceLine;
+    return `Dear ${intake.company_name} Support,
+
+I am writing about the following: ${aboutLine}.
+Service or product involved: ${serviceLine}.
+
+What happened:
+${intake.story.trim()}
+
+Approximate amount involved: ${intake.money_involved}. Problem date / start date: ${intake.pay_or_order_date}.
+
+I am requesting ${ask}.
+
+Please send a substantive reply by a specific date you propose, or within 10 business days of this message. I am keeping a dated copy of this contact and your response as proof.
+
+Sincerely,
+${intake.user_display_name}
+${intake.reply_email}`.trim();
+  }
+
+  if (cfpbLikelyRelevant(intake)) {
+    const financialLine = cfpbFinancialProductSummary(intake);
+    const aboutLine = intake.purchase_or_signup.trim() || financialLine;
+    const introBlock = isOrderPurchaseIntake(intake)
+      ? `I am writing about the following: ${aboutLine}.
+Financial product or service involved: ${financialLine}.`
+      : `I am writing about a problem involving this financial product or service: ${financialLine}.`;
+    const amountLine = isOrderPurchaseIntake(intake)
+      ? `Approximate amount involved: ${intake.money_involved}. Problem date / start date: ${intake.pay_or_order_date}.`
+      : `Approximate amount involved (if any): ${intake.money_involved}. Problem date / start date: ${intake.pay_or_order_date}.`;
+    return `Dear ${intake.company_name} Support,
+
+${introBlock}
+
+What happened:
+${intake.story.trim()}
+
+${amountLine}
+
+I am requesting that you ${CFPB_MERCHANT_RESOLUTION_ASK}.
+
+Please send a substantive reply by a specific date you propose, or within 10 business days of this message. I am keeping a dated copy of this contact and your response as proof.
+
+Sincerely,
+${intake.user_display_name}
+${intake.reply_email}`.trim();
+  }
+
   return `Dear ${intake.company_name} Support,
 
 I am writing about the following: ${intake.purchase_or_signup}.
@@ -73,6 +138,8 @@ export default function JusticeMerchantPage() {
     useState<NonNullable<JusticeIntake["contact_proof_type"]>>("none");
   const [contactProofText, setContactProofText] = useState("");
   const [copyHint, setCopyHint] = useState<string | null>(null);
+  const [contactDateError, setContactDateError] = useState<string | null>(null);
+  const [contactProofError, setContactProofError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -86,7 +153,9 @@ export default function JusticeMerchantPage() {
       setIntake(data);
       if (data.already_contacted === "yes") {
         if (data.contact_method) setContactMethod(data.contact_method);
-        if (typeof data.contact_date === "string") setContactDate(data.contact_date);
+        if (typeof data.contact_date === "string" && isValidDocumentedContactDate(data.contact_date)) {
+          setContactDate(data.contact_date.trim());
+        }
         if (data.merchant_response_type) setMerchantResponseType(data.merchant_response_type);
         if (data.contact_proof_type) setContactProofType(data.contact_proof_type);
         if (typeof data.contact_proof_text === "string") setContactProofText(data.contact_proof_text);
@@ -111,13 +180,28 @@ export default function JusticeMerchantPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!intake) return;
+    const dateTrimmed = contactDate.trim();
+    if (!dateTrimmed || !isValidDocumentedContactDate(dateTrimmed)) {
+      setContactDateError("Enter the contact date.");
+      return;
+    }
+    setContactDateError(null);
+    if (contactProofType === "none" && !contactProofText.trim()) {
+      setContactProofError("Describe your contact attempt before saving.");
+      return;
+    }
+    if (contactProofType === "ticket" && !contactProofText.trim()) {
+      setContactProofError("Enter the ticket or case number before saving.");
+      return;
+    }
+    setContactProofError(null);
     setSaving(true);
     try {
       const updated: JusticeIntake = {
         ...intake,
         already_contacted: "yes",
         contact_method: contactMethod,
-        contact_date: contactDate.trim(),
+        contact_date: dateTrimmed,
         merchant_response_type: merchantResponseType,
         contact_proof_type: contactProofType,
       };
@@ -132,10 +216,12 @@ export default function JusticeMerchantPage() {
 
       const cid = sessionStorage.getItem(STORAGE_CASE_ID);
       if (cid) {
+        const companyContact =
+          cfpbLikelyRelevant(updated) || fccLikelyRelevant(updated);
         appendTimelineEvent(cid, {
           type: "merchant_contact_saved",
-          label: "Merchant contact saved",
-          detail: `Merchant response: ${merchantResponseType}`,
+          label: companyContact ? "Company contact documented" : "Merchant contact saved",
+          detail: `${companyContact ? "Company" : "Merchant"} response: ${merchantResponseType}`,
         });
         appendEscalationUnlockedFromMerchantSaveOnce(cid, updated);
       }
@@ -166,6 +252,21 @@ export default function JusticeMerchantPage() {
   }
 
   const issueSummary = intake.problem_category.replace(/_/g, " ");
+  const fccRel = fccLikelyRelevant(intake);
+  const cfpbRel = cfpbLikelyRelevant(intake);
+  const useCompanyContactLabels = cfpbRel || fccRel;
+  const proofDetailsLabel =
+    contactProofType === "none"
+      ? "Describe your contact attempt"
+      : contactProofType === "ticket"
+        ? "Ticket or case number"
+        : "Proof details (optional)";
+  const proofDetailsPlaceholder =
+    contactProofType === "none"
+      ? "Example: I called on 04/27, waited 20 minutes, spoke to support, and they said they could not help."
+      : contactProofType === "ticket"
+        ? "e.g. Case #12345 or support ticket ID"
+        : "Ticket number, paste of email, case ID, etc.";
 
   return (
     <>
@@ -174,7 +275,9 @@ export default function JusticeMerchantPage() {
         <Link href="/justice/plan" className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
           Back to action plan
         </Link>
-        <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Merchant contact & proof</h1>
+        <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">
+          {useCompanyContactLabels ? "Company contact & proof" : "Merchant contact & proof"}
+        </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           Use the message below with the company, then save what happened so your action plan stays accurate.
         </p>
@@ -185,14 +288,29 @@ export default function JusticeMerchantPage() {
             <li>
               <span className="text-neutral-500 dark:text-neutral-400">Company:</span> {intake.company_name}
             </li>
-            <li>
-              <span className="text-neutral-500 dark:text-neutral-400">Issue:</span> {issueSummary}
-            </li>
+            {fccRel ? (
+              <li>
+                <span className="text-neutral-500 dark:text-neutral-400">Service / product:</span>{" "}
+                {intake.purchase_or_signup.trim() || "—"}
+              </li>
+            ) : cfpbRel ? (
+              <li>
+                <span className="text-neutral-500 dark:text-neutral-400">Financial product or service:</span>{" "}
+                {cfpbFinancialProductSummary(intake)}
+              </li>
+            ) : (
+              <li>
+                <span className="text-neutral-500 dark:text-neutral-400">Issue:</span> {issueSummary}
+              </li>
+            )}
             <li>
               <span className="text-neutral-500 dark:text-neutral-400">Money:</span> {intake.money_involved}
             </li>
             <li>
-              <span className="text-neutral-500 dark:text-neutral-400">Order / pay date:</span> {intake.pay_or_order_date}
+              <span className="text-neutral-500 dark:text-neutral-400">
+                {fccRel || cfpbRel ? "When did this problem happen or start?" : "Order / pay date:"}
+              </span>{" "}
+              {intake.pay_or_order_date}
             </li>
             <li>
               <span className="text-neutral-500 dark:text-neutral-400">Your email:</span> {intake.reply_email}
@@ -210,7 +328,9 @@ export default function JusticeMerchantPage() {
             className={`${inputCls} mt-2 font-mono text-xs leading-relaxed`}
             rows={14}
             value={message}
-            aria-label="Generated merchant contact message"
+            aria-label={
+              useCompanyContactLabels ? "Generated company contact message" : "Generated merchant contact message"
+            }
           />
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <button
@@ -251,12 +371,30 @@ export default function JusticeMerchantPage() {
           </div>
 
           <div>
-            <label className={labelCls}>Contact date</label>
-            <input className={inputCls} value={contactDate} onChange={(e) => setContactDate(e.target.value)} required />
+            <label className={labelCls} htmlFor="justice-contact-date">
+              Contact date
+            </label>
+            <input
+              id="justice-contact-date"
+              type="date"
+              className={inputCls}
+              value={contactDate}
+              onChange={(e) => {
+                setContactDate(e.target.value);
+                setContactDateError(null);
+              }}
+              aria-invalid={contactDateError ? true : undefined}
+              aria-describedby={contactDateError ? "justice-contact-date-error" : undefined}
+            />
+            {contactDateError ? (
+              <p id="justice-contact-date-error" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                {contactDateError}
+              </p>
+            ) : null}
           </div>
 
           <div>
-            <label className={labelCls}>Merchant response</label>
+            <label className={labelCls}>{useCompanyContactLabels ? "Company response" : "Merchant response"}</label>
             <select
               className={inputCls}
               value={merchantResponseType}
@@ -268,7 +406,9 @@ export default function JusticeMerchantPage() {
               <option value="no_response">No response yet</option>
               <option value="refused_help">They refused a refund or real help</option>
               <option value="promised_but_did_not_fix">They said they would fix it but did not</option>
-              <option value="resolved">Resolved — merchant fixed the issue</option>
+              <option value="resolved">
+                {useCompanyContactLabels ? "Resolved — company fixed the issue" : "Resolved — merchant fixed the issue"}
+              </option>
               <option value="partial_help">They gave partial refund or partial help</option>
               <option value="asked_more_info">They asked for more information</option>
               <option value="other">Other</option>
@@ -280,28 +420,42 @@ export default function JusticeMerchantPage() {
             <select
               className={inputCls}
               value={contactProofType}
-              onChange={(e) =>
-                setContactProofType(e.target.value as NonNullable<JusticeIntake["contact_proof_type"]>)
-              }
+              onChange={(e) => {
+                setContactProofType(e.target.value as NonNullable<JusticeIntake["contact_proof_type"]>);
+                setContactProofError(null);
+              }}
               required
             >
               <option value="upload">I can upload a file</option>
               <option value="paste">I can paste text</option>
               <option value="ticket">I have a ticket or case number</option>
               <option value="screenshot">I have a screenshot</option>
-              <option value="none">I don’t have proof right now</option>
+              <option value="none">No written proof — I can describe the attempt</option>
             </select>
           </div>
 
           <div>
-            <label className={labelCls}>Proof details (optional)</label>
+            <label className={labelCls} htmlFor="justice-contact-proof-details">
+              {proofDetailsLabel}
+            </label>
             <textarea
+              id="justice-contact-proof-details"
               className={inputCls}
               rows={3}
               value={contactProofText}
-              onChange={(e) => setContactProofText(e.target.value)}
-              placeholder="Ticket number, paste of email, case ID, etc."
+              onChange={(e) => {
+                setContactProofText(e.target.value);
+                setContactProofError(null);
+              }}
+              placeholder={proofDetailsPlaceholder}
+              aria-invalid={contactProofError ? true : undefined}
+              aria-describedby={contactProofError ? "justice-contact-proof-error" : undefined}
             />
+            {contactProofError ? (
+              <p id="justice-contact-proof-error" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                {contactProofError}
+              </p>
+            ) : null}
           </div>
 
           <button

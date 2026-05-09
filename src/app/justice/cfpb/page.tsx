@@ -9,6 +9,15 @@ import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { cfpbLikelyRelevant } from "@/lib/justice/rules";
 import { appendCfpbPrepOpenedOnce } from "@/lib/justice/timeline";
 
+/** Matches merchant CFPB branch — financial resolution, not refund/replacement retail wording. */
+const CFPB_PREP_RESOLUTION_TEXT =
+  "I am requesting that you review the issue, correct any account error, refund or credit any improper charge, and provide written confirmation.";
+
+function cfpbFinancialProductSummary(intake: JusticeIntake): string {
+  const s = intake.purchase_or_signup.trim();
+  return s || "financial product, account, or billing issue";
+}
+
 function desiredResolutionPhrase(category: JusticeIntake["problem_category"]): string {
   switch (category) {
     case "online_purchase":
@@ -27,8 +36,10 @@ function desiredResolutionPhrase(category: JusticeIntake["problem_category"]): s
 }
 
 function buildCfpbComplaintDraft(intake: JusticeIntake): string {
+  const cfpbRel = cfpbLikelyRelevant(intake);
   const issue = intake.problem_category.replace(/_/g, " ");
-  const ask = desiredResolutionPhrase(intake.problem_category);
+  const ask = cfpbRel ? CFPB_PREP_RESOLUTION_TEXT : desiredResolutionPhrase(intake.problem_category);
+
   const lines: string[] = [
     "DRAFT FOR CFPB COMPLAINT",
     "(Copy and paste into the official Consumer Financial Protection Bureau complaint flow — this app does not submit for you.)",
@@ -36,28 +47,58 @@ function buildCfpbComplaintDraft(intake: JusticeIntake): string {
     `Company or provider: ${intake.company_name}`,
     intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",
     "",
-    "Type of issue (from my intake):",
-    issue,
-    "",
-    "Product or service:",
-    intake.purchase_or_signup,
-    "",
-    "What happened:",
-    intake.story.trim(),
-    "",
-    `Approximate amount involved: ${intake.money_involved}`,
-    `Order or transaction date: ${intake.pay_or_order_date}`,
-    "",
-    intake.order_confirmation_details.trim()
-      ? `Confirmation / reference details: ${intake.order_confirmation_details.trim()}`
-      : "",
-    "",
-    "Resolution I am seeking:",
-    ask,
-    "",
-    "My contact:",
-    `${intake.user_display_name} <${intake.reply_email}>`,
   ];
+
+  if (cfpbRel) {
+    const fpLine = cfpbFinancialProductSummary(intake);
+    lines.push(
+      "Nature of complaint:",
+      "Financial product, billing, or account matter",
+      "",
+      "Financial product or service:",
+      fpLine,
+      "",
+      "What happened:",
+      intake.story.trim(),
+      "",
+      `Approximate amount involved (if any): ${intake.money_involved}`,
+      `Problem date / start date: ${intake.pay_or_order_date}`,
+      "",
+      intake.order_confirmation_details.trim()
+        ? `Confirmation / reference details: ${intake.order_confirmation_details.trim()}`
+        : "",
+      "",
+      "Resolution I am seeking:",
+      ask,
+      "",
+      "My contact:",
+      `${intake.user_display_name} <${intake.reply_email}>`
+    );
+  } else {
+    lines.push(
+      "Type of issue (from my intake):",
+      issue,
+      "",
+      "Product or service:",
+      intake.purchase_or_signup,
+      "",
+      "What happened:",
+      intake.story.trim(),
+      "",
+      `Approximate amount involved: ${intake.money_involved}`,
+      `Order or transaction date: ${intake.pay_or_order_date}`,
+      "",
+      intake.order_confirmation_details.trim()
+        ? `Confirmation / reference details: ${intake.order_confirmation_details.trim()}`
+        : "",
+      "",
+      "Resolution I am seeking:",
+      ask,
+      "",
+      "My contact:",
+      `${intake.user_display_name} <${intake.reply_email}>`
+    );
+  }
 
   if (intake.already_contacted === "yes" && intake.contact_method) {
     lines.push(
@@ -69,7 +110,11 @@ function buildCfpbComplaintDraft(intake: JusticeIntake): string {
         ? `Their response (as I understand it): ${intake.merchant_response_type.replace(/_/g, " ")}`
         : "",
       intake.contact_proof_text?.trim()
-        ? `Notes on proof: ${intake.contact_proof_text.trim()}`
+        ? intake.contact_proof_type === "none"
+          ? `Contact attempt notes: ${intake.contact_proof_text.trim()}`
+          : intake.contact_proof_type === "ticket"
+            ? `Ticket/case number: ${intake.contact_proof_text.trim()}`
+            : `Notes on proof: ${intake.contact_proof_text.trim()}`
         : ""
     );
   }
@@ -125,8 +170,10 @@ export default function JusticeCfpbPrepPage() {
     );
   }
 
-  const issueSummary = `${intake.company_name} — ${intake.problem_category.replace(/_/g, " ")}`;
-  const desiredResolution = desiredResolutionPhrase(intake.problem_category);
+  const issueSummary = likelyFit
+    ? `${intake.company_name} — ${cfpbFinancialProductSummary(intake)}`
+    : `${intake.company_name} — ${intake.problem_category.replace(/_/g, " ")}`;
+  const desiredResolution = likelyFit ? CFPB_PREP_RESOLUTION_TEXT : desiredResolutionPhrase(intake.problem_category);
 
   const fitNote = likelyFit
     ? "Based on your answers (subscription or charge dispute, or billing/bank/credit-related wording in your description), a CFPB complaint may be in scope. This is only a rough guide — confirm your situation fits their rules before filing."
@@ -227,10 +274,11 @@ export default function JusticeCfpbPrepPage() {
           <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Complaint summary</p>
           <p className="mt-2 text-sm text-neutral-800 dark:text-neutral-200">{issueSummary}</p>
           <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-            Purchase / signup: {intake.purchase_or_signup}
+            {likelyFit ? "Financial product or service:" : "Purchase / signup:"} {intake.purchase_or_signup.trim() || "—"}
           </p>
           <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-            Money: {intake.money_involved} · Date: {intake.pay_or_order_date}
+            Money: {intake.money_involved} ·{" "}
+            {likelyFit ? "Problem date / start date:" : "Date:"} {intake.pay_or_order_date}
           </p>
         </div>
 

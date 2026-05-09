@@ -73,7 +73,7 @@ function buildFccComplaintDraft(intake: JusticeIntake): string {
     intake.story.trim(),
     "",
     `Approximate amount involved (if any): ${intake.money_involved}`,
-    `Relevant date(s): ${intake.pay_or_order_date}`,
+    `Problem date / start date: ${intake.pay_or_order_date}`,
     "",
     intake.order_confirmation_details.trim()
       ? `Account / confirmation details: ${intake.order_confirmation_details.trim()}`
@@ -261,7 +261,7 @@ export default function JusticeFccPrepPage() {
             </p>
           ) : null}
           <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-            Money (if any): {intake.money_involved} · Dates: {intake.pay_or_order_date}
+            Money (if any): {intake.money_involved} · Problem date / start date: {intake.pay_or_order_date}
           </p>
         </div>
 
