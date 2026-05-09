@@ -78,6 +78,21 @@ export function clearTimelineForNewCase(previousCaseId: string | null, newCaseId
   saveStore(store);
 }
 
+/** Replace stored timeline for a case (e.g. after server sync). Optionally remove other case keys (stale local ids). */
+export function replaceTimelineForCase(
+  caseId: string,
+  entries: TimelineEntry[],
+  options?: { removeCaseIds?: string[] }
+): void {
+  if (typeof window === "undefined" || !caseId) return;
+  const store = loadStore();
+  for (const rid of options?.removeCaseIds ?? []) {
+    if (rid && rid !== caseId) delete store[rid];
+  }
+  store[caseId] = entries.map((e) => ({ ...e, case_id: caseId }));
+  saveStore(store);
+}
+
 /** Maps POST /api/justice/events `event_name` to a user-facing label (for docs / future sync). */
 export function labelForAnalyticsEventName(eventName: string): string | undefined {
   const m: Record<string, string> = {
