@@ -1,13 +1,19 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import { useRouter } from "next/navigation";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { cfpbLikelyRelevant, fccLikelyRelevant, isValidDocumentedContactDate } from "@/lib/justice/rules";
-import { appendEscalationUnlockedFromMerchantSaveOnce, appendTimelineEvent } from "@/lib/justice/timeline";
+import {
+  appendEscalationUnlockedFromMerchantSaveOnce,
+  appendTimelineEvent,
+  readTimeline,
+  replaceTimelineForCase,
+} from "@/lib/justice/timeline";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -129,6 +135,7 @@ const cardCls =
 
 export default function JusticeMerchantPage() {
   const router = useRouter();
+  const { isSignedIn, isLoaded } = useAuth();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [contactMethod, setContactMethod] = useState<NonNullable<JusticeIntake["contact_method"]>>("email");
   const [contactDate, setContactDate] = useState("");
@@ -214,16 +221,43 @@ export default function JusticeMerchantPage() {
       sessionStorage.removeItem("justice_ftc_mock_completed");
       sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
 
-      const cid = sessionStorage.getItem(STORAGE_CASE_ID);
-      if (cid) {
+      const caseId = sessionStorage.getItem(STORAGE_CASE_ID);
+      if (caseId) {
         const companyContact =
           cfpbLikelyRelevant(updated) || fccLikelyRelevant(updated);
-        appendTimelineEvent(cid, {
+        appendTimelineEvent(caseId, {
           type: "merchant_contact_saved",
           label: companyContact ? "Company contact documented" : "Merchant contact saved",
           detail: `${companyContact ? "Company" : "Merchant"} response: ${merchantResponseType}`,
         });
-        appendEscalationUnlockedFromMerchantSaveOnce(cid, updated);
+        appendEscalationUnlockedFromMerchantSaveOnce(caseId, updated);
+      }
+
+      if (isLoaded && isSignedIn && caseId) {
+        try {
+          const timeline = readTimeline(caseId);
+          const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ intake: updated, timeline }),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as {
+              intake?: JusticeIntake;
+              timeline?: unknown;
+            };
+            if (data.intake) {
+              sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
+            }
+            if (Array.isArray(data.timeline)) {
+              replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+            }
+          } else {
+            console.warn("justice merchant: PATCH /api/justice/cases/[id] failed", res.status);
+          }
+        } catch (e) {
+          console.warn("justice merchant: PATCH /api/justice/cases/[id] error", e);
+        }
       }
 
       await logEvent("merchant_contact_saved", {
