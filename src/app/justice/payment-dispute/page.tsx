@@ -120,6 +120,7 @@ function loadDraft(caseId: string): Partial<PaymentDraft> | null {
 }
 
 function saveDraft(draft: PaymentDraft) {
+  if (typeof window === "undefined") return;
   sessionStorage.setItem(PAYMENT_DRAFT_KEY, JSON.stringify(draft));
 }
 
@@ -196,6 +197,7 @@ const cardCls =
 export default function JusticePaymentDisputePage() {
   const router = useRouter();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
+  const [caseId, setCaseId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>("credit_card");
   const [chargeDate, setChargeDate] = useState("");
   const [chargeAmount, setChargeAmount] = useState("");
@@ -208,6 +210,7 @@ export default function JusticePaymentDisputePage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const cid = sessionStorage.getItem(STORAGE_CASE_ID);
     if (cid) {
       appendPaymentChecklistViewedOnce(cid);
@@ -223,6 +226,7 @@ export default function JusticePaymentDisputePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
     const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
     if (!raw || !cid) {
@@ -231,6 +235,7 @@ export default function JusticePaymentDisputePage() {
     }
     try {
       const data = JSON.parse(raw) as JusticeIntake;
+      setCaseId(cid);
       setIntake(data);
       const saved = loadDraft(cid);
       if (saved && saved.case_id === cid) {
@@ -267,10 +272,9 @@ export default function JusticePaymentDisputePage() {
   }, [router]);
 
   const draft: PaymentDraft | null = useMemo(() => {
-    const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
-    if (!cid) return null;
+    if (!caseId) return null;
     const draft: PaymentDraft = {
-      case_id: cid,
+      case_id: caseId,
       payment_method: paymentMethod,
       charge_date: chargeDate,
       charge_amount: chargeAmount,
@@ -283,7 +287,7 @@ export default function JusticePaymentDisputePage() {
       draft.dispute_reason_other = disputeReasonOther.trim();
     }
     return draft;
-  }, [paymentMethod, chargeDate, chargeAmount, merchantName, disputeReason, disputeReasonOther, priorContact, proofType]);
+  }, [caseId, paymentMethod, chargeDate, chargeAmount, merchantName, disputeReason, disputeReasonOther, priorContact, proofType]);
 
   const letterText = useMemo(() => {
     if (!intake || !draft) return "";
@@ -302,13 +306,11 @@ export default function JusticePaymentDisputePage() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!intake || !draft) return;
-    const cid = sessionStorage.getItem(STORAGE_CASE_ID);
-    if (!cid) return;
+    if (!intake || !draft || !caseId) return;
     setSaving(true);
     try {
       saveDraft(draft);
-      appendTimelineEvent(cid, {
+      appendTimelineEvent(caseId, {
         type: "payment_dispute_checklist_prepared",
         label: "Payment dispute checklist prepared",
       });
@@ -317,7 +319,7 @@ export default function JusticePaymentDisputePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           event_name: "payment_dispute_checklist_prepared",
-          payload: { case_id: cid },
+          payload: { case_id: caseId },
         }),
       }).catch(() => {});
       router.push("/justice/plan");
@@ -378,7 +380,7 @@ export default function JusticePaymentDisputePage() {
             </li>
           </ul>
           <p className="mt-3 rounded-xl border border-neutral-200/80 bg-neutral-50 px-3 py-2 text-xs text-neutral-500 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/50 dark:text-neutral-400">
-            Case id: {typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "—" : "—"}
+            Case id: {caseId || "—"}
           </p>
         </div>
 
