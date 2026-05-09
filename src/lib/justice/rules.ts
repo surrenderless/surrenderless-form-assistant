@@ -31,6 +31,42 @@ export function computeFtcUnlocked(intake: JusticeIntake, manualEscalate: boolea
   return ftcUnlockedFromIntake(intake);
 }
 
+const ISO_CONTACT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Calendar date saved from the contact proof form (YYYY-MM-DD). */
+export function isValidDocumentedContactDate(s: string | undefined): boolean {
+  if (!s?.trim()) return false;
+  const t = s.trim();
+  if (!ISO_CONTACT_DATE_RE.test(t)) return false;
+  const d = new Date(`${t}T12:00:00`);
+  return !Number.isNaN(d.getTime());
+}
+
+/**
+ * True when intake records a documented contact attempt sufficient for CFPB prep unlock
+ * (method, valid date, outcome, description when proof type is "none", ticket/case text when "ticket").
+ */
+export function cfpbPrepDocumentedFromIntake(intake: JusticeIntake): boolean {
+  if (intake.already_contacted !== "yes") return false;
+  if (!intake.contact_method) return false;
+  if (!isValidDocumentedContactDate(intake.contact_date)) return false;
+  if (!intake.merchant_response_type) return false;
+  const proofType = intake.contact_proof_type ?? "none";
+  if (proofType === "none") {
+    return (intake.contact_proof_text?.trim().length ?? 0) > 0;
+  }
+  if (proofType === "ticket") {
+    return (intake.contact_proof_text?.trim().length ?? 0) > 0;
+  }
+  return true;
+}
+
+/** CFPB prep / escalation checklist unlock (manual bypass matches FTC manual escalate). */
+export function cfpbPrepUnlockedFromIntake(intake: JusticeIntake, manualEscalate: boolean): boolean {
+  if (manualEscalate) return true;
+  return cfpbPrepDocumentedFromIntake(intake);
+}
+
 export function isMerchantResolved(intake: JusticeIntake): boolean {
   return intake.already_contacted === "yes" && intake.merchant_response_type === "resolved";
 }
@@ -124,7 +160,7 @@ function matchesCfpbFinancialHints(intake: JusticeIntake): boolean {
 
 export function cfpbLikelyRelevant(intake: JusticeIntake): boolean {
   const cat = intake.problem_category;
-  if (cat === "subscription" || cat === "charge_dispute") return true;
+  if (cat === "financial_account_issue" || cat === "subscription" || cat === "charge_dispute") return true;
   return matchesCfpbFinancialHints(intake);
 }
 
@@ -197,25 +233,33 @@ export function computeJusticeDestinations(
   let ftcRoute: string | undefined;
   if (resolved) {
     ftcStatus = "later";
-    ftcRationale = "Not recommended while you consider the issue resolved with the merchant.";
+    ftcRationale = ctx.useCompanyContactLabels
+      ? "Not recommended while you consider the issue resolved with the company."
+      : "Not recommended while you consider the issue resolved with the merchant.";
     ftcRoute = undefined;
   } else if (ftcOpen) {
     if (cfpbRel) {
       ftcStatus = "available";
-      ftcRationale =
-        "Practice complaint flow when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
+      ftcRationale = ctx.useCompanyContactLabels
+        ? "Practice complaint flow when company contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step."
+        : "Practice complaint flow when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
     } else if (fccRel) {
       ftcStatus = "available";
-      ftcRationale =
-        "Practice complaint flow when merchant contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step.";
+      ftcRationale = ctx.useCompanyContactLabels
+        ? "Practice complaint flow when company contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step."
+        : "Practice complaint flow when merchant contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step.";
     } else {
       ftcStatus = "recommended";
-      ftcRationale = "Practice complaint flow when merchant contact failed or was refused.";
+      ftcRationale = ctx.useCompanyContactLabels
+        ? "Practice complaint flow when company contact failed or was refused."
+        : "Practice complaint flow when merchant contact failed or was refused.";
     }
     ftcRoute = "/justice/ftc-review";
   } else {
     ftcStatus = "later";
-    ftcRationale = "Unlocks after you document merchant contact and a failed or refused outcome.";
+    ftcRationale = ctx.useCompanyContactLabels
+      ? "Unlocks after you document company contact and a failed or refused outcome."
+      : "Unlocks after you document merchant contact and a failed or refused outcome.";
     ftcRoute = undefined;
   }
   push({
@@ -286,15 +330,18 @@ export function computeJusticeDestinations(
       priority: 50,
       internalRoute: "/justice/state-ag",
     });
+    const cfpbPrepUnlocked = cfpbRel && cfpbPrepUnlockedFromIntake(intake, ctx.manualFtc);
     push({
       id: "cfpb",
       label: "CFPB",
-      rationale: cfpbRel
-        ? "Recommended for bank, credit, loan, payment, debt, billing, or financial account issues."
-        : "Not highlighted until your answers suggest bank, credit, loan, billing, or related financial issues.",
-      status: cfpbRel ? "recommended" : "later",
+      rationale: !cfpbRel
+        ? "Not highlighted until your answers suggest bank, credit, loan, billing, or related financial issues."
+        : cfpbPrepUnlocked
+          ? "Recommended for bank, credit, loan, payment, debt, billing, or financial account issues."
+          : "Available after you document company contact or failed-contact proof.",
+      status: !cfpbRel ? "later" : cfpbPrepUnlocked ? "recommended" : "locked",
       priority: cfpbRel ? 28 : 60,
-      ...(cfpbRel ? { internalRoute: "/justice/cfpb" } : {}),
+      ...(cfpbPrepUnlocked ? { internalRoute: "/justice/cfpb" } : {}),
     });
     push({
       id: "fcc",

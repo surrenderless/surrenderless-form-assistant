@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import { cfpbLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
 import { appendTimelineEvent, clearTimelineForNewCase } from "@/lib/justice/timeline";
 
 function newCaseId() {
@@ -48,6 +49,7 @@ export default function JusticeIntakePage() {
   const [contact_proof_type, setContactProofType] =
     useState<NonNullable<JusticeIntake["contact_proof_type"]>>("none");
   const [contact_proof_text, setContactProofText] = useState("");
+  const [contactProofError, setContactProofError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -57,6 +59,7 @@ export default function JusticeIntakePage() {
 
       const categories: JusticeIntake["problem_category"][] = [
         "online_purchase",
+        "financial_account_issue",
         "subscription",
         "service_failed",
         "charge_dispute",
@@ -92,6 +95,17 @@ export default function JusticeIntakePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (already_contacted === "yes") {
+      if (contact_proof_type === "none" && !contact_proof_text.trim()) {
+        setContactProofError("Describe your contact attempt before continuing.");
+        return;
+      }
+      if (contact_proof_type === "ticket" && !contact_proof_text.trim()) {
+        setContactProofError("Enter the ticket or case number before continuing.");
+        return;
+      }
+    }
+    setContactProofError(null);
     setSubmitting(true);
     try {
       const intake: JusticeIntake = {
@@ -138,6 +152,64 @@ export default function JusticeIntakePage() {
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
+  const draftForRelevance = useMemo((): JusticeIntake => {
+    return {
+      problem_category,
+      company_name: company_name.trim(),
+      company_website: company_website.trim(),
+      purchase_or_signup: purchase_or_signup.trim(),
+      story: story.trim(),
+      money_involved: money_involved.trim(),
+      pay_or_order_date: pay_or_order_date.trim(),
+      order_confirmation_details: order_confirmation_details.trim(),
+      user_display_name: user_display_name.trim(),
+      reply_email: reply_email.trim(),
+      already_contacted,
+      ...(already_contacted === "yes"
+        ? {
+            contact_method,
+            contact_date: contact_date.trim(),
+            merchant_response_type,
+            contact_proof_type,
+            ...(contact_proof_text.trim() ? { contact_proof_text: contact_proof_text.trim() } : {}),
+          }
+        : {}),
+    };
+  }, [
+    problem_category,
+    company_name,
+    company_website,
+    purchase_or_signup,
+    story,
+    money_involved,
+    pay_or_order_date,
+    order_confirmation_details,
+    user_display_name,
+    reply_email,
+    already_contacted,
+    contact_method,
+    contact_date,
+    merchant_response_type,
+    contact_proof_type,
+    contact_proof_text,
+  ]);
+
+  const cfpbOrFccDateWording =
+    cfpbLikelyRelevant(draftForRelevance) || fccLikelyRelevant(draftForRelevance);
+
+  const proofDetailsLabel =
+    contact_proof_type === "none"
+      ? "Describe your contact attempt"
+      : contact_proof_type === "ticket"
+        ? "Ticket or case number"
+        : "Proof details (optional)";
+  const proofDetailsPlaceholder =
+    contact_proof_type === "none"
+      ? "Example: I called on 04/27, waited 20 minutes, spoke to support, and they said they could not help."
+      : contact_proof_type === "ticket"
+        ? "e.g. Case #12345 or support ticket ID"
+        : "Ticket number, paste of email, etc.";
+
   return (
     <>
       <Header />
@@ -165,6 +237,9 @@ export default function JusticeIntakePage() {
               required
             >
               <option value="online_purchase">Something I bought online</option>
+              <option value="financial_account_issue">
+                Bank, credit, loan, payment, debt, billing, or financial account issue
+              </option>
               <option value="subscription">A subscription or recurring charge</option>
               <option value="service_failed">A service that didn’t work as promised</option>
               <option value="charge_dispute">A charge I didn’t agree to</option>
@@ -204,7 +279,15 @@ export default function JusticeIntakePage() {
           </div>
 
           <div>
-            <label className={labelCls}>When did you pay or place the order?</label>
+            <label className={labelCls}>
+              {cfpbOrFccDateWording ? "When did this problem happen or start?" : "Order / pay date"}
+            </label>
+            {cfpbOrFccDateWording ? (
+              <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                Use your best estimate. For billing/charges, enter the charge or bill date. For service problems, enter
+                when the issue started. For calls/texts, enter the date of the call or message.
+              </p>
+            ) : null}
             <input className={inputCls} type="text" value={pay_or_order_date} onChange={(e) => setPayOrOrderDate(e.target.value)} required placeholder="e.g. 2026-01-15 or “last month”" />
           </div>
 
@@ -227,11 +310,27 @@ export default function JusticeIntakePage() {
             <span className={labelCls}>Have you already contacted the company about this?</span>
             <div className="mt-2 flex gap-4">
               <label className="flex items-center gap-2 text-sm">
-                <input type="radio" name="ac" checked={already_contacted === "no"} onChange={() => setAlreadyContacted("no")} />
+                <input
+                  type="radio"
+                  name="ac"
+                  checked={already_contacted === "no"}
+                  onChange={() => {
+                    setAlreadyContacted("no");
+                    setContactProofError(null);
+                  }}
+                />
                 No
               </label>
               <label className="flex items-center gap-2 text-sm">
-                <input type="radio" name="ac" checked={already_contacted === "yes"} onChange={() => setAlreadyContacted("yes")} />
+                <input
+                  type="radio"
+                  name="ac"
+                  checked={already_contacted === "yes"}
+                  onChange={() => {
+                    setAlreadyContacted("yes");
+                    setContactProofError(null);
+                  }}
+                />
                 Yes
               </label>
             </div>
@@ -279,19 +378,41 @@ export default function JusticeIntakePage() {
                 <select
                   className={inputCls}
                   value={contact_proof_type}
-                  onChange={(e) => setContactProofType(e.target.value as NonNullable<JusticeIntake["contact_proof_type"]>)}
+                  onChange={(e) => {
+                    setContactProofType(e.target.value as NonNullable<JusticeIntake["contact_proof_type"]>);
+                    setContactProofError(null);
+                  }}
                   required
                 >
                   <option value="upload">I can upload a file</option>
                   <option value="paste">I can paste text</option>
                   <option value="ticket">I have a ticket or case number</option>
                   <option value="screenshot">I have a screenshot</option>
-                  <option value="none">I don’t have proof right now</option>
+                  <option value="none">No written proof — I can describe the attempt</option>
                 </select>
               </div>
               <div>
-                <label className={labelCls}>Proof details (optional)</label>
-                <textarea className={inputCls} rows={3} value={contact_proof_text} onChange={(e) => setContactProofText(e.target.value)} placeholder="Ticket number, paste of email, etc." />
+                <label className={labelCls} htmlFor="intake-contact-proof-details">
+                  {proofDetailsLabel}
+                </label>
+                <textarea
+                  id="intake-contact-proof-details"
+                  className={inputCls}
+                  rows={3}
+                  value={contact_proof_text}
+                  onChange={(e) => {
+                    setContactProofText(e.target.value);
+                    setContactProofError(null);
+                  }}
+                  placeholder={proofDetailsPlaceholder}
+                  aria-invalid={contactProofError ? true : undefined}
+                  aria-describedby={contactProofError ? "intake-contact-proof-error" : undefined}
+                />
+                {contactProofError ? (
+                  <p id="intake-contact-proof-error" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    {contactProofError}
+                  </p>
+                ) : null}
               </div>
             </div>
           )}
