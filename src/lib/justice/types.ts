@@ -74,6 +74,7 @@ export type TimelineEntryType =
   | "merchant_contact_saved"
   | "escalation_unlocked"
   | "payment_checklist_viewed"
+  | "payment_dispute_checklist_prepared"
   | "ftc_practice_started"
   | "ftc_practice_completed"
   | "bbb_prep_opened"
