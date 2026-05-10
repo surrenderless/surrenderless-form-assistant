@@ -5,10 +5,15 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { fccLikelyRelevant } from "@/lib/justice/rules";
-import { appendFccPrepOpenedOnce, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
+import {
+  appendFccComplaintFiledOnce,
+  appendFccPrepOpenedOnce,
+  readTimeline,
+  syncCaseTimelineToServer,
+} from "@/lib/justice/timeline";
 
 const FCC_COMPLAINT_URL = "https://consumercomplaints.fcc.gov/";
 
@@ -113,6 +118,8 @@ export default function JusticeFccPrepPage() {
   const { isSignedIn, isLoaded } = useAuth();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
+  const [caseId, setCaseId] = useState("");
+  const [fccComplaintFiled, setFccComplaintFiled] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -123,30 +130,17 @@ export default function JusticeFccPrepPage() {
     try {
       const data = JSON.parse(raw) as JusticeIntake;
       setIntake(data);
-      const cid = sessionStorage.getItem(STORAGE_CASE_ID);
-      if (cid) appendFccPrepOpenedOnce(cid);
+      const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
+      setCaseId(cid);
+      if (cid) {
+        appendFccPrepOpenedOnce(cid);
+        setFccComplaintFiled(readTimeline(cid).some((e) => e.type === "fcc_complaint_filed"));
+      } else {
+        setFccComplaintFiled(false);
+      }
 
       if (isLoaded && isSignedIn && cid) {
-        void (async () => {
-          try {
-            const timeline = readTimeline(cid);
-            const res = await fetch(`/api/justice/cases/${encodeURIComponent(cid)}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ timeline }),
-            });
-            if (res.ok) {
-              const payload = (await res.json()) as { timeline?: unknown };
-              if (Array.isArray(payload.timeline)) {
-                replaceTimelineForCase(cid, payload.timeline as TimelineEntry[]);
-              }
-            } else {
-              console.warn("justice fcc: PATCH /api/justice/cases/[id] failed", res.status);
-            }
-          } catch (e) {
-            console.warn("justice fcc: PATCH /api/justice/cases/[id] error", e);
-          }
-        })();
+        void syncCaseTimelineToServer(cid);
       }
     } catch {
       router.replace("/justice/intake");
@@ -163,6 +157,16 @@ export default function JusticeFccPrepPage() {
       window.setTimeout(() => setCopyHint(null), 2500);
     } catch {
       setCopyHint("Copy failed — select the text and copy manually.");
+    }
+  }
+
+  async function markFccComplaintFiled() {
+    const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
+    if (!cid) return;
+    if (!appendFccComplaintFiledOnce(cid)) return;
+    setFccComplaintFiled(true);
+    if (isLoaded && isSignedIn) {
+      await syncCaseTimelineToServer(cid);
     }
   }
 
@@ -327,6 +331,14 @@ export default function JusticeFccPrepPage() {
               className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"
             >
               Copy text
+            </button>
+            <button
+              type="button"
+              disabled={!caseId || fccComplaintFiled}
+              onClick={() => void markFccComplaintFiled()}
+              className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+            >
+              Mark FCC complaint filed
             </button>
             {copyHint ? (
               <span className="text-xs text-emerald-700 dark:text-emerald-400">{copyHint}</span>

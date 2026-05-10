@@ -93,6 +93,83 @@ export function replaceTimelineForCase(
   saveStore(store);
 }
 
+const EXT_FILING_MARKED_DETAIL = "User marked external filing complete.";
+
+/** PATCH timeline to server and replace local store with response (signed-in flow). */
+export async function syncCaseTimelineToServer(caseId: string): Promise<void> {
+  if (!caseId || typeof window === "undefined") return;
+  try {
+    const timeline = readTimeline(caseId);
+    const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timeline }),
+    });
+    if (res.ok) {
+      const payload = (await res.json()) as { timeline?: unknown };
+      if (Array.isArray(payload.timeline)) {
+        replaceTimelineForCase(caseId, payload.timeline as TimelineEntry[]);
+      }
+    } else {
+      console.warn("justice: PATCH /api/justice/cases/[id] (timeline) failed", res.status);
+    }
+  } catch (e) {
+    console.warn("justice: PATCH /api/justice/cases/[id] (timeline) error", e);
+  }
+}
+
+/** @returns true if a new entry was appended */
+export function appendStateAgComplaintFiledOnce(caseId: string): boolean {
+  if (!caseId) return false;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "state_ag_complaint_filed")) return false;
+  appendTimelineEvent(caseId, {
+    type: "state_ag_complaint_filed",
+    label: "State AG complaint filed",
+    detail: EXT_FILING_MARKED_DETAIL,
+  });
+  return true;
+}
+
+/** @returns true if a new entry was appended */
+export function appendBbbComplaintFiledOnce(caseId: string): boolean {
+  if (!caseId) return false;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "bbb_complaint_filed")) return false;
+  appendTimelineEvent(caseId, {
+    type: "bbb_complaint_filed",
+    label: "BBB complaint filed",
+    detail: EXT_FILING_MARKED_DETAIL,
+  });
+  return true;
+}
+
+/** @returns true if a new entry was appended */
+export function appendCfpbComplaintFiledOnce(caseId: string): boolean {
+  if (!caseId) return false;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "cfpb_complaint_filed")) return false;
+  appendTimelineEvent(caseId, {
+    type: "cfpb_complaint_filed",
+    label: "CFPB complaint filed",
+    detail: EXT_FILING_MARKED_DETAIL,
+  });
+  return true;
+}
+
+/** @returns true if a new entry was appended */
+export function appendFccComplaintFiledOnce(caseId: string): boolean {
+  if (!caseId) return false;
+  const entries = readTimeline(caseId);
+  if (entries.some((e) => e.type === "fcc_complaint_filed")) return false;
+  appendTimelineEvent(caseId, {
+    type: "fcc_complaint_filed",
+    label: "FCC complaint filed",
+    detail: EXT_FILING_MARKED_DETAIL,
+  });
+  return true;
+}
+
 /** Maps POST /api/justice/events `event_name` to a user-facing label (for docs / future sync). */
 export function labelForAnalyticsEventName(eventName: string): string | undefined {
   const m: Record<string, string> = {
@@ -111,6 +188,10 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     state_ag_prep_opened: "State AG prep opened",
     cfpb_prep_opened: "CFPB prep opened",
     fcc_prep_opened: "FCC prep opened",
+    state_ag_complaint_filed: "State AG complaint filed",
+    bbb_complaint_filed: "BBB complaint filed",
+    cfpb_complaint_filed: "CFPB complaint filed",
+    fcc_complaint_filed: "FCC complaint filed",
   };
   return m[eventName];
 }

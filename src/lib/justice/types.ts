@@ -80,7 +80,11 @@ export type TimelineEntryType =
   | "bbb_prep_opened"
   | "state_ag_prep_opened"
   | "cfpb_prep_opened"
-  | "fcc_prep_opened";
+  | "fcc_prep_opened"
+  | "state_ag_complaint_filed"
+  | "bbb_complaint_filed"
+  | "cfpb_complaint_filed"
+  | "fcc_complaint_filed";
 
 export type TimelineEntry = {
   id: string;
