@@ -82,6 +82,8 @@ export default function JusticePlanPage() {
   const loggedPlan = useRef(false);
   /** True when plan is open only because we expect GET /api/justice/cases/[id] to supply intake. */
   const pendingServerIntakeRef = useRef(false);
+  /** Signed-in, no local case id — fetch GET /api/justice/cases to resume latest. */
+  const [resumeLatestPending, setResumeLatestPending] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -100,6 +102,7 @@ export default function JusticePlanPage() {
     }
     if (parsed) {
       pendingServerIntakeRef.current = false;
+      setResumeLatestPending(false);
       setIntake(parsed);
       return;
     }
@@ -108,74 +111,133 @@ export default function JusticePlanPage() {
 
     if (isSignedIn && cid) {
       pendingServerIntakeRef.current = true;
+      setResumeLatestPending(false);
+      return;
+    }
+
+    if (isSignedIn && !cid) {
+      setResumeLatestPending(true);
       return;
     }
 
     pendingServerIntakeRef.current = false;
+    setResumeLatestPending(false);
     router.replace("/justice/intake");
   }, [router, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (pathname !== "/justice/plan") return;
     if (!isLoaded || !isSignedIn) return;
+
     const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
-    if (!cid) return;
+    if (!cid && !resumeLatestPending) return;
 
     const ac = new AbortController();
-    void (async () => {
-      try {
-        const res = await fetch(`/api/justice/cases/${encodeURIComponent(cid)}`, {
-          signal: ac.signal,
-        });
-        if (!res.ok) {
-          console.warn("justice plan: GET /api/justice/cases/[id] failed", res.status);
+
+    if (cid) {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/justice/cases/${encodeURIComponent(cid)}`, {
+            signal: ac.signal,
+          });
+          if (!res.ok) {
+            console.warn("justice plan: GET /api/justice/cases/[id] failed", res.status);
+            if (pendingServerIntakeRef.current) {
+              pendingServerIntakeRef.current = false;
+              router.replace("/justice/intake");
+            }
+            return;
+          }
+          const data = (await res.json()) as {
+            id?: string;
+            intake?: JusticeIntake;
+            timeline?: unknown;
+          };
+          if (ac.signal.aborted) return;
+          if (!data?.id || !data.intake) {
+            console.warn("justice plan: case hydrate response missing id or intake");
+            if (pendingServerIntakeRef.current) {
+              pendingServerIntakeRef.current = false;
+              router.replace("/justice/intake");
+            }
+            return;
+          }
+          if (data.id !== cid) {
+            console.warn("justice plan: case id mismatch from server");
+            if (pendingServerIntakeRef.current) {
+              pendingServerIntakeRef.current = false;
+              router.replace("/justice/intake");
+            }
+            return;
+          }
+          pendingServerIntakeRef.current = false;
+          sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
+          const serverTimeline = Array.isArray(data.timeline) ? (data.timeline as TimelineEntry[]) : [];
+          replaceTimelineForCase(cid, serverTimeline);
+          setIntake(data.intake);
+          setCaseId(cid);
+          setTimeline(readTimeline(cid));
+        } catch (e) {
+          if (ac.signal.aborted) return;
+          console.warn("justice plan: GET /api/justice/cases/[id] error", e);
           if (pendingServerIntakeRef.current) {
             pendingServerIntakeRef.current = false;
             router.replace("/justice/intake");
           }
+        }
+      })();
+
+      return () => ac.abort();
+    }
+
+    if (!resumeLatestPending) return;
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/justice/cases", { signal: ac.signal });
+        if (!res.ok) {
+          console.warn("justice plan: GET /api/justice/cases failed", res.status);
+          setResumeLatestPending(false);
+          router.replace("/justice/intake");
           return;
         }
-        const data = (await res.json()) as {
+        const list = (await res.json()) as Array<{
           id?: string;
           intake?: JusticeIntake;
           timeline?: unknown;
-        };
+        }>;
         if (ac.signal.aborted) return;
-        if (!data?.id || !data.intake) {
-          console.warn("justice plan: case hydrate response missing id or intake");
-          if (pendingServerIntakeRef.current) {
-            pendingServerIntakeRef.current = false;
-            router.replace("/justice/intake");
-          }
+        if (!Array.isArray(list) || list.length === 0) {
+          setResumeLatestPending(false);
+          router.replace("/justice/intake");
           return;
         }
-        if (data.id !== cid) {
-          console.warn("justice plan: case id mismatch from server");
-          if (pendingServerIntakeRef.current) {
-            pendingServerIntakeRef.current = false;
-            router.replace("/justice/intake");
-          }
+        const latest = list[0];
+        if (!latest?.id || !latest.intake) {
+          console.warn("justice plan: list response missing id or intake");
+          setResumeLatestPending(false);
+          router.replace("/justice/intake");
           return;
         }
+        sessionStorage.setItem(STORAGE_CASE_ID, latest.id);
+        sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(latest.intake));
+        const serverTimeline = Array.isArray(latest.timeline) ? (latest.timeline as TimelineEntry[]) : [];
+        replaceTimelineForCase(latest.id, serverTimeline);
         pendingServerIntakeRef.current = false;
-        sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
-        const serverTimeline = Array.isArray(data.timeline) ? (data.timeline as TimelineEntry[]) : [];
-        replaceTimelineForCase(cid, serverTimeline);
-        setIntake(data.intake);
-        setCaseId(cid);
-        setTimeline(readTimeline(cid));
+        setResumeLatestPending(false);
+        setIntake(latest.intake);
+        setCaseId(latest.id);
+        setTimeline(readTimeline(latest.id));
       } catch (e) {
         if (ac.signal.aborted) return;
-        console.warn("justice plan: GET /api/justice/cases/[id] error", e);
-        if (pendingServerIntakeRef.current) {
-          pendingServerIntakeRef.current = false;
-          router.replace("/justice/intake");
-        }
+        console.warn("justice plan: GET /api/justice/cases error", e);
+        setResumeLatestPending(false);
+        router.replace("/justice/intake");
       }
     })();
 
     return () => ac.abort();
-  }, [pathname, isLoaded, isSignedIn, router]);
+  }, [pathname, isLoaded, isSignedIn, router, resumeLatestPending]);
 
   useEffect(() => {
     if (!intake || loggedPlan.current) return;
