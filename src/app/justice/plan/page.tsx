@@ -17,6 +17,7 @@ import {
   isMerchantResolved,
   paymentDisputeAvailable,
 } from "@/lib/justice/rules";
+import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import {
   appendActionPlanViewedOnce,
   appendEscalationUnlockedFromMerchantSaveOnce,
@@ -350,6 +351,14 @@ export default function JusticePlanPage() {
           {" · "}
           <Link href="/justice/cases" className="text-blue-600 hover:underline">
             Saved cases
+          </Link>
+          {" · "}
+          <Link
+            href="/justice/intake"
+            onClick={() => clearLocalJusticeSession()}
+            className="text-blue-600 hover:underline"
+          >
+            Start new case
           </Link>
           {" · "}
           <Link href="/" className="text-blue-600 hover:underline">

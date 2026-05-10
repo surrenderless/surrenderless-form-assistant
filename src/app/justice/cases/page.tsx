@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 
@@ -95,6 +96,15 @@ export default function JusticeCasesPage() {
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Saved cases</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           Open a case you saved while signed in to continue your action plan.
+        </p>
+        <p className="mt-3">
+          <Link
+            href="/justice/intake"
+            onClick={() => clearLocalJusticeSession()}
+            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Start new case
+          </Link>
         </p>
 
         {!isLoaded ? (
