@@ -80,6 +80,13 @@ const PREP_TYPES: TimelineEntryType[] = [
   "fcc_prep_opened",
 ];
 
+const FILED_COMPLAINT_TYPES: TimelineEntryType[] = [
+  "state_ag_complaint_filed",
+  "bbb_complaint_filed",
+  "cfpb_complaint_filed",
+  "fcc_complaint_filed",
+];
+
 function prepStageLabel(type: TimelineEntryType): string {
   switch (type) {
     case "state_ag_prep_opened":
@@ -95,18 +102,62 @@ function prepStageLabel(type: TimelineEntryType): string {
   }
 }
 
+function filedComplaintStageLabel(type: TimelineEntryType): string {
+  switch (type) {
+    case "state_ag_complaint_filed":
+      return "State AG complaint filed";
+    case "bbb_complaint_filed":
+      return "BBB complaint filed";
+    case "cfpb_complaint_filed":
+      return "CFPB complaint filed";
+    case "fcc_complaint_filed":
+      return "FCC complaint filed";
+    default:
+      return "Complaint filed";
+  }
+}
+
+function filedComplaintTypePriority(t: TimelineEntryType): number {
+  switch (t) {
+    case "state_ag_complaint_filed":
+      return 0;
+    case "bbb_complaint_filed":
+      return 1;
+    case "cfpb_complaint_filed":
+      return 2;
+    case "fcc_complaint_filed":
+      return 3;
+    default:
+      return 99;
+  }
+}
+
+/** Latest external complaint filed marker; ties on `ts` use AG > BBB > CFPB > FCC. */
+function latestFiledComplaint(entries: TimelineEntry[]): TimelineEntry | undefined {
+  const filed = entries.filter((e) => FILED_COMPLAINT_TYPES.includes(e.type));
+  if (filed.length === 0) return undefined;
+  return [...filed].sort((a, b) => {
+    const byTs = b.ts.localeCompare(a.ts);
+    if (byTs !== 0) return byTs;
+    return filedComplaintTypePriority(a.type) - filedComplaintTypePriority(b.type);
+  })[0];
+}
+
 function latestByTs(entries: TimelineEntry[]): TimelineEntry | undefined {
   if (entries.length === 0) return undefined;
   return [...entries].sort((a, b) => b.ts.localeCompare(a.ts))[0];
 }
 
-/** Furthest meaningful milestone: FTC → prep (latest) → escalation → merchant → started. */
+/** Furthest meaningful milestone: FTC → external complaint filed (latest) → prep (latest) → escalation → merchant → started. */
 function computeTimelineStatusSummary(entries: TimelineEntry[]): string {
   const ftcDone = latestByTs(entries.filter((e) => e.type === "ftc_practice_completed"));
   if (ftcDone) return "FTC practice completed";
 
   const ftcStart = latestByTs(entries.filter((e) => e.type === "ftc_practice_started"));
   if (ftcStart) return "FTC practice started";
+
+  const latestFiled = latestFiledComplaint(entries);
+  if (latestFiled) return filedComplaintStageLabel(latestFiled.type);
 
   const preps = entries.filter((e) => PREP_TYPES.includes(e.type));
   const latestPrep = latestByTs(preps);
