@@ -12,10 +12,17 @@ type CaseResponse = {
   client_state: unknown;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
 };
 
 const SELECT =
-  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at" as const;
+  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at" as const;
+
+function isValidArchivedAt(value: unknown): value is string | null {
+  if (value === null) return true;
+  if (typeof value !== "string") return false;
+  return !Number.isNaN(Date.parse(value));
+}
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -72,7 +79,7 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   }
 
   const b = body as Record<string, unknown>;
-  const allowed = ["intake", "timeline", "payment_dispute_draft", "client_state"] as const;
+  const allowed = ["intake", "timeline", "payment_dispute_draft", "client_state", "archived_at"] as const;
   const patch: Record<string, unknown> = {};
 
   for (const key of allowed) {
@@ -91,6 +98,11 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       patch.payment_dispute_draft = b.payment_dispute_draft;
     } else if (key === "client_state") {
       patch.client_state = b.client_state;
+    } else if (key === "archived_at") {
+      if (!isValidArchivedAt(b.archived_at)) {
+        return NextResponse.json({ error: "Invalid archived_at" }, { status: 400 });
+      }
+      patch.archived_at = b.archived_at;
     }
   }
 

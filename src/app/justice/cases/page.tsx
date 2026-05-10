@@ -43,6 +43,8 @@ export default function JusticeCasesPage() {
   const { isSignedIn, isLoaded } = useAuth();
   const [cases, setCases] = useState<CaseRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [sessionCaseId, setSessionCaseId] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -71,11 +73,37 @@ export default function JusticeCasesPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setSessionCaseId(sessionStorage.getItem(STORAGE_CASE_ID));
+  }, [cases]);
+
+  async function archiveCase(id: string) {
+    setArchivingId(id);
+    try {
+      const res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived_at: new Date().toISOString() }),
+      });
+      if (res.ok) {
+        setCases((prev) => (prev ? prev.filter((c) => c.id !== id) : prev));
+      } else {
+        console.warn("justice cases: archive failed", res.status);
+      }
+    } catch (e) {
+      console.warn("justice cases: archive error", e);
+    } finally {
+      setArchivingId(null);
+    }
+  }
+
   function openCase(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
     const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
     replaceTimelineForCase(row.id, tl);
+    setSessionCaseId(row.id);
     router.push("/justice/plan");
   }
 
@@ -133,13 +161,29 @@ export default function JusticeCasesPage() {
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                   Updated {formatUpdatedAt(row.updated_at)}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => openCase(row)}
-                  className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
-                >
-                  Open case
-                </button>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <button
+                    type="button"
+                    onClick={() => openCase(row)}
+                    className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                  >
+                    Open case
+                  </button>
+                  {sessionCaseId === row.id ? (
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      This case is open in your browser — open another case or start new to archive this one.
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={archivingId === row.id}
+                      onClick={() => void archiveCase(row.id)}
+                      className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
+                    >
+                      {archivingId === row.id ? "Archiving…" : "Archive"}
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

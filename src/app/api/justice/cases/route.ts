@@ -11,6 +11,7 @@ type CaseResponse = {
   client_state: unknown;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -21,8 +22,9 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from("justice_cases")
-    .select("id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at")
+    .select("id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at")
     .eq("user_id", userId)
+    .is("archived_at", null)
     .order("updated_at", { ascending: false })
     .limit(10);
 
@@ -77,7 +79,7 @@ export async function POST(req: NextRequest) {
       payment_dispute_draft,
       client_state,
     })
-    .select("id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at")
+    .select("id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at")
     .single();
 
   if (error) {
