@@ -1,11 +1,11 @@
 "use client";
 
 import { SignInButton, useAuth } from "@clerk/nextjs";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
-import type { DestinationStatus, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import type { DestinationStatus, JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import {
   cfpbLikelyRelevant,
@@ -71,6 +71,67 @@ function formatTimelineTs(iso: string): string {
   }
 }
 
+const PAYMENT_DRAFT_STORAGE_KEY = "justice_payment_dispute_checklist_draft_v1";
+
+const PREP_TYPES: TimelineEntryType[] = [
+  "state_ag_prep_opened",
+  "bbb_prep_opened",
+  "cfpb_prep_opened",
+  "fcc_prep_opened",
+];
+
+function prepStageLabel(type: TimelineEntryType): string {
+  switch (type) {
+    case "state_ag_prep_opened":
+      return "State AG prep started";
+    case "bbb_prep_opened":
+      return "BBB prep started";
+    case "cfpb_prep_opened":
+      return "CFPB prep started";
+    case "fcc_prep_opened":
+      return "FCC prep started";
+    default:
+      return "Prep started";
+  }
+}
+
+function latestByTs(entries: TimelineEntry[]): TimelineEntry | undefined {
+  if (entries.length === 0) return undefined;
+  return [...entries].sort((a, b) => b.ts.localeCompare(a.ts))[0];
+}
+
+/** Furthest meaningful milestone for the status line (existing timeline types only). */
+function computeTimelineStatusSummary(entries: TimelineEntry[]): string {
+  const preps = entries.filter((e) => PREP_TYPES.includes(e.type));
+  const latestPrep = latestByTs(preps);
+  if (latestPrep) return prepStageLabel(latestPrep.type);
+
+  const ftcDone = latestByTs(entries.filter((e) => e.type === "ftc_practice_completed"));
+  if (ftcDone) return "FTC practice completed";
+
+  const ftcStart = latestByTs(entries.filter((e) => e.type === "ftc_practice_started"));
+  if (ftcStart) return "FTC practice started";
+
+  const payPrepared = latestByTs(entries.filter((e) => e.type === "payment_dispute_checklist_prepared"));
+  if (payPrepared) return "Payment dispute checklist prepared";
+
+  const payViewed = latestByTs(entries.filter((e) => e.type === "payment_checklist_viewed"));
+  if (payViewed) return "Payment checklist viewed";
+
+  if (entries.some((e) => e.type === "escalation_unlocked")) return "Escalation ready";
+
+  if (entries.some((e) => e.type === "merchant_contact_saved")) return "Company contacted";
+
+  return "Started";
+}
+
+function latestTimelineProgressLine(entries: TimelineEntry[]): string | null {
+  const latest = latestByTs(entries);
+  if (!latest) return null;
+  const detail = latest.detail?.trim();
+  return detail ? `${latest.label} — ${detail}` : latest.label;
+}
+
 export default function JusticePlanPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -80,6 +141,8 @@ export default function JusticePlanPage() {
   const [manualFtc, setManualFtc] = useState(false);
   const [ftcCompleted, setFtcCompleted] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [caseLabel, setCaseLabel] = useState<string | null>(null);
+  const [serverPaymentDisputeDraft, setServerPaymentDisputeDraft] = useState<unknown | null>(null);
   const loggedPlan = useRef(false);
   /** True when plan is open only because we expect GET /api/justice/cases/[id] to supply intake. */
   const pendingServerIntakeRef = useRef(false);
@@ -104,6 +167,8 @@ export default function JusticePlanPage() {
     if (parsed) {
       pendingServerIntakeRef.current = false;
       setResumeLatestPending(false);
+      setCaseLabel(null);
+      setServerPaymentDisputeDraft(null);
       setIntake(parsed);
       return;
     }
@@ -155,6 +220,8 @@ export default function JusticePlanPage() {
             id?: string;
             intake?: JusticeIntake;
             timeline?: unknown;
+            case_label?: string | null;
+            payment_dispute_draft?: unknown;
           };
           if (ac.signal.aborted) return;
           if (!data?.id || !data.intake) {
@@ -177,6 +244,10 @@ export default function JusticePlanPage() {
           sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
           const serverTimeline = Array.isArray(data.timeline) ? (data.timeline as TimelineEntry[]) : [];
           replaceTimelineForCase(cid, serverTimeline);
+          setCaseLabel(data.case_label ?? null);
+          setServerPaymentDisputeDraft(
+            data.payment_dispute_draft !== undefined ? data.payment_dispute_draft : null
+          );
           setIntake(data.intake);
           setCaseId(cid);
           setTimeline(readTimeline(cid));
@@ -208,6 +279,8 @@ export default function JusticePlanPage() {
           id?: string;
           intake?: JusticeIntake;
           timeline?: unknown;
+          case_label?: string | null;
+          payment_dispute_draft?: unknown;
         }>;
         if (ac.signal.aborted) return;
         if (!Array.isArray(list) || list.length === 0) {
@@ -228,6 +301,10 @@ export default function JusticePlanPage() {
         replaceTimelineForCase(latest.id, serverTimeline);
         pendingServerIntakeRef.current = false;
         setResumeLatestPending(false);
+        setCaseLabel(latest.case_label ?? null);
+        setServerPaymentDisputeDraft(
+          latest.payment_dispute_draft !== undefined ? latest.payment_dispute_draft : null
+        );
         setIntake(latest.intake);
         setCaseId(latest.id);
         setTimeline(readTimeline(latest.id));
@@ -265,6 +342,42 @@ export default function JusticePlanPage() {
     appendActionPlanViewedOnce(cid);
     setTimeline(readTimeline(cid));
   }, [intake, caseId, pathname]);
+
+  const caseSummaryTitle = useMemo(() => {
+    if (!intake) return "";
+    const label = caseLabel?.trim();
+    if (label) return label;
+    const po = intake.purchase_or_signup.trim();
+    if (!po) return intake.company_name;
+    return `${intake.company_name} — ${po.slice(0, 80)}${po.length > 80 ? "…" : ""}`;
+  }, [intake, caseLabel]);
+
+  const timelineStatus = useMemo(() => computeTimelineStatusSummary(timeline), [timeline]);
+
+  const progressLine = useMemo(() => latestTimelineProgressLine(timeline), [timeline]);
+
+  const paymentDraftHint = useMemo(() => {
+    const cid = caseId || (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) : null) || "";
+    if (!cid) return null;
+    if (serverPaymentDisputeDraft != null && typeof serverPaymentDisputeDraft === "object") {
+      const d = serverPaymentDisputeDraft as { merchant_name?: string; charge_amount?: string };
+      const bits = [d.merchant_name?.trim(), d.charge_amount?.trim()].filter(Boolean);
+      if (bits.length) return `${bits.join(" · ")}`;
+      return "Saved on your account";
+    }
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = sessionStorage.getItem(PAYMENT_DRAFT_STORAGE_KEY);
+      if (!raw) return null;
+      const d = JSON.parse(raw) as { case_id?: string; merchant_name?: string; charge_amount?: string };
+      if (d.case_id !== cid) return null;
+      const bits = [d.merchant_name?.trim(), d.charge_amount?.trim()].filter(Boolean);
+      if (bits.length) return `${bits.join(" · ")} (this device)`;
+      return "On this device";
+    } catch {
+      return null;
+    }
+  }, [caseId, serverPaymentDisputeDraft]);
 
   if (!intake) {
     if (isLoaded && !isSignedIn) {
@@ -374,6 +487,9 @@ export default function JusticePlanPage() {
 
   const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
 
+  const summaryCardCls =
+    "mt-4 rounded-xl border border-neutral-200/90 bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06]";
+
   return (
     <>
       <Header />
@@ -401,6 +517,42 @@ export default function JusticePlanPage() {
         </p>
 
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
+
+        <section className={summaryCardCls} aria-label="Case summary">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">Case</p>
+          <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">{caseSummaryTitle}</p>
+          <div className="mt-3 space-y-1.5 text-neutral-700 dark:text-neutral-300">
+            <p>
+              <span className="text-neutral-500 dark:text-neutral-400">Company · </span>
+              {intake.company_name}
+            </p>
+            <p>
+              <span className="text-neutral-500 dark:text-neutral-400">Issue / product · </span>
+              {intake.purchase_or_signup.trim() || "—"}
+            </p>
+            <p>
+              <span className="text-neutral-500 dark:text-neutral-400">Money · </span>
+              {intake.money_involved.trim() || "—"}
+            </p>
+            <p>
+              <span className="text-neutral-500 dark:text-neutral-400">Status · </span>
+              <span className="font-medium text-neutral-900 dark:text-neutral-100">{timelineStatus}</span>
+            </p>
+            {progressLine ? (
+              <p className="border-t border-neutral-100 pt-2 text-neutral-800 dark:border-neutral-700 dark:text-neutral-200">
+                <span className="text-neutral-500 dark:text-neutral-400">Latest · </span>
+                {progressLine}
+              </p>
+            ) : null}
+            {paymentDraftHint ? (
+              <p className="border-t border-neutral-100 pt-2 text-neutral-800 dark:border-neutral-700 dark:text-neutral-200">
+                <span className="text-neutral-500 dark:text-neutral-400">Payment checklist draft · </span>
+                {paymentDraftHint}
+              </p>
+            ) : null}
+          </div>
+        </section>
+
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{headline}</p>
         <p className="mt-1 text-xs text-neutral-500">{recommendationText}</p>
 
