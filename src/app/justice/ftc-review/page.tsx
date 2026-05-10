@@ -5,11 +5,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/nextjs";
 import Header from "@/app/components/Header";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { computeFtcUnlocked } from "@/lib/justice/rules";
 import { intakeToMockFtcUserData } from "@/lib/justice/ftc-user-data";
-import { appendTimelineEvent } from "@/lib/justice/timeline";
+import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -25,7 +25,7 @@ async function logEvent(event_name: string, payload: Record<string, unknown>) {
 
 export default function JusticeFtcReviewPage() {
   const router = useRouter();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, isLoaded } = useAuth();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [running, setRunning] = useState(false);
@@ -64,6 +64,28 @@ export default function JusticeFtcReviewPage() {
     );
   }
 
+  async function syncTimelineToSupabase(caseId: string | null) {
+    if (!caseId || !isLoaded || !isSignedIn) return;
+    try {
+      const timeline = readTimeline(caseId);
+      const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeline }),
+      });
+      if (res.ok) {
+        const payload = (await res.json()) as { timeline?: unknown };
+        if (Array.isArray(payload.timeline)) {
+          replaceTimelineForCase(caseId, payload.timeline as TimelineEntry[]);
+        }
+      } else {
+        console.warn("justice ftc-review: PATCH /api/justice/cases/[id] failed", res.status);
+      }
+    } catch (e) {
+      console.warn("justice ftc-review: PATCH /api/justice/cases/[id] error", e);
+    }
+  }
+
   const summaryLines = [
     `Company: ${intake.company_name}`,
     `Issue: ${intake.problem_category.replace(/_/g, " ")}`,
@@ -87,6 +109,7 @@ export default function JusticeFtcReviewPage() {
     if (caseId) {
       appendTimelineEvent(caseId, { type: "ftc_practice_started", label: "FTC practice started" });
     }
+    await syncTimelineToSupabase(caseId);
 
     await logEvent("ftc_mock_lane_started", { case_id: caseId, mock_path: "/mock/ftc-complaint" });
 
@@ -111,6 +134,7 @@ export default function JusticeFtcReviewPage() {
           detail: fillResult?.storageSkipped ? "Screenshot storage skipped locally" : undefined,
         });
       }
+      await syncTimelineToSupabase(caseId);
       setStorageSkipped(fillResult?.storageSkipped === true);
       setTechnicalDetails(JSON.stringify(data, null, 2));
       setPracticeSuccess(true);
@@ -127,6 +151,7 @@ export default function JusticeFtcReviewPage() {
           detail: "Did not complete",
         });
       }
+      await syncTimelineToSupabase(caseId);
       setError(e?.message || "Something went wrong.");
     } finally {
       setRunning(false);
