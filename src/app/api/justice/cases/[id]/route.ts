@@ -13,15 +13,22 @@ type CaseResponse = {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
+  case_label: string | null;
 };
 
 const SELECT =
-  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at" as const;
+  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label" as const;
 
 function isValidArchivedAt(value: unknown): value is string | null {
   if (value === null) return true;
   if (typeof value !== "string") return false;
   return !Number.isNaN(Date.parse(value));
+}
+
+function isValidCaseLabel(value: unknown): value is string | null {
+  if (value === null) return true;
+  if (typeof value !== "string") return false;
+  return value.length <= 500;
 }
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -79,7 +86,14 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   }
 
   const b = body as Record<string, unknown>;
-  const allowed = ["intake", "timeline", "payment_dispute_draft", "client_state", "archived_at"] as const;
+  const allowed = [
+    "intake",
+    "timeline",
+    "payment_dispute_draft",
+    "client_state",
+    "archived_at",
+    "case_label",
+  ] as const;
   const patch: Record<string, unknown> = {};
 
   for (const key of allowed) {
@@ -103,6 +117,12 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
         return NextResponse.json({ error: "Invalid archived_at" }, { status: 400 });
       }
       patch.archived_at = b.archived_at;
+    } else if (key === "case_label") {
+      if (!isValidCaseLabel(b.case_label)) {
+        return NextResponse.json({ error: "Invalid case_label" }, { status: 400 });
+      }
+      const v = b.case_label;
+      patch.case_label = v === null || v.trim() === "" ? null : v.trim();
     }
   }
 
