@@ -6,15 +6,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1 } from "@/lib/justice/types";
+import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import {
   appendPaymentChecklistViewedOnce,
   appendTimelineEvent,
   readTimeline,
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
-
-const PAYMENT_DRAFT_KEY = "justice_payment_dispute_checklist_draft_v1";
 
 type PaymentMethodOption =
   | "credit_card"
@@ -115,7 +114,7 @@ function proofTypeLabel(p: PaymentDisputeProofType): string {
 function loadDraft(caseId: string): Partial<PaymentDraft> | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(PAYMENT_DRAFT_KEY);
+    const raw = sessionStorage.getItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1);
     if (!raw) return null;
     const d = JSON.parse(raw) as Partial<PaymentDraft> & { dispute_reason?: string };
     if (d.case_id !== caseId) return null;
@@ -127,7 +126,7 @@ function loadDraft(caseId: string): Partial<PaymentDraft> | null {
 
 function saveDraft(draft: PaymentDraft) {
   if (typeof window === "undefined") return;
-  sessionStorage.setItem(PAYMENT_DRAFT_KEY, JSON.stringify(draft));
+  sessionStorage.setItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1, JSON.stringify(draft));
 }
 
 function disputeReasonLabel(r: DisputeReasonOption): string {
@@ -203,8 +202,9 @@ const cardCls =
 export default function JusticePaymentDisputePage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
-  const [intake, setIntake] = useState<JusticeIntake | null>(null);
+  const { status: hydrationStatus, intake } = useJusticeActionPageHydration();
   const [caseId, setCaseId] = useState("");
+  const [formReady, setFormReady] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>("credit_card");
   const [chargeDate, setChargeDate] = useState("");
   const [chargeAmount, setChargeAmount] = useState("");
@@ -217,66 +217,55 @@ export default function JusticePaymentDisputePage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (hydrationStatus !== "ready" || !intake) return;
     if (typeof window === "undefined") return;
-    const cid = sessionStorage.getItem(STORAGE_CASE_ID);
-    if (cid) {
-      appendPaymentChecklistViewedOnce(cid);
-      void fetch("/api/justice/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event_name: "payment_dispute_checklist_viewed",
-          payload: { case_id: cid },
-        }),
-      }).catch(() => {});
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = sessionStorage.getItem(STORAGE_INTAKE);
     const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
-    if (!raw || !cid) {
+    if (!cid) {
       router.replace("/justice/intake");
       return;
     }
-    try {
-      const data = JSON.parse(raw) as JusticeIntake;
-      setCaseId(cid);
-      setIntake(data);
-      const saved = loadDraft(cid);
-      if (saved && saved.case_id === cid) {
-        if (saved.payment_method) setPaymentMethod(saved.payment_method);
-        if (typeof saved.charge_date === "string") setChargeDate(saved.charge_date);
-        if (typeof saved.charge_amount === "string") setChargeAmount(saved.charge_amount);
-        if (typeof saved.merchant_name === "string") setMerchantName(saved.merchant_name);
-        if (typeof saved.dispute_reason === "string") {
-          if (isDisputeReasonOption(saved.dispute_reason)) {
-            setDisputeReason(saved.dispute_reason);
-            if (typeof saved.dispute_reason_other === "string") {
-              setDisputeReasonOther(saved.dispute_reason_other);
-            }
-          } else {
-            setDisputeReason("other");
-            setDisputeReasonOther(saved.dispute_reason);
+    setCaseId(cid);
+    appendPaymentChecklistViewedOnce(cid);
+    void fetch("/api/justice/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_name: "payment_dispute_checklist_viewed",
+        payload: { case_id: cid },
+      }),
+    }).catch(() => {});
+
+    const saved = loadDraft(cid);
+    if (saved && saved.case_id === cid) {
+      if (saved.payment_method) setPaymentMethod(saved.payment_method);
+      if (typeof saved.charge_date === "string") setChargeDate(saved.charge_date);
+      if (typeof saved.charge_amount === "string") setChargeAmount(saved.charge_amount);
+      if (typeof saved.merchant_name === "string") setMerchantName(saved.merchant_name);
+      if (typeof saved.dispute_reason === "string") {
+        if (isDisputeReasonOption(saved.dispute_reason)) {
+          setDisputeReason(saved.dispute_reason);
+          if (typeof saved.dispute_reason_other === "string") {
+            setDisputeReasonOther(saved.dispute_reason_other);
           }
+        } else {
+          setDisputeReason("other");
+          setDisputeReasonOther(saved.dispute_reason);
         }
-        if (saved.prior_company_contact === "yes" || saved.prior_company_contact === "no") {
-          setPriorContact(saved.prior_company_contact);
-        }
-        if (saved.proof_type) setProofType(saved.proof_type);
-      } else {
-        setChargeAmount(data.money_involved.trim());
-        setChargeDate(data.pay_or_order_date.trim());
-        setMerchantName(data.company_name.trim());
-        setDisputeReason("unauthorized_charge");
-        setDisputeReasonOther("");
-        setPriorContact(data.already_contacted === "yes" ? "yes" : "no");
       }
-    } catch {
-      router.replace("/justice/intake");
+      if (saved.prior_company_contact === "yes" || saved.prior_company_contact === "no") {
+        setPriorContact(saved.prior_company_contact);
+      }
+      if (saved.proof_type) setProofType(saved.proof_type);
+    } else {
+      setChargeAmount(intake.money_involved.trim());
+      setChargeDate(intake.pay_or_order_date.trim());
+      setMerchantName(intake.company_name.trim());
+      setDisputeReason("unauthorized_charge");
+      setDisputeReasonOther("");
+      setPriorContact(intake.already_contacted === "yes" ? "yes" : "no");
     }
-  }, [router]);
+    setFormReady(true);
+  }, [hydrationStatus, intake, router]);
 
   const draft: PaymentDraft | null = useMemo(() => {
     if (!caseId) return null;
@@ -336,7 +325,10 @@ export default function JusticePaymentDisputePage() {
               timeline?: unknown;
             };
             if (data.payment_dispute_draft != null) {
-              sessionStorage.setItem(PAYMENT_DRAFT_KEY, JSON.stringify(data.payment_dispute_draft));
+              sessionStorage.setItem(
+                STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
+                JSON.stringify(data.payment_dispute_draft)
+              );
             }
             if (Array.isArray(data.timeline)) {
               replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
@@ -367,7 +359,7 @@ export default function JusticePaymentDisputePage() {
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
-  if (!intake) {
+  if (hydrationStatus !== "ready" || !intake || !formReady) {
     return (
       <>
         <Header />

@@ -100,3 +100,5 @@ export const STORAGE_CASE_ID = "justice_case_id";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
 /** Session JSON: `Record<caseId, TimelineEntry[]>` */
 export const STORAGE_TIMELINE_V1 = "justice_timeline_v1";
+/** Payment dispute checklist draft (same key as legacy inline constants). */
+export const STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1 = "justice_payment_dispute_checklist_draft_v1";

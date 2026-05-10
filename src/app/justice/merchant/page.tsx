@@ -3,8 +3,8 @@
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Header from "@/app/components/Header";
 import { useRouter } from "next/navigation";
+import Header from "@/app/components/Header";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { cfpbLikelyRelevant, fccLikelyRelevant, isValidDocumentedContactDate } from "@/lib/justice/rules";
@@ -14,6 +14,7 @@ import {
   readTimeline,
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
+import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -136,6 +137,7 @@ const cardCls =
 export default function JusticeMerchantPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
+  const { status: hydrationStatus, intake: hydratedIntake } = useJusticeActionPageHydration();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [contactMethod, setContactMethod] = useState<NonNullable<JusticeIntake["contact_method"]>>("email");
   const [contactDate, setContactDate] = useState("");
@@ -150,27 +152,19 @@ export default function JusticeMerchantPage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem(STORAGE_INTAKE);
-    if (!raw) {
-      router.replace("/justice/intake");
-      return;
-    }
-    try {
-      const data = JSON.parse(raw) as JusticeIntake;
-      setIntake(data);
-      if (data.already_contacted === "yes") {
-        if (data.contact_method) setContactMethod(data.contact_method);
-        if (typeof data.contact_date === "string" && isValidDocumentedContactDate(data.contact_date)) {
-          setContactDate(data.contact_date.trim());
-        }
-        if (data.merchant_response_type) setMerchantResponseType(data.merchant_response_type);
-        if (data.contact_proof_type) setContactProofType(data.contact_proof_type);
-        if (typeof data.contact_proof_text === "string") setContactProofText(data.contact_proof_text);
+    if (hydrationStatus !== "ready" || !hydratedIntake) return;
+    const data = hydratedIntake;
+    setIntake(data);
+    if (data.already_contacted === "yes") {
+      if (data.contact_method) setContactMethod(data.contact_method);
+      if (typeof data.contact_date === "string" && isValidDocumentedContactDate(data.contact_date)) {
+        setContactDate(data.contact_date.trim());
       }
-    } catch {
-      router.replace("/justice/intake");
+      if (data.merchant_response_type) setMerchantResponseType(data.merchant_response_type);
+      if (data.contact_proof_type) setContactProofType(data.contact_proof_type);
+      if (typeof data.contact_proof_text === "string") setContactProofText(data.contact_proof_text);
     }
-  }, [router]);
+  }, [hydrationStatus, hydratedIntake]);
 
   const message = useMemo(() => (intake ? buildMerchantMessage(intake) : ""), [intake]);
 
@@ -274,7 +268,7 @@ export default function JusticeMerchantPage() {
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
-  if (!intake) {
+  if (hydrationStatus !== "ready" || !intake) {
     return (
       <>
         <Header />

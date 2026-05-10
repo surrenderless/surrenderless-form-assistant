@@ -6,7 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import type { DestinationStatus, JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import {
+  STORAGE_CASE_ID,
+  STORAGE_FTC_MANUAL_UNLOCK,
+  STORAGE_INTAKE,
+  STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
+} from "@/lib/justice/types";
 import {
   cfpbLikelyRelevant,
   cfpbPrepDocumentedFromIntake,
@@ -70,8 +75,6 @@ function formatTimelineTs(iso: string): string {
     return iso;
   }
 }
-
-const PAYMENT_DRAFT_STORAGE_KEY = "justice_payment_dispute_checklist_draft_v1";
 
 const PREP_TYPES: TimelineEntryType[] = [
   "state_ag_prep_opened",
@@ -415,7 +418,7 @@ export default function JusticePlanPage() {
 
     if (typeof window === "undefined") return null;
     try {
-      const raw = sessionStorage.getItem(PAYMENT_DRAFT_STORAGE_KEY);
+      const raw = sessionStorage.getItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1);
       if (!raw) return null;
       const d = JSON.parse(raw) as { case_id?: string; merchant_name?: string; charge_amount?: string };
       if (d.case_id !== cid) return null;

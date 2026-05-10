@@ -3,7 +3,6 @@
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
@@ -13,6 +12,7 @@ import {
   readTimeline,
   syncCaseTimelineToServer,
 } from "@/lib/justice/timeline";
+import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const US_STATES: { code: string; name: string }[] = [
   { code: "AL", name: "Alabama" },
@@ -157,38 +157,29 @@ const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
 export default function JusticeStateAgPrepPage() {
-  const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
+  const { status: hydrationStatus, intake: hydratedIntake } = useJusticeActionPageHydration();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [caseId, setCaseId] = useState("");
   const [stateAgComplaintFiled, setStateAgComplaintFiled] = useState(false);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem(STORAGE_INTAKE);
-    if (!raw) {
-      router.replace("/justice/intake");
-      return;
+    if (hydrationStatus !== "ready" || !hydratedIntake) return;
+    setIntake(hydratedIntake);
+    const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
+    setCaseId(cid);
+    if (cid) {
+      appendStateAgPrepOpenedOnce(cid);
+      setStateAgComplaintFiled(readTimeline(cid).some((e) => e.type === "state_ag_complaint_filed"));
+    } else {
+      setStateAgComplaintFiled(false);
     }
-    try {
-      const data = JSON.parse(raw) as JusticeIntake;
-      setIntake(data);
-      const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
-      setCaseId(cid);
-      if (cid) {
-        appendStateAgPrepOpenedOnce(cid);
-        setStateAgComplaintFiled(readTimeline(cid).some((e) => e.type === "state_ag_complaint_filed"));
-      } else {
-        setStateAgComplaintFiled(false);
-      }
 
-      if (isLoaded && isSignedIn && cid) {
-        void syncCaseTimelineToServer(cid);
-      }
-    } catch {
-      router.replace("/justice/intake");
+    if (isLoaded && isSignedIn && cid) {
+      void syncCaseTimelineToServer(cid);
     }
-  }, [router, isLoaded, isSignedIn]);
+  }, [hydrationStatus, hydratedIntake, isLoaded, isSignedIn]);
 
   const complaintText = useMemo(() => (intake ? buildStateAgComplaintDraft(intake) : ""), [intake]);
 
@@ -227,7 +218,7 @@ export default function JusticeStateAgPrepPage() {
     }
   }
 
-  if (!intake) {
+  if (hydrationStatus !== "ready" || !intake) {
     return (
       <>
         <Header />

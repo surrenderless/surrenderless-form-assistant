@@ -10,6 +10,7 @@ import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/li
 import { computeFtcUnlocked } from "@/lib/justice/rules";
 import { intakeToMockFtcUserData } from "@/lib/justice/ftc-user-data";
 import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
+import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 async function logEvent(event_name: string, payload: Record<string, unknown>) {
   try {
@@ -26,6 +27,7 @@ async function logEvent(event_name: string, payload: Record<string, unknown>) {
 export default function JusticeFtcReviewPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
+  const { status: hydrationStatus, intake: hydratedIntake } = useJusticeActionPageHydration();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [running, setRunning] = useState(false);
@@ -35,25 +37,16 @@ export default function JusticeFtcReviewPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem(STORAGE_INTAKE);
-    if (!raw) {
-      router.replace("/justice/intake");
+    if (hydrationStatus !== "ready" || !hydratedIntake) return;
+    const manual = sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    if (!computeFtcUnlocked(hydratedIntake, manual)) {
+      router.replace("/justice/plan");
       return;
     }
-    try {
-      const data = JSON.parse(raw) as JusticeIntake;
-      const manual = sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
-      if (!computeFtcUnlocked(data, manual)) {
-        router.replace("/justice/plan");
-        return;
-      }
-      setIntake(data);
-    } catch {
-      router.replace("/justice/intake");
-    }
-  }, [router]);
+    setIntake(hydratedIntake);
+  }, [hydrationStatus, hydratedIntake, router]);
 
-  if (!intake) {
+  if (hydrationStatus !== "ready" || !intake) {
     return (
       <>
         <Header />
