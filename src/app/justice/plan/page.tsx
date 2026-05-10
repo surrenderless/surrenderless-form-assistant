@@ -100,27 +100,21 @@ function latestByTs(entries: TimelineEntry[]): TimelineEntry | undefined {
   return [...entries].sort((a, b) => b.ts.localeCompare(a.ts))[0];
 }
 
-/** Furthest meaningful milestone for the status line (existing timeline types only). */
+/** Furthest meaningful milestone: FTC → prep (latest) → escalation → merchant → started. */
 function computeTimelineStatusSummary(entries: TimelineEntry[]): string {
-  const preps = entries.filter((e) => PREP_TYPES.includes(e.type));
-  const latestPrep = latestByTs(preps);
-  if (latestPrep) return prepStageLabel(latestPrep.type);
-
   const ftcDone = latestByTs(entries.filter((e) => e.type === "ftc_practice_completed"));
   if (ftcDone) return "FTC practice completed";
 
   const ftcStart = latestByTs(entries.filter((e) => e.type === "ftc_practice_started"));
   if (ftcStart) return "FTC practice started";
 
-  const payPrepared = latestByTs(entries.filter((e) => e.type === "payment_dispute_checklist_prepared"));
-  if (payPrepared) return "Payment dispute checklist prepared";
+  const preps = entries.filter((e) => PREP_TYPES.includes(e.type));
+  const latestPrep = latestByTs(preps);
+  if (latestPrep) return prepStageLabel(latestPrep.type);
 
-  const payViewed = latestByTs(entries.filter((e) => e.type === "payment_checklist_viewed"));
-  if (payViewed) return "Payment checklist viewed";
+  if (latestByTs(entries.filter((e) => e.type === "escalation_unlocked"))) return "Escalation ready";
 
-  if (entries.some((e) => e.type === "escalation_unlocked")) return "Escalation ready";
-
-  if (entries.some((e) => e.type === "merchant_contact_saved")) return "Company contacted";
+  if (latestByTs(entries.filter((e) => e.type === "merchant_contact_saved"))) return "Company contacted";
 
   return "Started";
 }
@@ -356,15 +350,18 @@ export default function JusticePlanPage() {
 
   const progressLine = useMemo(() => latestTimelineProgressLine(timeline), [timeline]);
 
-  const paymentDraftHint = useMemo(() => {
+  const paymentDraftUi = useMemo((): { detail?: string } | null => {
     const cid = caseId || (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) : null) || "";
     if (!cid) return null;
-    if (serverPaymentDisputeDraft != null && typeof serverPaymentDisputeDraft === "object") {
+
+    if (serverPaymentDisputeDraft != null) {
+      if (typeof serverPaymentDisputeDraft !== "object" || Array.isArray(serverPaymentDisputeDraft)) return null;
+      if (Object.keys(serverPaymentDisputeDraft as object).length === 0) return null;
       const d = serverPaymentDisputeDraft as { merchant_name?: string; charge_amount?: string };
       const bits = [d.merchant_name?.trim(), d.charge_amount?.trim()].filter(Boolean);
-      if (bits.length) return `${bits.join(" · ")}`;
-      return "Saved on your account";
+      return bits.length ? { detail: bits.join(" · ") } : {};
     }
+
     if (typeof window === "undefined") return null;
     try {
       const raw = sessionStorage.getItem(PAYMENT_DRAFT_STORAGE_KEY);
@@ -372,8 +369,7 @@ export default function JusticePlanPage() {
       const d = JSON.parse(raw) as { case_id?: string; merchant_name?: string; charge_amount?: string };
       if (d.case_id !== cid) return null;
       const bits = [d.merchant_name?.trim(), d.charge_amount?.trim()].filter(Boolean);
-      if (bits.length) return `${bits.join(" · ")} (this device)`;
-      return "On this device";
+      return bits.length ? { detail: `${bits.join(" · ")} (on this device)` } : {};
     } catch {
       return null;
     }
@@ -488,7 +484,7 @@ export default function JusticePlanPage() {
   const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
 
   const summaryCardCls =
-    "mt-4 rounded-xl border border-neutral-200/90 bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06]";
+    "mt-4 rounded-xl border border-neutral-200/90 bg-white px-4 py-4 text-sm leading-relaxed shadow-sm ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06]";
 
   return (
     <>
@@ -518,37 +514,43 @@ export default function JusticePlanPage() {
 
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
 
-        <section className={summaryCardCls} aria-label="Case summary">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">Case</p>
-          <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">{caseSummaryTitle}</p>
-          <div className="mt-3 space-y-1.5 text-neutral-700 dark:text-neutral-300">
-            <p>
-              <span className="text-neutral-500 dark:text-neutral-400">Company · </span>
-              {intake.company_name}
-            </p>
-            <p>
-              <span className="text-neutral-500 dark:text-neutral-400">Issue / product · </span>
-              {intake.purchase_or_signup.trim() || "—"}
-            </p>
-            <p>
-              <span className="text-neutral-500 dark:text-neutral-400">Money · </span>
-              {intake.money_involved.trim() || "—"}
-            </p>
-            <p>
-              <span className="text-neutral-500 dark:text-neutral-400">Status · </span>
-              <span className="font-medium text-neutral-900 dark:text-neutral-100">{timelineStatus}</span>
-            </p>
+        <section className={summaryCardCls} aria-label="Current case summary">
+          <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Current case</p>
+          <p className="mt-2 text-base font-semibold text-neutral-900 dark:text-neutral-100">{caseSummaryTitle}</p>
+          <div className="mt-4 space-y-3 text-neutral-700 dark:text-neutral-300">
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Company</p>
+              <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">{intake.company_name}</p>
+            </div>
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Issue or product</p>
+              <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">
+                {intake.purchase_or_signup.trim() || "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Money involved</p>
+              <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">
+                {intake.money_involved.trim() || "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Where you are now</p>
+              <p className="mt-1 font-medium text-neutral-900 dark:text-neutral-100">{timelineStatus}</p>
+            </div>
             {progressLine ? (
-              <p className="border-t border-neutral-100 pt-2 text-neutral-800 dark:border-neutral-700 dark:text-neutral-200">
-                <span className="text-neutral-500 dark:text-neutral-400">Latest · </span>
-                {progressLine}
-              </p>
+              <div className="border-t border-neutral-100 pt-3 dark:border-neutral-700">
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">Latest update</p>
+                <p className="mt-1 text-neutral-800 dark:text-neutral-200">{progressLine}</p>
+              </div>
             ) : null}
-            {paymentDraftHint ? (
-              <p className="border-t border-neutral-100 pt-2 text-neutral-800 dark:border-neutral-700 dark:text-neutral-200">
-                <span className="text-neutral-500 dark:text-neutral-400">Payment checklist draft · </span>
-                {paymentDraftHint}
-              </p>
+            {paymentDraftUi ? (
+              <div className="border-t border-neutral-100 pt-3 dark:border-neutral-700">
+                <p className="font-medium text-neutral-900 dark:text-neutral-100">Payment dispute draft saved</p>
+                {paymentDraftUi.detail ? (
+                  <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{paymentDraftUi.detail}</p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </section>
