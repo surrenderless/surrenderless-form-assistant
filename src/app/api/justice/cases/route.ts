@@ -13,6 +13,27 @@ type CaseResponse = {
   updated_at: string;
 };
 
+export async function GET(req: NextRequest) {
+  const userId = getUserOr401(req);
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("justice_cases")
+    .select("id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.warn("justice_cases list:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json((data ?? []) as CaseResponse[]);
+}
+
 export async function POST(req: NextRequest) {
   const userId = getUserOr401(req);
   if (!userId) {
