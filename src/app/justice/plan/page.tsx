@@ -348,6 +348,10 @@ export default function JusticePlanPage() {
             Edit answers
           </Link>
           {" · "}
+          <Link href="/justice/cases" className="text-blue-600 hover:underline">
+            Saved cases
+          </Link>
+          {" · "}
           <Link href="/" className="text-blue-600 hover:underline">
             Home
           </Link>
