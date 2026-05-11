@@ -21,15 +21,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const { data, error } = await supabaseAdmin
+  const archivedOnly = req.nextUrl.searchParams.get("archived") === "1";
+
+  let listQuery = supabaseAdmin
     .from("justice_cases")
     .select(
       "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label"
     )
-    .eq("user_id", userId)
-    .is("archived_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(10);
+    .eq("user_id", userId);
+
+  listQuery = archivedOnly
+    ? listQuery.not("archived_at", "is", null)
+    : listQuery.is("archived_at", null);
+
+  const { data, error } = await listQuery.order("updated_at", { ascending: false }).limit(10);
 
   if (error) {
     console.warn("justice_cases list:", error.message);

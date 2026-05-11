@@ -168,13 +168,17 @@ export default function JusticeCasesPage() {
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           Open a case you saved while signed in to continue your action plan.
         </p>
-        <p className="mt-3">
+        <p className="mt-3 text-sm">
           <Link
             href="/justice/intake"
             onClick={() => clearLocalJusticeSession()}
-            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+            className="font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
             Start new case
+          </Link>
+          {" · "}
+          <Link href="/justice/cases/archived" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+            Archived cases
           </Link>
         </p>
 
