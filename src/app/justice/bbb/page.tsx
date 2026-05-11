@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Header from "@/app/components/Header";
+import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
@@ -127,6 +128,10 @@ export default function JusticeBbbPrepPage() {
     if (isLoaded && isSignedIn) {
       await syncCaseTimelineToServer(cid);
     }
+  }
+
+  if (hydrationStatus === "needs_sign_in") {
+    return <JusticeActionResumeSignInPrompt />;
   }
 
   if (hydrationStatus !== "ready" || !intake) {

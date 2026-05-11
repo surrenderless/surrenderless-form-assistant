@@ -10,13 +10,13 @@ import {
 import type { JusticeIntake } from "@/lib/justice/types";
 
 export type JusticeActionPageHydration = {
-  status: "loading" | "ready" | "redirecting";
+  status: "loading" | "ready" | "redirecting" | "needs_sign_in";
   intake: JusticeIntake | null;
 };
 
 /**
  * For justice action routes: prefer valid local intake; if absent and signed in, resume latest case from GET /api/justice/cases.
- * If absent and signed out, navigates to /justice/intake.
+ * If absent and signed out, status is `needs_sign_in` (no redirect — pages show a resume prompt).
  */
 export function useJusticeActionPageHydration(): JusticeActionPageHydration {
   const { isLoaded, isSignedIn } = useAuth();
@@ -41,8 +41,7 @@ export function useJusticeActionPageHydration(): JusticeActionPageHydration {
     }
 
     if (!isSignedIn) {
-      setState({ status: "redirecting", intake: null });
-      router.replace("/justice/intake");
+      setState({ status: "needs_sign_in", intake: null });
       return;
     }
 
