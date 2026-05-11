@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/nextjs";
 import Header from "@/app/components/Header";
+import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { computeFtcUnlocked } from "@/lib/justice/rules";
@@ -45,6 +46,10 @@ export default function JusticeFtcReviewPage() {
     }
     setIntake(hydratedIntake);
   }, [hydrationStatus, hydratedIntake, router]);
+
+  if (hydrationStatus === "needs_sign_in") {
+    return <JusticeActionResumeSignInPrompt />;
+  }
 
   if (hydrationStatus !== "ready" || !intake) {
     return (

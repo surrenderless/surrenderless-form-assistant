@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
+import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1 } from "@/lib/justice/types";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
@@ -358,6 +359,10 @@ export default function JusticePaymentDisputePage() {
   const inputCls =
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
+
+  if (hydrationStatus === "needs_sign_in") {
+    return <JusticeActionResumeSignInPrompt />;
+  }
 
   if (hydrationStatus !== "ready" || !intake || !formReady) {
     return (
