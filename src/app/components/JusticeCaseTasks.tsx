@@ -3,6 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
 const cardCls =
@@ -34,9 +35,11 @@ function sortTasks(rows: JusticeCaseTaskRow[]): JusticeCaseTaskRow[] {
 
 export type JusticeCaseTasksProps = {
   onTasksChange?: () => void;
+  /** After task APIs update the server timeline and session storage, refresh parent UI (e.g. action plan `readTimeline`). */
+  onCaseTimelineSynced?: () => void;
 };
 
-export default function JusticeCaseTasks({ onTasksChange }: JusticeCaseTasksProps) {
+export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }: JusticeCaseTasksProps) {
   const { isLoaded, isSignedIn } = useAuth();
   const [caseId, setCaseId] = useState("");
   const [items, setItems] = useState<JusticeCaseTaskRow[]>([]);
@@ -120,11 +123,16 @@ export default function JusticeCaseTasks({ onTasksChange }: JusticeCaseTasksProp
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
         setAddError(err.error ?? "Could not save task.");
         return;
       }
+      applyServerTimelineFromResponse(cid, payload);
+      onCaseTimelineSynced?.();
       setTitle("");
       setDueDate("");
       setNotes("");
@@ -164,11 +172,17 @@ export default function JusticeCaseTasks({ onTasksChange }: JusticeCaseTasksProp
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ completed_at: nextCompleted }),
       });
+      const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {
         console.warn("justice tasks: patch failed", res.status);
         return;
       }
-      const updated = (await res.json()) as JusticeCaseTaskRow;
+      const cid = readCaseId();
+      if (cid) applyServerTimelineFromResponse(cid, payload);
+      onCaseTimelineSynced?.();
+      const raw = payload as (JusticeCaseTaskRow & { timeline?: unknown }) | null;
+      if (!raw) return;
+      const { timeline: _tl, ...updated } = raw;
       setItems((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
       onTasksChange?.();
     } catch {

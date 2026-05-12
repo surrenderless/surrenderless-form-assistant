@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { validate as isUuid } from "uuid";
 import { getUserOr401 } from "@/server/requireUser";
 import { userOwnsJusticeCase } from "@/server/justiceCaseOwnership";
+import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import { supabaseAdmin } from "@/utils/supabaseClient";
 
 const MAX_DEST = 500;
@@ -137,5 +138,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  const conf = data.confirmation_number?.trim();
+  const detail = conf ? `${data.destination} filed — ${conf}` : `${data.destination} filed`;
+  const timeline = await appendCaseTimelineEntry(userId, caseId, {
+    id: `justice_fil:${data.id}`,
+    type: "filing_recorded",
+    label: "Filing recorded",
+    detail,
+  });
+
+  return NextResponse.json(timeline ? { ...data, timeline } : data);
 }

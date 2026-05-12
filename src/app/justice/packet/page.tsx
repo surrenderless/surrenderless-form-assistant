@@ -190,6 +190,7 @@ export default function JusticePacketPage() {
   const [evidenceError, setEvidenceError] = useState(false);
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
   const [copyHint, setCopyHint] = useState<string | null>(null);
+  const [timelineTick, setTimelineTick] = useState(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -492,7 +493,7 @@ export default function JusticePacketPage() {
 
         <JusticeFilingRecords onFilingsChange={() => void loadFilings()} />
 
-        <JusticeCaseTasks />
+        <JusticeCaseTasks onCaseTimelineSynced={() => setTimelineTick((n) => n + 1)} />
 
         <section className={`mt-5 ${cardCls}`} aria-labelledby="packet-bundle">
           <h2 id="packet-bundle" className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
