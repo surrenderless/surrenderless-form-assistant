@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/nextjs";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
+import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { computeFtcUnlocked } from "@/lib/justice/rules";
@@ -179,6 +180,8 @@ export default function JusticeFtcReviewPage() {
             </li>
           ))}
         </ul>
+
+        <JusticeSavedEvidenceList />
 
         <label className="mt-6 flex items-start gap-3 rounded-2xl border border-neutral-200/90 bg-white p-4 text-sm text-neutral-800 shadow-md shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:shadow-black/40 dark:ring-white/[0.06]">
           <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />

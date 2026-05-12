@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Header from "@/app/components/Header";
+import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
@@ -323,6 +324,8 @@ export default function JusticeCfpbPrepPage() {
             ))}
           </ul>
         </div>
+
+        <JusticeSavedEvidenceList />
 
         <div className={`mt-5 ${cardCls}`}>
           <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">

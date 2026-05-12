@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
+import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1 } from "@/lib/justice/types";
@@ -537,6 +538,8 @@ export default function JusticePaymentDisputePage() {
             {saving ? "Saving…" : "Save and return to action plan"}
           </button>
         </form>
+
+        <JusticeSavedEvidenceList />
 
         <div className={`mt-6 ${cardCls}`}>
           <label className={labelCls}>Copy for your bank or card issuer</label>
