@@ -18,6 +18,16 @@ import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPag
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
+/** Light background for dark-mode users; @page margin for exported print. */
+const PRINT_STYLES = `
+@media print {
+  @page { margin: 0.6in; }
+  html, body {
+    background: #fff !important;
+  }
+}
+`;
+
 function formatTimelineTs(iso: string): string {
   try {
     const d = new Date(iso);
@@ -224,6 +234,24 @@ export default function JusticePacketPage() {
     }
   }
 
+  function downloadPacket() {
+    if (!packetText || !caseId) return;
+    const blob = new Blob([packetText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `justice-case-packet-${caseId}.txt`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function printPacket() {
+    window.print();
+  }
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
@@ -303,9 +331,11 @@ export default function JusticePacketPage() {
 
   return (
     <>
-      <Header />
-      <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-2xl bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+      <style dangerouslySetInnerHTML={{ __html: PRINT_STYLES }} />
+      <div className="print:hidden">
+        <Header />
+        <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-2xl bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
           <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
             Back to action plan
           </Link>
@@ -438,10 +468,38 @@ export default function JusticePacketPage() {
             >
               Copy packet
             </button>
+            <button
+              type="button"
+              disabled={!packetText}
+              onClick={() => downloadPacket()}
+              className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+            >
+              Download .txt
+            </button>
+            <button
+              type="button"
+              onClick={() => printPacket()}
+              className="rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+            >
+              Print packet
+            </button>
             {copyHint ? <span className="text-xs text-emerald-700 dark:text-emerald-400">{copyHint}</span> : null}
           </div>
         </section>
-      </main>
+        </main>
+      </div>
+
+      <div
+        className="justice-packet-print-root hidden text-black print:block print:bg-white print:p-0"
+      >
+        <div className="print:p-[0.6in]">
+          <h1 className="text-xl font-bold text-neutral-900 print:text-black">Justice case packet</h1>
+          <p className="mt-1 text-sm text-neutral-700 print:text-black">Case id: {caseId}</p>
+          <pre className="mt-4 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-neutral-900 print:text-black print:text-[10pt]">
+            {packetText}
+          </pre>
+        </div>
+      </div>
     </>
   );
 }
