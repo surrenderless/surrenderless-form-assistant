@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
+import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import {
   JUSTICE_EVIDENCE_TYPE_LABELS,
@@ -490,6 +491,8 @@ export default function JusticePacketPage() {
         </section>
 
         <JusticeFilingRecords onFilingsChange={() => void loadFilings()} />
+
+        <JusticeCaseTasks />
 
         <section className={`mt-5 ${cardCls}`} aria-labelledby="packet-bundle">
           <h2 id="packet-bundle" className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
