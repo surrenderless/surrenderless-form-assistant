@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { validate as isUuid } from "uuid";
-import { isJusticeEvidenceType } from "@/lib/justice/evidence";
+import { isJusticeEvidenceType, JUSTICE_EVIDENCE_TYPE_LABELS } from "@/lib/justice/evidence";
 import { getUserOr401 } from "@/server/requireUser";
 import { userOwnsJusticeCase } from "@/server/justiceCaseOwnership";
+import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import { supabaseAdmin } from "@/utils/supabaseClient";
 
 function nonEmptyString(v: unknown): v is string {
@@ -113,5 +114,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  const et = data.evidence_type;
+  const typeLabel = isJusticeEvidenceType(et)
+    ? JUSTICE_EVIDENCE_TYPE_LABELS[et]
+    : et.replace(/_/g, " ");
+  const timeline = await appendCaseTimelineEntry(userId, caseId, {
+    id: `justice_ev:${data.id}`,
+    type: "evidence_added",
+    label: "Evidence added",
+    detail: `${data.title} — ${typeLabel}`,
+  });
+
+  return NextResponse.json(timeline ? { ...data, timeline } : data);
 }

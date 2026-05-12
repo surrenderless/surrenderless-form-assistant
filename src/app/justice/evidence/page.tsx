@@ -10,6 +10,7 @@ import {
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
 const cardCls =
@@ -113,11 +114,15 @@ export default function JusticeEvidencePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
         setAddError(err.error ?? "Could not save evidence.");
         return;
       }
+      applyServerTimelineFromResponse(cid, payload);
       setTitle("");
       setEvidenceDate("");
       setDescription("");

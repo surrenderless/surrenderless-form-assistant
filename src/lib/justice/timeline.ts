@@ -96,6 +96,15 @@ export function replaceTimelineForCase(
 const EXT_FILING_MARKED_DETAIL = "User marked external filing complete.";
 
 /** PATCH timeline to server and replace local store with response (signed-in flow). */
+/** When an API returns `{ …resource, timeline?: TimelineEntry[] }`, merge into session storage. */
+export function applyServerTimelineFromResponse(caseId: string, payload: unknown): void {
+  if (!caseId || typeof window === "undefined") return;
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return;
+  const timeline = (payload as Record<string, unknown>).timeline;
+  if (!Array.isArray(timeline)) return;
+  replaceTimelineForCase(caseId, timeline as TimelineEntry[]);
+}
+
 export async function syncCaseTimelineToServer(caseId: string): Promise<void> {
   if (!caseId || typeof window === "undefined") return;
   try {

@@ -703,7 +703,13 @@ export default function JusticePlanPage() {
           )}
         </section>
 
-        <JusticeCaseTasks />
+        <JusticeCaseTasks
+          onCaseTimelineSynced={() => {
+            const cid =
+              caseId || (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) : null) || "";
+            if (cid) setTimeline(readTimeline(cid));
+          }}
+        />
 
         <ul className="mt-8 space-y-5">
           <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">

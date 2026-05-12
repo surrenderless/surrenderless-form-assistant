@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { validate as isUuid } from "uuid";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  appendCaseTimelineEntry,
+  getJusticeCaseTimelineForUser,
+  newTaskCompletedTimelineId,
+} from "@/server/justiceTimelineAppend";
 import { supabaseAdmin } from "@/utils/supabaseClient";
 
 const SELECT =
@@ -91,6 +96,21 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
 
+  const { data: prev, error: prevErr } = await supabaseAdmin
+    .from("justice_case_tasks")
+    .select(SELECT)
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (prevErr) {
+    console.warn("justice_case_tasks read before update:", prevErr.message);
+    return NextResponse.json({ error: prevErr.message }, { status: 500 });
+  }
+  if (!prev) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const { data, error } = await supabaseAdmin
     .from("justice_case_tasks")
     .update(patch)
@@ -106,6 +126,25 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
 
   if (!data) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const completing =
+    Object.prototype.hasOwnProperty.call(b, "completed_at") &&
+    patch.completed_at != null &&
+    prev.completed_at == null;
+
+  if (completing) {
+    const titleDetail = data.title.trim();
+    let timeline = await appendCaseTimelineEntry(userId, data.case_id, {
+      id: newTaskCompletedTimelineId(),
+      type: "task_completed",
+      label: "Follow-up task completed",
+      detail: titleDetail,
+    });
+    if (!timeline) {
+      timeline = await getJusticeCaseTimelineForUser(userId, data.case_id);
+    }
+    return NextResponse.json(timeline != null ? { ...data, timeline } : data);
   }
 
   return NextResponse.json(data);

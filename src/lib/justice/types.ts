@@ -84,7 +84,11 @@ export type TimelineEntryType =
   | "state_ag_complaint_filed"
   | "bbb_complaint_filed"
   | "cfpb_complaint_filed"
-  | "fcc_complaint_filed";
+  | "fcc_complaint_filed"
+  | "evidence_added"
+  | "filing_recorded"
+  | "task_added"
+  | "task_completed";
 
 export type TimelineEntry = {
   id: string;
