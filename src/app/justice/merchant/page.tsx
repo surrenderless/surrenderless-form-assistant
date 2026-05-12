@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
+import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
@@ -378,6 +379,8 @@ export default function JusticeMerchantPage() {
             ) : null}
           </div>
         </div>
+
+        <JusticeSavedEvidenceList />
 
         <form onSubmit={(e) => void handleSave(e)} className={`mt-6 space-y-4 ${cardCls}`}>
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">After you contact them</p>
