@@ -3,12 +3,13 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
 type CaseRow = {
   id: string;
@@ -36,6 +37,22 @@ function problemCategoryLabel(category: string): string {
   return category.replace(/_/g, " ");
 }
 
+type CaseProgressSummary = {
+  evidenceCount: number;
+  filingsCount: number;
+  openTasksCount: number;
+  nextDue: string | null;
+};
+
+function soonestOpenTaskDueDate(tasks: JusticeCaseTaskRow[]): string | null {
+  const open = tasks.filter((t) => !t.completed_at);
+  const dates = open
+    .map((t) => t.due_date?.trim())
+    .filter((d): d is string => Boolean(d));
+  if (dates.length === 0) return null;
+  return [...dates].sort((a, b) => a.localeCompare(b))[0];
+}
+
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]";
 
@@ -51,6 +68,10 @@ export default function JusticeCasesPage() {
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [labelDraftById, setLabelDraftById] = useState<Record<string, string>>({});
   const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
+  const [progressById, setProgressById] = useState<Record<string, CaseProgressSummary>>({});
+  const [progressLoading, setProgressLoading] = useState(false);
+
+  const caseIdsKey = useMemo(() => (cases ?? []).map((c) => c.id).sort().join(","), [cases]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -78,6 +99,71 @@ export default function JusticeCasesPage() {
 
     return () => ac.abort();
   }, [isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !caseIdsKey) {
+      setProgressById({});
+      setProgressLoading(false);
+      return;
+    }
+
+    const ids = caseIdsKey.split(",").filter(Boolean);
+    const ac = new AbortController();
+    setProgressLoading(true);
+
+    void (async () => {
+      try {
+        const rows = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const [evRes, filRes, taskRes] = await Promise.all([
+                fetch(`/api/justice/evidence?case_id=${encodeURIComponent(id)}`, { signal: ac.signal }),
+                fetch(`/api/justice/filings?case_id=${encodeURIComponent(id)}`, { signal: ac.signal }),
+                fetch(`/api/justice/tasks?case_id=${encodeURIComponent(id)}`, { signal: ac.signal }),
+              ]);
+              if (ac.signal.aborted) return null;
+              const evJson: unknown = evRes.ok ? await evRes.json() : [];
+              const filJson: unknown = filRes.ok ? await filRes.json() : [];
+              const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
+              const evidenceCount = Array.isArray(evJson) ? evJson.length : 0;
+              const filingsCount = Array.isArray(filJson) ? filJson.length : 0;
+              const tasks = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
+              const openTasksCount = tasks.filter((t) => !t.completed_at).length;
+              const nextDue = soonestOpenTaskDueDate(tasks);
+              return {
+                id,
+                evidenceCount,
+                filingsCount,
+                openTasksCount,
+                nextDue,
+              } satisfies CaseProgressSummary & { id: string };
+            } catch {
+              if (ac.signal.aborted) return null;
+              return {
+                id,
+                evidenceCount: 0,
+                filingsCount: 0,
+                openTasksCount: 0,
+                nextDue: null,
+              };
+            }
+          })
+        );
+        if (ac.signal.aborted) return;
+        const next: Record<string, CaseProgressSummary> = {};
+        for (const r of rows) {
+          if (!r) continue;
+          const { id, ...summary } = r;
+          next[id] = summary;
+        }
+        setProgressById(next);
+      } finally {
+        if (!ac.signal.aborted) setProgressLoading(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [isLoaded, isSignedIn, caseIdsKey]);
 
   useEffect(() => {
     if (!cases) return;
@@ -214,6 +300,18 @@ export default function JusticeCasesPage() {
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                   Updated {formatUpdatedAt(row.updated_at)}
                 </p>
+                {progressLoading && progressById[row.id] === undefined ? (
+                  <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Loading progress…</p>
+                ) : (
+                  <ul className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+                    <li>Evidence: {progressById[row.id]?.evidenceCount ?? "—"}</li>
+                    <li>Filings: {progressById[row.id]?.filingsCount ?? "—"}</li>
+                    <li>Open tasks: {progressById[row.id]?.openTasksCount ?? "—"}</li>
+                    <li>
+                      Next due: {progressById[row.id]?.nextDue?.trim() || "None"}
+                    </li>
+                  </ul>
+                )}
                 <div className="mt-4">
                   <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
                     Case label
