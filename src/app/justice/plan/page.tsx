@@ -7,7 +7,9 @@ import Link from "next/link";
 import Header from "@/app/components/Header";
 import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
 import type { DestinationStatus, JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
+import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
   STORAGE_CASE_ID,
   STORAGE_FTC_MANUAL_UNLOCK,
@@ -91,6 +93,16 @@ function formatFilingDateDisplay(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function isBasicCaseInfoComplete(intake: JusticeIntake): boolean {
+  return (
+    intake.company_name.trim().length > 0 &&
+    Boolean(intake.problem_category) &&
+    intake.purchase_or_signup.trim().length > 0 &&
+    intake.story.trim().length > 0 &&
+    intake.money_involved.trim().length > 0
+  );
 }
 
 const PREP_TYPES: TimelineEntryType[] = [
@@ -214,7 +226,10 @@ export default function JusticePlanPage() {
   /** Signed-in, no local case id — fetch GET /api/justice/cases to resume latest. */
   const [resumeLatestPending, setResumeLatestPending] = useState(false);
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
-  const [filingsLoading, setFilingsLoading] = useState(false);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [evidenceCount, setEvidenceCount] = useState(0);
+  const [tasksForReadiness, setTasksForReadiness] = useState<JusticeCaseTaskRow[]>([]);
+  const [readinessTick, setReadinessTick] = useState(0);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -413,38 +428,49 @@ export default function JusticePlanPage() {
   useEffect(() => {
     if (!isLoaded || !isSignedIn) {
       setFilings([]);
-      setFilingsLoading(false);
+      setEvidenceCount(0);
+      setTasksForReadiness([]);
+      setReadinessLoading(false);
       return;
     }
     const cid = caseId || sessionStorage.getItem(STORAGE_CASE_ID) || "";
     if (!cid) {
       setFilings([]);
-      setFilingsLoading(false);
+      setEvidenceCount(0);
+      setTasksForReadiness([]);
+      setReadinessLoading(false);
       return;
     }
     let cancelled = false;
-    setFilingsLoading(true);
+    setReadinessLoading(true);
     void (async () => {
       try {
-        const res = await fetch(`/api/justice/filings?case_id=${encodeURIComponent(cid)}`);
+        const [filRes, evRes, taskRes] = await Promise.all([
+          fetch(`/api/justice/filings?case_id=${encodeURIComponent(cid)}`),
+          fetch(`/api/justice/evidence?case_id=${encodeURIComponent(cid)}`),
+          fetch(`/api/justice/tasks?case_id=${encodeURIComponent(cid)}`),
+        ]);
         if (cancelled) return;
-        if (!res.ok) {
-          setFilings([]);
-          return;
-        }
-        const data: unknown = await res.json();
-        if (cancelled) return;
-        setFilings(Array.isArray(data) ? (data as JusticeCaseFilingRow[]) : []);
+        const filJson: unknown = filRes.ok ? await filRes.json() : [];
+        const evJson: unknown = evRes.ok ? await evRes.json() : [];
+        const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
+        setFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
+        setEvidenceCount(Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]).length : 0);
+        setTasksForReadiness(Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : []);
       } catch {
-        if (!cancelled) setFilings([]);
+        if (!cancelled) {
+          setFilings([]);
+          setEvidenceCount(0);
+          setTasksForReadiness([]);
+        }
       } finally {
-        if (!cancelled) setFilingsLoading(false);
+        if (!cancelled) setReadinessLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isLoaded, isSignedIn, caseId, pathname]);
+  }, [isLoaded, isSignedIn, caseId, pathname, readinessTick]);
 
   const caseSummaryTitle = useMemo(() => {
     if (!intake) return "";
@@ -488,6 +514,15 @@ export default function JusticePlanPage() {
   const planLatestFilingDateText =
     planLatestFiling != null ? formatFilingDateDisplay(planLatestFiling.filed_at ?? planLatestFiling.created_at) : null;
   const planLatestConfirmation = planLatestFiling?.confirmation_number?.trim() || null;
+
+  const openTaskCount = useMemo(
+    () => tasksForReadiness.filter((t) => !t.completed_at).length,
+    [tasksForReadiness]
+  );
+
+  const basicsReady = intake ? isBasicCaseInfoComplete(intake) : false;
+  const evidenceReady = evidenceCount >= 1;
+  const readyToEscalate = basicsReady && evidenceReady;
 
   if (!intake) {
     if (isLoaded && !isSignedIn) {
@@ -672,6 +707,58 @@ export default function JusticePlanPage() {
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{headline}</p>
         <p className="mt-1 text-xs text-neutral-500">{recommendationText}</p>
 
+        <section
+          className="mt-6 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]"
+          aria-labelledby="case-readiness-heading"
+        >
+          <h2 id="case-readiness-heading" className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+            Case readiness
+          </h2>
+          {!isSignedIn ? (
+            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+              Sign in to load saved evidence, filings, and tasks for this case.
+            </p>
+          ) : readinessLoading ? (
+            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">Loading checklist…</p>
+          ) : (
+            <>
+              <ul className="mt-3 space-y-2.5 text-sm text-neutral-800 dark:text-neutral-200">
+                <li className="flex gap-2">
+                  <span className={basicsReady ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                    {basicsReady ? "✓" : "○"}
+                  </span>
+                  <span>
+                    Basic case info present (company, issue category, product/service, what happened, money/remedy).
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className={evidenceReady ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                    {evidenceReady ? "✓" : "○"}
+                  </span>
+                  <span>Evidence added: {evidenceCount >= 1 ? "at least 1 saved item" : "none yet"}</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className={filings.length >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                    {filings.length >= 1 ? "✓" : "○"}
+                  </span>
+                  <span>Filing recorded: {filings.length === 0 ? "none" : filings.length === 1 ? "1 record" : `${filings.length} records`}</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-neutral-500 dark:text-neutral-400">•</span>
+                  <span>Open tasks: {openTaskCount}</span>
+                </li>
+              </ul>
+              <p
+                className={`mt-4 text-sm font-medium ${
+                  readyToEscalate ? "text-emerald-800 dark:text-emerald-200" : "text-amber-900 dark:text-amber-200"
+                }`}
+              >
+                {readyToEscalate ? "Ready to escalate" : "Needs more info"}
+              </p>
+            </>
+          )}
+        </section>
+
         <section className="mt-6" aria-labelledby="case-timeline-heading">
           <h2
             id="case-timeline-heading"
@@ -709,6 +796,7 @@ export default function JusticePlanPage() {
               caseId || (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) : null) || "";
             if (cid) setTimeline(readTimeline(cid));
           }}
+          onTasksChange={() => setReadinessTick((n) => n + 1)}
         />
 
         <ul className="mt-8 space-y-5">
@@ -798,7 +886,7 @@ export default function JusticePlanPage() {
             <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
               Manual filing details saved for this case (prep pages or packet).
             </p>
-            {filingsLoading ? (
+            {readinessLoading ? (
               <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">Loading…</p>
             ) : filings.length === 0 ? (
               <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">No filing records yet.</p>
