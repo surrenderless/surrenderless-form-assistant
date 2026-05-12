@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
@@ -388,14 +389,29 @@ export default function JusticeCasesPage() {
                 {progressLoading && progressById[row.id] === undefined ? (
                   <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Loading progress…</p>
                 ) : (
-                  <ul className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
-                    <li>Evidence: {progressById[row.id]?.evidenceCount ?? "—"}</li>
-                    <li>Filings: {progressById[row.id]?.filingsCount ?? "—"}</li>
-                    <li>Open tasks: {progressById[row.id]?.openTasksCount ?? "—"}</li>
-                    <li>
-                      Next due: {progressById[row.id]?.nextDue?.trim() || "None"}
-                    </li>
-                  </ul>
+                  <>
+                    <ul className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+                      <li>Evidence: {progressById[row.id]?.evidenceCount ?? "—"}</li>
+                      <li>Filings: {progressById[row.id]?.filingsCount ?? "—"}</li>
+                      <li>Open tasks: {progressById[row.id]?.openTasksCount ?? "—"}</li>
+                      <li>
+                        Next due: {progressById[row.id]?.nextDue?.trim() || "None"}
+                      </li>
+                    </ul>
+                    <p
+                      className={`mt-2 text-xs font-medium ${
+                        isBasicCaseInfoReadyForEscalation(row.intake) &&
+                        (progressById[row.id]?.evidenceCount ?? 0) >= 1
+                          ? "text-emerald-700 dark:text-emerald-400"
+                          : "text-amber-800 dark:text-amber-200"
+                      }`}
+                    >
+                      {isBasicCaseInfoReadyForEscalation(row.intake) &&
+                      (progressById[row.id]?.evidenceCount ?? 0) >= 1
+                        ? "Ready to escalate"
+                        : "Needs more info"}
+                    </p>
+                  </>
                 )}
                 <div className="mt-4">
                   <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">

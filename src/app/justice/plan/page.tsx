@@ -16,6 +16,7 @@ import {
   STORAGE_INTAKE,
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
+import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import {
   cfpbLikelyRelevant,
   cfpbPrepDocumentedFromIntake,
@@ -93,16 +94,6 @@ function formatFilingDateDisplay(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-function isBasicCaseInfoComplete(intake: JusticeIntake): boolean {
-  return (
-    intake.company_name.trim().length > 0 &&
-    Boolean(intake.problem_category) &&
-    intake.purchase_or_signup.trim().length > 0 &&
-    intake.story.trim().length > 0 &&
-    intake.money_involved.trim().length > 0
-  );
 }
 
 const PREP_TYPES: TimelineEntryType[] = [
@@ -520,7 +511,7 @@ export default function JusticePlanPage() {
     [tasksForReadiness]
   );
 
-  const basicsReady = intake ? isBasicCaseInfoComplete(intake) : false;
+  const basicsReady = intake ? isBasicCaseInfoReadyForEscalation(intake) : false;
   const evidenceReady = evidenceCount >= 1;
   const readyToEscalate = basicsReady && evidenceReady;
 
@@ -728,7 +719,8 @@ export default function JusticePlanPage() {
                     {basicsReady ? "✓" : "○"}
                   </span>
                   <span>
-                    Basic case info present (company, issue category, product/service, what happened, money/remedy).
+                    Basic case info present (company, issue category, product/service, what happened, requested
+                    resolution).
                   </span>
                 </li>
                 <li className="flex gap-2">
