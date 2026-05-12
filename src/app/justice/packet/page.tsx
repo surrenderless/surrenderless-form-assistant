@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
+import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import {
   JUSTICE_EVIDENCE_TYPE_LABELS,
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { readTimeline } from "@/lib/justice/timeline";
@@ -83,6 +85,7 @@ function buildPacketPlainText(
   intake: JusticeIntake,
   timeline: TimelineEntry[],
   evidence: JusticeCaseEvidenceRow[],
+  filings: JusticeCaseFilingRow[],
   caseId: string
 ): string {
   const lines: string[] = [
@@ -155,6 +158,23 @@ function buildPacketPlainText(
     });
   }
 
+  lines.push("", "FILING RECORDS", "---------------");
+  if (filings.length === 0) {
+    lines.push("(No filing records yet.)");
+  } else {
+    filings.forEach((row, i) => {
+      lines.push(
+        `${i + 1}. ${row.destination}`,
+        row.filed_at ? `   Filed at: ${row.filed_at}` : "",
+        row.confirmation_number ? `   Confirmation: ${row.confirmation_number}` : "",
+        row.filing_url ? `   URL: ${row.filing_url}` : "",
+        row.notes?.trim() ? `   Notes: ${row.notes.trim()}` : "",
+        `   Recorded: ${formatEvidenceAdded(row.created_at)}`,
+        ""
+      );
+    });
+  }
+
   lines.push("---", "End of packet");
   return lines.filter(Boolean).join("\n").trim();
 }
@@ -167,6 +187,7 @@ export default function JusticePacketPage() {
   const [evidence, setEvidence] = useState<JusticeCaseEvidenceRow[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState(false);
+  const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
   useEffect(() => {
@@ -211,17 +232,36 @@ export default function JusticePacketPage() {
     }
   }, [isLoaded, isSignedIn]);
 
+  const loadFilings = useCallback(async () => {
+    const cid = typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "" : "";
+    if (!cid || !isLoaded || !isSignedIn) {
+      setFilings([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/justice/filings?case_id=${encodeURIComponent(cid)}`);
+      if (!res.ok) {
+        setFilings([]);
+        return;
+      }
+      const data = (await res.json()) as JusticeCaseFilingRow[];
+      setFilings(Array.isArray(data) ? data : []);
+    } catch {
+      setFilings([]);
+    }
+  }, [isLoaded, isSignedIn]);
+
   useEffect(() => {
     if (hydrationStatus !== "ready" || !intake || !isLoaded || !isSignedIn) return;
     const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
     if (!cid) return;
-    void loadEvidence();
-  }, [hydrationStatus, intake, isLoaded, isSignedIn, loadEvidence, caseId]);
+    void Promise.all([loadEvidence(), loadFilings()]);
+  }, [hydrationStatus, intake, isLoaded, isSignedIn, loadEvidence, loadFilings, caseId]);
 
   const packetText = useMemo(() => {
     if (!intake || !caseId) return "";
-    return buildPacketPlainText(intake, timeline, evidence, caseId);
-  }, [intake, timeline, evidence, caseId]);
+    return buildPacketPlainText(intake, timeline, evidence, filings, caseId);
+  }, [intake, timeline, evidence, filings, caseId]);
 
   async function copyPacket() {
     if (!packetText) return;
@@ -336,22 +376,22 @@ export default function JusticePacketPage() {
         <Header />
         <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-2xl bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
-            Back to action plan
-          </Link>
-          {" · "}
-          <Link href="/justice/evidence" className="text-blue-600 hover:underline dark:text-blue-400">
-            Evidence
-          </Link>
-          {" · "}
-          <Link href="/justice/cases" className="text-blue-600 hover:underline dark:text-blue-400">
-            Saved cases
-          </Link>
-        </p>
+            <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
+              Back to action plan
+            </Link>
+            {" · "}
+            <Link href="/justice/evidence" className="text-blue-600 hover:underline dark:text-blue-400">
+              Evidence
+            </Link>
+            {" · "}
+            <Link href="/justice/cases" className="text-blue-600 hover:underline dark:text-blue-400">
+              Saved cases
+            </Link>
+          </p>
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Case packet</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          One copy-ready bundle: summary, resolution, timeline, and saved evidence notes.
+          One copy-ready bundle: summary, resolution, timeline, evidence notes, and filing records.
         </p>
         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Case id: {caseId}</p>
 
@@ -448,6 +488,8 @@ export default function JusticePacketPage() {
             </ul>
           )}
         </section>
+
+        <JusticeFilingRecords onFilingsChange={() => void loadFilings()} />
 
         <section className={`mt-5 ${cardCls}`} aria-labelledby="packet-bundle">
           <h2 id="packet-bundle" className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
