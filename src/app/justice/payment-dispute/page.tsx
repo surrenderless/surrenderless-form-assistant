@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Header from "@/app/components/Header";
+import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -561,6 +562,8 @@ export default function JusticePaymentDisputePage() {
             submit disputes for you.
           </p>
         </div>
+
+        <JusticeFilingRecords />
       </main>
     </>
   );
