@@ -713,6 +713,19 @@ export default function JusticePlanPage() {
           </li>
 
           <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Evidence / proof</h2>
+            <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+              Keep short notes on screenshots, receipts, emails, and other proof tied to this case.
+            </p>
+            <Link
+              href="/justice/evidence"
+              className="mt-4 inline-flex rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+            >
+              Add evidence
+            </Link>
+          </li>
+
+          <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
             {merchantResolved ? (
               <>
                 <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-400">Case resolved</p>
