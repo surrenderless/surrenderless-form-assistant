@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import type { DestinationStatus, JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   STORAGE_CASE_ID,
   STORAGE_FTC_MANUAL_UNLOCK,
@@ -68,6 +69,21 @@ function formatTimelineTs(iso: string): string {
     return d.toLocaleString(undefined, {
       month: "short",
       day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function formatFilingDateDisplay(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
       hour: "numeric",
       minute: "2-digit",
     });
@@ -196,6 +212,8 @@ export default function JusticePlanPage() {
   const pendingServerIntakeRef = useRef(false);
   /** Signed-in, no local case id — fetch GET /api/justice/cases to resume latest. */
   const [resumeLatestPending, setResumeLatestPending] = useState(false);
+  const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
+  const [filingsLoading, setFilingsLoading] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -391,6 +409,42 @@ export default function JusticePlanPage() {
     setTimeline(readTimeline(cid));
   }, [intake, caseId, pathname]);
 
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      setFilings([]);
+      setFilingsLoading(false);
+      return;
+    }
+    const cid = caseId || sessionStorage.getItem(STORAGE_CASE_ID) || "";
+    if (!cid) {
+      setFilings([]);
+      setFilingsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFilingsLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/justice/filings?case_id=${encodeURIComponent(cid)}`);
+        if (cancelled) return;
+        if (!res.ok) {
+          setFilings([]);
+          return;
+        }
+        const data: unknown = await res.json();
+        if (cancelled) return;
+        setFilings(Array.isArray(data) ? (data as JusticeCaseFilingRow[]) : []);
+      } catch {
+        if (!cancelled) setFilings([]);
+      } finally {
+        if (!cancelled) setFilingsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, caseId, pathname]);
+
   const caseSummaryTitle = useMemo(() => {
     if (!intake) return "";
     const label = caseLabel?.trim();
@@ -428,6 +482,11 @@ export default function JusticePlanPage() {
       return null;
     }
   }, [caseId, serverPaymentDisputeDraft]);
+
+  const planLatestFiling = filings.length > 0 ? filings[0] : undefined;
+  const planLatestFilingDateText =
+    planLatestFiling != null ? formatFilingDateDisplay(planLatestFiling.filed_at ?? planLatestFiling.created_at) : null;
+  const planLatestConfirmation = planLatestFiling?.confirmation_number?.trim() || null;
 
   if (!intake) {
     if (isLoaded && !isSignedIn) {
@@ -722,6 +781,61 @@ export default function JusticePlanPage() {
               className="mt-4 inline-flex rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
             >
               Add evidence
+            </Link>
+          </li>
+
+          <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Filing records</h2>
+            <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+              Manual filing details saved for this case (prep pages or packet).
+            </p>
+            {filingsLoading ? (
+              <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">Loading…</p>
+            ) : filings.length === 0 ? (
+              <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">No filing records yet.</p>
+            ) : (
+              <dl className="mt-3 space-y-2.5 text-sm">
+                <div>
+                  <dt className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Records</dt>
+                  <dd className="mt-0.5 text-neutral-800 dark:text-neutral-200">
+                    {filings.length === 1 ? "1 filing record" : `${filings.length} filing records`}
+                  </dd>
+                </div>
+                {planLatestFiling != null ? (
+                  <>
+                    <div>
+                      <dt className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                        Latest destination
+                      </dt>
+                      <dd className="mt-0.5 text-neutral-800 dark:text-neutral-200">{planLatestFiling.destination}</dd>
+                    </div>
+                    {planLatestFilingDateText ? (
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                          Latest filing date
+                        </dt>
+                        <dd className="mt-0.5 text-neutral-800 dark:text-neutral-200">{planLatestFilingDateText}</dd>
+                      </div>
+                    ) : null}
+                    {planLatestConfirmation ? (
+                      <div>
+                        <dt className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                          Latest confirmation
+                        </dt>
+                        <dd className="mt-0.5 font-mono text-xs text-neutral-800 dark:text-neutral-200">
+                          {planLatestConfirmation}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </dl>
+            )}
+            <Link
+              href="/justice/packet"
+              className="mt-4 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"
+            >
+              Open packet
             </Link>
           </li>
 
