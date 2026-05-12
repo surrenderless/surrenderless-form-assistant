@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useAuth } from "@clerk/nextjs";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
+import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
@@ -244,6 +245,8 @@ export default function JusticeFtcReviewPage() {
             )}
           </div>
         )}
+
+        <JusticeFilingRecords />
       </main>
     </>
   );

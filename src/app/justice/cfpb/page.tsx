@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Header from "@/app/components/Header";
+import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -371,6 +372,8 @@ export default function JusticeCfpbPrepPage() {
             . This assistant does not submit to any government system.
           </p>
         </div>
+
+        <JusticeFilingRecords />
       </main>
     </>
   );
