@@ -53,6 +53,33 @@ function soonestOpenTaskDueDate(tasks: JusticeCaseTaskRow[]): string | null {
   return [...dates].sort((a, b) => a.localeCompare(b))[0];
 }
 
+type ProgressFetchRow = CaseProgressSummary & { id: string; tasks: JusticeCaseTaskRow[] };
+
+function buildAttentionItems(
+  caseList: CaseRow[],
+  tasksByCaseId: Record<string, JusticeCaseTaskRow[]>
+): { task: JusticeCaseTaskRow; caseRow: CaseRow }[] {
+  const items: { task: JusticeCaseTaskRow; caseRow: CaseRow }[] = [];
+  for (const c of caseList) {
+    const tasks = tasksByCaseId[c.id] ?? [];
+    for (const task of tasks) {
+      if (task.completed_at) continue;
+      items.push({ task, caseRow: c });
+    }
+  }
+  items.sort((a, b) => {
+    const da = a.task.due_date?.trim() ?? "";
+    const db = b.task.due_date?.trim() ?? "";
+    if (!da && !db) return a.task.created_at.localeCompare(b.task.created_at);
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = da.localeCompare(db);
+    if (cmp !== 0) return cmp;
+    return a.task.created_at.localeCompare(b.task.created_at);
+  });
+  return items;
+}
+
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]";
 
@@ -69,9 +96,15 @@ export default function JusticeCasesPage() {
   const [labelDraftById, setLabelDraftById] = useState<Record<string, string>>({});
   const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
   const [progressById, setProgressById] = useState<Record<string, CaseProgressSummary>>({});
+  const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [progressLoading, setProgressLoading] = useState(false);
 
   const caseIdsKey = useMemo(() => (cases ?? []).map((c) => c.id).sort().join(","), [cases]);
+
+  const attentionItems = useMemo(
+    () => (cases?.length ? buildAttentionItems(cases, tasksByCaseId) : []),
+    [cases, tasksByCaseId]
+  );
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -103,6 +136,7 @@ export default function JusticeCasesPage() {
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !caseIdsKey) {
       setProgressById({});
+      setTasksByCaseId({});
       setProgressLoading(false);
       return;
     }
@@ -130,33 +164,40 @@ export default function JusticeCasesPage() {
               const tasks = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
               const openTasksCount = tasks.filter((t) => !t.completed_at).length;
               const nextDue = soonestOpenTaskDueDate(tasks);
-              return {
+              const row: ProgressFetchRow = {
                 id,
                 evidenceCount,
                 filingsCount,
                 openTasksCount,
                 nextDue,
-              } satisfies CaseProgressSummary & { id: string };
+                tasks,
+              };
+              return row;
             } catch {
               if (ac.signal.aborted) return null;
-              return {
+              const row: ProgressFetchRow = {
                 id,
                 evidenceCount: 0,
                 filingsCount: 0,
                 openTasksCount: 0,
                 nextDue: null,
+                tasks: [],
               };
+              return row;
             }
           })
         );
         if (ac.signal.aborted) return;
         const next: Record<string, CaseProgressSummary> = {};
+        const nextTasks: Record<string, JusticeCaseTaskRow[]> = {};
         for (const r of rows) {
           if (!r) continue;
-          const { id, ...summary } = r;
+          const { id, tasks, ...summary } = r;
           next[id] = summary;
+          nextTasks[id] = tasks;
         }
         setProgressById(next);
+        setTasksByCaseId(nextTasks);
       } finally {
         if (!ac.signal.aborted) setProgressLoading(false);
       }
@@ -281,7 +322,51 @@ export default function JusticeCasesPage() {
             No saved cases yet. Complete intake while signed in to create one.
           </p>
         ) : (
-          <ul className="mt-8 space-y-4">
+          <>
+            <section className="mt-8" aria-labelledby="needs-attention-heading">
+              <h2
+                id="needs-attention-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Needs attention
+              </h2>
+              {progressLoading && Object.keys(tasksByCaseId).length === 0 ? (
+                <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">Loading follow-ups…</p>
+              ) : attentionItems.length === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">No open follow-up tasks.</p>
+              ) : (
+                <ul className="mt-3 space-y-3">
+                  {attentionItems.map(({ task, caseRow }) => (
+                    <li
+                      key={`${caseRow.id}-${task.id}`}
+                      className={`${cardCls} border-amber-200/80 ring-amber-950/[0.06] dark:border-amber-900/40 dark:ring-amber-500/10`}
+                    >
+                      <p className="font-medium text-neutral-900 dark:text-neutral-100">{task.title}</p>
+                      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                        Due: {task.due_date?.trim() ? task.due_date.trim() : "No due date"}
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
+                        Case: {caseRow.intake.company_name}
+                      </p>
+                      {task.notes?.trim() ? (
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                          {task.notes.trim()}
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => openCase(caseRow)}
+                        className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                      >
+                        Open case
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <ul className="mt-8 space-y-4">
             {cases.map((row) => {
               const customLabel = row.case_label?.trim();
               const mainTitle = customLabel || row.intake.company_name;
@@ -366,6 +451,7 @@ export default function JusticeCasesPage() {
             );
             })}
           </ul>
+          </>
         )}
       </main>
     </>
