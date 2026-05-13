@@ -25,7 +25,7 @@ Anything that permanently treats “open another tab and paste into a government
 The shipped experience is **mostly a form-first Consumer Justice case-management scaffold**:
 
 - **Stack:** Next.js (App Router), TypeScript, **Clerk** (auth), **Supabase** (persistence via service-role API routes), **REST API routes**, **session/local storage** for active case + timeline mirror.
-- **UX:** Multi-page **justice** routes (`/justice/*`): structured intake, action plan, per-destination prep pages, dedicated evidence page, saved cases, archived cases, packet (aggregate/export).
+- **UX:** Multi-page **justice** routes (`/justice/*`): structured **form** intake (`/justice/intake`), **scripted chat** intake (`/justice/chat` — first chat-first scaffold), action plan, per-destination prep pages, dedicated evidence page, saved cases, archived cases, packet (aggregate/export).
 - **Persistence:** When signed in, a **`justice_cases`** row holds intake, timeline JSON, optional payment-dispute draft and client state; **evidence**, **filing records**, and **follow-up tasks** live in child tables.
 - **Parallel legacy surface:** Root home (`/`) and dashboard-style flows (e.g. generic ask, form-fill demos, task logs, USPS demo) are **not** the Consumer Justice product; they share the repo.
 
@@ -63,10 +63,12 @@ New conversational UI should **read and write** these same primitives (intake sh
 
 **Bend the Consumer Justice MVP toward chat-first intake and action** while **preserving** persistence and case management:
 
+- **`/justice/chat` is now shipped** as the **first chat-first Justice intake scaffold**: **scripted** Q&A (not LLM-driven yet), **one question at a time**, answers accumulated into the same **`JusticeIntake`** shape, written to **`STORAGE_INTAKE` / `STORAGE_CASE_ID`** and the same **`case_started` → `POST /api/justice/cases` (when signed in) → `/justice/plan`** flow as form intake. **`/justice/intake` stays the unchanged form fallback** (also linked from the header as “Consumer case”).
 - Introduce a **conversational intake** that still produces (or updates) the same **`JusticeIntake`** / case row — forms become fallback or “edit details,” not the only path.
 - Surface **one** primary workspace (shell) that shows **case status**, **next actions**, and **approval previews** instead of scattering state across many routes without a narrative.
 - Reuse **timeline + tasks + filings** for “what happened / what’s next” instead of duplicating status in ad-hoc UI only.
 - Keep **server timeline append** and **PATCH case** patterns for anything that must stay consistent under automation later.
+- **Next:** evolve chat toward **LLM-assisted** follow-ups and previews while keeping the same persistence primitives; avoid parallel ad-hoc state outside `JusticeIntake` + session keys.
 
 ---
 
@@ -77,12 +79,12 @@ New conversational UI should **read and write** these same primitives (intake sh
 | Area | Paths (representative) |
 |------|-------------------------|
 | Legacy / misc | `/` (home), `/dashboard`, `/admin`, `/sign-in`, `/debug/me` |
-| Justice | `/justice/intake`, `/justice/plan`, `/justice/merchant`, `/justice/payment-dispute`, `/justice/ftc-review`, `/justice/bbb`, `/justice/state-ag`, `/justice/cfpb`, `/justice/fcc`, `/justice/evidence`, `/justice/cases`, `/justice/cases/archived`, `/justice/packet` |
+| Justice | `/justice/intake` (form intake), **`/justice/chat`** (scripted chat intake → plan), `/justice/plan`, `/justice/merchant`, `/justice/payment-dispute`, `/justice/ftc-review`, `/justice/bbb`, `/justice/state-ag`, `/justice/cfpb`, `/justice/fcc`, `/justice/evidence`, `/justice/cases`, `/justice/cases/archived`, `/justice/packet` |
 | Internal QA | `/mock/ftc-complaint` |
 
 ### Major Justice components (`src/app/components/`)
 
-- **`Header.tsx`** — Global nav link to Consumer intake + Clerk controls; used across Justice pages.
+- **`Header.tsx`** — Global nav links: **Consumer case** (`/justice/intake`), **Chat intake** (`/justice/chat`), plus Clerk controls; used across Justice pages.
 - **`JusticeActionResumeSignInPrompt.tsx`** — Hydration gate when session/user is insufficient.
 - **`JusticeSavedEvidenceList.tsx`** — Evidence list for current session case (prep pages).
 - **`JusticeFilingRecords.tsx`** — Filing CRUD for current case.
