@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Header from "@/app/components/Header";
 import {
+  isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
   JUSTICE_EVIDENCE_TYPES,
   type JusticeCaseEvidenceRow,
@@ -55,6 +56,15 @@ export default function JusticeEvidencePage() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editEvidenceType, setEditEvidenceType] = useState<JusticeEvidenceType>("screenshot");
+  const [editEvidenceDate, setEditEvidenceDate] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editSourceUrl, setEditSourceUrl] = useState("");
+  const [editStorageNote, setEditStorageNote] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -150,6 +160,10 @@ export default function JusticeEvidencePage() {
       const res = await fetch(`/api/justice/evidence/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (res.ok) {
         setItems((prev) => prev.filter((row) => row.id !== id));
+        if (editingId === id) {
+          setEditingId(null);
+          setEditError(null);
+        }
       } else {
         console.warn("justice evidence: delete failed", res.status);
       }
@@ -157,6 +171,63 @@ export default function JusticeEvidencePage() {
       console.warn("justice evidence: delete error");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  function startEdit(row: JusticeCaseEvidenceRow) {
+    setEditingId(row.id);
+    setEditError(null);
+    setEditTitle(row.title);
+    setEditEvidenceType(isJusticeEvidenceType(row.evidence_type) ? row.evidence_type : "other");
+    setEditEvidenceDate(row.evidence_date ?? "");
+    setEditDescription(row.description ?? "");
+    setEditSourceUrl(row.source_url ?? "");
+    setEditStorageNote(row.storage_note ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  async function handleSaveEdit(e: React.FormEvent, id: string) {
+    e.preventDefault();
+    if (!isSignedIn) return;
+    const trimmedTitle = editTitle.trim();
+    if (!trimmedTitle) {
+      setEditError("Title is required.");
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const body: Record<string, unknown> = {
+        title: trimmedTitle,
+        evidence_type: editEvidenceType,
+        evidence_date: editEvidenceDate.trim() ? editEvidenceDate.trim() : null,
+        description: editDescription.trim() ? editDescription.trim() : null,
+        source_url: editSourceUrl.trim() ? editSourceUrl.trim() : null,
+        storage_note: editStorageNote.trim() ? editStorageNote.trim() : null,
+      };
+      const res = await fetch(`/api/justice/evidence/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        setEditError(err.error ?? "Could not update evidence.");
+        return;
+      }
+      setEditingId(null);
+      await refreshList();
+    } catch {
+      setEditError("Could not update evidence.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -337,42 +408,168 @@ export default function JusticeEvidencePage() {
                 <ul className="mt-4 space-y-4">
                   {items.map((row) => (
                     <li key={row.id} className={cardCls}>
-                      <p className="font-medium text-neutral-900 dark:text-neutral-100">{row.title}</p>
-                      <p className="mt-1 text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                        {typeLabel(row.evidence_type)}
-                      </p>
-                      {row.evidence_date ? (
-                        <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">{row.evidence_date}</p>
-                      ) : null}
-                      {row.description ? (
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-                          {row.description}
-                        </p>
-                      ) : null}
-                      {row.source_url?.trim() ? (
-                        <p className="mt-2 text-xs break-all text-blue-600 dark:text-blue-400">
-                          <a href={row.source_url.trim()} target="_blank" rel="noopener noreferrer" className="underline">
-                            {row.source_url.trim()}
-                          </a>
-                        </p>
-                      ) : null}
-                      {row.storage_note?.trim() ? (
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
-                          <span className="font-medium text-neutral-700 dark:text-neutral-300">Stored: </span>
-                          {row.storage_note.trim()}
-                        </p>
-                      ) : null}
-                      <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-                        Added {formatEvidenceTime(row.created_at)}
-                      </p>
-                      <button
-                        type="button"
-                        disabled={deletingId === row.id}
-                        onClick={() => void handleDelete(row.id)}
-                        className="mt-4 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
-                      >
-                        {deletingId === row.id ? "Deleting…" : "Delete"}
-                      </button>
+                      {editingId === row.id ? (
+                        <form onSubmit={(e) => void handleSaveEdit(e, row.id)}>
+                          <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                            Edit evidence
+                          </p>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`edit-title-${row.id}`}>
+                              Title
+                            </label>
+                            <input
+                              id={`edit-title-${row.id}`}
+                              className={inputCls}
+                              value={editTitle}
+                              onChange={(e) => setEditTitle(e.target.value)}
+                              required
+                              maxLength={500}
+                              autoComplete="off"
+                            />
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`edit-type-${row.id}`}>
+                              Evidence type
+                            </label>
+                            <select
+                              id={`edit-type-${row.id}`}
+                              className={inputCls}
+                              value={editEvidenceType}
+                              onChange={(e) => setEditEvidenceType(e.target.value as JusticeEvidenceType)}
+                            >
+                              {JUSTICE_EVIDENCE_TYPES.map((t) => (
+                                <option key={t} value={t}>
+                                  {JUSTICE_EVIDENCE_TYPE_LABELS[t]}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`edit-date-${row.id}`}>
+                              Evidence date <span className="font-normal text-neutral-500">(optional)</span>
+                            </label>
+                            <input
+                              id={`edit-date-${row.id}`}
+                              className={inputCls}
+                              value={editEvidenceDate}
+                              onChange={(e) => setEditEvidenceDate(e.target.value)}
+                              maxLength={200}
+                              autoComplete="off"
+                            />
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`edit-desc-${row.id}`}>
+                              Description <span className="font-normal text-neutral-500">(optional)</span>
+                            </label>
+                            <textarea
+                              id={`edit-desc-${row.id}`}
+                              className={`${inputCls} min-h-[100px] resize-y`}
+                              value={editDescription}
+                              onChange={(e) => setEditDescription(e.target.value)}
+                              maxLength={8000}
+                            />
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`edit-url-${row.id}`}>
+                              Source URL <span className="font-normal text-neutral-500">(optional)</span>
+                            </label>
+                            <input
+                              id={`edit-url-${row.id}`}
+                              className={inputCls}
+                              value={editSourceUrl}
+                              onChange={(e) => setEditSourceUrl(e.target.value)}
+                              maxLength={2000}
+                              placeholder="https://..."
+                              autoComplete="off"
+                            />
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`edit-storage-${row.id}`}>
+                              Storage note <span className="font-normal text-neutral-500">(optional)</span>
+                            </label>
+                            <textarea
+                              id={`edit-storage-${row.id}`}
+                              className={`${inputCls} min-h-[72px] resize-y`}
+                              value={editStorageNote}
+                              onChange={(e) => setEditStorageNote(e.target.value)}
+                              maxLength={8000}
+                              placeholder="Where this file is saved, e.g. Gmail, Drive folder, desktop"
+                            />
+                          </div>
+                          {editError ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{editError}</p> : null}
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="submit"
+                              disabled={editSaving || !editTitle.trim()}
+                              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              {editSaving ? "Saving…" : "Save changes"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editSaving}
+                              onClick={cancelEdit}
+                              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <p className="font-medium text-neutral-900 dark:text-neutral-100">{row.title}</p>
+                          <p className="mt-1 text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                            {typeLabel(row.evidence_type)}
+                          </p>
+                          {row.evidence_date ? (
+                            <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">{row.evidence_date}</p>
+                          ) : null}
+                          {row.description ? (
+                            <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
+                              {row.description}
+                            </p>
+                          ) : null}
+                          {row.source_url?.trim() ? (
+                            <p className="mt-2 text-xs break-all text-blue-600 dark:text-blue-400">
+                              <a
+                                href={row.source_url.trim()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="underline"
+                              >
+                                {row.source_url.trim()}
+                              </a>
+                            </p>
+                          ) : null}
+                          {row.storage_note?.trim() ? (
+                            <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                              <span className="font-medium text-neutral-700 dark:text-neutral-300">Stored: </span>
+                              {row.storage_note.trim()}
+                            </p>
+                          ) : null}
+                          <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                            Added {formatEvidenceTime(row.created_at)}
+                          </p>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={Boolean(editingId) && editingId !== row.id}
+                              onClick={() => startEdit(row)}
+                              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingId === row.id}
+                              onClick={() => void handleDelete(row.id)}
+                              className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
+                            >
+                              {deletingId === row.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
