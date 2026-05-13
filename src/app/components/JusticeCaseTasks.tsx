@@ -52,6 +52,12 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
   const [addError, setAddError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const syncCaseId = useCallback(() => {
     setCaseId(readCaseId());
@@ -152,6 +158,10 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
       const res = await fetch(`/api/justice/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (res.ok) {
         setItems((prev) => prev.filter((r) => r.id !== id));
+        if (editingId === id) {
+          setEditingId(null);
+          setEditError(null);
+        }
         onTasksChange?.();
       } else {
         console.warn("justice tasks: delete failed", res.status);
@@ -160,6 +170,69 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
       console.warn("justice tasks: delete error");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  function startEdit(row: JusticeCaseTaskRow) {
+    setEditingId(row.id);
+    setEditError(null);
+    setEditTitle(row.title);
+    setEditDueDate(row.due_date ?? "");
+    setEditNotes(row.notes ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  async function handleSaveEdit(e: React.FormEvent, id: string) {
+    e.preventDefault();
+    if (!isSignedIn) return;
+    const t = editTitle.trim();
+    if (!t) {
+      setEditError("Title is required.");
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const body = {
+        title: t,
+        due_date: editDueDate.trim() ? editDueDate.trim() : null,
+        notes: editNotes.trim() ? editNotes.trim() : null,
+      };
+      const res = await fetch(`/api/justice/tasks/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        setEditError(err.error ?? "Could not update task.");
+        return;
+      }
+      const cid = readCaseId();
+      if (cid) applyServerTimelineFromResponse(cid, payload);
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        "timeline" in payload &&
+        Array.isArray((payload as Record<string, unknown>).timeline)
+      ) {
+        onCaseTimelineSynced?.();
+      }
+      setEditingId(null);
+      await refreshList();
+      onTasksChange?.();
+    } catch {
+      setEditError("Could not update task.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -277,38 +350,115 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
                       key={row.id}
                       className={`border-t border-neutral-100 pt-3 first:border-t-0 first:pt-0 dark:border-neutral-700/80 ${done ? "opacity-80" : ""}`}
                     >
-                      <p className={`font-medium text-neutral-900 dark:text-neutral-100 ${done ? "line-through" : ""}`}>
-                        {row.title}
-                      </p>
-                      {row.due_date ? (
-                        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">Due: {row.due_date}</p>
-                      ) : null}
-                      {row.notes?.trim() ? (
-                        <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-                          {row.notes.trim()}
-                        </p>
-                      ) : null}
-                      {row.completed_at ? (
-                        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">Completed</p>
-                      ) : null}
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={togglingId === row.id}
-                          onClick={() => void toggleComplete(row)}
-                          className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
-                        >
-                          {togglingId === row.id ? "Saving…" : done ? "Reopen" : "Mark complete"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={deletingId === row.id}
-                          onClick={() => void handleDelete(row.id)}
-                          className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
-                        >
-                          {deletingId === row.id ? "Deleting…" : "Delete"}
-                        </button>
-                      </div>
+                      {editingId === row.id ? (
+                        <form onSubmit={(e) => void handleSaveEdit(e, row.id)}>
+                          <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                            Edit task
+                          </p>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`task-edit-title-${row.id}`}>
+                              Title <span className="text-red-600">*</span>
+                            </label>
+                            <input
+                              id={`task-edit-title-${row.id}`}
+                              className={inputCls}
+                              value={editTitle}
+                              onChange={(e) => setEditTitle(e.target.value)}
+                              required
+                              maxLength={500}
+                              autoComplete="off"
+                            />
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`task-edit-due-${row.id}`}>
+                              Due date <span className="font-normal text-neutral-500">(optional)</span>
+                            </label>
+                            <input
+                              id={`task-edit-due-${row.id}`}
+                              className={inputCls}
+                              value={editDueDate}
+                              onChange={(e) => setEditDueDate(e.target.value)}
+                              maxLength={200}
+                              placeholder="e.g. 2026-05-20"
+                              autoComplete="off"
+                            />
+                          </div>
+                          <div className="mt-3">
+                            <label className={labelCls} htmlFor={`task-edit-notes-${row.id}`}>
+                              Notes <span className="font-normal text-neutral-500">(optional)</span>
+                            </label>
+                            <textarea
+                              id={`task-edit-notes-${row.id}`}
+                              className={`${inputCls} min-h-[72px] resize-y`}
+                              value={editNotes}
+                              onChange={(e) => setEditNotes(e.target.value)}
+                              maxLength={8000}
+                              placeholder="Context or links"
+                            />
+                          </div>
+                          {editError ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{editError}</p> : null}
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="submit"
+                              disabled={editSaving || !editTitle.trim()}
+                              className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              {editSaving ? "Saving…" : "Save changes"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editSaving}
+                              onClick={cancelEdit}
+                              className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <p className={`font-medium text-neutral-900 dark:text-neutral-100 ${done ? "line-through" : ""}`}>
+                            {row.title}
+                          </p>
+                          {row.due_date ? (
+                            <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">Due: {row.due_date}</p>
+                          ) : null}
+                          {row.notes?.trim() ? (
+                            <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
+                              {row.notes.trim()}
+                            </p>
+                          ) : null}
+                          {row.completed_at ? (
+                            <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">Completed</p>
+                          ) : null}
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={Boolean(editingId) && editingId !== row.id}
+                              onClick={() => startEdit(row)}
+                              className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              disabled={togglingId === row.id}
+                              onClick={() => void toggleComplete(row)}
+                              className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                            >
+                              {togglingId === row.id ? "Saving…" : done ? "Reopen" : "Mark complete"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingId === row.id}
+                              onClick={() => void handleDelete(row.id)}
+                              className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
+                            >
+                              {deletingId === row.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </li>
                   );
                 })}
