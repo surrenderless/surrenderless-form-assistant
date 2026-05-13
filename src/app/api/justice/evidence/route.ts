@@ -6,6 +6,19 @@ import { userOwnsJusticeCase } from "@/server/justiceCaseOwnership";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import { supabaseAdmin } from "@/utils/supabaseClient";
 
+const EVIDENCE_SELECT =
+  "id, user_id, case_id, title, evidence_type, evidence_date, description, source_url, storage_note, created_at, updated_at" as const;
+
+const MAX_TITLE = 500;
+const MAX_EVIDENCE_DATE = 200;
+const MAX_DESCRIPTION = 8000;
+const MAX_SOURCE_URL = 2000;
+const MAX_STORAGE_NOTE = 8000;
+
+function clampLen(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max);
+}
+
 function nonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
@@ -35,7 +48,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from("justice_case_evidence")
-    .select("id, user_id, case_id, title, evidence_type, evidence_date, description, created_at, updated_at")
+    .select(EVIDENCE_SELECT)
     .eq("case_id", caseId)
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
@@ -78,7 +91,7 @@ export async function POST(req: NextRequest) {
   if (!nonEmptyString(b.title)) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
-  const title = b.title.trim();
+  const title = clampLen(b.title.trim(), MAX_TITLE);
 
   if (typeof b.evidence_type !== "string" || !isJusticeEvidenceType(b.evidence_type)) {
     return NextResponse.json({ error: "Invalid evidence_type" }, { status: 400 });
@@ -88,11 +101,25 @@ export async function POST(req: NextRequest) {
   if (evidenceDate === undefined && b.evidence_date !== undefined && b.evidence_date !== null) {
     return NextResponse.json({ error: "Invalid evidence_date" }, { status: 400 });
   }
+  const evidenceDateVal = evidenceDate == null ? evidenceDate : clampLen(evidenceDate, MAX_EVIDENCE_DATE);
 
   const description = optionalStringOrNull(b.description);
   if (description === undefined && b.description !== undefined && b.description !== null) {
     return NextResponse.json({ error: "Invalid description" }, { status: 400 });
   }
+  const descriptionVal = description == null ? description : clampLen(description, MAX_DESCRIPTION);
+
+  const sourceUrl = optionalStringOrNull(b.source_url);
+  if (sourceUrl === undefined && b.source_url !== undefined && b.source_url !== null) {
+    return NextResponse.json({ error: "Invalid source_url" }, { status: 400 });
+  }
+  const sourceUrlVal = sourceUrl == null ? sourceUrl : clampLen(sourceUrl, MAX_SOURCE_URL);
+
+  const storageNote = optionalStringOrNull(b.storage_note);
+  if (storageNote === undefined && b.storage_note !== undefined && b.storage_note !== null) {
+    return NextResponse.json({ error: "Invalid storage_note" }, { status: 400 });
+  }
+  const storageNoteVal = storageNote == null ? storageNote : clampLen(storageNote, MAX_STORAGE_NOTE);
 
   const insertRow: Record<string, unknown> = {
     user_id: userId,
@@ -100,13 +127,15 @@ export async function POST(req: NextRequest) {
     title,
     evidence_type: b.evidence_type,
   };
-  if (evidenceDate !== undefined) insertRow.evidence_date = evidenceDate;
-  if (description !== undefined) insertRow.description = description;
+  if (evidenceDateVal !== undefined) insertRow.evidence_date = evidenceDateVal;
+  if (descriptionVal !== undefined) insertRow.description = descriptionVal;
+  if (sourceUrlVal !== undefined) insertRow.source_url = sourceUrlVal;
+  if (storageNoteVal !== undefined) insertRow.storage_note = storageNoteVal;
 
   const { data, error } = await supabaseAdmin
     .from("justice_case_evidence")
     .insert(insertRow)
-    .select("id, user_id, case_id, title, evidence_type, evidence_date, description, created_at, updated_at")
+    .select(EVIDENCE_SELECT)
     .single();
 
   if (error) {
