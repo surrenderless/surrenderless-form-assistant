@@ -38,6 +38,14 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDestination, setEditDestination] = useState("");
+  const [editFiledAt, setEditFiledAt] = useState("");
+  const [editConfirmation, setEditConfirmation] = useState("");
+  const [editFilingUrl, setEditFilingUrl] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const syncCaseId = useCallback(() => {
     setCaseId(readCaseId());
@@ -141,6 +149,10 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
       const res = await fetch(`/api/justice/filings/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (res.ok) {
         setItems((prev) => prev.filter((r) => r.id !== id));
+        if (editingId === id) {
+          setEditingId(null);
+          setEditError(null);
+        }
         onFilingsChange?.();
       } else {
         console.warn("justice filings: delete failed", res.status);
@@ -149,6 +161,62 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
       console.warn("justice filings: delete error");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  function startEdit(row: JusticeCaseFilingRow) {
+    setEditingId(row.id);
+    setEditError(null);
+    setEditDestination(row.destination);
+    setEditFiledAt(row.filed_at ?? "");
+    setEditConfirmation(row.confirmation_number ?? "");
+    setEditFilingUrl(row.filing_url ?? "");
+    setEditNotes(row.notes ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  async function handleSaveEdit(e: React.FormEvent, id: string) {
+    e.preventDefault();
+    if (!isSignedIn) return;
+    const dest = editDestination.trim();
+    if (!dest) {
+      setEditError("Destination is required.");
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const body = {
+        destination: dest,
+        filed_at: editFiledAt.trim() ? editFiledAt.trim() : null,
+        confirmation_number: editConfirmation.trim() ? editConfirmation.trim() : null,
+        filing_url: editFilingUrl.trim() ? editFilingUrl.trim() : null,
+        notes: editNotes.trim() ? editNotes.trim() : null,
+      };
+      const res = await fetch(`/api/justice/filings/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        setEditError(err.error ?? "Could not update filing.");
+        return;
+      }
+      setEditingId(null);
+      await refreshList();
+      onFilingsChange?.();
+    } catch {
+      setEditError("Could not update filing.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -263,35 +331,140 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
                     key={row.id}
                     className="border-t border-neutral-100 pt-3 first:border-t-0 first:pt-0 dark:border-neutral-700/80"
                   >
-                    <p className="font-medium text-neutral-900 dark:text-neutral-100">{row.destination}</p>
-                    {row.filed_at ? (
-                      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">Filed: {row.filed_at}</p>
-                    ) : null}
-                    {row.confirmation_number ? (
-                      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                        Confirmation: {row.confirmation_number}
-                      </p>
-                    ) : null}
-                    {row.filing_url ? (
-                      <p className="mt-1 text-xs break-all text-blue-600 dark:text-blue-400">
-                        <a href={row.filing_url} target="_blank" rel="noopener noreferrer" className="underline">
-                          {row.filing_url}
-                        </a>
-                      </p>
-                    ) : null}
-                    {row.notes?.trim() ? (
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
-                        {row.notes.trim()}
-                      </p>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={deletingId === row.id}
-                      onClick={() => void handleDelete(row.id)}
-                      className="mt-3 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
-                    >
-                      {deletingId === row.id ? "Deleting…" : "Delete"}
-                    </button>
+                    {editingId === row.id ? (
+                      <form onSubmit={(e) => void handleSaveEdit(e, row.id)}>
+                        <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                          Edit filing
+                        </p>
+                        <div className="mt-3">
+                          <label className={labelCls} htmlFor={`filing-edit-dest-${row.id}`}>
+                            Destination <span className="text-red-600">*</span>
+                          </label>
+                          <input
+                            id={`filing-edit-dest-${row.id}`}
+                            className={inputCls}
+                            value={editDestination}
+                            onChange={(e) => setEditDestination(e.target.value)}
+                            required
+                            maxLength={500}
+                            autoComplete="off"
+                          />
+                        </div>
+                        <div className="mt-3">
+                          <label className={labelCls} htmlFor={`filing-edit-date-${row.id}`}>
+                            Filed at <span className="font-normal text-neutral-500">(optional)</span>
+                          </label>
+                          <input
+                            id={`filing-edit-date-${row.id}`}
+                            className={inputCls}
+                            value={editFiledAt}
+                            onChange={(e) => setEditFiledAt(e.target.value)}
+                            maxLength={200}
+                            autoComplete="off"
+                          />
+                        </div>
+                        <div className="mt-3">
+                          <label className={labelCls} htmlFor={`filing-edit-confirm-${row.id}`}>
+                            Confirmation number <span className="font-normal text-neutral-500">(optional)</span>
+                          </label>
+                          <input
+                            id={`filing-edit-confirm-${row.id}`}
+                            className={inputCls}
+                            value={editConfirmation}
+                            onChange={(e) => setEditConfirmation(e.target.value)}
+                            maxLength={200}
+                            autoComplete="off"
+                          />
+                        </div>
+                        <div className="mt-3">
+                          <label className={labelCls} htmlFor={`filing-edit-url-${row.id}`}>
+                            Filing URL <span className="font-normal text-neutral-500">(optional)</span>
+                          </label>
+                          <input
+                            id={`filing-edit-url-${row.id}`}
+                            className={inputCls}
+                            type="url"
+                            value={editFilingUrl}
+                            onChange={(e) => setEditFilingUrl(e.target.value)}
+                            maxLength={2000}
+                            placeholder="https://…"
+                            autoComplete="off"
+                          />
+                        </div>
+                        <div className="mt-3">
+                          <label className={labelCls} htmlFor={`filing-edit-notes-${row.id}`}>
+                            Notes <span className="font-normal text-neutral-500">(optional)</span>
+                          </label>
+                          <textarea
+                            id={`filing-edit-notes-${row.id}`}
+                            className={`${inputCls} min-h-[80px] resize-y`}
+                            value={editNotes}
+                            onChange={(e) => setEditNotes(e.target.value)}
+                            maxLength={8000}
+                          />
+                        </div>
+                        {editError ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{editError}</p> : null}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="submit"
+                            disabled={editSaving || !editDestination.trim()}
+                            className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            {editSaving ? "Saving…" : "Save changes"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={editSaving}
+                            onClick={cancelEdit}
+                            className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <p className="font-medium text-neutral-900 dark:text-neutral-100">{row.destination}</p>
+                        {row.filed_at ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">Filed: {row.filed_at}</p>
+                        ) : null}
+                        {row.confirmation_number ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Confirmation: {row.confirmation_number}
+                          </p>
+                        ) : null}
+                        {row.filing_url ? (
+                          <p className="mt-1 text-xs break-all text-blue-600 dark:text-blue-400">
+                            <a href={row.filing_url} target="_blank" rel="noopener noreferrer" className="underline">
+                              {row.filing_url}
+                            </a>
+                          </p>
+                        ) : null}
+                        {row.notes?.trim() ? (
+                          <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
+                            {row.notes.trim()}
+                          </p>
+                        ) : null}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={Boolean(editingId) && editingId !== row.id}
+                            onClick={() => startEdit(row)}
+                            className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingId === row.id}
+                            onClick={() => void handleDelete(row.id)}
+                            className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
+                          >
+                            {deletingId === row.id ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
