@@ -11,6 +11,11 @@ import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import {
+  getJusticeTaskDueKind,
+  justiceTaskDueBadgeClass,
+  justiceTaskDueKindLabel,
+} from "@/lib/justice/taskDueStatus";
 
 type CaseRow = {
   id: string;
@@ -337,14 +342,21 @@ export default function JusticeCasesPage() {
                 <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">No open follow-up tasks.</p>
               ) : (
                 <ul className="mt-3 space-y-3">
-                  {attentionItems.map(({ task, caseRow }) => (
+                  {attentionItems.map(({ task, caseRow }) => {
+                    const dueKind = getJusticeTaskDueKind(task);
+                    return (
                     <li
                       key={`${caseRow.id}-${task.id}`}
                       className={`${cardCls} border-amber-200/80 ring-amber-950/[0.06] dark:border-amber-900/40 dark:ring-amber-500/10`}
                     >
                       <p className="font-medium text-neutral-900 dark:text-neutral-100">{task.title}</p>
-                      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                        Due: {task.due_date?.trim() ? task.due_date.trim() : "No due date"}
+                      <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                        <span className={justiceTaskDueBadgeClass(dueKind)}>
+                          {justiceTaskDueKindLabel(dueKind)}
+                        </span>
+                        {task.due_date?.trim() ? (
+                          <span>Due: {task.due_date.trim()}</span>
+                        ) : null}
                       </p>
                       <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
                         Case: {caseRow.intake.company_name}
@@ -362,7 +374,8 @@ export default function JusticeCasesPage() {
                         Open case
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </section>

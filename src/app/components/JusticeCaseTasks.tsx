@@ -3,6 +3,11 @@
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import {
+  getJusticeTaskDueKind,
+  justiceTaskDueBadgeClass,
+  justiceTaskDueKindLabel,
+} from "@/lib/justice/taskDueStatus";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
@@ -345,6 +350,7 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
               <ul className="mt-3 space-y-4">
                 {sortedItems.map((row) => {
                   const done = Boolean(row.completed_at);
+                  const dueKind = getJusticeTaskDueKind(row);
                   return (
                     <li
                       key={row.id}
@@ -420,16 +426,20 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
                           <p className={`font-medium text-neutral-900 dark:text-neutral-100 ${done ? "line-through" : ""}`}>
                             {row.title}
                           </p>
-                          {row.due_date ? (
-                            <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">Due: {row.due_date}</p>
-                          ) : null}
+                          <p className="mt-1 flex flex-wrap items-center gap-2">
+                            <span className={justiceTaskDueBadgeClass(dueKind)}>
+                              {justiceTaskDueKindLabel(dueKind)}
+                            </span>
+                            {row.due_date?.trim() ? (
+                              <span className="text-xs text-neutral-600 dark:text-neutral-400">
+                                Due: {row.due_date.trim()}
+                              </span>
+                            ) : null}
+                          </p>
                           {row.notes?.trim() ? (
                             <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
                               {row.notes.trim()}
                             </p>
-                          ) : null}
-                          {row.completed_at ? (
-                            <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">Completed</p>
                           ) : null}
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
