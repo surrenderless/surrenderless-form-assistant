@@ -25,6 +25,13 @@ type CaseRow = {
   case_label: string | null;
 };
 
+type CaseProgressSummary = {
+  evidenceCount: number;
+  filingsCount: number;
+  openTasksCount: number;
+  nextDue: string | null;
+};
+
 function formatUpdatedAt(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -43,12 +50,75 @@ function problemCategoryLabel(category: string): string {
   return category.replace(/_/g, " ");
 }
 
-type CaseProgressSummary = {
-  evidenceCount: number;
-  filingsCount: number;
-  openTasksCount: number;
-  nextDue: string | null;
-};
+type CaseStatusFilter = "all" | "ready_escalate" | "needs_info" | "open_tasks";
+type CaseSortOption = "updated" | "evidence" | "filings" | "open_tasks";
+
+function caseSearchHaystack(row: CaseRow, labelDraft: string): string {
+  const cat = row.intake.problem_category;
+  const parts = [
+    row.intake.company_name,
+    row.intake.purchase_or_signup,
+    problemCategoryLabel(cat),
+    cat,
+    row.case_label ?? "",
+    labelDraft,
+  ];
+  return parts.join(" ").toLowerCase();
+}
+
+function caseMatchesSearch(row: CaseRow, labelDraft: string, q: string): boolean {
+  const t = q.trim().toLowerCase();
+  if (!t) return true;
+  return caseSearchHaystack(row, labelDraft).includes(t);
+}
+
+function isReadyToEscalate(row: CaseRow, p: CaseProgressSummary | undefined): boolean {
+  return isBasicCaseInfoReadyForEscalation(row.intake) && (p?.evidenceCount ?? 0) >= 1;
+}
+
+function caseMatchesStatusFilter(
+  row: CaseRow,
+  p: CaseProgressSummary | undefined,
+  filter: CaseStatusFilter
+): boolean {
+  if (filter === "all") return true;
+  const openTasks = p?.openTasksCount ?? 0;
+  const ready = isReadyToEscalate(row, p);
+  if (filter === "ready_escalate") return ready;
+  if (filter === "needs_info") return !ready;
+  if (filter === "open_tasks") return openTasks > 0;
+  const _exhaustive: never = filter;
+  return _exhaustive;
+}
+
+function compareCasesForSort(
+  a: CaseRow,
+  b: CaseRow,
+  sort: CaseSortOption,
+  pa: CaseProgressSummary | undefined,
+  pb: CaseProgressSummary | undefined
+): number {
+  const tie = b.updated_at.localeCompare(a.updated_at);
+  switch (sort) {
+    case "updated":
+      return tie;
+    case "evidence": {
+      const da = pb?.evidenceCount ?? 0;
+      const db = pa?.evidenceCount ?? 0;
+      return da - db || tie;
+    }
+    case "filings": {
+      const da = pb?.filingsCount ?? 0;
+      const db = pa?.filingsCount ?? 0;
+      return da - db || tie;
+    }
+    case "open_tasks": {
+      const da = pb?.openTasksCount ?? 0;
+      const db = pa?.openTasksCount ?? 0;
+      return da - db || tie;
+    }
+  }
+}
 
 function soonestOpenTaskDueDate(tasks: JusticeCaseTaskRow[]): string | null {
   const open = tasks.filter((t) => !t.completed_at);
@@ -104,8 +174,23 @@ export default function JusticeCasesPage() {
   const [progressById, setProgressById] = useState<Record<string, CaseProgressSummary>>({});
   const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [progressLoading, setProgressLoading] = useState(false);
+  const [caseSearch, setCaseSearch] = useState("");
+  const [caseStatusFilter, setCaseStatusFilter] = useState<CaseStatusFilter>("all");
+  const [caseSort, setCaseSort] = useState<CaseSortOption>("updated");
 
   const caseIdsKey = useMemo(() => (cases ?? []).map((c) => c.id).sort().join(","), [cases]);
+
+  const filteredSortedCases = useMemo(() => {
+    if (!cases?.length) return [];
+    const filtered = cases.filter(
+      (row) =>
+        caseMatchesSearch(row, labelDraftById[row.id] ?? "", caseSearch) &&
+        caseMatchesStatusFilter(row, progressById[row.id], caseStatusFilter)
+    );
+    return [...filtered].sort((a, b) =>
+      compareCasesForSort(a, b, caseSort, progressById[a.id], progressById[b.id])
+    );
+  }, [cases, labelDraftById, caseSearch, caseStatusFilter, caseSort, progressById]);
 
   const attentionItems = useMemo(
     () => (cases?.length ? buildAttentionItems(cases, tasksByCaseId) : []),
@@ -380,8 +465,78 @@ export default function JusticeCasesPage() {
               )}
             </section>
 
-            <ul className="mt-8 space-y-4">
-            {cases.map((row) => {
+            <section className="mt-8" aria-labelledby="case-list-heading">
+              <h2
+                id="case-list-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                All cases
+              </h2>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400" htmlFor="justice-cases-search">
+                    Search
+                  </label>
+                  <input
+                    id="justice-cases-search"
+                    type="search"
+                    value={caseSearch}
+                    onChange={(e) => setCaseSearch(e.target.value)}
+                    placeholder="Company, product, category, label…"
+                    className={labelInputCls}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      className="block text-xs font-medium text-neutral-600 dark:text-neutral-400"
+                      htmlFor="justice-cases-status-filter"
+                    >
+                      Status
+                    </label>
+                    <select
+                      id="justice-cases-status-filter"
+                      value={caseStatusFilter}
+                      onChange={(e) => setCaseStatusFilter(e.target.value as CaseStatusFilter)}
+                      className={labelInputCls}
+                    >
+                      <option value="all">All</option>
+                      <option value="ready_escalate">Ready to escalate</option>
+                      <option value="needs_info">Needs more info</option>
+                      <option value="open_tasks">Has open tasks</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      className="block text-xs font-medium text-neutral-600 dark:text-neutral-400"
+                      htmlFor="justice-cases-sort"
+                    >
+                      Sort by
+                    </label>
+                    <select
+                      id="justice-cases-sort"
+                      value={caseSort}
+                      onChange={(e) => setCaseSort(e.target.value as CaseSortOption)}
+                      className={labelInputCls}
+                    >
+                      <option value="updated">Recently updated</option>
+                      <option value="evidence">Most evidence</option>
+                      <option value="filings">Most filings</option>
+                      <option value="open_tasks">Most open tasks</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <ul className="mt-6 space-y-4">
+            {filteredSortedCases.length === 0 ? (
+              <li className="rounded-2xl border border-neutral-200/90 bg-white px-4 py-6 text-center text-sm text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
+                No cases match your search or filters.
+              </li>
+            ) : null}
+            {filteredSortedCases.map((row) => {
               const customLabel = row.case_label?.trim();
               const mainTitle = customLabel || row.intake.company_name;
               return (
