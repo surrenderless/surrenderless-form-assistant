@@ -153,6 +153,19 @@ export default function JusticeSavedEvidenceList() {
                 {row.description ? (
                   <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-700 dark:text-neutral-300">{row.description}</p>
                 ) : null}
+                {row.source_url?.trim() ? (
+                  <p className="mt-1 text-xs break-all text-blue-600 dark:text-blue-400">
+                    <a href={row.source_url.trim()} target="_blank" rel="noopener noreferrer" className="underline">
+                      {row.source_url.trim()}
+                    </a>
+                  </p>
+                ) : null}
+                {row.storage_note?.trim() ? (
+                  <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-600 dark:text-neutral-400">
+                    <span className="font-medium text-neutral-700 dark:text-neutral-300">Stored: </span>
+                    {row.storage_note.trim()}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>

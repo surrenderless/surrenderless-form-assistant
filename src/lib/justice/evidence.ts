@@ -30,6 +30,8 @@ export type JusticeCaseEvidenceRow = {
   evidence_type: string;
   evidence_date: string | null;
   description: string | null;
+  source_url: string | null;
+  storage_note: string | null;
   created_at: string;
   updated_at: string;
 };

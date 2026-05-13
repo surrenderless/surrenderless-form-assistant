@@ -5,7 +5,13 @@ import { getUserOr401 } from "@/server/requireUser";
 import { supabaseAdmin } from "@/utils/supabaseClient";
 
 const SELECT =
-  "id, user_id, case_id, title, evidence_type, evidence_date, description, created_at, updated_at" as const;
+  "id, user_id, case_id, title, evidence_type, evidence_date, description, source_url, storage_note, created_at, updated_at" as const;
+
+const MAX_TITLE = 500;
+const MAX_EVIDENCE_DATE = 200;
+const MAX_DESCRIPTION = 8000;
+const MAX_SOURCE_URL = 2000;
+const MAX_STORAGE_NOTE = 8000;
 
 function optionalStringOrNull(v: unknown): string | null | undefined {
   if (v === undefined) return undefined;
@@ -13,6 +19,10 @@ function optionalStringOrNull(v: unknown): string | null | undefined {
   if (typeof v !== "string") return undefined;
   const t = v.trim();
   return t.length === 0 ? null : t;
+}
+
+function clampLen(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max);
 }
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -46,7 +56,7 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     if (typeof b.title !== "string" || !b.title.trim()) {
       return NextResponse.json({ error: "Invalid title" }, { status: 400 });
     }
-    patch.title = b.title.trim();
+    patch.title = clampLen(b.title.trim(), MAX_TITLE);
   }
 
   if (Object.prototype.hasOwnProperty.call(b, "evidence_type")) {
@@ -61,7 +71,7 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     if (v === undefined && b.evidence_date !== null) {
       return NextResponse.json({ error: "Invalid evidence_date" }, { status: 400 });
     }
-    patch.evidence_date = v === undefined ? null : v;
+    patch.evidence_date = v == null ? null : clampLen(v, MAX_EVIDENCE_DATE);
   }
 
   if (Object.prototype.hasOwnProperty.call(b, "description")) {
@@ -69,7 +79,23 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     if (v === undefined && b.description !== null) {
       return NextResponse.json({ error: "Invalid description" }, { status: 400 });
     }
-    patch.description = v === undefined ? null : v;
+    patch.description = v == null ? null : clampLen(v, MAX_DESCRIPTION);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(b, "source_url")) {
+    const v = optionalStringOrNull(b.source_url);
+    if (v === undefined && b.source_url !== null) {
+      return NextResponse.json({ error: "Invalid source_url" }, { status: 400 });
+    }
+    patch.source_url = v == null ? null : clampLen(v, MAX_SOURCE_URL);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(b, "storage_note")) {
+    const v = optionalStringOrNull(b.storage_note);
+    if (v === undefined && b.storage_note !== null) {
+      return NextResponse.json({ error: "Invalid storage_note" }, { status: 400 });
+    }
+    patch.storage_note = v == null ? null : clampLen(v, MAX_STORAGE_NOTE);
   }
 
   if (Object.keys(patch).length === 0) {
@@ -112,7 +138,7 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
     .delete()
     .eq("id", id)
     .eq("user_id", userId)
-    .select("id");
+    .select(SELECT);
 
   if (error) {
     console.warn("justice_case_evidence delete:", error.message);
@@ -123,5 +149,5 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deleted: data[0] });
 }

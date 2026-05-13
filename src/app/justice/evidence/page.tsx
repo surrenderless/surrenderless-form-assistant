@@ -50,6 +50,8 @@ export default function JusticeEvidencePage() {
   const [evidenceType, setEvidenceType] = useState<JusticeEvidenceType>("screenshot");
   const [evidenceDate, setEvidenceDate] = useState("");
   const [description, setDescription] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [storageNote, setStorageNote] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -108,6 +110,10 @@ export default function JusticeEvidencePage() {
       if (d) body.evidence_date = d;
       const desc = description.trim();
       if (desc) body.description = desc;
+      const su = sourceUrl.trim();
+      if (su) body.source_url = su;
+      const sn = storageNote.trim();
+      if (sn) body.storage_note = sn;
 
       const res = await fetch("/api/justice/evidence", {
         method: "POST",
@@ -126,6 +132,8 @@ export default function JusticeEvidencePage() {
       setTitle("");
       setEvidenceDate("");
       setDescription("");
+      setSourceUrl("");
+      setStorageNote("");
       setEvidenceType("screenshot");
       await refreshList();
     } catch {
@@ -275,7 +283,34 @@ export default function JusticeEvidencePage() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   maxLength={8000}
-                  placeholder="What this shows, where you saved it, ticket numbers, etc."
+                  placeholder="What this shows, ticket numbers, etc."
+                />
+              </div>
+              <div className="mt-4">
+                <label className={labelCls} htmlFor="evidence-source-url">
+                  Source URL <span className="font-normal text-neutral-500">(optional)</span>
+                </label>
+                <input
+                  id="evidence-source-url"
+                  className={inputCls}
+                  value={sourceUrl}
+                  onChange={(e) => setSourceUrl(e.target.value)}
+                  maxLength={2000}
+                  placeholder="https://..."
+                  autoComplete="off"
+                />
+              </div>
+              <div className="mt-4">
+                <label className={labelCls} htmlFor="evidence-storage-note">
+                  Storage note <span className="font-normal text-neutral-500">(optional)</span>
+                </label>
+                <textarea
+                  id="evidence-storage-note"
+                  className={`${inputCls} min-h-[72px] resize-y`}
+                  value={storageNote}
+                  onChange={(e) => setStorageNote(e.target.value)}
+                  maxLength={8000}
+                  placeholder="Where this file is saved, e.g. Gmail, Drive folder, desktop"
                 />
               </div>
               {addError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{addError}</p> : null}
@@ -312,6 +347,19 @@ export default function JusticeEvidencePage() {
                       {row.description ? (
                         <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
                           {row.description}
+                        </p>
+                      ) : null}
+                      {row.source_url?.trim() ? (
+                        <p className="mt-2 text-xs break-all text-blue-600 dark:text-blue-400">
+                          <a href={row.source_url.trim()} target="_blank" rel="noopener noreferrer" className="underline">
+                            {row.source_url.trim()}
+                          </a>
+                        </p>
+                      ) : null}
+                      {row.storage_note?.trim() ? (
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                          <span className="font-medium text-neutral-700 dark:text-neutral-300">Stored: </span>
+                          {row.storage_note.trim()}
                         </p>
                       ) : null}
                       <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">

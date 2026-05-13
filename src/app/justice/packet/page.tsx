@@ -153,6 +153,8 @@ function buildPacketPlainText(
         `   Type: ${evidenceTypeLabel(row.evidence_type)}`,
         row.evidence_date ? `   Date: ${row.evidence_date}` : "",
         row.description?.trim() ? `   Description: ${row.description.trim()}` : "",
+        row.source_url?.trim() ? `   Source URL: ${row.source_url.trim()}` : "",
+        row.storage_note?.trim() ? `   Storage: ${row.storage_note.trim()}` : "",
         `   Recorded: ${formatEvidenceAdded(row.created_at)}`,
         ""
       );
@@ -483,6 +485,19 @@ export default function JusticePacketPage() {
                   {row.description?.trim() ? (
                     <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-700 dark:text-neutral-300">
                       {row.description.trim()}
+                    </p>
+                  ) : null}
+                  {row.source_url?.trim() ? (
+                    <p className="mt-1 text-xs break-all text-blue-600 dark:text-blue-400">
+                      <a href={row.source_url.trim()} target="_blank" rel="noopener noreferrer" className="underline">
+                        {row.source_url.trim()}
+                      </a>
+                    </p>
+                  ) : null}
+                  {row.storage_note?.trim() ? (
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                      <span className="font-medium text-neutral-700 dark:text-neutral-300">Stored: </span>
+                      {row.storage_note.trim()}
                     </p>
                   ) : null}
                 </li>
