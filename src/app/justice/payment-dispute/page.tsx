@@ -10,6 +10,14 @@ import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList"
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1 } from "@/lib/justice/types";
+import {
+  buildBankLetter,
+  buildDefaultPaymentDisputeDraft,
+  type DisputeReasonOption,
+  type PaymentDisputeDraft,
+  type PaymentDisputeProofType,
+  type PaymentMethodOption,
+} from "@/lib/justice/buildPaymentDisputeBankLetter";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import {
   appendPaymentChecklistViewedOnce,
@@ -17,32 +25,6 @@ import {
   readTimeline,
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
-
-type PaymentMethodOption =
-  | "credit_card"
-  | "debit_card"
-  | "bank_account_ach"
-  | "paypal"
-  | "apple_google_pay"
-  | "other";
-
-type PaymentDisputeProofType =
-  | "receipt_order_confirmation"
-  | "screenshot"
-  | "email_chain"
-  | "merchant_chat_log"
-  | "bank_statement"
-  | "none_yet"
-  | "other";
-
-type DisputeReasonOption =
-  | "unauthorized_charge"
-  | "duplicate_charge"
-  | "wrong_amount"
-  | "canceled_refunded_still_charged"
-  | "goods_not_received"
-  | "service_not_as_promised"
-  | "other";
 
 const DISPUTE_REASON_VALUES: DisputeReasonOption[] = [
   "unauthorized_charge",
@@ -58,68 +40,12 @@ function isDisputeReasonOption(s: string): s is DisputeReasonOption {
   return DISPUTE_REASON_VALUES.includes(s as DisputeReasonOption);
 }
 
-type PaymentDraft = {
-  case_id: string;
-  payment_method: PaymentMethodOption;
-  charge_date: string;
-  charge_amount: string;
-  merchant_name: string;
-  dispute_reason: DisputeReasonOption;
-  dispute_reason_other?: string;
-  prior_company_contact: "yes" | "no";
-  proof_type: PaymentDisputeProofType;
-};
-
-function paymentMethodLabel(m: PaymentMethodOption): string {
-  switch (m) {
-    case "credit_card":
-      return "Credit card";
-    case "debit_card":
-      return "Debit card";
-    case "bank_account_ach":
-      return "Bank account / ACH";
-    case "paypal":
-      return "PayPal / similar wallet";
-    case "apple_google_pay":
-      return "Apple Pay / Google Pay";
-    case "other":
-      return "Other";
-    default: {
-      const _e: never = m;
-      return _e;
-    }
-  }
-}
-
-function proofTypeLabel(p: PaymentDisputeProofType): string {
-  switch (p) {
-    case "receipt_order_confirmation":
-      return "Receipt or order confirmation";
-    case "screenshot":
-      return "Screenshot(s)";
-    case "email_chain":
-      return "Email thread with merchant";
-    case "merchant_chat_log":
-      return "Chat log with merchant";
-    case "bank_statement":
-      return "Bank or card statement showing the charge";
-    case "none_yet":
-      return "No proof gathered yet";
-    case "other":
-      return "Other";
-    default: {
-      const _e: never = p;
-      return _e;
-    }
-  }
-}
-
-function loadDraft(caseId: string): Partial<PaymentDraft> | null {
+function loadDraft(caseId: string): Partial<PaymentDisputeDraft> | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1);
     if (!raw) return null;
-    const d = JSON.parse(raw) as Partial<PaymentDraft> & { dispute_reason?: string };
+    const d = JSON.parse(raw) as Partial<PaymentDisputeDraft> & { dispute_reason?: string };
     if (d.case_id !== caseId) return null;
     return d;
   } catch {
@@ -127,76 +53,9 @@ function loadDraft(caseId: string): Partial<PaymentDraft> | null {
   }
 }
 
-function saveDraft(draft: PaymentDraft) {
+function saveDraft(draft: PaymentDisputeDraft) {
   if (typeof window === "undefined") return;
   sessionStorage.setItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1, JSON.stringify(draft));
-}
-
-function disputeReasonLabel(r: DisputeReasonOption): string {
-  switch (r) {
-    case "unauthorized_charge":
-      return "Unauthorized charge";
-    case "duplicate_charge":
-      return "Duplicate charge";
-    case "wrong_amount":
-      return "Wrong amount";
-    case "canceled_refunded_still_charged":
-      return "Canceled or refunded but still charged";
-    case "goods_not_received":
-      return "Goods or services not received";
-    case "service_not_as_promised":
-      return "Service not as promised";
-    case "other":
-      return "Other";
-    default: {
-      const _e: never = r;
-      return _e;
-    }
-  }
-}
-
-function buildDisputeReasonLetterLines(draft: PaymentDraft): string[] {
-  const category = disputeReasonLabel(draft.dispute_reason);
-  if (draft.dispute_reason === "other") {
-    const detail = draft.dispute_reason_other?.trim() ?? "";
-    return [
-      `I am disputing this charge as: ${category}.`,
-      detail ? `Further explanation: ${detail}` : "",
-    ];
-  }
-  return [`I am disputing this charge as: ${category}.`];
-}
-
-function buildBankLetter(draft: PaymentDraft, intake: JusticeIntake): string {
-  const reasonLines = buildDisputeReasonLetterLines(draft);
-  const lines = [
-    "DISPUTE REQUEST — copy into your bank/card issuer message or dispute form",
-    "",
-    `Consumer: ${intake.user_display_name.trim()}`,
-    `Contact email: ${intake.reply_email.trim()}`,
-    "",
-    "Transaction / merchant",
-    `Merchant or seller name: ${draft.merchant_name.trim()}`,
-    `Amount disputed: ${draft.charge_amount.trim()}`,
-    `Charge date (as shown on statement if known): ${draft.charge_date.trim()}`,
-    `Payment method I used: ${paymentMethodLabel(draft.payment_method)}`,
-    "",
-    "Reason for dispute",
-    ...reasonLines,
-    "",
-    `Prior contact with the merchant/company about this charge: ${draft.prior_company_contact === "yes" ? "Yes" : "No"}`,
-    `Evidence I have or will provide: ${proofTypeLabel(draft.proof_type)}`,
-    "",
-    intake.order_confirmation_details.trim()
-      ? `Additional reference from my records: ${intake.order_confirmation_details.trim()}`
-      : "",
-    "",
-    "I am requesting that this charge be reversed or credited according to my issuer’s dispute rules.",
-    "",
-    "Thank you,",
-    intake.user_display_name.trim(),
-  ];
-  return lines.filter(Boolean).join("\n").trim();
 }
 
 const cardCls =
@@ -260,19 +119,22 @@ export default function JusticePaymentDisputePage() {
       }
       if (saved.proof_type) setProofType(saved.proof_type);
     } else {
-      setChargeAmount(intake.money_involved.trim());
-      setChargeDate(intake.pay_or_order_date.trim());
-      setMerchantName(intake.company_name.trim());
-      setDisputeReason("unauthorized_charge");
+      const defaults = buildDefaultPaymentDisputeDraft(cid, intake);
+      setChargeAmount(defaults.charge_amount);
+      setChargeDate(defaults.charge_date);
+      setMerchantName(defaults.merchant_name);
+      setPaymentMethod(defaults.payment_method);
+      setDisputeReason(defaults.dispute_reason);
       setDisputeReasonOther("");
-      setPriorContact(intake.already_contacted === "yes" ? "yes" : "no");
+      setPriorContact(defaults.prior_company_contact);
+      setProofType(defaults.proof_type);
     }
     setFormReady(true);
   }, [hydrationStatus, intake, router]);
 
-  const draft: PaymentDraft | null = useMemo(() => {
+  const draft: PaymentDisputeDraft | null = useMemo(() => {
     if (!caseId) return null;
-    const draft: PaymentDraft = {
+    const draft: PaymentDisputeDraft = {
       case_id: caseId,
       payment_method: paymentMethod,
       charge_date: chargeDate,
