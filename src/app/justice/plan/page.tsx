@@ -120,6 +120,24 @@ function formatFilingDateDisplay(iso: string): string {
   }
 }
 
+const PLAN_FILING_NOTES_PREVIEW_MAX = 120;
+const PLAN_FILING_CONFIRM_PREVIEW_MAX = 48;
+
+function truncatePlanFilingSnippet(text: string | null | undefined, max: number): string {
+  if (!text?.trim()) return "";
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
+}
+
+/** Prefer formatted date when `filed_at` parses; otherwise show the stored string. */
+function planFilingFiledAtLine(filedAt: string): string {
+  const t = filedAt.trim();
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) return formatFilingDateDisplay(t);
+  return t;
+}
+
 const PREP_TYPES: TimelineEntryType[] = [
   "state_ag_prep_opened",
   "bbb_prep_opened",
@@ -1117,6 +1135,59 @@ export default function JusticePlanPage() {
                 ) : null}
               </dl>
             )}
+            {isSignedIn && filings.length > 0 ? (
+              <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">Saved filings</p>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Preview only (no filing URLs here). Add or edit full records on the packet page.
+                </p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+                    Show saved filings ({filings.length})
+                  </summary>
+                  <ul className="mt-2 max-h-48 space-y-3 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-3 py-3 dark:border-neutral-600 dark:bg-neutral-900">
+                    {filings.map((row) => {
+                      const confirmSnip = truncatePlanFilingSnippet(
+                        row.confirmation_number,
+                        PLAN_FILING_CONFIRM_PREVIEW_MAX
+                      );
+                      const notesSnip = truncatePlanFilingSnippet(row.notes, PLAN_FILING_NOTES_PREVIEW_MAX);
+                      return (
+                        <li
+                          key={row.id}
+                          className="border-t border-neutral-100 pt-3 first:border-t-0 first:pt-0 dark:border-neutral-700/80"
+                        >
+                          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                            {row.destination}
+                          </p>
+                          {row.filed_at?.trim() ? (
+                            <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                              Filed: {planFilingFiledAtLine(row.filed_at)}
+                            </p>
+                          ) : null}
+                          {confirmSnip ? (
+                            <p className="mt-1 font-mono text-xs text-neutral-700 dark:text-neutral-300">
+                              Confirmation: {confirmSnip}
+                            </p>
+                          ) : null}
+                          {notesSnip ? (
+                            <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-700 dark:text-neutral-300">
+                              Notes: {notesSnip}
+                            </p>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+                <Link
+                  href="/justice/packet"
+                  className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Open packet to add or edit filing records →
+                </Link>
+              </div>
+            ) : null}
             <Link
               href="/justice/packet"
               className="mt-4 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"
