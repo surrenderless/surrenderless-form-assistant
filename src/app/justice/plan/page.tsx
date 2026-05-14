@@ -47,6 +47,7 @@ import {
 
 const MERCHANT_MESSAGE_PLAN_PREVIEW_MAX = 560;
 const PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX = 560;
+const FTC_STORY_PLAN_PREVIEW_MAX = 200;
 const PLAN_EVIDENCE_PREVIEW_DESC_MAX = 120;
 
 function planEvidenceTypeLabel(t: string): string {
@@ -1304,6 +1305,72 @@ export default function JusticePlanPage() {
                     ? "Your internal practice FTC form was filled. This was not a real government submission."
                     : "Use this after merchant contact failed or the company refused to help."}
                 </p>
+                {ftcOpen && !ftcPracticeDoneVisible ? (
+                  <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                    <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">FTC practice preview</p>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      Practice only — this is not a real FTC filing, nothing is submitted to the government automatically,
+                      and Surrenderless does not file for you. Open the next page to use the internal practice form.
+                    </p>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+                        Show practice fields preview
+                      </summary>
+                      <ul className="mt-2 space-y-1.5 text-xs text-neutral-700 dark:text-neutral-300">
+                        <li>
+                          <span className="font-medium text-neutral-600 dark:text-neutral-400">Company: </span>
+                          {intake.company_name.trim() || "—"}
+                        </li>
+                        <li>
+                          <span className="font-medium text-neutral-600 dark:text-neutral-400">Issue: </span>
+                          {intake.problem_category.replace(/_/g, " ")}
+                        </li>
+                        {intake.money_involved.trim() ? (
+                          <li>
+                            <span className="font-medium text-neutral-600 dark:text-neutral-400">Money: </span>
+                            {intake.money_involved.trim()}
+                          </li>
+                        ) : null}
+                        {intake.pay_or_order_date.trim() ? (
+                          <li>
+                            <span className="font-medium text-neutral-600 dark:text-neutral-400">Date / order: </span>
+                            {intake.pay_or_order_date.trim()}
+                          </li>
+                        ) : null}
+                        {intake.reply_email.trim() ? (
+                          <li>
+                            <span className="font-medium text-neutral-600 dark:text-neutral-400">Reply email: </span>
+                            {intake.reply_email.trim()}
+                          </li>
+                        ) : null}
+                      </ul>
+                      {intake.story.trim() ? (
+                        <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-2 py-2 dark:border-neutral-600 dark:bg-neutral-900">
+                          <p className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+                            Complaint summary
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+                            {intake.story.trim().length > FTC_STORY_PLAN_PREVIEW_MAX
+                              ? `${intake.story.trim().slice(0, FTC_STORY_PLAN_PREVIEW_MAX)}…`
+                              : intake.story.trim()}
+                          </p>
+                        </div>
+                      ) : null}
+                    </details>
+                    <Link
+                      href="/justice/ftc-review"
+                      className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                      onClick={() =>
+                        void logEvent("ftc_mock_review_opened", {
+                          case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                          from: "plan_ftc_practice_preview",
+                        })
+                      }
+                    >
+                      Continue to practice FTC form →
+                    </Link>
+                  </div>
+                ) : null}
                 {ftcOpen ? (
                   <Link
                     href="/justice/ftc-review"
