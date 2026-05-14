@@ -9,7 +9,11 @@ import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
-import { readTimeline } from "@/lib/justice/timeline";
+import {
+  appendSubmissionDraftReviewedOnce,
+  applyServerTimelineFromResponse,
+  readTimeline,
+} from "@/lib/justice/timeline";
 import {
   cfpbLikelyRelevant,
   computeJusticeDestinations,
@@ -41,6 +45,8 @@ export default function JusticePreviewPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiDraft, setAiDraft] = useState<string | null>(null);
+  const [continueError, setContinueError] = useState<string | null>(null);
+  const [continueLoading, setContinueLoading] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -141,6 +147,7 @@ export default function JusticePreviewPage() {
     setReviewed(false);
     setAiDraft(null);
     setAiError(null);
+    setContinueError(null);
   }, [selectedId, intake]);
 
   const generateAiDraft = useCallback(async () => {
@@ -194,6 +201,49 @@ export default function JusticePreviewPage() {
       setAiLoading(false);
     }
   }, [intake, selectedDestination, evidence, isSignedIn]);
+
+  const handleContinueToPlan = useCallback(async () => {
+    if (!reviewed) return;
+    setContinueError(null);
+    setContinueLoading(true);
+    try {
+      const cid = typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "" : "";
+      const usedAi = Boolean(aiDraft?.trim());
+      const destinationLabel = selectedDestination?.label;
+
+      if (isSignedIn && cid && isUuid(cid)) {
+        const res = await fetch("/api/justice/submission-draft-reviewed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            case_id: cid,
+            ...(destinationLabel ? { destination_label: destinationLabel } : {}),
+            used_ai: usedAi,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { timeline?: unknown; error?: string };
+        if (!res.ok) {
+          setContinueError(
+            data.error ?? "Could not save this review to your case timeline. You can try again or continue without saving."
+          );
+          return;
+        }
+        if (!Array.isArray(data.timeline)) {
+          setContinueError("Could not save this review to your case timeline (invalid response). Try again.");
+          return;
+        }
+        applyServerTimelineFromResponse(cid, { timeline: data.timeline });
+      } else if (cid) {
+        appendSubmissionDraftReviewedOnce(cid, {
+          destinationLabel,
+          usedAi,
+        });
+      }
+      router.push("/justice/plan");
+    } finally {
+      setContinueLoading(false);
+    }
+  }, [reviewed, isSignedIn, aiDraft, selectedDestination, router]);
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
@@ -343,13 +393,18 @@ export default function JusticePreviewPage() {
             />
             <span>I reviewed the deterministic draft and any AI-assisted draft shown above.</span>
           </label>
+          {continueError ? (
+            <p className="mt-3 text-sm text-amber-800 dark:text-amber-200" role="alert">
+              {continueError}
+            </p>
+          ) : null}
           <button
             type="button"
-            disabled={!reviewed}
-            onClick={() => router.push("/justice/plan")}
+            disabled={!reviewed || continueLoading}
+            onClick={() => void handleContinueToPlan()}
             className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Continue to action plan
+            {continueLoading ? "Saving…" : "Continue to action plan"}
           </button>
         </div>
       </main>

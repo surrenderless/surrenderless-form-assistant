@@ -85,6 +85,7 @@ export type TimelineEntryType =
   | "bbb_complaint_filed"
   | "cfpb_complaint_filed"
   | "fcc_complaint_filed"
+  | "submission_draft_reviewed"
   | "evidence_added"
   | "filing_recorded"
   | "task_added"

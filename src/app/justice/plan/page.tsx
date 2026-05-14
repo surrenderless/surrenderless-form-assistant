@@ -190,6 +190,10 @@ function computeTimelineStatusSummary(entries: TimelineEntry[]): string {
 
   if (latestByTs(entries.filter((e) => e.type === "merchant_contact_saved"))) return "Company contacted";
 
+  if (latestByTs(entries.filter((e) => e.type === "submission_draft_reviewed"))) {
+    return "Submission draft reviewed";
+  }
+
   return "Started";
 }
 
