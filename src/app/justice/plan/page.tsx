@@ -48,10 +48,86 @@ import {
 const MERCHANT_MESSAGE_PLAN_PREVIEW_MAX = 560;
 const PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX = 560;
 const FTC_STORY_PLAN_PREVIEW_MAX = 200;
+const FINAL_FOLLOWUP_CONTACT_PROOF_PREVIEW_MAX = 160;
 const PLAN_EVIDENCE_PREVIEW_DESC_MAX = 120;
 
 function planEvidenceTypeLabel(t: string): string {
   return JUSTICE_EVIDENCE_TYPE_LABELS[t as JusticeEvidenceType] ?? t.replace(/_/g, " ");
+}
+
+function planFinalFollowUpContactMethodLabel(m: JusticeIntake["contact_method"]): string {
+  if (!m) return "—";
+  switch (m) {
+    case "email":
+      return "Email";
+    case "chat":
+      return "Chat";
+    case "phone":
+      return "Phone";
+    case "form":
+      return "Web form";
+    case "in_person":
+      return "In person";
+    case "other":
+      return "Other";
+    default:
+      return String(m).replace(/_/g, " ");
+  }
+}
+
+function planFinalFollowUpOutcomeLabel(t: JusticeIntake["merchant_response_type"]): string {
+  if (!t) return "—";
+  switch (t) {
+    case "no_response":
+      return "No response";
+    case "refused_help":
+      return "Refused help";
+    case "promised_but_did_not_fix":
+      return "Promised fix but did not follow through";
+    case "partial_help":
+      return "Partial help";
+    case "asked_more_info":
+      return "Asked for more information";
+    case "other":
+      return "Other outcome";
+    case "resolved":
+      return "Resolved";
+    default:
+      return String(t).replace(/_/g, " ");
+  }
+}
+
+/** Deterministic copy-only text for optional last merchant contact before escalation (plan surface only). */
+function buildFinalFollowUpNudgeText(intake: JusticeIntake): string {
+  const company = intake.company_name.trim() || "the business";
+  const subjectLine = intake.purchase_or_signup.trim() || "my issue";
+  const story = intake.story.trim();
+  const storyPart = story
+    ? story.length > 220
+      ? `${story.slice(0, 220)}…`
+      : story
+    : "Describe what is still unresolved — you can expand this on the contact page before sending.";
+  const method = planFinalFollowUpContactMethodLabel(intake.contact_method);
+  const date = intake.contact_date?.trim() || "—";
+  const outcome = planFinalFollowUpOutcomeLabel(intake.merchant_response_type);
+  const name = intake.user_display_name.trim() || "—";
+  const email = intake.reply_email.trim() || "—";
+  return `Dear ${company} Support,
+
+Final follow-up before escalation (this is not your first contact)
+
+I previously reached out (${method}, dated ${date}) and recorded the outcome as: ${outcome}. I am sending one last written request before I pursue outside complaint options.
+
+Re: ${subjectLine}
+
+What I still need resolved:
+${storyPart}
+
+Please reply in writing with a concrete remedy or timeline. If I do not receive an acceptable resolution, I will move forward with other consumer channels.
+
+Sincerely,
+${name}
+${email}`.trim();
 }
 
 function truncatePlanEvidenceDescription(text: string | null, max: number): string {
@@ -675,6 +751,8 @@ export default function JusticePlanPage() {
     !merchantResolved &&
     (!contacted || (contacted && !ftcOpen) || (cfpbRel && contacted && !cfpbPrepOpen)) &&
     !paymentRecommendedNext;
+  const finalFollowUpPreviewVisible =
+    contacted && ftcOpen && !merchantResolved && !merchantBadge;
   const merchantTitle = merchantResolved
     ? "Merchant contact — resolved"
     : !contacted
@@ -899,6 +977,64 @@ export default function JusticePlanPage() {
                 </p>
               </div>
             </div>
+            {finalFollowUpPreviewVisible ? (
+              <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+                  Final follow-up before escalation
+                </p>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  This is separate from your first contact message. Surrenderless does not send email or chat messages
+                  for you — copy any text into your own email, chat, or support form.
+                </p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+                    Show saved contact summary and copyable nudge
+                  </summary>
+                  <ul className="mt-2 space-y-1.5 text-xs text-neutral-700 dark:text-neutral-300">
+                    <li>
+                      <span className="font-medium text-neutral-600 dark:text-neutral-400">Contact method: </span>
+                      {planFinalFollowUpContactMethodLabel(intake.contact_method)}
+                    </li>
+                    <li>
+                      <span className="font-medium text-neutral-600 dark:text-neutral-400">Contact date: </span>
+                      {intake.contact_date?.trim() || "—"}
+                    </li>
+                    <li>
+                      <span className="font-medium text-neutral-600 dark:text-neutral-400">Outcome recorded: </span>
+                      {planFinalFollowUpOutcomeLabel(intake.merchant_response_type)}
+                    </li>
+                    {intake.contact_proof_text?.trim() ? (
+                      <li>
+                        <span className="font-medium text-neutral-600 dark:text-neutral-400">Proof / notes: </span>
+                        {intake.contact_proof_text.trim().length > FINAL_FOLLOWUP_CONTACT_PROOF_PREVIEW_MAX
+                          ? `${intake.contact_proof_text.trim().slice(0, FINAL_FOLLOWUP_CONTACT_PROOF_PREVIEW_MAX)}…`
+                          : intake.contact_proof_text.trim()}
+                      </li>
+                    ) : null}
+                  </ul>
+                  <p className="mt-3 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                    Copyable final follow-up (paste yourself)
+                  </p>
+                  <div className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-2 py-2 dark:border-neutral-600 dark:bg-neutral-900">
+                    <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+                      {buildFinalFollowUpNudgeText(intake)}
+                    </pre>
+                  </div>
+                </details>
+                <Link
+                  href="/justice/merchant"
+                  className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                  onClick={() =>
+                    void logEvent("merchant_resolution_started", {
+                      case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                      from: "plan_final_follow_up_preview",
+                    })
+                  }
+                >
+                  Open full contact page to edit and save →
+                </Link>
+              </div>
+            ) : null}
             {merchantBadge && merchantSuggestedMessageFull ? (
               <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
                 <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
