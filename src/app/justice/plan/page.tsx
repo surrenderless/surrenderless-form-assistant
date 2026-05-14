@@ -30,6 +30,10 @@ import {
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
 import {
+  buildBankLetter as buildPaymentDisputeBankLetter,
+  buildDefaultPaymentDisputeDraft,
+} from "@/lib/justice/buildPaymentDisputeBankLetter";
+import {
   appendActionPlanViewedOnce,
   appendEscalationUnlockedFromMerchantSaveOnce,
   appendMerchantContactSavedOnce,
@@ -38,6 +42,7 @@ import {
 } from "@/lib/justice/timeline";
 
 const MERCHANT_MESSAGE_PLAN_PREVIEW_MAX = 560;
+const PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX = 560;
 
 function destinationStatusBadgeLabel(status: DestinationStatus): string {
   switch (status) {
@@ -535,6 +540,15 @@ export default function JusticePlanPage() {
     [intake]
   );
 
+  const paymentDisputePreviewLetterFull = useMemo(() => {
+    if (!intake || !paymentDisputeAvailable(intake)) return "";
+    const cid =
+      caseId ||
+      (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "" : "");
+    const draft = buildDefaultPaymentDisputeDraft(cid || "local", intake);
+    return buildPaymentDisputeBankLetter(draft, intake);
+  }, [intake, caseId]);
+
   const basicsReady = intake ? isBasicCaseInfoReadyForEscalation(intake) : false;
   const evidenceReady = evidenceCount >= 1;
   const readyToEscalate = basicsReady && evidenceReady;
@@ -918,6 +932,42 @@ export default function JusticePlanPage() {
             <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
               Best when money was charged and you have transaction details.
             </p>
+            {paymentOk && paymentDisputePreviewLetterFull ? (
+              <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+                  Suggested bank/card dispute letter
+                </p>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Nothing is sent from Surrenderless — use your bank or card issuer&apos;s own app or website. Preview
+                  uses the same template as the checklist with default dispute choices; open the full page to adjust
+                  details, copy, and save. Preview stays short to reduce accidental sharing of personal details.
+                </p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+                    Show letter preview
+                  </summary>
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-2 py-2 dark:border-neutral-600 dark:bg-neutral-900">
+                    <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+                      {paymentDisputePreviewLetterFull.length > PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX
+                        ? `${paymentDisputePreviewLetterFull.slice(0, PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX)}…`
+                        : paymentDisputePreviewLetterFull}
+                    </pre>
+                  </div>
+                  {paymentDisputePreviewLetterFull.length > PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX ? (
+                    <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      Preview is truncated here. Open the full checklist for the complete letter, copy button, and
+                      saving your checklist to the case.
+                    </p>
+                  ) : null}
+                </details>
+                <Link
+                  href="/justice/payment-dispute"
+                  className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Open full checklist to copy and save →
+                </Link>
+              </div>
+            ) : null}
             {paymentOk ? (
               <Link
                 href="/justice/payment-dispute"
