@@ -224,12 +224,15 @@ export default function JusticePreviewPage() {
         const data = (await res.json().catch(() => ({}))) as { timeline?: unknown; error?: string };
         if (!res.ok) {
           setContinueError(
-            data.error ?? "Could not save this review to your case timeline. You can try again or continue without saving."
+            data.error ??
+              "The submission draft review was not saved to your case timeline. Please try again."
           );
           return;
         }
         if (!Array.isArray(data.timeline)) {
-          setContinueError("Could not save this review to your case timeline (invalid response). Try again.");
+          setContinueError(
+            "The submission draft review was not saved (invalid server response). Please try again."
+          );
           return;
         }
         applyServerTimelineFromResponse(cid, { timeline: data.timeline });
