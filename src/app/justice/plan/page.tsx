@@ -48,6 +48,7 @@ import {
 const MERCHANT_MESSAGE_PLAN_PREVIEW_MAX = 560;
 const PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX = 560;
 const FTC_STORY_PLAN_PREVIEW_MAX = 200;
+const BBB_STATE_AG_STORY_PLAN_PREVIEW_MAX = 200;
 const FINAL_FOLLOWUP_CONTACT_PROOF_PREVIEW_MAX = 160;
 const PLAN_EVIDENCE_PREVIEW_DESC_MAX = 120;
 
@@ -1559,6 +1560,79 @@ export default function JusticePlanPage() {
                     ) : (
                       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{d.rationale}</p>
                     )}
+                    {d.internalRoute && (d.id === "bbb" || d.id === "state_ag") ? (
+                      <div className="mt-3 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                        <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+                          {d.id === "bbb" ? "BBB" : "State AG"} manual prep preview
+                        </p>
+                        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                          Manual prep only — Surrenderless does not file complaints or send them to regulators
+                          automatically. Open the prep page for the full checklist and copy-ready draft text.
+                        </p>
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+                            Show prep metadata
+                          </summary>
+                          <ul className="mt-2 space-y-1.5 text-xs text-neutral-700 dark:text-neutral-300">
+                            <li>
+                              <span className="font-medium text-neutral-600 dark:text-neutral-400">Company: </span>
+                              {intake.company_name.trim() || "—"}
+                            </li>
+                            <li>
+                              <span className="font-medium text-neutral-600 dark:text-neutral-400">Issue: </span>
+                              {intake.problem_category.replace(/_/g, " ")}
+                            </li>
+                            {intake.money_involved.trim() ? (
+                              <li>
+                                <span className="font-medium text-neutral-600 dark:text-neutral-400">Money: </span>
+                                {intake.money_involved.trim()}
+                              </li>
+                            ) : null}
+                            {intake.pay_or_order_date.trim() ? (
+                              <li>
+                                <span className="font-medium text-neutral-600 dark:text-neutral-400">
+                                  Date / order:{" "}
+                                </span>
+                                {intake.pay_or_order_date.trim()}
+                              </li>
+                            ) : null}
+                            {d.id === "state_ag" ? (
+                              <li>
+                                <span className="font-medium text-neutral-600 dark:text-neutral-400">State (AG): </span>
+                                {intake.consumer_us_state?.trim()
+                                  ? intake.consumer_us_state.trim().toUpperCase()
+                                  : "Not selected"}
+                              </li>
+                            ) : null}
+                            <li>
+                              <span className="font-medium text-neutral-600 dark:text-neutral-400">
+                                Merchant contact:{" "}
+                              </span>
+                              {intake.already_contacted === "yes"
+                                ? `Documented — outcome: ${planFinalFollowUpOutcomeLabel(intake.merchant_response_type)}`
+                                : "Not saved as contacted yet"}
+                            </li>
+                          </ul>
+                          {intake.story.trim() ? (
+                            <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-2 py-2 dark:border-neutral-600 dark:bg-neutral-900">
+                              <p className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+                                Complaint summary
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+                                {intake.story.trim().length > BBB_STATE_AG_STORY_PLAN_PREVIEW_MAX
+                                  ? `${intake.story.trim().slice(0, BBB_STATE_AG_STORY_PLAN_PREVIEW_MAX)}…`
+                                  : intake.story.trim()}
+                              </p>
+                            </div>
+                          ) : null}
+                        </details>
+                        <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                          {d.id === "bbb"
+                            ? "Copy full draft on BBB prep page."
+                            : "Copy full draft on State AG prep page."}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                   {d.internalRoute ? (
                     <div className="shrink-0 sm:pt-5">
