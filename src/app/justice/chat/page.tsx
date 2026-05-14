@@ -5,31 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/app/components/Header";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
-import {
-  appendTimelineEvent,
-  clearTimelineForNewCase,
-  readTimeline,
-  replaceTimelineForCase,
-} from "@/lib/justice/timeline";
-
-function newCaseId(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return `case_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-async function logEvent(event_name: string, payload: Record<string, unknown>) {
-  try {
-    await fetch("/api/justice/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_name, payload }),
-    });
-  } catch {
-    /* ignore */
-  }
-}
+import type { JusticeIntake } from "@/lib/justice/types";
+import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
+import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 
 type ChatRole = "assistant" | "user";
 
@@ -259,7 +237,7 @@ export default function JusticeChatPage() {
     const intake: JusticeIntake = {
       problem_category,
       company_name: company_name.trim(),
-      company_website: company_website.trim(),
+      company_website: normalizeCompanyWebsite(company_website),
       purchase_or_signup: purchase_or_signup.trim(),
       story: story.trim(),
       money_involved,
@@ -302,52 +280,12 @@ export default function JusticeChatPage() {
     setContactProofError(null);
     setSubmitting(true);
     try {
-      const prev_case_id = sessionStorage.getItem(STORAGE_CASE_ID);
-      const case_id = newCaseId();
-      clearTimelineForNewCase(prev_case_id, case_id);
-      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(intake));
-      sessionStorage.setItem(STORAGE_CASE_ID, case_id);
-      appendTimelineEvent(case_id, { type: "case_started", label: "Case started" });
-      sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
-      sessionStorage.removeItem("justice_ftc_mock_completed");
-
-      let finalCaseId = case_id;
-      if (isLoaded && isSignedIn) {
-        const timeline = readTimeline(case_id);
-        try {
-          const res = await fetch("/api/justice/cases", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ intake, timeline }),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as {
-              id?: string;
-              intake?: JusticeIntake;
-              timeline?: unknown;
-            };
-            if (data?.id) {
-              finalCaseId = data.id;
-              sessionStorage.setItem(STORAGE_CASE_ID, data.id);
-              if (data.intake) {
-                sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
-              }
-              const serverTimeline = Array.isArray(data.timeline)
-                ? (data.timeline as TimelineEntry[])
-                : timeline;
-              replaceTimelineForCase(data.id, serverTimeline, { removeCaseIds: [case_id] });
-            } else {
-              console.warn("justice chat: POST /api/justice/cases succeeded but missing id");
-            }
-          } else {
-            console.warn("justice chat: POST /api/justice/cases failed", res.status);
-          }
-        } catch (e) {
-          console.warn("justice chat: POST /api/justice/cases error", e);
-        }
-      }
-
-      await logEvent("intake_completed", { case_id: finalCaseId, already_contacted: intake.already_contacted });
+      await commitIntakeToSessionAndServer({
+        intake,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        commitLogLabel: "justice chat",
+      });
 
       router.push("/justice/plan");
     } finally {
@@ -383,9 +321,9 @@ export default function JusticeChatPage() {
     }
 
     if (step === "website") {
-      const w = trimmed.toLowerCase() === "none" ? "" : trimmed;
-      setCompanyWebsite(w);
-      appendUser(w || "(none)");
+      const normalized = normalizeCompanyWebsite(trimmed);
+      setCompanyWebsite(normalized);
+      appendUser(trimmed || "(none)");
       goToStep(nextStep("website", already_contacted));
       return;
     }
