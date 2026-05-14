@@ -25,7 +25,7 @@ Anything that permanently treats “open another tab and paste into a government
 The shipped experience is **mostly a form-first Consumer Justice case-management scaffold**:
 
 - **Stack:** Next.js (App Router), TypeScript, **Clerk** (auth), **Supabase** (persistence via service-role API routes), **REST API routes**, **session/local storage** for active case + timeline mirror.
-- **UX:** Multi-page **justice** routes (`/justice/*`): structured **form** intake (`/justice/intake`), **scripted chat** intake (`/justice/chat` — first chat-first scaffold), action plan, per-destination prep pages, dedicated evidence page, saved cases, archived cases, packet (aggregate/export).
+- **UX:** Multi-page **justice** routes (`/justice/*`): structured **form** intake (`/justice/intake`), **scripted chat** intake (`/justice/chat` — first chat-first scaffold), action plan, per-destination prep pages, dedicated evidence page, saved cases, archived cases, packet (aggregate/export). **`/justice/intake` and `/justice/chat` share** `src/lib/justice/commitIntakeToSessionAndServer.ts` (session + timeline + optional `POST /api/justice/cases` + `intake_completed` + plan handoff) and **`src/lib/justice/normalizeCompanyWebsite.ts`** (optional company website: bare domains like `amazon.com` → `https://amazon.com`, sentinels like `none` / `n/a` → empty string).
 - **Persistence:** When signed in, a **`justice_cases`** row holds intake, timeline JSON, optional payment-dispute draft and client state; **evidence**, **filing records**, and **follow-up tasks** live in child tables.
 - **Parallel legacy surface:** Root home (`/`) and dashboard-style flows (e.g. generic ask, form-fill demos, task logs, USPS demo) are **not** the Consumer Justice product; they share the repo.
 
@@ -63,7 +63,7 @@ New conversational UI should **read and write** these same primitives (intake sh
 
 **Bend the Consumer Justice MVP toward chat-first intake and action** while **preserving** persistence and case management:
 
-- **`/justice/chat` is now shipped** as the **first chat-first Justice intake scaffold**: **scripted** Q&A (not LLM-driven yet), **one question at a time**, answers accumulated into the same **`JusticeIntake`** shape, written to **`STORAGE_INTAKE` / `STORAGE_CASE_ID`** and the same **`case_started` → `POST /api/justice/cases` (when signed in) → `/justice/plan`** flow as form intake. **`/justice/intake` stays the unchanged form fallback** (also linked from the header as “Consumer case”).
+- **`/justice/chat` is now shipped** as the **first chat-first Justice intake scaffold**: **scripted** Q&A (not LLM-driven yet), **one question at a time**, answers accumulated into the same **`JusticeIntake`** shape, then committed via **`src/lib/justice/commitIntakeToSessionAndServer.ts`** (same path as form intake: **`STORAGE_INTAKE` / `STORAGE_CASE_ID`**, **`case_started`**, optional **`POST /api/justice/cases`**, server id/timeline merge, **`intake_completed`**, caller navigates to **`/justice/plan`**). Company website uses **`src/lib/justice/normalizeCompanyWebsite.ts`** on both **`/justice/intake`** and **`/justice/chat`**. **`/justice/intake` stays the form fallback** (also linked from the header as “Consumer case”).
 - Introduce a **conversational intake** that still produces (or updates) the same **`JusticeIntake`** / case row — forms become fallback or “edit details,” not the only path.
 - Surface **one** primary workspace (shell) that shows **case status**, **next actions**, and **approval previews** instead of scattering state across many routes without a narrative.
 - Reuse **timeline + tasks + filings** for “what happened / what’s next” instead of duplicating status in ad-hoc UI only.
@@ -113,6 +113,8 @@ New conversational UI should **read and write** these same primitives (intake sh
 ### Key libraries (`src/lib/justice/`)
 
 - **`types.ts`** — `JusticeIntake`, timeline types, **storage key constants**.
+- **`commitIntakeToSessionAndServer.ts`** — Shared client helper used by **`/justice/intake`** and **`/justice/chat`**: after validation, commits a completed **`JusticeIntake`** into **`STORAGE_INTAKE`** / **`STORAGE_CASE_ID`**, clears prior timeline scope, appends **`case_started`**, clears FTC/mock session keys, **`POST /api/justice/cases`** with `{ intake, timeline }` when signed in (with **session-only fallback** if the request fails), replaces local case id with server id/timeline when returned, fires **`intake_completed`** analytics; callers **`router.push("/justice/plan")`**.
+- **`normalizeCompanyWebsite.ts`** — Shared normalizer for **`company_website`** on **`/justice/intake`** and **`/justice/chat`**: empty / `none` / `n/a` / `-` / `no` → `""`; values already starting with **`http://`** or **`https://`** unchanged; bare hosts (e.g. **`amazon.com`**) → **`https://amazon.com`**. Form intake uses **`type="text"`** (not **`type="url"`**) so bare domains are not blocked by the browser.
 - **`timeline.ts`** — Session timeline store, sync helpers, many `append*Once` helpers.
 - **`rules.ts`** — Destination computation and gating.
 - **`caseReadiness.ts`**, **`caseApiValidation.ts`**, **`hydrateActiveCaseFromServer.ts`**, **`clearLocalJusticeSession.ts`**, **`taskDueStatus.ts`**, **`useJusticeActionPageHydration.ts`**, etc.
