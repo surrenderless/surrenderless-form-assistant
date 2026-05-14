@@ -25,7 +25,7 @@ Anything that permanently treats “open another tab and paste into a government
 The shipped experience is **mostly a form-first Consumer Justice case-management scaffold**:
 
 - **Stack:** Next.js (App Router), TypeScript, **Clerk** (auth), **Supabase** (persistence via service-role API routes), **REST API routes**, **session/local storage** for active case + timeline mirror.
-- **UX:** Multi-page **justice** routes (`/justice/*`): structured **form** intake (`/justice/intake`), **scripted chat** intake (`/justice/chat` — first chat-first scaffold), action plan, per-destination prep pages, dedicated evidence page, saved cases, archived cases, packet (aggregate/export). **`/justice/intake` and `/justice/chat` share** `src/lib/justice/commitIntakeToSessionAndServer.ts` (session + timeline + optional `POST /api/justice/cases` + `intake_completed` + plan handoff) and **`src/lib/justice/normalizeCompanyWebsite.ts`** (optional company website: bare domains like `amazon.com` → `https://amazon.com`, sentinels like `none` / `n/a` → empty string).
+- **UX:** Multi-page **justice** routes (`/justice/*`): structured **form** intake (`/justice/intake`), **scripted chat** intake (`/justice/chat` — first chat-first scaffold), action plan, **`/justice/preview`** (first in-app **submission draft preview** — deterministic/template text from `src/lib/justice/buildSubmissionDraftPreview.ts`, not AI; destination selector from current justice destinations; not-filed / not-legal-advice copy; **“I reviewed this draft”** required before **Continue to action plan** back to **`/justice/plan`**; no filing automation, embedded browser, schema, or API route changes in this slice), per-destination prep pages, dedicated evidence page, saved cases, archived cases, packet (aggregate/export). **`/justice/plan`** links to **`/justice/preview`** from the **case packet** area. **`/justice/intake` and `/justice/chat` share** `src/lib/justice/commitIntakeToSessionAndServer.ts` (session + timeline + optional `POST /api/justice/cases` + `intake_completed` + plan handoff) and **`src/lib/justice/normalizeCompanyWebsite.ts`** (optional company website: bare domains like `amazon.com` → `https://amazon.com`, sentinels like `none` / `n/a` → empty string).
 - **Persistence:** When signed in, a **`justice_cases`** row holds intake, timeline JSON, optional payment-dispute draft and client state; **evidence**, **filing records**, and **follow-up tasks** live in child tables.
 - **Parallel legacy surface:** Root home (`/`) and dashboard-style flows (e.g. generic ask, form-fill demos, task logs, USPS demo) are **not** the Consumer Justice product; they share the repo.
 
@@ -45,6 +45,7 @@ Do **not** throw away these; they are the right backbone for a chat-first evolut
 | **Readiness** | `src/lib/justice/caseReadiness.ts` and plan UX (“ready to escalate” vs “needs more info”). |
 | **Saved cases** | `src/app/justice/cases/page.tsx` + `GET/PATCH` case APIs; search/filter/sort (client-side). |
 | **Packet generation** | `src/app/justice/packet/page.tsx` — aggregate intake, timeline, evidence, filings, tasks for review/export. |
+| **Submission draft preview (first slice)** | `src/app/justice/preview/page.tsx` + `src/lib/justice/buildSubmissionDraftPreview.ts` — user reviews what would be submitted **before** any filing; deterministic/template-based (not LLM output yet); destination picker uses the same computed justice destinations as the plan; explicit not-filed / not-legal-advice copy; checkbox gate before returning to the plan. **No** filing automation, embedded webview, new Supabase tables/migrations, or new/changed justice API routes in this slice. |
 | **Action routing / rules** | `src/lib/justice/rules.ts` — destination ordering, locks, FTC/CFPB/FCC relevance, payment dispute availability. |
 
 New conversational UI should **read and write** these same primitives (intake shape can evolve carefully; prefer additive fields and migrations if the schema changes).
@@ -64,6 +65,7 @@ New conversational UI should **read and write** these same primitives (intake sh
 **Bend the Consumer Justice MVP toward chat-first intake and action** while **preserving** persistence and case management:
 
 - **`/justice/chat` is now shipped** as the **first chat-first Justice intake scaffold**: **scripted** Q&A (not LLM-driven yet), **one question at a time**, answers accumulated into the same **`JusticeIntake`** shape, then committed via **`src/lib/justice/commitIntakeToSessionAndServer.ts`** (same path as form intake: **`STORAGE_INTAKE` / `STORAGE_CASE_ID`**, **`case_started`**, optional **`POST /api/justice/cases`**, server id/timeline merge, **`intake_completed`**, caller navigates to **`/justice/plan`**). Company website uses **`src/lib/justice/normalizeCompanyWebsite.ts`** on both **`/justice/intake`** and **`/justice/chat`**. **`/justice/intake` stays the form fallback** (also linked from the header as “Consumer case”).
+- **`/justice/preview` is shipped** as the **first in-app submission draft preview** surface: users read a plain-text draft (from **`buildSubmissionDraftPreview`**) for a chosen destination **before** any filing; copy states it is **not filed** and **not legal advice**; **“I reviewed this draft”** unlocks **Continue to action plan** back to **`/justice/plan`** (linked from the plan’s **case packet** block). This is a step on the path **chat → structured case → generated submission preview → approval → action tracking**; filing automation, in-app browser, schema work, and justice API churn for this feature are **not** in place yet.
 - Introduce a **conversational intake** that still produces (or updates) the same **`JusticeIntake`** / case row — forms become fallback or “edit details,” not the only path.
 - Surface **one** primary workspace (shell) that shows **case status**, **next actions**, and **approval previews** instead of scattering state across many routes without a narrative.
 - Reuse **timeline + tasks + filings** for “what happened / what’s next” instead of duplicating status in ad-hoc UI only.
@@ -79,7 +81,7 @@ New conversational UI should **read and write** these same primitives (intake sh
 | Area | Paths (representative) |
 |------|-------------------------|
 | Legacy / misc | `/` (home), `/dashboard`, `/admin`, `/sign-in`, `/debug/me` |
-| Justice | `/justice/intake` (form intake), **`/justice/chat`** (scripted chat intake → plan), `/justice/plan`, `/justice/merchant`, `/justice/payment-dispute`, `/justice/ftc-review`, `/justice/bbb`, `/justice/state-ag`, `/justice/cfpb`, `/justice/fcc`, `/justice/evidence`, `/justice/cases`, `/justice/cases/archived`, `/justice/packet` |
+| Justice | `/justice/intake` (form intake), **`/justice/chat`** (scripted chat intake → plan), `/justice/plan`, **`/justice/preview`** (submission draft preview), `/justice/merchant`, `/justice/payment-dispute`, `/justice/ftc-review`, `/justice/bbb`, `/justice/state-ag`, `/justice/cfpb`, `/justice/fcc`, `/justice/evidence`, `/justice/cases`, `/justice/cases/archived`, `/justice/packet` |
 | Internal QA | `/mock/ftc-complaint` |
 
 ### Major Justice components (`src/app/components/`)
@@ -117,6 +119,7 @@ New conversational UI should **read and write** these same primitives (intake sh
 - **`normalizeCompanyWebsite.ts`** — Shared normalizer for **`company_website`** on **`/justice/intake`** and **`/justice/chat`**: empty / `none` / `n/a` / `-` / `no` → `""`; values already starting with **`http://`** or **`https://`** unchanged; bare hosts (e.g. **`amazon.com`**) → **`https://amazon.com`**. Form intake uses **`type="text"`** (not **`type="url"`**) so bare domains are not blocked by the browser.
 - **`timeline.ts`** — Session timeline store, sync helpers, many `append*Once` helpers.
 - **`rules.ts`** — Destination computation and gating.
+- **`buildSubmissionDraftPreview.ts`** — Pure, deterministic plain-text draft for **`/justice/preview`** from **`JusticeIntake`**, selected destination label/id, and optional evidence titles (no AI).
 - **`caseReadiness.ts`**, **`caseApiValidation.ts`**, **`hydrateActiveCaseFromServer.ts`**, **`clearLocalJusticeSession.ts`**, **`taskDueStatus.ts`**, **`useJusticeActionPageHydration.ts`**, etc.
 
 ### Session / local storage keys (from `src/lib/justice/types.ts` and `clearLocalJusticeSession.ts`)
