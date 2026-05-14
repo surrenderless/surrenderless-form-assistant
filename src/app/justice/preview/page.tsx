@@ -331,14 +331,17 @@ export default function JusticePreviewPage() {
         </div>
 
         <div className={`mt-6 ${cardCls}`}>
-          <label className="flex cursor-pointer items-start gap-3 text-sm text-neutral-800 dark:text-neutral-200">
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            Continue only after checking the draft text you intend to rely on.
+          </p>
+          <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm text-neutral-800 dark:text-neutral-200">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4 rounded border-neutral-300 text-blue-600 focus:ring-blue-500"
               checked={reviewed}
               onChange={(e) => setReviewed(e.target.checked)}
             />
-            <span>I reviewed this draft.</span>
+            <span>I reviewed the deterministic draft and any AI-assisted draft shown above.</span>
           </label>
           <button
             type="button"
