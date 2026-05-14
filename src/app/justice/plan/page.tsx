@@ -7,7 +7,11 @@ import Link from "next/link";
 import Header from "@/app/components/Header";
 import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
 import type { DestinationStatus, JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
-import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
+import {
+  JUSTICE_EVIDENCE_TYPE_LABELS,
+  type JusticeCaseEvidenceRow,
+  type JusticeEvidenceType,
+} from "@/lib/justice/evidence";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
@@ -43,6 +47,18 @@ import {
 
 const MERCHANT_MESSAGE_PLAN_PREVIEW_MAX = 560;
 const PAYMENT_DISPUTE_LETTER_PLAN_PREVIEW_MAX = 560;
+const PLAN_EVIDENCE_PREVIEW_DESC_MAX = 120;
+
+function planEvidenceTypeLabel(t: string): string {
+  return JUSTICE_EVIDENCE_TYPE_LABELS[t as JusticeEvidenceType] ?? t.replace(/_/g, " ");
+}
+
+function truncatePlanEvidenceDescription(text: string | null, max: number): string {
+  if (!text?.trim()) return "";
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
+}
 
 function destinationStatusBadgeLabel(status: DestinationStatus): string {
   switch (status) {
@@ -231,6 +247,7 @@ export default function JusticePlanPage() {
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
   const [readinessLoading, setReadinessLoading] = useState(false);
   const [evidenceCount, setEvidenceCount] = useState(0);
+  const [evidenceRowsForPlan, setEvidenceRowsForPlan] = useState<JusticeCaseEvidenceRow[]>([]);
   const [tasksForReadiness, setTasksForReadiness] = useState<JusticeCaseTaskRow[]>([]);
   const [readinessTick, setReadinessTick] = useState(0);
 
@@ -432,6 +449,7 @@ export default function JusticePlanPage() {
     if (!isLoaded || !isSignedIn) {
       setFilings([]);
       setEvidenceCount(0);
+      setEvidenceRowsForPlan([]);
       setTasksForReadiness([]);
       setReadinessLoading(false);
       return;
@@ -440,6 +458,7 @@ export default function JusticePlanPage() {
     if (!cid) {
       setFilings([]);
       setEvidenceCount(0);
+      setEvidenceRowsForPlan([]);
       setTasksForReadiness([]);
       setReadinessLoading(false);
       return;
@@ -458,12 +477,15 @@ export default function JusticePlanPage() {
         const evJson: unknown = evRes.ok ? await evRes.json() : [];
         const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
         setFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
-        setEvidenceCount(Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]).length : 0);
+        const evRows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
+        setEvidenceCount(evRows.length);
+        setEvidenceRowsForPlan(evRows);
         setTasksForReadiness(Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : []);
       } catch {
         if (!cancelled) {
           setFilings([]);
           setEvidenceCount(0);
+          setEvidenceRowsForPlan([]);
           setTasksForReadiness([]);
         }
       } finally {
@@ -992,12 +1014,60 @@ export default function JusticePlanPage() {
             <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
               Keep short notes on screenshots, receipts, emails, and other proof tied to this case.
             </p>
-            <Link
-              href="/justice/evidence"
-              className="mt-4 inline-flex rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
-            >
-              Add evidence
-            </Link>
+            {isSignedIn && evidenceRowsForPlan.length > 0 ? (
+              <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">Saved evidence</p>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Metadata only — descriptions are shortened here. Open the evidence page to add or edit records.
+                </p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+                    Show saved evidence ({evidenceRowsForPlan.length})
+                  </summary>
+                  <ul className="mt-2 max-h-48 space-y-3 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-3 py-3 dark:border-neutral-600 dark:bg-neutral-900">
+                    {evidenceRowsForPlan.map((row) => {
+                      const descPreview = truncatePlanEvidenceDescription(
+                        row.description,
+                        PLAN_EVIDENCE_PREVIEW_DESC_MAX
+                      );
+                      return (
+                        <li
+                          key={row.id}
+                          className="border-t border-neutral-100 pt-3 first:border-t-0 first:pt-0 dark:border-neutral-700/80"
+                        >
+                          <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{row.title}</p>
+                          <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+                            {planEvidenceTypeLabel(row.evidence_type)}
+                          </p>
+                          {row.evidence_date ? (
+                            <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">{row.evidence_date}</p>
+                          ) : null}
+                          {descPreview ? (
+                            <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-700 dark:text-neutral-300">
+                              {descPreview}
+                            </p>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+                <Link
+                  href="/justice/evidence"
+                  className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Manage evidence →
+                </Link>
+              </div>
+            ) : null}
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <Link
+                href="/justice/evidence"
+                className="inline-flex justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+              >
+                Add evidence
+              </Link>
+            </div>
           </li>
 
           <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
