@@ -4,10 +4,12 @@ import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
+import { readTimeline } from "@/lib/justice/timeline";
 import {
   cfpbLikelyRelevant,
   computeJusticeDestinations,
@@ -36,6 +38,9 @@ export default function JusticePreviewPage() {
   const [evidenceError, setEvidenceError] = useState(false);
   const [selectedId, setSelectedId] = useState<DestinationId | null>(null);
   const [reviewed, setReviewed] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiDraft, setAiDraft] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -134,7 +139,61 @@ export default function JusticePreviewPage() {
 
   useEffect(() => {
     setReviewed(false);
+    setAiDraft(null);
+    setAiError(null);
   }, [selectedId, intake]);
+
+  const generateAiDraft = useCallback(async () => {
+    if (!intake || !selectedDestination) return;
+    if (!isSignedIn) {
+      setAiError("Sign in to generate an AI-assisted draft.");
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const cid = typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "" : "";
+      const timeline = typeof window !== "undefined" && cid ? readTimeline(cid) : [];
+      const timeline_summary = timeline.slice(-60).map((e) => ({
+        type: e.type,
+        label: e.label,
+        ts: e.ts,
+        ...(e.detail?.trim() ? { detail: e.detail.trim() } : {}),
+      }));
+      const evidence_items = evidence.map((e) => ({
+        title: e.title,
+        evidence_type: e.evidence_type,
+        ...(e.description?.trim() ? { description: e.description.trim() } : {}),
+        ...(e.evidence_date != null && e.evidence_date !== "" ? { evidence_date: e.evidence_date } : {}),
+      }));
+      const res = await fetch("/api/justice/preview-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intake,
+          destination_id: selectedDestination.id,
+          destination_label: selectedDestination.label,
+          ...(cid && isUuid(cid) ? { case_id: cid } : {}),
+          evidence_items,
+          timeline_summary,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { draft?: string; error?: string };
+      if (!res.ok) {
+        setAiError(data.error ?? "Could not generate AI-assisted draft.");
+        return;
+      }
+      if (typeof data.draft === "string" && data.draft.trim()) {
+        setAiDraft(data.draft.trim());
+      } else {
+        setAiError("Empty response from draft service.");
+      }
+    } catch {
+      setAiError("Could not generate AI-assisted draft.");
+    } finally {
+      setAiLoading(false);
+    }
+  }, [intake, selectedDestination, evidence, isSignedIn]);
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
@@ -232,13 +291,43 @@ export default function JusticePreviewPage() {
         ) : null}
 
         <div className={`mt-6 ${cardCls}`}>
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Draft for your review</h2>
+          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Deterministic draft (source of truth)</h2>
           <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-            Not filed. Not legal advice. For your preparation only.
+            Not filed. Not legal advice. For your preparation only. Built locally from your saved answers — no external AI.
           </p>
-          <pre className="mt-4 max-h-[min(480px,55vh)] overflow-auto whitespace-pre-wrap rounded-xl border border-neutral-100 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950/60 dark:text-neutral-100">
+          <pre className="mt-4 max-h-[min(360px,45vh)] overflow-auto whitespace-pre-wrap rounded-xl border border-neutral-100 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950/60 dark:text-neutral-100">
             {draftText}
           </pre>
+        </div>
+
+        <div className={`mt-6 ${cardCls}`}>
+          <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">AI-assisted draft (optional)</h2>
+          <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+            If you use this, Surrenderless sends your case summary (intake, destination, evidence notes, and timeline) to{" "}
+            <strong>OpenAI</strong> to produce an extra draft. Nothing is filed automatically. This is still not legal
+            advice. Review the deterministic draft above even when using AI.
+          </p>
+          <button
+            type="button"
+            disabled={aiLoading || !isSignedIn}
+            onClick={() => void generateAiDraft()}
+            className="mt-4 w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+          >
+            {aiLoading ? "Generating…" : "Generate AI-assisted draft"}
+          </button>
+          {!isSignedIn ? (
+            <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Sign in to use AI-assisted drafts.</p>
+          ) : null}
+          {aiError ? (
+            <p className="mt-3 text-sm text-amber-800 dark:text-amber-200" role="alert">
+              {aiError} Your deterministic draft above is unchanged.
+            </p>
+          ) : null}
+          {aiDraft ? (
+            <pre className="mt-4 max-h-[min(360px,45vh)] overflow-auto whitespace-pre-wrap rounded-xl border border-blue-100 bg-blue-50/80 p-4 text-xs leading-relaxed text-neutral-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-neutral-100">
+              {aiDraft}
+            </pre>
+          ) : null}
         </div>
 
         <div className={`mt-6 ${cardCls}`}>
