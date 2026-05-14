@@ -215,6 +215,54 @@ export function appendActionPlanViewedOnce(caseId: string): void {
   });
 }
 
+/** Stable id for idempotent server + session “submission draft reviewed” milestone. */
+export const SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID = "submission_draft_reviewed";
+
+export type SubmissionDraftReviewedOpts = {
+  destinationLabel?: string;
+  usedAi?: boolean;
+};
+
+const MAX_SUBMISSION_DRAFT_REVIEWED_DETAIL = 500;
+
+/** Detail line for submission draft review (session + server). */
+export function buildSubmissionDraftReviewedDetail(opts: SubmissionDraftReviewedOpts): string {
+  const label = opts.destinationLabel?.trim();
+  const parts: string[] = [];
+  if (label) parts.push(`Related action: ${label}`);
+  parts.push(opts.usedAi ? "Included AI-assisted draft." : "Deterministic draft only.");
+  const s = parts.join(" ");
+  return s.length <= MAX_SUBMISSION_DRAFT_REVIEWED_DETAIL ? s : s.slice(0, MAX_SUBMISSION_DRAFT_REVIEWED_DETAIL);
+}
+
+/** Appends once per case in session storage; uses stable entry id (matches server idempotency). */
+export function appendSubmissionDraftReviewedOnce(caseId: string, opts: SubmissionDraftReviewedOpts): void {
+  if (!caseId || typeof window === "undefined") return;
+  const entries = readTimeline(caseId);
+  if (
+    entries.some(
+      (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
+    )
+  ) {
+    return;
+  }
+  const detail = buildSubmissionDraftReviewedDetail(opts);
+  const entry: TimelineEntry = {
+    id: SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID,
+    case_id: caseId,
+    type: "submission_draft_reviewed",
+    label: "Submission draft reviewed",
+    ts: new Date().toISOString(),
+    detail,
+  };
+  const store = loadStore();
+  const list = store[caseId] ?? [];
+  list.push(entry);
+  list.sort((a, b) => a.ts.localeCompare(b.ts));
+  store[caseId] = list;
+  saveStore(store);
+}
+
 export function appendPaymentChecklistViewedOnce(caseId: string): void {
   if (!caseId) return;
   const entries = readTimeline(caseId);
