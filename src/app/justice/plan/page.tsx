@@ -27,6 +27,7 @@ import {
   cfpbPrepUnlockedFromIntake,
   computeFtcUnlocked,
   computeJusticeDestinations,
+  dotLikelyRelevant,
   fccLikelyRelevant,
   isMerchantResolved,
   paymentDisputeAvailable,
@@ -720,7 +721,8 @@ export default function JusticePlanPage() {
   const merchantResolved = isMerchantResolved(intake);
   const cfpbRel = cfpbLikelyRelevant(intake);
   const fccRel = fccLikelyRelevant(intake);
-  const useCompanyContactLabels = cfpbRel || fccRel;
+  const dotRel = dotLikelyRelevant(intake);
+  const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
   const cfpbPrepOpen = cfpbRel && cfpbPrepUnlockedFromIntake(intake, manualFtc);
   const step3ContactLockMessage = useCompanyContactLabels
     ? "Complete company contact first or provide failed-contact proof."
@@ -732,21 +734,29 @@ export default function JusticePlanPage() {
 
   const headline = `${intake.company_name} — ${intake.purchase_or_signup.slice(0, 80)}${intake.purchase_or_signup.length > 80 ? "…" : ""}`;
   const recommendationText =
-    ftcPracticeDoneVisible && !cfpbRel && !fccRel
-      ? "FTC practice completed. Next: consider payment dispute if money is still lost."
-      : merchantResolved
-        ? "You marked this as resolved with the merchant. Keep any confirmations for your records."
-        : !contacted
-          ? "Recommended next: contact the company first."
-          : cfpbRel
-            ? cfpbPrepOpen
-              ? "Recommended next: prepare your CFPB complaint (file manually on the official CFPB site when ready)."
-              : strengthenProofHint
-            : fccRel && ftcOpen
-              ? "Recommended next: prepare your FCC complaint (file manually on the official FCC site when ready)."
-              : ftcOpen
-                ? "Recommended next: escalate using your failed contact proof."
-                : strengthenProofHint;
+    ftcPracticeDoneVisible && !cfpbRel && !fccRel && dotRel
+      ? "FTC practice completed. Next: prepare your DOT aviation complaint draft (manual prep only; file on the official USDOT process when ready), or consider a payment dispute if money is still lost."
+      : ftcPracticeDoneVisible && !cfpbRel && !fccRel
+        ? "FTC practice completed. Next: consider payment dispute if money is still lost."
+        : merchantResolved
+          ? "You marked this as resolved with the merchant. Keep any confirmations for your records."
+          : !contacted
+            ? "Recommended next: contact the company first."
+            : cfpbRel
+              ? cfpbPrepOpen
+                ? "Recommended next: prepare your CFPB complaint (file manually on the official CFPB site when ready)."
+                : strengthenProofHint
+              : fccRel
+                ? ftcOpen
+                  ? "Recommended next: prepare your FCC complaint (file manually on the official FCC site when ready)."
+                  : strengthenProofHint
+                : dotRel
+                  ? ftcOpen
+                    ? "Recommended next: prepare your DOT aviation complaint draft (manual prep here; file on the official USDOT aviation consumer process when ready)."
+                    : strengthenProofHint
+                  : ftcOpen
+                    ? "Recommended next: escalate using your failed contact proof."
+                    : strengthenProofHint;
   const paymentRecommendedNext = ftcPracticeDoneVisible && paymentOk;
   const merchantBadge =
     !merchantResolved &&
@@ -1417,6 +1427,38 @@ export default function JusticePlanPage() {
                     }
                   >
                     Prepare FCC complaint
+                  </Link>
+                ) : (
+                  <p className="mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">
+                    {step3ContactLockMessage}
+                  </p>
+                )}
+              </>
+            ) : dotRel ? (
+              <>
+                {contacted && ftcOpen ? (
+                  <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+                ) : null}
+                <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                  Step 3 — Escalate to DOT
+                </h2>
+                <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                  Use this for flight, airline, refund, cancellation, baggage, delays, or other aviation consumer issues.
+                  Manual prep only — Surrenderless helps you draft text to copy; it does not file with DOT or any agency
+                  automatically.
+                </p>
+                {ftcOpen ? (
+                  <Link
+                    href="/justice/dot"
+                    className="mt-4 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg"
+                    onClick={() =>
+                      void logEvent("dot_prep_opened", {
+                        case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                        from: "plan_step3",
+                      })
+                    }
+                  >
+                    Prepare DOT aviation complaint
                   </Link>
                 ) : (
                   <p className="mt-4 rounded-xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 shadow-inner dark:border-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-300">

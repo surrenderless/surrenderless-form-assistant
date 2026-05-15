@@ -111,6 +111,11 @@ function matchesDotHints(intake: JusticeIntake): boolean {
   return hints.some((h) => t.includes(h));
 }
 
+/** True when intake text suggests a USDOT / aviation consumer complaint may apply. */
+export function dotLikelyRelevant(intake: JusticeIntake): boolean {
+  return matchesDotHints(intake);
+}
+
 /** Text signals that a complaint may involve CFPB-regulated financial products/services (not ordinary retail goods alone). */
 function matchesCfpbFinancialHints(intake: JusticeIntake): boolean {
   const t = intakeTextBlob(intake);
