@@ -16,10 +16,21 @@ export default function JusticeWorkspacePage() {
           regulators, courts, or companies.
         </p>
         <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-500">
-          Use the links below to start a new case, open your plan, or browse cases you saved while signed in.
+          Recommended: start with chat intake. Use the form intake if you prefer the full structured form. You can
+          also open your plan or browse cases you saved while signed in.
         </p>
 
         <ul className="mt-8 space-y-3">
+          <li>
+            <Link href="/justice/chat" className={`${cardCls} text-left`}>
+              <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Start with chat intake
+              </span>
+              <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
+                Answer step-by-step questions to build your case.
+              </span>
+            </Link>
+          </li>
           <li>
             <Link href="/justice/plan" className={`${cardCls} text-left`}>
               <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
@@ -28,16 +39,6 @@ export default function JusticeWorkspacePage() {
               <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
                 Open your plan when you already have a case in this browser — or follow prompts there to start or
                 resume.
-              </span>
-            </Link>
-          </li>
-          <li>
-            <Link href="/justice/chat" className={`${cardCls} text-left`}>
-              <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                Start with chat intake
-              </span>
-              <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-                Answer step-by-step questions to build your case.
               </span>
             </Link>
           </li>
