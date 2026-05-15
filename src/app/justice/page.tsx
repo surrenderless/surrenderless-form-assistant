@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Header from "@/app/components/Header";
+import JusticeHubActiveCaseCard from "@/app/justice/JusticeHubActiveCaseCard";
 
 const cardCls =
   "block rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-md shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition hover:border-blue-200/80 hover:shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06] dark:hover:border-blue-800/50";
@@ -19,6 +20,8 @@ export default function JusticeWorkspacePage() {
           Recommended: start with chat intake. Use the form intake if you prefer the full structured form. You can
           also open your plan or browse cases you saved while signed in.
         </p>
+
+        <JusticeHubActiveCaseCard />
 
         <ul className="mt-8 space-y-3">
           <li>
