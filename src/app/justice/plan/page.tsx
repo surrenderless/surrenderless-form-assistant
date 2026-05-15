@@ -1607,7 +1607,8 @@ export default function JusticePlanPage() {
                       d.id === "state_ag" ||
                       d.id === "cfpb" ||
                       d.id === "fcc" ||
-                      d.id === "dot") ? (
+                      d.id === "dot" ||
+                      d.id === "small_claims") ? (
                       <div className="mt-3 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
                         <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
                           {d.id === "bbb"
@@ -1618,7 +1619,9 @@ export default function JusticePlanPage() {
                                 ? "CFPB"
                                 : d.id === "fcc"
                                   ? "FCC"
-                                  : "USDOT / aviation"}{" "}
+                                  : d.id === "dot"
+                                    ? "USDOT / aviation"
+                                    : "Demand letter"}{" "}
                           manual prep preview
                         </p>
                         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
@@ -1746,6 +1749,12 @@ export default function JusticePlanPage() {
                           }
                           if (d.id === "dot") {
                             void logEvent("dot_prep_opened", {
+                              case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
+                              from: "destinations_engine",
+                            });
+                          }
+                          if (d.id === "small_claims") {
+                            void logEvent("demand_letter_prep_opened", {
                               case_id: caseId || sessionStorage.getItem(STORAGE_CASE_ID),
                               from: "destinations_engine",
                             });

@@ -386,6 +386,7 @@ export function computeJusticeDestinations(
     rationale: scRationale,
     status: scStatus,
     priority: 90,
+    internalRoute: "/justice/demand-letter",
   });
 
   return out.sort((a, b) => a.priority - b.priority);
