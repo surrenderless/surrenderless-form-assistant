@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
+import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 
 type CaseRow = {
   id: string;
@@ -47,16 +48,22 @@ export default function JusticeArchivedCasesPage() {
     const ac = new AbortController();
     void (async () => {
       try {
-        const res = await fetch("/api/justice/cases?archived=1", { signal: ac.signal });
+        const res = await fetch(`/api/justice/cases?archived=1&limit=10&offset=0`, { signal: ac.signal });
         if (!res.ok) {
           setLoadError("Could not load archived cases.");
           setCases([]);
           return;
         }
-        const data = (await res.json()) as CaseRow[];
+        const body = (await res.json()) as unknown;
+        const env = parseJusticeCasesListEnvelope(body);
+        if (!env) {
+          setLoadError("Could not load archived cases.");
+          setCases([]);
+          return;
+        }
         if (!ac.signal.aborted) {
           setLoadError(null);
-          setCases(Array.isArray(data) ? data : []);
+          setCases(env.cases as CaseRow[]);
         }
       } catch (e) {
         if (ac.signal.aborted) return;

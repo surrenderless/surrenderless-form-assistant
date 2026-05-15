@@ -115,7 +115,7 @@ New conversational UI should **read and write** these same primitives (intake sh
 
 ### Justice API routes (`src/app/api/justice/`)
 
-- **`cases`** — `GET` list (non-archived default; `?archived=1` for archived); `POST` create. **`GET` is capped (e.g. limit 10)** — see limitations.
+- **`cases`** — `GET` list (non-archived default; `?archived=1` for archived); optional **`limit`** (default **10**, max **50**) and **`offset`** pagination; JSON **`{ cases, has_more, offset, limit }`**; `POST` create.
 - **`cases/[id]`** — `GET` one case; `PATCH` intake, timeline, drafts, `archived_at`, `case_label`.
 - **`evidence`**, **`evidence/[id]`** — List/create; update/delete; POST may append server timeline (`evidence_added`).
 - **`filings`**, **`filings/[id]`** — Same pattern; `filing_recorded` on create.
@@ -167,7 +167,7 @@ New conversational UI should **read and write** these same primitives (intake sh
 
 ### Known limitations (non-exhaustive)
 
-- **Case list cap:** `GET /api/justice/cases` returns a **limited** number of rows (e.g. 10) — “resume latest” and saved list omit older cases.
+- **Large saved-case lists:** `GET /api/justice/cases` paginates (**`limit`** / **`offset`**, **`has_more`**); **`/justice/cases`** offers **Load more cases**. Very large offsets or huge histories can still be slow — prefer reasonable page sizes.
 - **Dual timeline:** Session + DB can drift if sync fails or multiple tabs are used.
 - **Pre-server case id:** Intake can generate a non-UUID id in edge environments; evidence/task APIs require UUID `case_id`.
 - **RLS vs Clerk:** Child-table RLS policies target Supabase Auth `uid`; app uses **Clerk id + service role** — fine for current server-only access, confusing if client-side Supabase is introduced without redesign.

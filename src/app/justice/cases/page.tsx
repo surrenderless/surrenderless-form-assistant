@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
@@ -159,6 +160,9 @@ function buildAttentionItems(
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]";
 
+/** Must match default `GET /api/justice/cases` page size and stay within API `MAX_LIST_LIMIT`. */
+const CASES_PAGE_LIMIT = 10;
+
 const labelInputCls =
   "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
 
@@ -167,6 +171,8 @@ export default function JusticeCasesPage() {
   const { isSignedIn, isLoaded } = useAuth();
   const [cases, setCases] = useState<CaseRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hasMoreCases, setHasMoreCases] = useState(false);
+  const [loadingMoreCases, setLoadingMoreCases] = useState(false);
   const [sessionCaseId, setSessionCaseId] = useState<string | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [labelDraftById, setLabelDraftById] = useState<Record<string, string>>({});
@@ -203,21 +209,34 @@ export default function JusticeCasesPage() {
     const ac = new AbortController();
     void (async () => {
       try {
-        const res = await fetch("/api/justice/cases", { signal: ac.signal });
+        const res = await fetch(
+          `/api/justice/cases?limit=${CASES_PAGE_LIMIT}&offset=0`,
+          { signal: ac.signal }
+        );
         if (!res.ok) {
           setLoadError("Could not load cases.");
           setCases([]);
+          setHasMoreCases(false);
           return;
         }
-        const data = (await res.json()) as CaseRow[];
+        const body = (await res.json()) as unknown;
+        const env = parseJusticeCasesListEnvelope(body);
+        if (!env) {
+          setLoadError("Could not load cases.");
+          setCases([]);
+          setHasMoreCases(false);
+          return;
+        }
         if (!ac.signal.aborted) {
           setLoadError(null);
-          setCases(Array.isArray(data) ? data : []);
+          setCases(env.cases as CaseRow[]);
+          setHasMoreCases(env.has_more);
         }
       } catch (e) {
         if (ac.signal.aborted) return;
         setLoadError("Could not load cases.");
         setCases([]);
+        setHasMoreCases(false);
       }
     })();
 
@@ -314,6 +333,32 @@ export default function JusticeCasesPage() {
     if (typeof window === "undefined") return;
     setSessionCaseId(sessionStorage.getItem(STORAGE_CASE_ID));
   }, [cases]);
+
+  async function loadMoreCases() {
+    if (!isSignedIn || cases === null || !hasMoreCases || loadingMoreCases) return;
+    setLoadingMoreCases(true);
+    try {
+      const offset = cases.length;
+      const res = await fetch(`/api/justice/cases?limit=${CASES_PAGE_LIMIT}&offset=${offset}`);
+      if (!res.ok) {
+        setLoadError("Could not load more cases.");
+        return;
+      }
+      const body = (await res.json()) as unknown;
+      const env = parseJusticeCasesListEnvelope(body);
+      if (!env) {
+        setLoadError("Could not load more cases.");
+        return;
+      }
+      setLoadError(null);
+      setCases((prev) => [...(prev ?? []), ...(env.cases as CaseRow[])]);
+      setHasMoreCases(env.has_more);
+    } catch {
+      setLoadError("Could not load more cases.");
+    } finally {
+      setLoadingMoreCases(false);
+    }
+  }
 
   async function saveLabel(id: string) {
     setSavingLabelId(id);
@@ -635,6 +680,18 @@ export default function JusticeCasesPage() {
             );
             })}
           </ul>
+            {hasMoreCases ? (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => void loadMoreCases()}
+                  disabled={loadingMoreCases}
+                  className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  {loadingMoreCases ? "Loading…" : "Load more cases"}
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </main>

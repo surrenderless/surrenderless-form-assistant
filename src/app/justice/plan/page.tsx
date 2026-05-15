@@ -21,6 +21,7 @@ import {
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import {
   cfpbLikelyRelevant,
   cfpbPrepDocumentedFromIntake,
@@ -474,20 +475,22 @@ export default function JusticePlanPage() {
           router.replace("/justice/intake");
           return;
         }
-        const list = (await res.json()) as Array<{
-          id?: string;
-          intake?: JusticeIntake;
-          timeline?: unknown;
-          case_label?: string | null;
-          payment_dispute_draft?: unknown;
-        }>;
+        const body = (await res.json()) as unknown;
+        const env = parseJusticeCasesListEnvelope(body);
+        const list = env?.cases ?? [];
         if (ac.signal.aborted) return;
         if (!Array.isArray(list) || list.length === 0) {
           setResumeLatestPending(false);
           router.replace("/justice/intake");
           return;
         }
-        const latest = list[0];
+        const latest = list[0] as {
+          id?: string;
+          intake?: JusticeIntake;
+          timeline?: unknown;
+          case_label?: string | null;
+          payment_dispute_draft?: unknown;
+        };
         if (!latest?.id || !latest.intake) {
           console.warn("justice plan: list response missing id or intake");
           setResumeLatestPending(false);
