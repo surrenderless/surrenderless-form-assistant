@@ -825,6 +825,24 @@ export default function JusticePlanPage() {
 
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
 
+        {showPostDraftReviewCallout ? (
+          <div
+            className="mt-4 rounded-xl border border-blue-200/90 bg-blue-50/90 px-4 py-3 text-sm shadow-sm ring-1 ring-blue-950/[0.06] dark:border-blue-800/80 dark:bg-blue-950/40 dark:ring-blue-400/10"
+            role="status"
+          >
+            <p className="font-semibold text-blue-950 dark:text-blue-100">Submission draft reviewed</p>
+            <p className="mt-1.5 text-blue-900/90 dark:text-blue-100/90">
+              You reviewed your submission draft on the preview page. Your next step is to follow the{" "}
+              <strong>recommended action</strong> further down this page (concise recommendation line and highlighted{" "}
+              <strong>Recommended next</strong> cards)—nothing is filed automatically from Surrenderless.
+            </p>
+            <p className="mt-2 text-xs text-blue-900/80 dark:text-blue-200/80">
+              Tip: use the highlighted &quot;Recommended next&quot; cards and links for merchant contact, prep pages, or
+              payment dispute steps.
+            </p>
+          </div>
+        ) : null}
+
         <section className={summaryCardCls} aria-label="Current case summary">
           <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Current case</p>
           <p className="mt-2 text-base font-semibold text-neutral-900 dark:text-neutral-100">{caseSummaryTitle}</p>
@@ -868,24 +886,6 @@ export default function JusticePlanPage() {
 
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{headline}</p>
         <p className="mt-1 text-xs text-neutral-500">{recommendationText}</p>
-
-        {showPostDraftReviewCallout ? (
-          <div
-            className="mt-4 rounded-xl border border-blue-200/90 bg-blue-50/90 px-4 py-3 text-sm shadow-sm ring-1 ring-blue-950/[0.06] dark:border-blue-800/80 dark:bg-blue-950/40 dark:ring-blue-400/10"
-            role="status"
-          >
-            <p className="font-semibold text-blue-950 dark:text-blue-100">Submission draft reviewed</p>
-            <p className="mt-1.5 text-blue-900/90 dark:text-blue-100/90">
-              You reviewed your submission draft on the preview page. Your next step is to follow the{" "}
-              <strong>recommended action</strong> on this plan below (same guidance as the line above)—nothing is filed
-              automatically from Surrenderless.
-            </p>
-            <p className="mt-2 text-xs text-blue-900/80 dark:text-blue-200/80">
-              Tip: use the highlighted &quot;Recommended next&quot; cards and links for merchant contact, prep pages, or
-              payment dispute steps.
-            </p>
-          </div>
-        ) : null}
 
         <section
           className="mt-6 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]"
