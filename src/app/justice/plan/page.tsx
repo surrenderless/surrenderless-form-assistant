@@ -794,6 +794,22 @@ export default function JusticePlanPage() {
 
   const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
 
+  /** Styling mirror of “Recommended next” visibility on the Step 3 `<li>` (no logic changes). */
+  const step3RecommendedCardHighlight =
+    !merchantResolved &&
+    (cfpbRel
+      ? contacted && cfpbPrepOpen
+      : fccRel
+        ? contacted && ftcOpen
+        : dotRel
+          ? contacted && ftcOpen
+          : !ftcPracticeDoneVisible && contacted && ftcOpen);
+
+  const mainDestinationLiBaseCls =
+    "rounded-2xl p-5 shadow-lg shadow-neutral-900/5 transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:shadow-black/40 dark:hover:shadow-black/50";
+  const mainDestinationLiNeutralCls = `${mainDestinationLiBaseCls} border border-neutral-200/90 bg-white ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06]`;
+  const mainDestinationLiRecommendedCls = `${mainDestinationLiBaseCls} border border-blue-200/80 bg-blue-50/40 ring-2 ring-blue-500/20 dark:border-blue-800/60 dark:bg-blue-950/40 dark:ring-blue-400/20`;
+
   const summaryCardCls =
     "mt-4 rounded-xl border border-neutral-200/90 bg-white px-4 py-4 text-sm leading-relaxed shadow-sm ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:ring-white/[0.06]";
 
@@ -992,10 +1008,14 @@ export default function JusticePlanPage() {
         />
 
         <ul className="mt-8 space-y-5">
-          <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
+          <li
+            className={merchantBadge ? mainDestinationLiRecommendedCls : mainDestinationLiNeutralCls}
+          >
             <div className="flex items-start justify-between gap-2">
               <div>
-                {merchantBadge && <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>}
+                {merchantBadge && (
+                  <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400">Recommended next</p>
+                )}
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">{merchantTitle}</h2>
                 <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
                   {merchantDescription}
@@ -1126,9 +1146,11 @@ export default function JusticePlanPage() {
             </div>
           </li>
 
-          <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
+          <li
+            className={paymentRecommendedNext ? mainDestinationLiRecommendedCls : mainDestinationLiNeutralCls}
+          >
             {paymentRecommendedNext && (
-              <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+              <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400">Recommended next</p>
             )}
             <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Payment dispute</h2>
             <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
@@ -1379,7 +1401,9 @@ export default function JusticePlanPage() {
             </div>
           </li>
 
-          <li className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] transition-shadow duration-200 hover:shadow-xl hover:shadow-neutral-900/[0.07] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] dark:hover:shadow-black/50">
+          <li
+            className={step3RecommendedCardHighlight ? mainDestinationLiRecommendedCls : mainDestinationLiNeutralCls}
+          >
             {merchantResolved ? (
               <>
                 <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-400">Case resolved</p>
@@ -1391,7 +1415,7 @@ export default function JusticePlanPage() {
             ) : cfpbRel ? (
               <>
                 {contacted && cfpbPrepOpen ? (
-                  <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+                  <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400">Recommended next</p>
                 ) : null}
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
                   Step 3 — Escalate to CFPB
@@ -1421,7 +1445,7 @@ export default function JusticePlanPage() {
             ) : fccRel ? (
               <>
                 {contacted && ftcOpen ? (
-                  <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+                  <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400">Recommended next</p>
                 ) : null}
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
                   Step 3 — Escalate to FCC
@@ -1451,7 +1475,7 @@ export default function JusticePlanPage() {
             ) : dotRel ? (
               <>
                 {contacted && ftcOpen ? (
-                  <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+                  <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400">Recommended next</p>
                 ) : null}
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
                   Step 3 — Escalate to DOT
@@ -1488,7 +1512,7 @@ export default function JusticePlanPage() {
                   </p>
                 )}
                 {!merchantResolved && !ftcPracticeDoneVisible && contacted && ftcOpen && (
-                  <p className="text-xs font-semibold uppercase text-blue-600">Recommended next</p>
+                  <p className="text-xs font-semibold uppercase text-blue-600 dark:text-blue-400">Recommended next</p>
                 )}
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
                   {ftcPracticeDoneVisible ? "FTC practice completed" : "Step 3 — Escalate to FTC"}
