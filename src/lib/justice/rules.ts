@@ -353,14 +353,16 @@ export function computeJusticeDestinations(
       priority: fccRel ? (cfpbRel ? 29 : 27) : 70,
       ...(fccRel ? { internalRoute: "/justice/fcc" } : {}),
     });
+    const dotRel = matchesDotHints(intake);
     push({
       id: "dot",
       label: "USDOT / aviation consumer",
-      rationale: matchesDotHints(intake)
+      rationale: dotRel
         ? "May fit flights or certain transportation problems."
         : "Usually for aviation or specific transportation complaints.",
-      status: matchesDotHints(intake) ? "manual" : "later",
+      status: dotRel ? "manual" : "later",
       priority: 80,
+      ...(dotRel ? { internalRoute: "/justice/dot" } : {}),
     });
   }
 
