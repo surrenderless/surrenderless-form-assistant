@@ -81,3 +81,22 @@ export function isTimelineArray(v: unknown): v is TimelineEntry[] {
   }
   return true;
 }
+
+/** JSON body from `GET /api/justice/cases` (paginated list). */
+export type JusticeCasesListEnvelope = {
+  cases: unknown[];
+  has_more: boolean;
+  offset: number;
+  limit: number;
+};
+
+export function parseJusticeCasesListEnvelope(body: unknown): JusticeCasesListEnvelope | null {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+  const o = body as Record<string, unknown>;
+  if (!Array.isArray(o.cases) || typeof o.has_more !== "boolean") return null;
+  const offset =
+    typeof o.offset === "number" && Number.isFinite(o.offset) && o.offset >= 0 ? Math.trunc(o.offset) : 0;
+  const limit =
+    typeof o.limit === "number" && Number.isFinite(o.limit) && o.limit >= 1 ? Math.trunc(o.limit) : 10;
+  return { cases: o.cases, has_more: o.has_more, offset, limit };
+}

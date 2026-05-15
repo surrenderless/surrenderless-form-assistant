@@ -1,4 +1,4 @@
-import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
+import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import {
@@ -54,7 +54,9 @@ export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeI
 export async function fetchAndHydrateLatestJusticeCase(signal?: AbortSignal): Promise<JusticeIntake | null> {
   const res = await fetch("/api/justice/cases", { signal });
   if (!res.ok) return null;
-  const list = (await res.json()) as unknown;
+  const body = (await res.json()) as unknown;
+  const env = parseJusticeCasesListEnvelope(body);
+  const list = env?.cases ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
   const latest = list[0] as JusticeCaseListRow;
   return hydrateSessionFromCaseListRow(latest);
