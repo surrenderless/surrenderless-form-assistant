@@ -885,7 +885,18 @@ export default function JusticePlanPage() {
         </section>
 
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{headline}</p>
-        <p className="mt-1 text-xs text-neutral-500">{recommendationText}</p>
+        <div
+          className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-4 py-3 shadow-inner ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-800/40 dark:ring-white/[0.06]"
+          aria-labelledby="plan-recommended-next-heading"
+        >
+          <p
+            id="plan-recommended-next-heading"
+            className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400"
+          >
+            Recommended next
+          </p>
+          <p className="mt-2 text-sm font-medium text-neutral-800 dark:text-neutral-200">{recommendationText}</p>
+        </div>
 
         <section
           className="mt-6 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]"
