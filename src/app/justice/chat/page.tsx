@@ -97,7 +97,7 @@ function assistantPrompt(step: Step): string {
     case "desired_resolution":
       return "What outcome do you want? (e.g. full refund, replacement, cancellation, written explanation.)";
     case "review":
-      return "Here’s a quick recap. When you’re ready, continue to your action plan.";
+      return "Here’s a quick recap. When you’re ready, continue to review your submission draft, then your action plan.";
     default:
       return "";
   }
@@ -265,7 +265,7 @@ export default function JusticeChatPage() {
     return intake;
   }
 
-  async function commitToSessionAndPlan() {
+  async function commitToSessionAndPreview() {
     const intake = buildIntake();
     if (intake.already_contacted === "yes") {
       if (contact_proof_type === "none" && !contact_proof_text.trim()) {
@@ -287,7 +287,7 @@ export default function JusticeChatPage() {
         commitLogLabel: "justice chat",
       });
 
-      router.push("/justice/plan");
+      router.push("/justice/preview");
     } finally {
       setSubmitting(false);
     }
@@ -555,10 +555,10 @@ export default function JusticeChatPage() {
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => void commitToSessionAndPlan()}
+                onClick={() => void commitToSessionAndPreview()}
                 className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
               >
-                {submitting ? "Saving…" : "Continue to plan"}
+                {submitting ? "Saving…" : "Continue to submission preview"}
               </button>
             </div>
           ) : (

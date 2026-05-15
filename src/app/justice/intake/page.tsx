@@ -124,7 +124,7 @@ export default function JusticeIntakePage() {
         commitLogLabel: "justice intake",
       });
 
-      router.push("/justice/plan");
+      router.push("/justice/preview");
     } finally {
       setSubmitting(false);
     }
@@ -203,7 +203,7 @@ export default function JusticeIntakePage() {
         </p>
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your consumer case</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Answer once. You’ll get a simple action plan next.
+          Answer once. Next you’ll review a submission draft, then your action plan.
         </p>
 
         <form
@@ -405,7 +405,7 @@ export default function JusticeIntakePage() {
             disabled={submitting}
             className="w-full rounded-xl bg-blue-600 px-4 py-3.5 font-semibold text-white shadow-lg shadow-blue-900/25 transition hover:bg-blue-700 hover:shadow-xl disabled:opacity-60"
           >
-            {submitting ? "Saving…" : "See my action plan"}
+            {submitting ? "Saving…" : "Continue to submission preview"}
           </button>
         </form>
       </main>
