@@ -6,7 +6,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
-import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
+import {
+  buildJusticeIntakeFromParts,
+  validateContactProofForIntake,
+} from "@/lib/justice/buildJusticeIntake";
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 
@@ -216,13 +219,13 @@ export default function JusticeChatPage() {
   );
 
   function validateProofForAdvance(): boolean {
-    if (already_contacted !== "yes") return true;
-    if (contact_proof_type === "none" && !contact_proof_text.trim()) {
-      setContactProofError("Describe your contact attempt before continuing.");
-      return false;
-    }
-    if (contact_proof_type === "ticket" && !contact_proof_text.trim()) {
-      setContactProofError("Enter the ticket or case number before continuing.");
+    const proofCheck = validateContactProofForIntake({
+      already_contacted,
+      contact_proof_type,
+      contact_proof_text,
+    });
+    if (!proofCheck.ok) {
+      setContactProofError(proofCheck.message);
       return false;
     }
     setContactProofError(null);
@@ -253,18 +256,17 @@ export default function JusticeChatPage() {
   }
 
   async function commitToSessionAndPreview() {
-    const intake = buildIntake();
-    if (intake.already_contacted === "yes") {
-      if (contact_proof_type === "none" && !contact_proof_text.trim()) {
-        setContactProofError("Describe your contact attempt before continuing.");
-        return;
-      }
-      if (contact_proof_type === "ticket" && !contact_proof_text.trim()) {
-        setContactProofError("Enter the ticket or case number before continuing.");
-        return;
-      }
+    const proofCheck = validateContactProofForIntake({
+      already_contacted,
+      contact_proof_type,
+      contact_proof_text,
+    });
+    if (!proofCheck.ok) {
+      setContactProofError(proofCheck.message);
+      return;
     }
     setContactProofError(null);
+    const intake = buildIntake();
     setSubmitting(true);
     try {
       await commitIntakeToSessionAndServer({
