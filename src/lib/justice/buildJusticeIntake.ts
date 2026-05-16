@@ -23,6 +23,28 @@ export type BuildJusticeIntakeParts = {
   consumer_us_state: string;
 };
 
+export type ContactProofValidationInput = {
+  already_contacted: JusticeIntake["already_contacted"];
+  contact_proof_type: JusticeIntake["contact_proof_type"];
+  contact_proof_text: string;
+};
+
+export type ContactProofValidationResult = { ok: true } | { ok: false; message: string };
+
+/** Gate intake commit/advance when contact proof is required for `none` / `ticket`. */
+export function validateContactProofForIntake(
+  input: ContactProofValidationInput
+): ContactProofValidationResult {
+  if (input.already_contacted !== "yes") return { ok: true };
+  if (input.contact_proof_type === "none" && !input.contact_proof_text.trim()) {
+    return { ok: false, message: "Describe your contact attempt before continuing." };
+  }
+  if (input.contact_proof_type === "ticket" && !input.contact_proof_text.trim()) {
+    return { ok: false, message: "Enter the ticket or case number before continuing." };
+  }
+  return { ok: true };
+}
+
 /**
  * Build a `JusticeIntake` from chat-style collected parts (scripted or future AI intake).
  * Matches legacy `/justice/chat` `buildIntake()` semantics.
