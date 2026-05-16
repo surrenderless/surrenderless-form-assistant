@@ -39,17 +39,27 @@ const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] 
 const OPENING_GREETING =
   "Hi — tell me what’s going on with your consumer issue. I’ll ask follow-up questions and keep track of your case details. When we’re done, you can review everything and continue to your submission preview.";
 
-const PREVIEW_BASICS_MESSAGE =
-  "Add the missing basics before preview: company, product/service, story, reply email, and requested outcome.";
+const RECAP_STORY_MAX_LEN = 120;
 
-function isPreviewBasicsComplete(parts: BuildJusticeIntakeParts): boolean {
-  return (
-    parts.company_name.trim().length > 0 &&
-    parts.purchase_or_signup.trim().length > 0 &&
-    parts.story.trim().length > 0 &&
-    parts.reply_email.trim().includes("@") &&
-    (parts.money_amount.trim().length > 0 || parts.desired_resolution.trim().length > 0)
-  );
+function getPreviewBasicsMissing(parts: BuildJusticeIntakeParts): string[] {
+  const missing: string[] = [];
+  if (!parts.company_name.trim()) missing.push("company");
+  if (!parts.purchase_or_signup.trim()) missing.push("product/service");
+  if (!parts.story.trim()) missing.push("what happened");
+  if (!parts.reply_email.trim().includes("@")) missing.push("reply email");
+  if (!parts.money_amount.trim() && !parts.desired_resolution.trim()) missing.push("requested outcome");
+  return missing;
+}
+
+function stillNeededBeforePreviewMessage(missing: string[]): string {
+  return `Still needed before preview: ${missing.join(", ")}.`;
+}
+
+function recapStoryDisplay(story: string): string {
+  const trimmed = story.trim();
+  if (!trimmed) return "—";
+  if (trimmed.length <= RECAP_STORY_MAX_LEN) return trimmed;
+  return `${trimmed.slice(0, RECAP_STORY_MAX_LEN)}…`;
 }
 
 function msgId(): string {
@@ -146,8 +156,8 @@ export default function JusticeChatAiPage() {
 
   async function handleContinueToPreview() {
     setContactProofError(null);
-    if (!isPreviewBasicsComplete(parts)) {
-      setContactProofError(PREVIEW_BASICS_MESSAGE);
+    const basicsMissing = getPreviewBasicsMissing(parts);
+    if (basicsMissing.length > 0) {
       return;
     }
     const proofCheck = validateContactProofForIntake({
@@ -195,6 +205,10 @@ export default function JusticeChatAiPage() {
   if (!isSignedIn) {
     return <JusticeActionResumeSignInPrompt />;
   }
+
+  const basicsMissing = getPreviewBasicsMissing(parts);
+  const stillNeededHint =
+    basicsMissing.length > 0 ? stillNeededBeforePreviewMessage(basicsMissing) : null;
 
   return (
     <>
@@ -295,6 +309,9 @@ export default function JusticeChatAiPage() {
                 <span className="font-medium">Product / service:</span> {parts.purchase_or_signup || "—"}
               </li>
               <li>
+                <span className="font-medium">What happened:</span> {recapStoryDisplay(parts.story)}
+              </li>
+              <li>
                 <span className="font-medium">Money / outcome:</span>{" "}
                 {[parts.money_amount, parts.desired_resolution].filter(Boolean).join(" — ") || "—"}
               </li>
@@ -305,7 +322,10 @@ export default function JusticeChatAiPage() {
                 <span className="font-medium">Email:</span> {parts.reply_email || "—"}
               </li>
             </ul>
-            {contactProofError ? (
+            {stillNeededHint ? (
+              <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{stillNeededHint}</p>
+            ) : null}
+            {contactProofError && contactProofError !== stillNeededHint ? (
               <p className="mt-2 text-sm text-red-600 dark:text-red-400">{contactProofError}</p>
             ) : null}
             <button
