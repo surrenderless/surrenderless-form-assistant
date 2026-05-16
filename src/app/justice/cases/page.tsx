@@ -199,8 +199,11 @@ export default function JusticeCasesPage() {
   }, [cases, labelDraftById, caseSearch, caseStatusFilter, caseSort, progressById]);
 
   const attentionItems = useMemo(
-    () => (cases?.length ? buildAttentionItems(cases, tasksByCaseId) : []),
-    [cases, tasksByCaseId]
+    () =>
+      filteredSortedCases.length > 0
+        ? buildAttentionItems(filteredSortedCases, tasksByCaseId)
+        : [],
+    [filteredSortedCases, tasksByCaseId]
   );
 
   useEffect(() => {
