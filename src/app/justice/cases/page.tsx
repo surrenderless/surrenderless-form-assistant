@@ -433,7 +433,7 @@ export default function JusticeCasesPage() {
         </p>
         <p className="mt-3 text-sm">
           <Link
-            href="/justice/intake"
+            href="/justice"
             onClick={() => clearLocalJusticeSession()}
             className="font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
