@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
+import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 
@@ -229,40 +230,26 @@ export default function JusticeChatPage() {
   }
 
   function buildIntake(): JusticeIntake {
-    const moneyPart = money_amount.trim();
-    const resPart = desired_resolution.trim();
-    const money_involved =
-      moneyPart && resPart ? `${moneyPart} — Desired outcome: ${resPart}` : moneyPart || resPart || "—";
-
-    const intake: JusticeIntake = {
+    return buildJusticeIntakeFromParts({
       problem_category,
-      company_name: company_name.trim(),
-      company_website: normalizeCompanyWebsite(company_website),
-      purchase_or_signup: purchase_or_signup.trim(),
-      story: story.trim(),
-      money_involved,
-      pay_or_order_date: pay_or_order_date.trim(),
-      order_confirmation_details: order_confirmation_details.trim(),
-      user_display_name: user_display_name.trim(),
-      reply_email: reply_email.trim(),
+      company_name,
+      company_website,
+      purchase_or_signup,
+      story,
+      money_amount,
+      desired_resolution,
+      pay_or_order_date,
+      order_confirmation_details,
+      user_display_name,
+      reply_email,
       already_contacted,
-      ...(already_contacted === "yes"
-        ? {
-            contact_method,
-            contact_date: contact_date.trim(),
-            merchant_response_type,
-            contact_proof_type,
-            ...(contact_proof_text.trim() ? { contact_proof_text: contact_proof_text.trim() } : {}),
-          }
-        : {}),
-    };
-
-    const st = consumer_us_state.trim().toUpperCase();
-    if (/^[A-Z]{2}$/.test(st)) {
-      intake.consumer_us_state = st;
-    }
-
-    return intake;
+      contact_method,
+      contact_date,
+      merchant_response_type,
+      contact_proof_type,
+      contact_proof_text,
+      consumer_us_state,
+    });
   }
 
   async function commitToSessionAndPreview() {
