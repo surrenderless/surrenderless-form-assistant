@@ -444,6 +444,10 @@ export default function JusticeCasesPage() {
             Archived cases
           </Link>
         </p>
+        <p className="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+          Clears this browser&apos;s active case and returns to the Justice workspace, where chat intake is first and
+          form intake is still available.
+        </p>
 
         {!isLoaded ? (
           <p className="mt-8 text-sm text-neutral-500 dark:text-neutral-400">Loading…</p>
@@ -663,7 +667,9 @@ export default function JusticeCasesPage() {
                   </button>
                   {sessionCaseId === row.id ? (
                     <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                      This case is open in your browser — open another case or start new to archive this one.
+                      This is the active case in this browser. Archive is disabled while it is active. Open another
+                      case or use Start new case above to clear or switch the active browser case; you can archive this
+                      one later.
                     </p>
                   ) : (
                     <button
