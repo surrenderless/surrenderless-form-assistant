@@ -29,6 +29,14 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   );
 }
 
+/** Client-only snapshot of active case card state from session/timeline helpers. */
+function readSnapshotFromLocalSession(): { intake: JusticeIntake; reviewed: boolean } | null {
+  const intake = readValidLocalJusticeIntake();
+  if (!intake) return null;
+  const caseId = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
+  return { intake, reviewed: submissionDraftReviewedInTimeline(caseId) };
+}
+
 export default function JusticeHubWorkspaceBody() {
   const [snapshot, setSnapshot] = useState<{
     intake: JusticeIntake;
@@ -36,14 +44,27 @@ export default function JusticeHubWorkspaceBody() {
   } | null>(null);
 
   useEffect(() => {
-    const intake = readValidLocalJusticeIntake();
-    if (!intake) {
-      setSnapshot(null);
-      return;
+    function refreshFromLocalSession() {
+      setSnapshot(readSnapshotFromLocalSession());
     }
-    const caseId = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
-    const reviewed = submissionDraftReviewedInTimeline(caseId);
-    setSnapshot({ intake, reviewed });
+
+    refreshFromLocalSession();
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshFromLocalSession();
+      }
+    }
+
+    window.addEventListener("focus", refreshFromLocalSession);
+    window.addEventListener("storage", refreshFromLocalSession);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", refreshFromLocalSession);
+      window.removeEventListener("storage", refreshFromLocalSession);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, []);
 
   return (
