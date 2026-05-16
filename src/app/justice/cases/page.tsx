@@ -77,6 +77,18 @@ function isReadyToEscalate(row: CaseRow, p: CaseProgressSummary | undefined): bo
   return isBasicCaseInfoReadyForEscalation(row.intake) && (p?.evidenceCount ?? 0) >= 1;
 }
 
+/** Display-only hint; uses same predicates as readiness badge (no logic change). */
+function caseReadinessHint(intake: JusticeIntake, evidenceCount: number): string {
+  const basicsReady = isBasicCaseInfoReadyForEscalation(intake);
+  if (basicsReady && evidenceCount >= 1) {
+    return "Basic case details and at least one evidence item are saved.";
+  }
+  if (!basicsReady) {
+    return "Complete basic case details: company, category, product/service, what happened, and desired outcome.";
+  }
+  return "Add at least one evidence item from the action plan.";
+}
+
 function caseMatchesStatusFilter(
   row: CaseRow,
   p: CaseProgressSummary | undefined,
@@ -630,6 +642,9 @@ export default function JusticeCasesPage() {
                       (progressById[row.id]?.evidenceCount ?? 0) >= 1
                         ? "Ready to escalate"
                         : "Needs more info"}
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                      {caseReadinessHint(row.intake, progressById[row.id]?.evidenceCount ?? 0)}
                     </p>
                   </>
                 )}
