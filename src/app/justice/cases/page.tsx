@@ -643,9 +643,14 @@ export default function JusticeCasesPage() {
                         ? "Ready to escalate"
                         : "Needs more info"}
                     </p>
-                    <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                      {caseReadinessHint(row.intake, progressById[row.id]?.evidenceCount ?? 0)}
-                    </p>
+                    {!(
+                      isBasicCaseInfoReadyForEscalation(row.intake) &&
+                      (progressById[row.id]?.evidenceCount ?? 0) >= 1
+                    ) ? (
+                      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                        {caseReadinessHint(row.intake, progressById[row.id]?.evidenceCount ?? 0)}
+                      </p>
+                    ) : null}
                   </>
                 )}
                 <div className="mt-4">
