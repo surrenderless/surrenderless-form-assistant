@@ -83,7 +83,7 @@ export default function JusticePaymentDisputePage() {
     if (typeof window === "undefined") return;
     const cid = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
     if (!cid) {
-      router.replace("/justice/intake");
+      router.replace("/justice");
       return;
     }
     setCaseId(cid);

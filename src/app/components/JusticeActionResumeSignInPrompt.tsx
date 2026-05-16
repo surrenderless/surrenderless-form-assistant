@@ -29,7 +29,7 @@ export default function JusticeActionResumeSignInPrompt() {
             type="button"
             onClick={() => {
               clearLocalJusticeSession();
-              router.push("/justice/intake");
+              router.push("/justice");
             }}
             className="inline-flex justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
           >
