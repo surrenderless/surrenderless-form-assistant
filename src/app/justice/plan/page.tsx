@@ -412,7 +412,7 @@ export default function JusticePlanPage() {
             console.warn("justice plan: GET /api/justice/cases/[id] failed", res.status);
             if (pendingServerIntakeRef.current) {
               pendingServerIntakeRef.current = false;
-              router.replace("/justice/intake");
+              router.replace("/justice");
             }
             return;
           }
@@ -428,7 +428,7 @@ export default function JusticePlanPage() {
             console.warn("justice plan: case hydrate response missing id or intake");
             if (pendingServerIntakeRef.current) {
               pendingServerIntakeRef.current = false;
-              router.replace("/justice/intake");
+              router.replace("/justice");
             }
             return;
           }
@@ -436,7 +436,7 @@ export default function JusticePlanPage() {
             console.warn("justice plan: case id mismatch from server");
             if (pendingServerIntakeRef.current) {
               pendingServerIntakeRef.current = false;
-              router.replace("/justice/intake");
+              router.replace("/justice");
             }
             return;
           }
@@ -456,7 +456,7 @@ export default function JusticePlanPage() {
           console.warn("justice plan: GET /api/justice/cases/[id] error", e);
           if (pendingServerIntakeRef.current) {
             pendingServerIntakeRef.current = false;
-            router.replace("/justice/intake");
+            router.replace("/justice");
           }
         }
       })();
@@ -472,7 +472,7 @@ export default function JusticePlanPage() {
         if (!res.ok) {
           console.warn("justice plan: GET /api/justice/cases failed", res.status);
           setResumeLatestPending(false);
-          router.replace("/justice/intake");
+          router.replace("/justice");
           return;
         }
         const body = (await res.json()) as unknown;
@@ -481,7 +481,7 @@ export default function JusticePlanPage() {
         if (ac.signal.aborted) return;
         if (!Array.isArray(list) || list.length === 0) {
           setResumeLatestPending(false);
-          router.replace("/justice/intake");
+          router.replace("/justice");
           return;
         }
         const latest = list[0] as {
@@ -494,7 +494,7 @@ export default function JusticePlanPage() {
         if (!latest?.id || !latest.intake) {
           console.warn("justice plan: list response missing id or intake");
           setResumeLatestPending(false);
-          router.replace("/justice/intake");
+          router.replace("/justice");
           return;
         }
         sessionStorage.setItem(STORAGE_CASE_ID, latest.id);
@@ -514,7 +514,7 @@ export default function JusticePlanPage() {
         if (ac.signal.aborted) return;
         console.warn("justice plan: GET /api/justice/cases error", e);
         setResumeLatestPending(false);
-        router.replace("/justice/intake");
+        router.replace("/justice");
       }
     })();
 
@@ -827,7 +827,7 @@ export default function JusticePlanPage() {
           </Link>
           {" · "}
           <Link
-            href="/justice/intake"
+            href="/justice"
             onClick={() => clearLocalJusticeSession()}
             className="text-blue-600 hover:underline"
           >

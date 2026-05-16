@@ -16,6 +16,7 @@ export type JusticeActionPageHydration = {
 
 /**
  * For justice action routes: prefer valid local intake; if absent and signed in, resume latest case from GET /api/justice/cases.
+ * If hydrate fails or returns no case, replaces to `/justice` workspace.
  * If absent and signed out, status is `needs_sign_in` (no redirect — pages show a resume prompt).
  */
 export function useJusticeActionPageHydration(): JusticeActionPageHydration {
@@ -54,14 +55,14 @@ export function useJusticeActionPageHydration(): JusticeActionPageHydration {
         if (ac.signal.aborted) return;
         if (!hydrated) {
           setState({ status: "redirecting", intake: null });
-          router.replace("/justice/intake");
+          router.replace("/justice");
           return;
         }
         setState({ status: "ready", intake: hydrated });
       } catch {
         if (ac.signal.aborted) return;
         setState({ status: "redirecting", intake: null });
-        router.replace("/justice/intake");
+        router.replace("/justice");
       }
     })();
 
