@@ -108,6 +108,16 @@ export default function JusticeHubWorkspaceBody() {
             </span>
           </Link>
         </li>
+        <li>
+          <Link href="/justice/chat-ai" className={`${cardCls} text-left`}>
+            <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+              Try AI chat prototype
+            </span>
+            <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
+              Conversational AI intake prototype. Scripted chat remains available.
+            </span>
+          </Link>
+        </li>
         {!snapshot ? (
           <li>
             <Link href="/justice/plan" className={`${cardCls} text-left`}>
