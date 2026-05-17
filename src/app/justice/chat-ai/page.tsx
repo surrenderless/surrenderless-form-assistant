@@ -62,6 +62,32 @@ function recapStoryDisplay(story: string): string {
   return `${trimmed.slice(0, RECAP_STORY_MAX_LEN)}…`;
 }
 
+function formatIntakeChatApiError(status: number, serverError?: string): string {
+  const err = serverError?.trim() ?? "";
+  if (status === 401) {
+    return "Your session may have expired. Sign in again, then resend your message.";
+  }
+  if (status === 429) {
+    return "You’re sending messages too quickly. Wait a moment, then try again.";
+  }
+  if (status === 502) {
+    return "We couldn’t get a usable AI reply. Check your message and try again.";
+  }
+  if (status === 500) {
+    if (err.includes("OPENAI_API_KEY")) {
+      return "AI intake isn’t available right now. Please try again later.";
+    }
+    return "Something went wrong on our side. Please try again.";
+  }
+  if (status === 413 || err.toLowerCase().includes("too large")) {
+    return "That message is too large. Shorten it and try again.";
+  }
+  if (status === 400) {
+    return "Something went wrong sending your message. Please try again.";
+  }
+  return "Something went wrong. Please try again.";
+}
+
 function msgId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `m_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -127,15 +153,7 @@ export default function JusticeChatAiPage() {
       };
 
       if (!res.ok) {
-        if (res.status === 401) {
-          setApiError(data.error ?? "Sign in to use AI chat intake.");
-        } else if (res.status === 429) {
-          setApiError(data.error ?? "Rate limit exceeded. Please wait a moment and try again.");
-        } else if (res.status === 502) {
-          setApiError(data.error ?? "AI intake failed. Please try again.");
-        } else {
-          setApiError(data.error ?? "Something went wrong. Please try again.");
-        }
+        setApiError(formatIntakeChatApiError(res.status, data.error));
         return;
       }
 
