@@ -75,6 +75,7 @@ export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sendInFlightRef = useRef(false);
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
   const [messages, setMessages] = useState<UiMessage[]>(() => [
@@ -91,6 +92,8 @@ export default function JusticeChatAiPage() {
   }, [messages, loading]);
 
   async function handleSend() {
+    if (sendInFlightRef.current || loading) return;
+
     setApiError(null);
     const trimmed = inputValue.trim();
     if (!trimmed) return;
@@ -104,6 +107,7 @@ export default function JusticeChatAiPage() {
       content: m.text,
     }));
 
+    sendInFlightRef.current = true;
     setLoading(true);
     try {
       const res = await fetch("/api/justice/intake-chat", {
@@ -150,6 +154,7 @@ export default function JusticeChatAiPage() {
     } catch {
       setApiError("Could not reach AI intake. Please try again.");
     } finally {
+      sendInFlightRef.current = false;
       setLoading(false);
     }
   }
@@ -279,7 +284,7 @@ export default function JusticeChatAiPage() {
               }}
               disabled={loading}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !loading && !sendInFlightRef.current) {
                   e.preventDefault();
                   void handleSend();
                 }
