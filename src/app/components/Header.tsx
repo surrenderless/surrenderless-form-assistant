@@ -9,7 +9,7 @@ export default function Header() {
         <Link href="/justice" className="text-sm text-blue-600 hover:underline">
           Justice
         </Link>
-        <Link href="/justice/chat" className="text-sm text-blue-600 hover:underline">
+        <Link href="/justice/chat-ai" className="text-sm text-blue-600 hover:underline">
           Chat intake
         </Link>
         <Link href="/justice/intake" className="text-sm text-blue-600 hover:underline">

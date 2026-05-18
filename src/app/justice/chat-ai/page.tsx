@@ -247,7 +247,7 @@ export default function JusticeChatAiPage() {
           </Link>
           {" · "}
           <Link href="/justice/chat" className="text-blue-600 hover:underline">
-            Scripted chat
+            Step-by-step chat
           </Link>
           {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
@@ -256,12 +256,13 @@ export default function JusticeChatAiPage() {
         </p>
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">
-          Your consumer case (AI chat)
+          Your consumer case
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Prototype: conversational intake powered by AI. Prefer step-by-step questions?{" "}
+          Tell us what happened in a conversation; we&apos;ll ask follow-up questions and track your case details.
+          Prefer one question at a time?{" "}
           <Link href="/justice/chat" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
-            Use scripted chat
+            Use step-by-step chat
           </Link>
           .
         </p>
