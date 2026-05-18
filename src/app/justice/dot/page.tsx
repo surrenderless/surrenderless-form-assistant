@@ -194,8 +194,12 @@ export default function JusticeDotAviationPrepPage() {
           {!intake.company_name.trim() ? (
             <p className="mt-3 text-xs text-amber-800 dark:text-amber-200">
               Add a company or airline name from{" "}
+              <Link href="/justice/chat-ai" className="underline">
+                chat intake
+              </Link>{" "}
+              or{" "}
               <Link href="/justice/intake" className="underline">
-                Edit answers
+                structured form
               </Link>{" "}
               so your complaint matches the right provider.
             </p>

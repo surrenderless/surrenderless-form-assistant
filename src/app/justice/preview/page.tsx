@@ -269,20 +269,26 @@ export default function JusticePreviewPage() {
         <Header />
         <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-lg bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
           <p className="text-sm text-neutral-700 dark:text-neutral-300">
-            No active case to preview. Start with chat or form intake.
+            No active case to preview. Start with chat intake, or use a fallback below.
           </p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Link
-              href="/justice/chat"
+              href="/justice/chat-ai"
               className="inline-flex justify-center rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700"
             >
               Chat intake
             </Link>
             <Link
-              href="/justice/intake"
+              href="/justice/chat"
               className="inline-flex justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
             >
-              Form intake
+              Step-by-step chat
+            </Link>
+            <Link
+              href="/justice/intake"
+              className="inline-flex justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-700 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              Structured form
             </Link>
           </div>
         </main>
@@ -299,12 +305,16 @@ export default function JusticePreviewPage() {
             Back to action plan
           </Link>
           {" · "}
-          <Link href="/justice/chat" className="text-blue-600 hover:underline dark:text-blue-400">
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
             Chat intake
           </Link>
           {" · "}
+          <Link href="/justice/chat" className="text-blue-600 hover:underline dark:text-blue-400">
+            Step-by-step chat
+          </Link>
+          {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline dark:text-blue-400">
-            Form intake
+            Structured form
           </Link>
         </p>
 

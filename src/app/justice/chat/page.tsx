@@ -491,7 +491,7 @@ export default function JusticeChatPage() {
           </Link>
           {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
-            Form intake instead
+            Structured form instead
           </Link>
         </p>
 
@@ -499,7 +499,7 @@ export default function JusticeChatPage() {
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           Answer one question at a time. Prefer the full form?{" "}
           <Link href="/justice/intake" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
-            Use form intake
+            Use structured form
           </Link>
           .
         </p>

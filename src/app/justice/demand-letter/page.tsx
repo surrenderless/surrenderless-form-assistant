@@ -191,8 +191,12 @@ export default function JusticeDemandLetterPrepPage() {
           {!intake.company_name.trim() ? (
             <p className="mt-3 text-xs text-amber-800 dark:text-amber-200">
               Add who the letter should go to from{" "}
+              <Link href="/justice/chat-ai" className="underline">
+                chat intake
+              </Link>{" "}
+              or{" "}
               <Link href="/justice/intake" className="underline">
-                Edit answers
+                structured form
               </Link>
               .
             </p>

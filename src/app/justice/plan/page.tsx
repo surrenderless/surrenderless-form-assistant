@@ -698,7 +698,7 @@ export default function JusticePlanPage() {
                 </button>
               </SignInButton>
               <Link
-                href="/justice/intake"
+                href="/justice"
                 className="inline-flex justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-neutral-900 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
               >
                 Start a new case
@@ -818,8 +818,12 @@ export default function JusticePlanPage() {
       <Header />
       <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-lg bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline">
+            Update in chat
+          </Link>
+          {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
-            Edit answers
+            Edit structured form
           </Link>
           {" · "}
           <Link href="/justice/cases" className="text-blue-600 hover:underline">
