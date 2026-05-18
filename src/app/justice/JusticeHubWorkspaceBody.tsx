@@ -101,20 +101,20 @@ export default function JusticeHubWorkspaceBody() {
 
       <ul className="mt-8 space-y-3">
         <li>
-          <Link href="/justice/chat" className={`${cardCls} text-left`}>
+          <Link href="/justice/chat-ai" className={`${cardCls} text-left`}>
             <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Start with chat intake</span>
             <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-              Answer step-by-step questions to build your case.
+              Describe your issue in a conversation; we&apos;ll collect your case details.
             </span>
           </Link>
         </li>
         <li>
-          <Link href="/justice/chat-ai" className={`${cardCls} text-left`}>
+          <Link href="/justice/chat" className={`${cardCls} text-left`}>
             <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-              Try AI chat prototype
+              Use step-by-step chat
             </span>
             <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-              Conversational AI intake prototype. Scripted chat remains available.
+              Answer scripted questions one at a time instead.
             </span>
           </Link>
         </li>
