@@ -220,8 +220,15 @@ export default function JusticeBbbPrepPage() {
           </ul>
           {!intake.company_name.trim() ? (
             <p className="mt-3 text-xs text-amber-800 dark:text-amber-200">
-              Add a company name from <Link href="/justice/intake" className="underline">Edit answers</Link> so your BBB
-              filing matches the right business.
+              Add a company name via{" "}
+              <Link href="/justice/chat-ai" className="underline">
+                chat intake
+              </Link>{" "}
+              or{" "}
+              <Link href="/justice/intake" className="underline">
+                structured form
+              </Link>{" "}
+              so your BBB filing matches the right business.
             </p>
           ) : null}
         </div>

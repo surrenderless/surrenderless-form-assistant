@@ -251,7 +251,7 @@ export default function JusticeChatAiPage() {
           </Link>
           {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
-            Form intake
+            Structured form
           </Link>
         </p>
 
