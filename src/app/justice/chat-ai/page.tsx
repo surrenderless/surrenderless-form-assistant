@@ -373,6 +373,29 @@ export default function JusticeChatAiPage() {
             {contactProofError && contactProofError !== stillNeededHint ? (
               <p className="mt-2 text-sm text-red-600 dark:text-red-400">{contactProofError}</p>
             ) : null}
+
+            <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 p-3 ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/50 dark:ring-white/[0.04]">
+              <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                Proof / evidence
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
+                screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
+                transcripts. Add short notes (and optional links) for what you have on file; file uploads are not
+                available yet.
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+                You can continue to your submission preview without proof for now. Before you escalate or submit
+                complaints, saving at least one evidence item helps — nothing is filed automatically from this app yet.
+              </p>
+              <Link
+                href="/justice/evidence"
+                className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-blue-600 bg-white px-4 py-2 text-sm font-semibold text-blue-600 shadow-sm transition hover:bg-blue-50 dark:border-blue-500 dark:bg-neutral-900 dark:text-blue-400 dark:hover:bg-neutral-800"
+              >
+                Organize evidence
+              </Link>
+            </div>
+
             <button
               type="button"
               disabled={submitting || loading}
