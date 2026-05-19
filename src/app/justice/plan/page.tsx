@@ -224,32 +224,19 @@ function planFilingFiledAtLine(filedAt: string): string {
   return t;
 }
 
-const COMPLAINT_PREP_ROUTES = new Set([
-  "/justice/cfpb",
-  "/justice/fcc",
-  "/justice/dot",
-  "/justice/bbb",
-  "/justice/state-ag",
-  "/justice/demand-letter",
-  "/justice/ftc-review",
-]);
-
-function preparedActionButtonLabel(href: string): string {
-  return COMPLAINT_PREP_ROUTES.has(href) ? "Open prepared complaint draft" : "Continue prepared action";
-}
-
-/** One primary in-app step after submission draft review (page-local; does not change rules). */
+/** Post-review handoff: primary CTA stays on in-app review (packet); optional detail prep route. */
 function pickPreparedNextAction(params: {
   contacted: boolean;
   useCompanyContactLabels: boolean;
   destinations: JusticeDestination[];
-}): { href: string; buttonLabel: string; stepLabel: string } {
+}): { href: string; detailHref: string | null; buttonLabel: string; stepLabel: string } {
   const { contacted, useCompanyContactLabels, destinations } = params;
 
   if (!contacted) {
     return {
-      href: "/justice/merchant",
-      buttonLabel: "Continue prepared action",
+      href: "/justice/packet",
+      detailHref: "/justice/merchant",
+      buttonLabel: "Review prepared next step",
       stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
     };
   }
@@ -262,16 +249,18 @@ function pickPreparedNextAction(params: {
 
   if (firstRoutableDest?.internalRoute) {
     return {
-      href: firstRoutableDest.internalRoute,
-      buttonLabel: preparedActionButtonLabel(firstRoutableDest.internalRoute),
+      href: "/justice/packet",
+      detailHref: firstRoutableDest.internalRoute,
+      buttonLabel: "Review prepared next step",
       stepLabel: firstRoutableDest.label,
     };
   }
 
   return {
     href: "/justice/packet",
-    buttonLabel: "Open case packet",
-    stepLabel: "Case packet",
+    detailHref: null,
+    buttonLabel: "Review prepared next step",
+    stepLabel: "Prepared case review",
   };
 }
 
@@ -909,42 +898,37 @@ export default function JusticePlanPage() {
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
 
         {showPostDraftReviewCallout ? (
-          <div className="mt-4 space-y-3" role="status">
-            <div className="rounded-xl border border-blue-200/90 bg-blue-50/90 px-4 py-3 text-sm shadow-sm ring-1 ring-blue-950/[0.06] dark:border-blue-800/80 dark:bg-blue-950/40 dark:ring-blue-400/10">
-              <p className="font-semibold text-blue-950 dark:text-blue-100">Submission draft reviewed</p>
-              <p className="mt-1.5 text-blue-900/90 dark:text-blue-100/90">
-                You approved your submission draft on the preview page. Surrenderless has prepared a clear next step
-                below from that review.
-              </p>
-            </div>
-            {preparedNextAction ? (
-              <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-4 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10">
-                <p className="font-semibold text-emerald-950 dark:text-emerald-100">Your prepared next step</p>
-                <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
-                  <strong>{preparedNextAction.stepLabel}</strong> is ready from your reviewed draft. Surrenderless
-                  prepared this in-app action for you to review and use — nothing has been filed automatically, and
-                  Surrenderless has not submitted, filed, or contacted anyone on your behalf.
-                </p>
-                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                  {recommendationText}
-                </p>
-                <Link
-                  href={preparedNextAction.href}
-                  className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-                >
-                  {preparedNextAction.buttonLabel}
-                </Link>
-                <Link
-                  href="/justice/packet"
-                  className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                >
-                  Track filing when complete
-                </Link>
-                <p className="mt-3 text-xs text-emerald-800/85 dark:text-emerald-200/85">
-                  Your full action plan, evidence, and other destinations remain below if you need them.
-                </p>
-              </div>
+          <div
+            className="mt-4 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-4 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10"
+            role="status"
+            aria-label="Prepared next step from reviewed draft"
+          >
+            <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+              Surrenderless prepared your next step
+            </p>
+            <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+              From your reviewed submission draft, Surrenderless assembled your case for in-app review. Your current
+              focus is <strong>{preparedNextAction.stepLabel}</strong> — open your prepared review below when you are
+              ready. Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted
+              anyone on your behalf.
+            </p>
+            <Link
+              href={preparedNextAction.href}
+              className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+            >
+              {preparedNextAction.buttonLabel}
+            </Link>
+            {preparedNextAction.detailHref ? (
+              <Link
+                href={preparedNextAction.detailHref}
+                className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+              >
+                Open {preparedNextAction.stepLabel} preparation
+              </Link>
             ) : null}
+            <p className="mt-3 text-xs text-emerald-800/85 dark:text-emerald-200/85">
+              Your full action plan, prep pages, and filing records remain below if you need them.
+            </p>
           </div>
         ) : null}
 
