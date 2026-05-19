@@ -44,6 +44,33 @@ function showPreparedActionPacketFraming(intake: JusticeIntake, timeline: Timeli
   return !movedOn;
 }
 
+/** Page-local session flag per case (no API / timeline writes). */
+const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+
+function readPreparedPacketApproved(caseId: string): boolean {
+  if (typeof window === "undefined" || !caseId) return false;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    if (!raw) return false;
+    const map = JSON.parse(raw) as Record<string, boolean>;
+    return map[caseId] === true;
+  } catch {
+    return false;
+  }
+}
+
+function writePreparedPacketApproved(caseId: string): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    const map: Record<string, boolean> = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+    map[caseId] = true;
+    sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
+  }
+}
+
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
@@ -219,6 +246,8 @@ export default function JusticePacketPage() {
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [timelineTick, setTimelineTick] = useState(0);
+  const [packetApproved, setPacketApproved] = useState(false);
+  const [approveChecked, setApproveChecked] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -287,6 +316,15 @@ export default function JusticePacketPage() {
     if (!cid) return;
     void Promise.all([loadEvidence(), loadFilings()]);
   }, [hydrationStatus, intake, isLoaded, isSignedIn, loadEvidence, loadFilings, caseId]);
+
+  useEffect(() => {
+    if (!caseId) {
+      setPacketApproved(false);
+      setApproveChecked(false);
+      return;
+    }
+    setPacketApproved(readPreparedPacketApproved(caseId));
+  }, [caseId, hydrationStatus]);
 
   const packetText = useMemo(() => {
     if (!intake || !caseId) return "";
@@ -400,6 +438,12 @@ export default function JusticePacketPage() {
   const resolution = desiredResolutionPhrase(intake.problem_category);
   const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
 
+  function handleApprovePreparedPacket() {
+    if (!caseId || !approveChecked) return;
+    writePreparedPacketApproved(caseId);
+    setPacketApproved(true);
+  }
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: PRINT_STYLES }} />
@@ -429,6 +473,7 @@ export default function JusticePacketPage() {
         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Case id: {caseId}</p>
 
         {showPreparedActionFraming ? (
+          <>
           <div
             className="mt-4 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-4 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10"
             role="status"
@@ -451,6 +496,61 @@ export default function JusticePacketPage() {
               Back to action plan
             </Link>
           </div>
+          {packetApproved ? (
+              <div
+                className="mt-3 rounded-xl border border-emerald-300/80 bg-emerald-50/90 px-4 py-3 text-sm ring-1 ring-emerald-600/15 dark:border-emerald-700/80 dark:bg-emerald-950/40 dark:ring-emerald-400/15"
+                role="status"
+              >
+                <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+                  Packet approved for next action
+                </p>
+                <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
+                  You reviewed this prepared packet. Surrenderless has not filed, submitted, sent, or contacted anyone
+                  on your behalf. Continue from your action plan when you are ready for the next in-app step.
+                </p>
+                <Link
+                  href="/justice/plan"
+                  className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  Continue from action plan
+                </Link>
+              </div>
+            ) : (
+              <div
+                className={`mt-3 ${cardCls}`}
+                aria-labelledby="packet-approve-heading"
+              >
+                <h2
+                  id="packet-approve-heading"
+                  className="text-base font-semibold text-neutral-900 dark:text-neutral-100"
+                >
+                  Approve for next action
+                </h2>
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  Review the case summary, timeline, evidence, and filing records below. When this packet looks right,
+                  approve it so Surrenderless can treat it as ready for your next in-app step — nothing is filed or sent
+                  automatically.
+                </p>
+                <label className="mt-4 flex cursor-pointer items-start gap-3 text-sm text-neutral-800 dark:text-neutral-200">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500"
+                    checked={approveChecked}
+                    onChange={(e) => setApproveChecked(e.target.checked)}
+                  />
+                  <span>I reviewed this prepared packet</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={!approveChecked}
+                  onClick={handleApprovePreparedPacket}
+                  className="mt-4 w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                >
+                  Approve prepared packet for next action
+                </button>
+              </div>
+            )}
+          </>
         ) : null}
 
         <section className={`mt-6 ${cardCls}`} aria-labelledby="packet-summary">
