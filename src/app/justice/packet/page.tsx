@@ -13,10 +13,36 @@ import {
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import { isMerchantResolved } from "@/lib/justice/rules";
+import type { JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { readTimeline } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+
+/** Mirrors post-review callout gates on `/justice/plan` (page-local; does not change rules). */
+const PREP_OPENED_TYPES: TimelineEntryType[] = [
+  "state_ag_prep_opened",
+  "bbb_prep_opened",
+  "cfpb_prep_opened",
+  "fcc_prep_opened",
+];
+
+const FILED_COMPLAINT_TYPES: TimelineEntryType[] = [
+  "state_ag_complaint_filed",
+  "bbb_complaint_filed",
+  "cfpb_complaint_filed",
+  "fcc_complaint_filed",
+];
+
+function showPreparedActionPacketFraming(intake: JusticeIntake, timeline: TimelineEntry[]): boolean {
+  if (isMerchantResolved(intake)) return false;
+  if (!timeline.some((e) => e.type === "submission_draft_reviewed")) return false;
+  const movedOn =
+    timeline.some((e) => PREP_OPENED_TYPES.includes(e.type)) ||
+    timeline.some((e) => FILED_COMPLAINT_TYPES.includes(e.type)) ||
+    timeline.some((e) => e.type === "ftc_practice_completed");
+  return !movedOn;
+}
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -372,6 +398,7 @@ export default function JusticePacketPage() {
   }
 
   const resolution = desiredResolutionPhrase(intake.problem_category);
+  const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
 
   return (
     <>
@@ -395,9 +422,36 @@ export default function JusticePacketPage() {
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Case packet</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          One copy-ready bundle: summary, resolution, timeline, evidence notes, and filing records.
+          {showPreparedActionFraming
+            ? "Prepared in-app review of your case: summary, timeline, evidence notes, and filing records in one place."
+            : "One copy-ready bundle: summary, resolution, timeline, evidence notes, and filing records."}
         </p>
         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Case id: {caseId}</p>
+
+        {showPreparedActionFraming ? (
+          <div
+            className="mt-4 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-4 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10"
+            role="status"
+            aria-label="Prepared action review packet"
+          >
+            <p className="font-semibold text-emerald-950 dark:text-emerald-100">Your prepared action review</p>
+            <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+              Surrenderless assembled this packet from your reviewed submission draft so you can confirm your case
+              details, proof, and records before your next step. This is in-app preparation and review — nothing has
+              been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on your behalf.
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+              When you complete an external filing yourself, record confirmations in the filing section below.
+              Surrenderless does not submit or queue government complaints for you yet.
+            </p>
+            <Link
+              href="/justice/plan"
+              className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              Back to action plan
+            </Link>
+          </div>
+        ) : null}
 
         <section className={`mt-6 ${cardCls}`} aria-labelledby="packet-summary">
           <h2 id="packet-summary" className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
