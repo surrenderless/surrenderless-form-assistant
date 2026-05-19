@@ -6,7 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
-import type { DestinationStatus, JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
+import type {
+  DestinationStatus,
+  JusticeDestination,
+  JusticeIntake,
+  TimelineEntry,
+  TimelineEntryType,
+} from "@/lib/justice/types";
 import {
   JUSTICE_EVIDENCE_TYPE_LABELS,
   type JusticeCaseEvidenceRow,
@@ -216,6 +222,115 @@ function planFilingFiledAtLine(filedAt: string): string {
   const d = new Date(t);
   if (!Number.isNaN(d.getTime())) return formatFilingDateDisplay(t);
   return t;
+}
+
+const COMPLAINT_PREP_ROUTES = new Set([
+  "/justice/cfpb",
+  "/justice/fcc",
+  "/justice/dot",
+  "/justice/bbb",
+  "/justice/state-ag",
+  "/justice/demand-letter",
+  "/justice/ftc-review",
+]);
+
+function preparedActionButtonLabel(href: string): string {
+  return COMPLAINT_PREP_ROUTES.has(href) ? "Open prepared complaint draft" : "Continue prepared action";
+}
+
+/** One primary in-app step after submission draft review (page-local; does not change rules). */
+function pickPreparedNextAction(params: {
+  contacted: boolean;
+  merchantResolved: boolean;
+  merchantBadge: boolean;
+  useCompanyContactLabels: boolean;
+  cfpbRel: boolean;
+  cfpbPrepOpen: boolean;
+  fccRel: boolean;
+  ftcOpen: boolean;
+  dotRel: boolean;
+  paymentRecommendedNext: boolean;
+  paymentOk: boolean;
+  destinations: JusticeDestination[];
+}): { href: string; buttonLabel: string; stepLabel: string } | null {
+  const {
+    contacted,
+    merchantResolved,
+    merchantBadge,
+    useCompanyContactLabels,
+    cfpbRel,
+    cfpbPrepOpen,
+    fccRel,
+    ftcOpen,
+    dotRel,
+    paymentRecommendedNext,
+    paymentOk,
+    destinations,
+  } = params;
+
+  const firstRoutableDest = destinations.find(
+    (d) =>
+      d.internalRoute &&
+      (d.status === "recommended" || d.status === "available")
+  );
+
+  if (!merchantResolved && (!contacted || merchantBadge)) {
+    return {
+      href: "/justice/merchant",
+      buttonLabel: "Continue prepared action",
+      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
+    };
+  }
+
+  if (!merchantResolved && cfpbRel && cfpbPrepOpen) {
+    return {
+      href: "/justice/cfpb",
+      buttonLabel: "Open prepared complaint draft",
+      stepLabel: "CFPB complaint prep",
+    };
+  }
+
+  if (!merchantResolved && fccRel && ftcOpen) {
+    return {
+      href: "/justice/fcc",
+      buttonLabel: "Open prepared complaint draft",
+      stepLabel: "FCC complaint prep",
+    };
+  }
+
+  if (!merchantResolved && dotRel && ftcOpen) {
+    return {
+      href: "/justice/dot",
+      buttonLabel: "Open prepared complaint draft",
+      stepLabel: "DOT aviation complaint prep",
+    };
+  }
+
+  if (!merchantResolved && paymentRecommendedNext && paymentOk) {
+    return {
+      href: "/justice/payment-dispute",
+      buttonLabel: "Continue prepared action",
+      stepLabel: "Payment dispute checklist",
+    };
+  }
+
+  if (firstRoutableDest?.internalRoute) {
+    return {
+      href: firstRoutableDest.internalRoute,
+      buttonLabel: preparedActionButtonLabel(firstRoutableDest.internalRoute),
+      stepLabel: firstRoutableDest.label,
+    };
+  }
+
+  if (!merchantResolved) {
+    return {
+      href: "/justice/merchant",
+      buttonLabel: "Continue prepared action",
+      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
+    };
+  }
+
+  return null;
 }
 
 const PREP_TYPES: TimelineEntryType[] = [
@@ -794,6 +909,21 @@ export default function JusticePlanPage() {
 
   const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
 
+  const preparedNextAction = pickPreparedNextAction({
+    contacted,
+    merchantResolved,
+    merchantBadge,
+    useCompanyContactLabels,
+    cfpbRel,
+    cfpbPrepOpen,
+    fccRel,
+    ftcOpen,
+    dotRel,
+    paymentRecommendedNext,
+    paymentOk,
+    destinations,
+  });
+
   /** Styling mirror of “Recommended next” visibility on the Step 3 `<li>` (no logic changes). */
   const step3RecommendedCardHighlight =
     !merchantResolved &&
@@ -846,20 +976,42 @@ export default function JusticePlanPage() {
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
 
         {showPostDraftReviewCallout ? (
-          <div
-            className="mt-4 rounded-xl border border-blue-200/90 bg-blue-50/90 px-4 py-3 text-sm shadow-sm ring-1 ring-blue-950/[0.06] dark:border-blue-800/80 dark:bg-blue-950/40 dark:ring-blue-400/10"
-            role="status"
-          >
-            <p className="font-semibold text-blue-950 dark:text-blue-100">Submission draft reviewed</p>
-            <p className="mt-1.5 text-blue-900/90 dark:text-blue-100/90">
-              You reviewed your submission draft on the preview page. Your next step is to follow the{" "}
-              <strong>recommended action</strong> further down this page (concise recommendation line and highlighted{" "}
-              <strong>Recommended next</strong> cards)—nothing is filed automatically from Surrenderless.
-            </p>
-            <p className="mt-2 text-xs text-blue-900/80 dark:text-blue-200/80">
-              Tip: use the highlighted &quot;Recommended next&quot; cards and links for merchant contact, prep pages, or
-              payment dispute steps.
-            </p>
+          <div className="mt-4 space-y-3" role="status">
+            <div className="rounded-xl border border-blue-200/90 bg-blue-50/90 px-4 py-3 text-sm shadow-sm ring-1 ring-blue-950/[0.06] dark:border-blue-800/80 dark:bg-blue-950/40 dark:ring-blue-400/10">
+              <p className="font-semibold text-blue-950 dark:text-blue-100">Submission draft reviewed</p>
+              <p className="mt-1.5 text-blue-900/90 dark:text-blue-100/90">
+                You approved your submission draft on the preview page. Surrenderless has prepared a clear next step
+                below from that review.
+              </p>
+            </div>
+            {preparedNextAction ? (
+              <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-4 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10">
+                <p className="font-semibold text-emerald-950 dark:text-emerald-100">Your prepared next step</p>
+                <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                  <strong>{preparedNextAction.stepLabel}</strong> is ready from your reviewed draft. Surrenderless
+                  prepared this in-app action for you to review and use — nothing has been filed automatically, and
+                  Surrenderless has not submitted, filed, or contacted anyone on your behalf.
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  {recommendationText}
+                </p>
+                <Link
+                  href={preparedNextAction.href}
+                  className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                >
+                  {preparedNextAction.buttonLabel}
+                </Link>
+                <Link
+                  href="/justice/packet"
+                  className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  Track filing when complete
+                </Link>
+                <p className="mt-3 text-xs text-emerald-800/85 dark:text-emerald-200/85">
+                  Your full action plan, evidence, and other destinations remain below if you need them.
+                </p>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
