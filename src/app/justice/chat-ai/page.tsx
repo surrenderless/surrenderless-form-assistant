@@ -8,10 +8,12 @@ import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import {
   buildJusticeIntakeFromParts,
+  justiceIntakeToBuildJusticeIntakeParts,
   type BuildJusticeIntakeParts,
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
+import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
   defaultBuildJusticeIntakeParts,
   MAX_INTAKE_CHAT_USER_MESSAGE,
@@ -38,6 +40,9 @@ const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] 
 
 const OPENING_GREETING =
   "Hi — tell me what’s going on with your consumer issue. I’ll ask follow-up questions and keep track of your case details. When we’re done, you can review everything and continue to your submission preview.";
+
+const UPDATE_GREETING =
+  "Your current case is loaded in the recap below. Tell me what you’d like to add or change — I’ll update the details as we go. When you’re ready, continue to your submission preview.";
 
 const RECAP_STORY_MAX_LEN = 120;
 
@@ -102,8 +107,10 @@ export default function JusticeChatAiPage() {
   const { isSignedIn, isLoaded } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendInFlightRef = useRef(false);
+  const sessionHydratedRef = useRef(false);
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
+  const [isUpdatingExistingCase, setIsUpdatingExistingCase] = useState(false);
   const [messages, setMessages] = useState<UiMessage[]>(() => [
     { id: msgId(), role: "assistant", text: OPENING_GREETING },
   ]);
@@ -112,6 +119,17 @@ export default function JusticeChatAiPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [contactProofError, setContactProofError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (sessionHydratedRef.current) return;
+    sessionHydratedRef.current = true;
+    const intake = readValidLocalJusticeIntake();
+    if (intake) {
+      setParts(justiceIntakeToBuildJusticeIntakeParts(intake));
+      setIsUpdatingExistingCase(true);
+      setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
+    }
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -201,6 +219,7 @@ export default function JusticeChatAiPage() {
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
         commitLogLabel: "justice chat-ai",
+        mode: isUpdatingExistingCase ? "update" : "create",
       });
       router.push("/justice/preview");
     } finally {
@@ -259,7 +278,9 @@ export default function JusticeChatAiPage() {
           Your consumer case
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Tell us what happened in a conversation; we&apos;ll ask follow-up questions and track your case details.
+          {isUpdatingExistingCase
+            ? "Update your loaded case in a conversation — describe what to add or change, then continue to preview."
+            : "Tell us what happened in a conversation; we'll ask follow-up questions and track your case details."}{" "}
           Prefer one question at a time?{" "}
           <Link href="/justice/chat" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
             Use step-by-step chat
