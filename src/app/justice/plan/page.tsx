@@ -241,40 +241,12 @@ function preparedActionButtonLabel(href: string): string {
 /** One primary in-app step after submission draft review (page-local; does not change rules). */
 function pickPreparedNextAction(params: {
   contacted: boolean;
-  merchantResolved: boolean;
-  merchantBadge: boolean;
   useCompanyContactLabels: boolean;
-  cfpbRel: boolean;
-  cfpbPrepOpen: boolean;
-  fccRel: boolean;
-  ftcOpen: boolean;
-  dotRel: boolean;
-  paymentRecommendedNext: boolean;
-  paymentOk: boolean;
   destinations: JusticeDestination[];
-}): { href: string; buttonLabel: string; stepLabel: string } | null {
-  const {
-    contacted,
-    merchantResolved,
-    merchantBadge,
-    useCompanyContactLabels,
-    cfpbRel,
-    cfpbPrepOpen,
-    fccRel,
-    ftcOpen,
-    dotRel,
-    paymentRecommendedNext,
-    paymentOk,
-    destinations,
-  } = params;
+}): { href: string; buttonLabel: string; stepLabel: string } {
+  const { contacted, useCompanyContactLabels, destinations } = params;
 
-  const firstRoutableDest = destinations.find(
-    (d) =>
-      d.internalRoute &&
-      (d.status === "recommended" || d.status === "available")
-  );
-
-  if (!merchantResolved && (!contacted || merchantBadge)) {
+  if (!contacted) {
     return {
       href: "/justice/merchant",
       buttonLabel: "Continue prepared action",
@@ -282,37 +254,11 @@ function pickPreparedNextAction(params: {
     };
   }
 
-  if (!merchantResolved && cfpbRel && cfpbPrepOpen) {
-    return {
-      href: "/justice/cfpb",
-      buttonLabel: "Open prepared complaint draft",
-      stepLabel: "CFPB complaint prep",
-    };
-  }
-
-  if (!merchantResolved && fccRel && ftcOpen) {
-    return {
-      href: "/justice/fcc",
-      buttonLabel: "Open prepared complaint draft",
-      stepLabel: "FCC complaint prep",
-    };
-  }
-
-  if (!merchantResolved && dotRel && ftcOpen) {
-    return {
-      href: "/justice/dot",
-      buttonLabel: "Open prepared complaint draft",
-      stepLabel: "DOT aviation complaint prep",
-    };
-  }
-
-  if (!merchantResolved && paymentRecommendedNext && paymentOk) {
-    return {
-      href: "/justice/payment-dispute",
-      buttonLabel: "Continue prepared action",
-      stepLabel: "Payment dispute checklist",
-    };
-  }
+  const firstRoutableDest = destinations.find(
+    (d) =>
+      d.internalRoute &&
+      (d.status === "recommended" || d.status === "available")
+  );
 
   if (firstRoutableDest?.internalRoute) {
     return {
@@ -322,15 +268,11 @@ function pickPreparedNextAction(params: {
     };
   }
 
-  if (!merchantResolved) {
-    return {
-      href: "/justice/merchant",
-      buttonLabel: "Continue prepared action",
-      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
-    };
-  }
-
-  return null;
+  return {
+    href: "/justice/packet",
+    buttonLabel: "Open case packet",
+    stepLabel: "Case packet",
+  };
 }
 
 const PREP_TYPES: TimelineEntryType[] = [
@@ -911,16 +853,7 @@ export default function JusticePlanPage() {
 
   const preparedNextAction = pickPreparedNextAction({
     contacted,
-    merchantResolved,
-    merchantBadge,
     useCompanyContactLabels,
-    cfpbRel,
-    cfpbPrepOpen,
-    fccRel,
-    ftcOpen,
-    dotRel,
-    paymentRecommendedNext,
-    paymentOk,
     destinations,
   });
 
