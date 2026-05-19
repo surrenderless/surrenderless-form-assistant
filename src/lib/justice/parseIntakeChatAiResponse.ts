@@ -1,4 +1,9 @@
-import type { BuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
+import {
+  defaultBuildJusticeIntakeParts,
+  type BuildJusticeIntakeParts,
+} from "@/lib/justice/buildJusticeIntake";
+
+export { defaultBuildJusticeIntakeParts };
 import type {
   ContactMethod,
   ContactProofType,
@@ -71,29 +76,6 @@ export type IntakeChatHistoryTurn = {
 function clampStr(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max);
-}
-
-export function defaultBuildJusticeIntakeParts(): BuildJusticeIntakeParts {
-  return {
-    problem_category: "online_purchase",
-    company_name: "",
-    company_website: "",
-    purchase_or_signup: "",
-    story: "",
-    money_amount: "",
-    desired_resolution: "",
-    pay_or_order_date: "",
-    order_confirmation_details: "",
-    user_display_name: "",
-    reply_email: "",
-    already_contacted: "no",
-    contact_method: "email",
-    contact_date: "",
-    merchant_response_type: "no_response",
-    contact_proof_type: "none",
-    contact_proof_text: "",
-    consumer_us_state: "",
-  };
 }
 
 function coerceProblemCategory(v: unknown, fallback: ProblemCategory): ProblemCategory {
