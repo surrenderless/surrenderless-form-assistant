@@ -100,9 +100,18 @@ export type TimelineEntry = {
   detail?: string;
 };
 
+/** Next in-app step the user approved with the prepared packet (metadata only; not a filing record). */
+export type JusticeApprovedNextAction = {
+  label?: string;
+  href?: string;
+  status?: "approved";
+  approved_at?: string;
+};
+
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */
 export type JusticeCaseClientState = {
   prepared_packet_approved?: boolean;
+  approved_next_action?: JusticeApprovedNextAction;
 };
 
 export const STORAGE_INTAKE = "justice_intake_v1";

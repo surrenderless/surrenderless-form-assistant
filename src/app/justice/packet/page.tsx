@@ -14,13 +14,22 @@ import {
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
-import { isMerchantResolved } from "@/lib/justice/rules";
+import {
+  cfpbLikelyRelevant,
+  computeJusticeDestinations,
+  dotLikelyRelevant,
+  fccLikelyRelevant,
+  isMerchantResolved,
+} from "@/lib/justice/rules";
 import type {
+  JusticeApprovedNextAction,
   JusticeCaseClientState,
+  JusticeDestination,
   JusticeIntake,
   TimelineEntry,
   TimelineEntryType,
 } from "@/lib/justice/types";
+import { STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { readTimeline } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
@@ -40,6 +49,68 @@ const FILED_COMPLAINT_TYPES: TimelineEntryType[] = [
   "fcc_complaint_filed",
 ];
 
+/** Post-review next step; mirrors `/justice/plan` `pickPreparedNextAction` (page-local). */
+function pickPreparedNextAction(params: {
+  contacted: boolean;
+  useCompanyContactLabels: boolean;
+  destinations: JusticeDestination[];
+}): { detailHref: string | null; stepLabel: string } {
+  const { contacted, useCompanyContactLabels, destinations } = params;
+
+  if (!contacted) {
+    return {
+      detailHref: "/justice/merchant",
+      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
+    };
+  }
+
+  const firstRoutableDest = destinations.find(
+    (d) =>
+      d.internalRoute &&
+      (d.status === "recommended" || d.status === "available")
+  );
+
+  if (firstRoutableDest?.internalRoute) {
+    return {
+      detailHref: firstRoutableDest.internalRoute,
+      stepLabel: firstRoutableDest.label,
+    };
+  }
+
+  return {
+    detailHref: null,
+    stepLabel: "Prepared case review",
+  };
+}
+
+function buildApprovedNextActionTarget(
+  prepared: ReturnType<typeof pickPreparedNextAction>
+): JusticeApprovedNextAction {
+  return {
+    label: prepared.stepLabel,
+    href: prepared.detailHref ?? "/justice/packet",
+    status: "approved",
+    approved_at: new Date().toISOString(),
+  };
+}
+
+function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const label = typeof o.label === "string" ? o.label.trim() : "";
+  const href = typeof o.href === "string" ? o.href.trim() : "";
+  if (!label && !href) return undefined;
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(o.status === "approved" ? { status: "approved" as const } : {}),
+    ...(typeof o.approved_at === "string" && o.approved_at.trim()
+      ? { approved_at: o.approved_at.trim() }
+      : {}),
+  };
+}
+
 function showPreparedActionPacketFraming(intake: JusticeIntake, timeline: TimelineEntry[]): boolean {
   if (isMerchantResolved(intake)) return false;
   if (!timeline.some((e) => e.type === "submission_draft_reviewed")) return false;
@@ -50,8 +121,9 @@ function showPreparedActionPacketFraming(intake: JusticeIntake, timeline: Timeli
   return !movedOn;
 }
 
-/** Page-local session flag per case (no API / timeline writes). */
+/** Page-local session flags per case (no API / timeline writes). */
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
 
 function readPreparedPacketApproved(caseId: string): boolean {
   if (typeof window === "undefined" || !caseId) return false;
@@ -77,14 +149,50 @@ function writePreparedPacketApproved(caseId: string): void {
   }
 }
 
+function readSessionApprovedNextAction(caseId: string): JusticeApprovedNextAction | undefined {
+  if (typeof window === "undefined" || !caseId) return undefined;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+    if (!raw) return undefined;
+    const map = JSON.parse(raw) as Record<string, unknown>;
+    return parseApprovedNextAction(map[caseId]);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSessionApprovedNextAction(caseId: string, action: JusticeApprovedNextAction): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+    const map: Record<string, JusticeApprovedNextAction> = raw
+      ? (JSON.parse(raw) as Record<string, JusticeApprovedNextAction>)
+      : {};
+    map[caseId] = action;
+    sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
+  }
+}
+
 function parseJusticeCaseClientState(raw: unknown): JusticeCaseClientState {
   if (raw === null || raw === undefined) return {};
   if (typeof raw !== "object" || Array.isArray(raw)) return {};
   const o = raw as Record<string, unknown>;
+  const approvedNext = parseApprovedNextAction(o.approved_next_action);
   return {
     ...(o as JusticeCaseClientState),
     prepared_packet_approved: o.prepared_packet_approved === true,
+    ...(approvedNext ? { approved_next_action: approvedNext } : {}),
   };
+}
+
+function resolveApprovedNextAction(
+  caseId: string,
+  clientState: unknown
+): JusticeApprovedNextAction | undefined {
+  const fromServer = parseJusticeCaseClientState(clientState).approved_next_action;
+  return fromServer ?? readSessionApprovedNextAction(caseId);
 }
 
 function isPreparedPacketApprovedInClientState(raw: unknown): boolean {
@@ -267,6 +375,9 @@ export default function JusticePacketPage() {
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [timelineTick, setTimelineTick] = useState(0);
   const [packetApproved, setPacketApproved] = useState(false);
+  const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
+    undefined
+  );
   const [approveChecked, setApproveChecked] = useState(false);
 
   useEffect(() => {
@@ -340,12 +451,15 @@ export default function JusticePacketPage() {
   useEffect(() => {
     if (!caseId) {
       setPacketApproved(false);
+      setApprovedNextAction(undefined);
       setApproveChecked(false);
       return;
     }
     const sessionApproved = readPreparedPacketApproved(caseId);
+    const sessionNextAction = readSessionApprovedNextAction(caseId);
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) {
       setPacketApproved(sessionApproved);
+      setApprovedNextAction(sessionNextAction);
       return;
     }
 
@@ -356,16 +470,29 @@ export default function JusticePacketPage() {
           signal: ac.signal,
         });
         if (!res.ok) {
-          if (!ac.signal.aborted) setPacketApproved(sessionApproved);
+          if (!ac.signal.aborted) {
+            setPacketApproved(sessionApproved);
+            setApprovedNextAction(sessionNextAction);
+          }
           return;
         }
         const data = (await res.json()) as { client_state?: unknown };
         if (ac.signal.aborted) return;
-        const serverApproved = isPreparedPacketApprovedInClientState(data.client_state);
+        const parsed = parseJusticeCaseClientState(data.client_state);
+        const serverApproved = parsed.prepared_packet_approved === true;
         if (serverApproved) writePreparedPacketApproved(caseId);
+        if (parsed.approved_next_action) {
+          writeSessionApprovedNextAction(caseId, parsed.approved_next_action);
+        }
         setPacketApproved(sessionApproved || serverApproved);
+        setApprovedNextAction(
+          resolveApprovedNextAction(caseId, data.client_state) ?? sessionNextAction
+        );
       } catch {
-        if (!ac.signal.aborted) setPacketApproved(sessionApproved);
+        if (!ac.signal.aborted) {
+          setPacketApproved(sessionApproved);
+          setApprovedNextAction(sessionNextAction);
+        }
       }
     })();
 
@@ -485,9 +612,23 @@ export default function JusticePacketPage() {
   const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
 
   async function handleApprovePreparedPacket() {
-    if (!caseId || !approveChecked) return;
+    if (!caseId || !approveChecked || !intake) return;
+
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const contacted = intake.already_contacted === "yes";
+    const cfpbRel = cfpbLikelyRelevant(intake);
+    const fccRel = fccLikelyRelevant(intake);
+    const dotRel = dotLikelyRelevant(intake);
+    const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
+    const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+    const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
+    const nextActionTarget = buildApprovedNextActionTarget(prepared);
+
     writePreparedPacketApproved(caseId);
+    writeSessionApprovedNextAction(caseId, nextActionTarget);
     setPacketApproved(true);
+    setApprovedNextAction(nextActionTarget);
 
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
@@ -501,6 +642,7 @@ export default function JusticePacketPage() {
       const merged: JusticeCaseClientState = {
         ...parseJusticeCaseClientState(existing.client_state),
         prepared_packet_approved: true,
+        approved_next_action: nextActionTarget,
       };
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
@@ -576,12 +718,27 @@ export default function JusticePacketPage() {
                   Packet approved for next action
                 </p>
                 <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
-                  You reviewed this prepared packet. Surrenderless has not filed, submitted, sent, or contacted anyone
-                  on your behalf. Continue from your action plan when you are ready for the next in-app step.
+                  You reviewed this prepared packet
+                  {approvedNextAction?.label ? (
+                    <>
+                      {" "}
+                      for <strong>{approvedNextAction.label}</strong>
+                    </>
+                  ) : null}
+                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Continue from your
+                  action plan when you are ready for the next in-app step.
                 </p>
+                {approvedNextAction?.href && approvedNextAction.label ? (
+                  <Link
+                    href={approvedNextAction.href}
+                    className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  >
+                    Open {approvedNextAction.label}
+                  </Link>
+                ) : null}
                 <Link
                   href="/justice/plan"
-                  className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  className={`${approvedNextAction?.href ? "mt-2 ml-4" : "mt-2"} inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100`}
                 >
                   Continue from action plan
                 </Link>
