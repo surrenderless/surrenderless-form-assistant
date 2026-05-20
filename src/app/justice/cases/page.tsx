@@ -230,6 +230,42 @@ function soonestOpenTaskDueDate(tasks: JusticeCaseTaskRow[]): string | null {
 
 type ProgressFetchRow = CaseProgressSummary & { id: string; tasks: JusticeCaseTaskRow[] };
 
+type FollowUpAttentionItem = {
+  caseRow: CaseRow;
+  next: JusticeApprovedNextAction;
+};
+
+function buildFollowUpAttentionItems(caseList: CaseRow[]): FollowUpAttentionItem[] {
+  const items: FollowUpAttentionItem[] = [];
+  for (const c of caseList) {
+    const next = parseApprovedNextActionFromClientState(c.client_state);
+    if (next?.follow_up_needed !== true) continue;
+    items.push({ caseRow: c, next });
+  }
+  items.sort((a, b) => {
+    const da = a.next.follow_up_at?.trim() ?? "";
+    const db = b.next.follow_up_at?.trim() ?? "";
+    if (!da && !db) return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = da.localeCompare(db);
+    if (cmp !== 0) return cmp;
+    return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+  });
+  return items;
+}
+
+function caseDisplayTitle(row: CaseRow, labelDraft: string): string {
+  const custom = row.case_label?.trim() || labelDraft.trim();
+  return custom || row.intake.company_name;
+}
+
+function truncateAttentionNote(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trimEnd()}…`;
+}
+
 function buildAttentionItems(
   caseList: CaseRow[],
   tasksByCaseId: Record<string, JusticeCaseTaskRow[]>
@@ -296,6 +332,11 @@ export default function JusticeCasesPage() {
     );
   }, [cases, labelDraftById, caseSearch, caseStatusFilter, caseSort, progressById]);
 
+  const followUpAttentionItems = useMemo(
+    () => buildFollowUpAttentionItems(filteredSortedCases),
+    [filteredSortedCases]
+  );
+
   const attentionItems = useMemo(
     () =>
       filteredSortedCases.length > 0
@@ -303,6 +344,9 @@ export default function JusticeCasesPage() {
         : [],
     [filteredSortedCases, tasksByCaseId]
   );
+
+  const hasNeedsAttentionContent =
+    followUpAttentionItems.length > 0 || attentionItems.length > 0;
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -571,44 +615,95 @@ export default function JusticeCasesPage() {
               >
                 Needs attention
               </h2>
-              {progressLoading && Object.keys(tasksByCaseId).length === 0 ? (
-                <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">Loading follow-ups…</p>
-              ) : attentionItems.length === 0 ? (
-                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">No open follow-up tasks.</p>
+              {!hasNeedsAttentionContent ? (
+                progressLoading ? (
+                  <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">Loading follow-ups…</p>
+                ) : (
+                  <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">No open follow-up tasks.</p>
+                )
               ) : (
                 <ul className="mt-3 space-y-3">
+                  {followUpAttentionItems.map(({ caseRow, next }) => {
+                    const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
+                    const product = caseRow.intake.purchase_or_signup.trim();
+                    const statusLabel = approvedNextActionStatusDisplay(next.status);
+                    const followUpDate = formatApprovedNextActionFollowUpDate(next.follow_up_at);
+                    const outcomeNote = next.outcome_note?.trim();
+                    return (
+                      <li
+                        key={`follow-up-${caseRow.id}`}
+                        className={`${cardCls} border-amber-200/80 ring-amber-950/[0.06] dark:border-amber-900/40 dark:ring-amber-500/10`}
+                      >
+                        <p className="font-medium text-neutral-900 dark:text-neutral-100">
+                          Approved next action follow-up
+                        </p>
+                        <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                          Follow-up needed
+                        </p>
+                        <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">{title}</p>
+                        {product ? (
+                          <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
+                        ) : null}
+                        {statusLabel ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Status: {statusLabel}
+                          </p>
+                        ) : null}
+                        {followUpDate ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Follow-up date: {followUpDate}
+                          </p>
+                        ) : null}
+                        {outcomeNote ? (
+                          <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                            {truncateAttentionNote(outcomeNote, 200)}
+                          </p>
+                        ) : null}
+                        <p className="mt-2 text-[11px] text-neutral-500 dark:text-neutral-500">
+                          In-app tracking only — not filed or submitted automatically.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => openCase(caseRow)}
+                          className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                        >
+                          Open case
+                        </button>
+                      </li>
+                    );
+                  })}
                   {attentionItems.map(({ task, caseRow }) => {
                     const dueKind = getJusticeTaskDueKind(task);
                     return (
-                    <li
-                      key={`${caseRow.id}-${task.id}`}
-                      className={`${cardCls} border-amber-200/80 ring-amber-950/[0.06] dark:border-amber-900/40 dark:ring-amber-500/10`}
-                    >
-                      <p className="font-medium text-neutral-900 dark:text-neutral-100">{task.title}</p>
-                      <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-                        <span className={justiceTaskDueBadgeClass(dueKind)}>
-                          {justiceTaskDueKindLabel(dueKind)}
-                        </span>
-                        {task.due_date?.trim() ? (
-                          <span>Due: {task.due_date.trim()}</span>
-                        ) : null}
-                      </p>
-                      <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
-                        Case: {caseRow.intake.company_name}
-                      </p>
-                      {task.notes?.trim() ? (
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
-                          {task.notes.trim()}
-                        </p>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => openCase(caseRow)}
-                        className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                      <li
+                        key={`${caseRow.id}-${task.id}`}
+                        className={`${cardCls} border-amber-200/80 ring-amber-950/[0.06] dark:border-amber-900/40 dark:ring-amber-500/10`}
                       >
-                        Open case
-                      </button>
-                    </li>
+                        <p className="font-medium text-neutral-900 dark:text-neutral-100">{task.title}</p>
+                        <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                          <span className={justiceTaskDueBadgeClass(dueKind)}>
+                            {justiceTaskDueKindLabel(dueKind)}
+                          </span>
+                          {task.due_date?.trim() ? (
+                            <span>Due: {task.due_date.trim()}</span>
+                          ) : null}
+                        </p>
+                        <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
+                          Case: {caseRow.intake.company_name}
+                        </p>
+                        {task.notes?.trim() ? (
+                          <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
+                            {task.notes.trim()}
+                          </p>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => openCase(caseRow)}
+                          className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                        >
+                          Open case
+                        </button>
+                      </li>
                     );
                   })}
                 </ul>
