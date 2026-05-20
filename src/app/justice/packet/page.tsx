@@ -104,9 +104,16 @@ function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | unde
   return {
     ...(label ? { label } : {}),
     ...(href ? { href } : {}),
-    ...(o.status === "approved" ? { status: "approved" as const } : {}),
+    ...(o.status === "approved"
+      ? { status: "approved" as const }
+      : o.status === "started"
+        ? { status: "started" as const }
+        : {}),
     ...(typeof o.approved_at === "string" && o.approved_at.trim()
       ? { approved_at: o.approved_at.trim() }
+      : {}),
+    ...(typeof o.started_at === "string" && o.started_at.trim()
+      ? { started_at: o.started_at.trim() }
       : {}),
   };
 }

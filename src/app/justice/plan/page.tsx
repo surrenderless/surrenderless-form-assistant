@@ -4,11 +4,13 @@ import { SignInButton, useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
 import type {
   DestinationStatus,
   JusticeApprovedNextAction,
+  JusticeCaseClientState,
   JusticeDestination,
   JusticeIntake,
   TimelineEntry,
@@ -66,9 +68,16 @@ function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | unde
   return {
     ...(label ? { label } : {}),
     ...(href ? { href } : {}),
-    ...(o.status === "approved" ? { status: "approved" as const } : {}),
+    ...(o.status === "approved"
+      ? { status: "approved" as const }
+      : o.status === "started"
+        ? { status: "started" as const }
+        : {}),
     ...(typeof o.approved_at === "string" && o.approved_at.trim()
       ? { approved_at: o.approved_at.trim() }
+      : {}),
+    ...(typeof o.started_at === "string" && o.started_at.trim()
+      ? { started_at: o.started_at.trim() }
       : {}),
   };
 }
@@ -89,13 +98,93 @@ function resolveApprovedNextAction(
   caseId: string,
   clientState: unknown
 ): JusticeApprovedNextAction | undefined {
+  const fromSession = readSessionApprovedNextAction(caseId);
+  let fromServer: JusticeApprovedNextAction | undefined;
   if (clientState !== null && clientState !== undefined && typeof clientState === "object") {
-    const fromServer = parseApprovedNextAction(
+    fromServer = parseApprovedNextAction(
       (clientState as Record<string, unknown>).approved_next_action
     );
-    if (fromServer) return fromServer;
   }
-  return readSessionApprovedNextAction(caseId);
+  if (!fromServer) return fromSession;
+  if (!fromSession) return fromServer;
+
+  const label = fromServer.label ?? fromSession.label;
+  const href = fromServer.href ?? fromSession.href;
+  const approved_at = fromServer.approved_at ?? fromSession.approved_at;
+  const started = fromServer.status === "started" || fromSession.status === "started";
+
+  if (started) {
+    return {
+      ...(label ? { label } : {}),
+      ...(href ? { href } : {}),
+      ...(approved_at ? { approved_at } : {}),
+      status: "started",
+      started_at: fromServer.started_at ?? fromSession.started_at,
+    };
+  }
+
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(approved_at ? { approved_at } : {}),
+    status: fromServer.status ?? fromSession.status,
+  };
+}
+
+function writeSessionApprovedNextAction(caseId: string, action: JusticeApprovedNextAction): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+    const map: Record<string, JusticeApprovedNextAction> = raw
+      ? (JSON.parse(raw) as Record<string, JusticeApprovedNextAction>)
+      : {};
+    map[caseId] = action;
+    sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
+  }
+}
+
+function mergeClientStateWithApprovedNextAction(
+  existing: unknown,
+  approvedNext: JusticeApprovedNextAction
+): JusticeCaseClientState {
+  const merged: JusticeCaseClientState = { approved_next_action: approvedNext };
+  if (existing !== null && existing !== undefined && typeof existing === "object" && !Array.isArray(existing)) {
+    const o = existing as Record<string, unknown>;
+    if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
+    const prev = parseApprovedNextAction(o.approved_next_action);
+    if (prev?.approved_at && !approvedNext.approved_at) {
+      merged.approved_next_action = { ...approvedNext, approved_at: prev.approved_at };
+    }
+  }
+  merged.prepared_packet_approved = true;
+  return merged;
+}
+
+async function persistApprovedNextActionStarted(
+  caseId: string,
+  approvedNext: JusticeApprovedNextAction
+): Promise<void> {
+  try {
+    const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+    if (!getRes.ok) {
+      console.warn("justice plan: GET /api/justice/cases/[id] (client_state) failed", getRes.status);
+      return;
+    }
+    const existing = (await getRes.json()) as { client_state?: unknown };
+    const merged = mergeClientStateWithApprovedNextAction(existing.client_state, approvedNext);
+    const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_state: merged }),
+    });
+    if (!patchRes.ok) {
+      console.warn("justice plan: PATCH /api/justice/cases/[id] (client_state) failed", patchRes.status);
+    }
+  } catch (e) {
+    console.warn("justice plan: PATCH /api/justice/cases/[id] (client_state) error", e);
+  }
 }
 
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
@@ -493,7 +582,11 @@ export default function JusticePlanPage() {
       setServerPaymentDisputeDraft(null);
       setIntake(parsed);
       setPreparedPacketApproved(resolvePreparedPacketApproved(cid, undefined));
-      setApprovedNextAction(resolveApprovedNextAction(cid, undefined));
+      {
+        const resolved = resolveApprovedNextAction(cid, undefined);
+        if (resolved) writeSessionApprovedNextAction(cid, resolved);
+        setApprovedNextAction(resolved);
+      }
       return;
     }
 
@@ -577,7 +670,11 @@ export default function JusticePlanPage() {
           setCaseId(cid);
           setTimeline(readTimeline(cid));
           setPreparedPacketApproved(resolvePreparedPacketApproved(cid, data.client_state));
-          setApprovedNextAction(resolveApprovedNextAction(cid, data.client_state));
+          {
+            const resolved = resolveApprovedNextAction(cid, data.client_state);
+            if (resolved) writeSessionApprovedNextAction(cid, resolved);
+            setApprovedNextAction(resolved);
+          }
         } catch (e) {
           if (ac.signal.aborted) return;
           console.warn("justice plan: GET /api/justice/cases/[id] error", e);
@@ -641,7 +738,11 @@ export default function JusticePlanPage() {
         setPreparedPacketApproved(
           resolvePreparedPacketApproved(latest.id, latest.client_state)
         );
-        setApprovedNextAction(resolveApprovedNextAction(latest.id, latest.client_state));
+        {
+          const resolved = resolveApprovedNextAction(latest.id, latest.client_state);
+          if (resolved) writeSessionApprovedNextAction(latest.id, resolved);
+          setApprovedNextAction(resolved);
+        }
       } catch (e) {
         if (ac.signal.aborted) return;
         console.warn("justice plan: GET /api/justice/cases error", e);
@@ -940,6 +1041,81 @@ export default function JusticePlanPage() {
     preparedPacketApproved && approvedNextAction?.href
       ? approvedNextAction.href
       : preparedNextAction.detailHref;
+  const approvedNextActionStarted = approvedNextAction?.status === "started";
+  const showApprovedNextActionCta =
+    preparedPacketApproved && approvedNextAction && approvedStepHref;
+
+  async function handleViewApprovedCasePacketClick() {
+    const label = approvedNextAction?.label ?? approvedStepLabel;
+    const href = approvedNextAction?.href ?? preparedNextAction.href ?? "/justice/packet";
+    const next: JusticeApprovedNextAction = {
+      ...(approvedNextAction ?? {}),
+      ...(label ? { label } : {}),
+      href,
+      status: "started",
+      started_at: approvedNextAction?.started_at ?? new Date().toISOString(),
+      ...(approvedNextAction?.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
+    };
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, next);
+      try {
+        const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+        const map: Record<string, boolean> = raw
+          ? (JSON.parse(raw) as Record<string, boolean>)
+          : {};
+        map[caseId] = true;
+        sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+      } catch {
+        // ignore corrupt session data
+      }
+    }
+
+    setApprovedNextAction(next);
+    setPreparedPacketApproved(true);
+
+    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
+      await persistApprovedNextActionStarted(caseId, next);
+    }
+
+    router.push(next.href || "/justice/packet");
+  }
+
+  async function handleApprovedNextActionOpen(href: string) {
+    const label = approvedNextAction?.label ?? approvedStepLabel;
+    const targetHref = href || approvedNextAction?.href || "/justice/packet";
+    const next: JusticeApprovedNextAction = {
+      ...(approvedNextAction ?? {}),
+      ...(label ? { label } : {}),
+      href: approvedNextAction?.href ?? targetHref,
+      status: "started",
+      started_at: approvedNextAction?.started_at ?? new Date().toISOString(),
+      ...(approvedNextAction?.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
+    };
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, next);
+      try {
+        const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+        const map: Record<string, boolean> = raw
+          ? (JSON.parse(raw) as Record<string, boolean>)
+          : {};
+        map[caseId] = true;
+        sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+      } catch {
+        // ignore corrupt session data
+      }
+    }
+
+    setApprovedNextAction(next);
+    setPreparedPacketApproved(true);
+
+    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
+      await persistApprovedNextActionStarted(caseId, next);
+    }
+
+    router.push(targetHref);
+  }
 
   /** Styling mirror of “Recommended next” visibility on the Step 3 `<li>` (no logic changes). */
   const step3RecommendedCardHighlight =
@@ -1004,18 +1180,40 @@ export default function JusticePlanPage() {
                 role="status"
               >
                 <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-                  Prepared packet approved for next action
+                  {approvedNextActionStarted
+                    ? "Next action started"
+                    : "Prepared packet approved for next action"}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
-                  You reviewed and approved your prepared case packet
-                  {approvedNextAction?.label ? (
+                  {approvedNextActionStarted ? (
                     <>
-                      {" "}
-                      for <strong>{approvedNextAction.label}</strong>
+                      You opened your approved next in-app step
+                      {approvedNextAction?.label ? (
+                        <>
+                          {" "}
+                          (<strong>{approvedNextAction.label}</strong>)
+                        </>
+                      ) : null}
+                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.
                     </>
-                  ) : null}
-                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.
+                  ) : (
+                    <>
+                      You reviewed and approved your prepared case packet
+                      {approvedNextAction?.label ? (
+                        <>
+                          {" "}
+                          for <strong>{approvedNextAction.label}</strong>
+                        </>
+                      ) : null}
+                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.
+                    </>
+                  )}
                 </p>
+                {approvedNextActionStarted ? (
+                  <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                    Opened for next step.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <p className="font-semibold text-emerald-950 dark:text-emerald-100">
@@ -1023,7 +1221,9 @@ export default function JusticePlanPage() {
             </p>
             <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
               {preparedPacketApproved
-                ? "Your prepared case packet is approved. Continue with the next in-app step below when you are ready."
+                ? approvedNextActionStarted
+                  ? "Your prepared case packet is approved and your next in-app step is started."
+                  : "Your prepared case packet is approved. Continue with the next in-app step below when you are ready."
                 : "From your reviewed submission draft, Surrenderless assembled your case for in-app review. Your current focus is"}{" "}
               {!preparedPacketApproved ? (
                 <>
@@ -1031,27 +1231,50 @@ export default function JusticePlanPage() {
                 </>
               ) : (
                 <>
-                  Approved next step: <strong>{approvedStepLabel}</strong>.
+                  Approved next step: <strong>{approvedStepLabel}</strong>
+                  {approvedNextActionStarted ? " (started)." : "."}
                 </>
               )}{" "}
               Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on
               your behalf.
             </p>
-            <Link
-              href={preparedNextAction.href}
-              className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-            >
-              {preparedPacketApproved ? "View approved case packet" : preparedNextAction.buttonLabel}
-            </Link>
-            {approvedStepHref ? (
-              <Link
-                href={approvedStepHref}
-                className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+            {preparedPacketApproved ? (
+              <button
+                type="button"
+                onClick={() => void handleViewApprovedCasePacketClick()}
+                className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
               >
-                {preparedPacketApproved && approvedNextAction?.label
-                  ? `Open ${approvedNextAction.label}`
-                  : `Open ${preparedNextAction.stepLabel} preparation`}
+                {approvedNextActionStarted ? "Continue approved case packet" : "View approved case packet"}
+              </button>
+            ) : (
+              <Link
+                href={preparedNextAction.href}
+                className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+              >
+                {preparedNextAction.buttonLabel}
               </Link>
+            )}
+            {approvedStepHref ? (
+              showApprovedNextActionCta && !approvedNextActionStarted ? (
+                approvedStepHref !== preparedNextAction.href ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleApprovedNextActionOpen(approvedStepHref)}
+                    className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  >
+                    {approvedNextAction?.label
+                      ? `Open ${approvedNextAction.label}`
+                      : `Open ${preparedNextAction.stepLabel} preparation`}
+                  </button>
+                ) : null
+              ) : (
+                <Link
+                  href={approvedStepHref}
+                  className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  Open {preparedNextAction.stepLabel} preparation
+                </Link>
+              )
             ) : null}
             <p className="mt-3 text-xs text-emerald-800/85 dark:text-emerald-200/85">
               Your full action plan, prep pages, and filing records remain below if you need them.
@@ -1063,33 +1286,68 @@ export default function JusticePlanPage() {
             role="status"
           >
             <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-              Prepared packet approved for next action
+              {approvedNextActionStarted
+                ? "Next action started"
+                : "Prepared packet approved for next action"}
             </p>
             <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
-              You approved your prepared case packet
-              {approvedNextAction?.label ? (
+              {approvedNextActionStarted ? (
                 <>
-                  {" "}
-                  for <strong>{approvedNextAction.label}</strong>
+                  You opened your approved next in-app step
+                  {approvedNextAction?.label ? (
+                    <>
+                      {" "}
+                      (<strong>{approvedNextAction.label}</strong>)
+                    </>
+                  ) : null}
+                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.
                 </>
-              ) : null}
-              . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Use the action plan
-              below for your next steps.
+              ) : (
+                <>
+                  You approved your prepared case packet
+                  {approvedNextAction?.label ? (
+                    <>
+                      {" "}
+                      for <strong>{approvedNextAction.label}</strong>
+                    </>
+                  ) : null}
+                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Use the action
+                  plan below for your next steps.
+                </>
+              )}
             </p>
-            {approvedStepHref && approvedNextAction?.label ? (
-              <Link
-                href={approvedStepHref}
+            {approvedNextActionStarted ? (
+              <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                Opened for next step.
+              </p>
+            ) : null}
+            {showApprovedNextActionCta && !approvedNextActionStarted ? (
+              <button
+                type="button"
+                onClick={() => void handleApprovedNextActionOpen(approvedStepHref)}
                 className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
               >
-                Open {approvedNextAction.label}
-              </Link>
+                {approvedNextAction?.label
+                  ? `Open ${approvedNextAction.label}`
+                  : `Open ${preparedNextAction.stepLabel} preparation`}
+              </button>
             ) : null}
-            <Link
-              href="/justice/packet"
-              className={`${approvedStepHref && approvedNextAction?.label ? "mt-2 ml-4" : "mt-2"} inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100`}
-            >
-              View case packet
-            </Link>
+            {approvedNextActionStarted ? (
+              <button
+                type="button"
+                onClick={() => void handleApprovedNextActionOpen("/justice/packet")}
+                className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+              >
+                View case packet
+              </button>
+            ) : (
+              <Link
+                href="/justice/packet"
+                className={`${showApprovedNextActionCta && !approvedNextActionStarted ? "mt-2 ml-4" : "mt-2"} inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100`}
+              >
+                View case packet
+              </Link>
+            )}
           </div>
         ) : null}
 
