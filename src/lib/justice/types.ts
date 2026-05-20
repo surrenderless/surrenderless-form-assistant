@@ -108,6 +108,10 @@ export type JusticeApprovedNextAction = {
   approved_at?: string;
   started_at?: string;
   completed_at?: string;
+  /** User-recorded outcome / follow-up tracking (in-app only; not a filing record). */
+  outcome_note?: string;
+  follow_up_needed?: boolean;
+  follow_up_at?: string;
 };
 
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */
