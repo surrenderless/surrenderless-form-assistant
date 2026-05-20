@@ -100,6 +100,11 @@ export type TimelineEntry = {
   detail?: string;
 };
 
+/** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */
+export type JusticeCaseClientState = {
+  prepared_packet_approved?: boolean;
+};
+
 export const STORAGE_INTAKE = "justice_intake_v1";
 export const STORAGE_CASE_ID = "justice_case_id";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
