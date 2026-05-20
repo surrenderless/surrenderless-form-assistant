@@ -120,7 +120,47 @@ function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | unde
     ...(typeof o.completed_at === "string" && o.completed_at.trim()
       ? { completed_at: o.completed_at.trim() }
       : {}),
+    ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
+      ? { outcome_note: o.outcome_note.trim() }
+      : {}),
+    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
+    ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
+      ? { follow_up_at: o.follow_up_at.trim() }
+      : {}),
   };
+}
+
+function formatTrackingFollowUpDate(iso?: string): string | null {
+  if (!iso?.trim()) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+function hasApprovedNextActionTrackingSummary(action: JusticeApprovedNextAction): boolean {
+  return Boolean(action.outcome_note?.trim()) || action.follow_up_needed === true;
+}
+
+function ApprovedNextActionTrackingSummary({ action }: { action: JusticeApprovedNextAction }) {
+  if (!hasApprovedNextActionTrackingSummary(action)) return null;
+  const followUpDate = formatTrackingFollowUpDate(action.follow_up_at);
+  return (
+    <div className="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-3 py-2 text-xs text-emerald-950 dark:border-emerald-600/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+      <p className="font-medium text-emerald-900 dark:text-emerald-50">Tracking note saved</p>
+      {action.outcome_note?.trim() ? (
+        <p className="mt-1 whitespace-pre-wrap leading-relaxed">{action.outcome_note.trim()}</p>
+      ) : null}
+      {action.follow_up_needed === true ? (
+        <p className="mt-1 text-emerald-800 dark:text-emerald-200">
+          Follow-up needed
+          {followUpDate ? <> — target date {followUpDate}</> : null}
+        </p>
+      ) : null}
+      <p className="mt-1 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        In-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone.
+      </p>
+    </div>
+  );
 }
 
 function showPreparedActionPacketFraming(intake: JusticeIntake, timeline: TimelineEntry[]): boolean {
@@ -218,10 +258,18 @@ function resolveApprovedNextAction(
   const approved_at = fromServer.approved_at ?? fromSession.approved_at;
   const started_at = fromServer.started_at ?? fromSession.started_at;
   const completed_at = fromServer.completed_at ?? fromSession.completed_at;
+  const outcome_note = fromServer.outcome_note ?? fromSession.outcome_note;
+  const follow_up_needed = fromServer.follow_up_needed ?? fromSession.follow_up_needed;
+  const follow_up_at = fromServer.follow_up_at ?? fromSession.follow_up_at;
   const completed =
     fromServer.status === "completed" || fromSession.status === "completed";
   const started =
     !completed && (fromServer.status === "started" || fromSession.status === "started");
+  const trackingFields = {
+    ...(outcome_note ? { outcome_note } : {}),
+    ...(follow_up_needed === true ? { follow_up_needed: true } : {}),
+    ...(follow_up_at ? { follow_up_at } : {}),
+  };
 
   if (completed) {
     return {
@@ -231,6 +279,7 @@ function resolveApprovedNextAction(
       status: "completed",
       ...(started_at ? { started_at } : {}),
       ...(completed_at ? { completed_at } : {}),
+      ...trackingFields,
     };
   }
 
@@ -241,6 +290,7 @@ function resolveApprovedNextAction(
       ...(approved_at ? { approved_at } : {}),
       status: "started",
       ...(started_at ? { started_at } : {}),
+      ...trackingFields,
     };
   }
 
@@ -249,6 +299,7 @@ function resolveApprovedNextAction(
     ...(href ? { href } : {}),
     ...(approved_at ? { approved_at } : {}),
     status: fromServer.status ?? fromSession.status,
+    ...trackingFields,
   };
 }
 
@@ -820,6 +871,9 @@ export default function JusticePacketPage() {
                   <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                     Opened for next step.
                   </p>
+                ) : null}
+                {approvedNextActionCompleted && approvedNextAction ? (
+                  <ApprovedNextActionTrackingSummary action={approvedNextAction} />
                 ) : null}
                 {!approvedNextActionStarted &&
                 !approvedNextActionCompleted &&
