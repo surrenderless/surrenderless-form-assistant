@@ -68,16 +68,21 @@ function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | unde
   return {
     ...(label ? { label } : {}),
     ...(href ? { href } : {}),
-    ...(o.status === "approved"
-      ? { status: "approved" as const }
+    ...(o.status === "completed"
+      ? { status: "completed" as const }
       : o.status === "started"
         ? { status: "started" as const }
-        : {}),
+        : o.status === "approved"
+          ? { status: "approved" as const }
+          : {}),
     ...(typeof o.approved_at === "string" && o.approved_at.trim()
       ? { approved_at: o.approved_at.trim() }
       : {}),
     ...(typeof o.started_at === "string" && o.started_at.trim()
       ? { started_at: o.started_at.trim() }
+      : {}),
+    ...(typeof o.completed_at === "string" && o.completed_at.trim()
+      ? { completed_at: o.completed_at.trim() }
       : {}),
   };
 }
@@ -111,7 +116,23 @@ function resolveApprovedNextAction(
   const label = fromServer.label ?? fromSession.label;
   const href = fromServer.href ?? fromSession.href;
   const approved_at = fromServer.approved_at ?? fromSession.approved_at;
-  const started = fromServer.status === "started" || fromSession.status === "started";
+  const started_at = fromServer.started_at ?? fromSession.started_at;
+  const completed_at = fromServer.completed_at ?? fromSession.completed_at;
+  const completed =
+    fromServer.status === "completed" || fromSession.status === "completed";
+  const started =
+    !completed && (fromServer.status === "started" || fromSession.status === "started");
+
+  if (completed) {
+    return {
+      ...(label ? { label } : {}),
+      ...(href ? { href } : {}),
+      ...(approved_at ? { approved_at } : {}),
+      status: "completed",
+      ...(started_at ? { started_at } : {}),
+      ...(completed_at ? { completed_at } : {}),
+    };
+  }
 
   if (started) {
     return {
@@ -119,7 +140,7 @@ function resolveApprovedNextAction(
       ...(href ? { href } : {}),
       ...(approved_at ? { approved_at } : {}),
       status: "started",
-      started_at: fromServer.started_at ?? fromSession.started_at,
+      ...(started_at ? { started_at } : {}),
     };
   }
 
@@ -154,15 +175,20 @@ function mergeClientStateWithApprovedNextAction(
     const o = existing as Record<string, unknown>;
     if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
     const prev = parseApprovedNextAction(o.approved_next_action);
-    if (prev?.approved_at && !approvedNext.approved_at) {
-      merged.approved_next_action = { ...approvedNext, approved_at: prev.approved_at };
+    if (prev) {
+      merged.approved_next_action = {
+        ...approvedNext,
+        ...(prev.approved_at && !approvedNext.approved_at ? { approved_at: prev.approved_at } : {}),
+        ...(prev.started_at && !approvedNext.started_at ? { started_at: prev.started_at } : {}),
+        ...(prev.completed_at && !approvedNext.completed_at ? { completed_at: prev.completed_at } : {}),
+      };
     }
   }
   merged.prepared_packet_approved = true;
   return merged;
 }
 
-async function persistApprovedNextActionStarted(
+async function persistApprovedNextActionClientState(
   caseId: string,
   approvedNext: JusticeApprovedNextAction
 ): Promise<void> {
@@ -1041,11 +1067,35 @@ export default function JusticePlanPage() {
     preparedPacketApproved && approvedNextAction?.href
       ? approvedNextAction.href
       : preparedNextAction.detailHref;
+  const approvedNextActionCompleted = approvedNextAction?.status === "completed";
   const approvedNextActionStarted = approvedNextAction?.status === "started";
   const showApprovedNextActionCta =
-    preparedPacketApproved && approvedNextAction && approvedStepHref;
+    preparedPacketApproved && approvedNextAction && approvedStepHref && !approvedNextActionCompleted;
+
+  async function persistApprovedNextAction(next: JusticeApprovedNextAction) {
+    if (caseId) writeSessionApprovedNextAction(caseId, next);
+    setApprovedNextAction(next);
+    setPreparedPacketApproved(true);
+    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
+      await persistApprovedNextActionClientState(caseId, next);
+    }
+  }
+
+  async function handleMarkApprovedNextActionHandled() {
+    if (!approvedNextAction || approvedNextAction.status !== "started") return;
+    const next: JusticeApprovedNextAction = {
+      ...approvedNextAction,
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    };
+    await persistApprovedNextAction(next);
+  }
 
   async function handleViewApprovedCasePacketClick() {
+    if (approvedNextActionCompleted) {
+      router.push(approvedNextAction?.href ?? preparedNextAction.href ?? "/justice/packet");
+      return;
+    }
     const label = approvedNextAction?.label ?? approvedStepLabel;
     const href = approvedNextAction?.href ?? preparedNextAction.href ?? "/justice/packet";
     const next: JusticeApprovedNextAction = {
@@ -1058,7 +1108,6 @@ export default function JusticePlanPage() {
     };
 
     if (caseId) {
-      writeSessionApprovedNextAction(caseId, next);
       try {
         const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
         const map: Record<string, boolean> = raw
@@ -1071,17 +1120,15 @@ export default function JusticePlanPage() {
       }
     }
 
-    setApprovedNextAction(next);
-    setPreparedPacketApproved(true);
-
-    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
-      await persistApprovedNextActionStarted(caseId, next);
-    }
-
+    await persistApprovedNextAction(next);
     router.push(next.href || "/justice/packet");
   }
 
   async function handleApprovedNextActionOpen(href: string) {
+    if (approvedNextActionCompleted) {
+      router.push(href || approvedNextAction?.href || "/justice/packet");
+      return;
+    }
     const label = approvedNextAction?.label ?? approvedStepLabel;
     const targetHref = href || approvedNextAction?.href || "/justice/packet";
     const next: JusticeApprovedNextAction = {
@@ -1094,7 +1141,6 @@ export default function JusticePlanPage() {
     };
 
     if (caseId) {
-      writeSessionApprovedNextAction(caseId, next);
       try {
         const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
         const map: Record<string, boolean> = raw
@@ -1107,13 +1153,7 @@ export default function JusticePlanPage() {
       }
     }
 
-    setApprovedNextAction(next);
-    setPreparedPacketApproved(true);
-
-    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
-      await persistApprovedNextActionStarted(caseId, next);
-    }
-
+    await persistApprovedNextAction(next);
     router.push(targetHref);
   }
 
@@ -1180,12 +1220,26 @@ export default function JusticePlanPage() {
                 role="status"
               >
                 <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-                  {approvedNextActionStarted
-                    ? "Next action started"
-                    : "Prepared packet approved for next action"}
+                  {approvedNextActionCompleted
+                    ? "Next action recorded as handled"
+                    : approvedNextActionStarted
+                      ? "Next action started"
+                      : "Prepared packet approved for next action"}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
-                  {approvedNextActionStarted ? (
+                  {approvedNextActionCompleted ? (
+                    <>
+                      You recorded that your approved next step was handled for now
+                      {approvedNextAction?.label ? (
+                        <>
+                          {" "}
+                          (<strong>{approvedNextAction.label}</strong>)
+                        </>
+                      ) : null}
+                      . This is in-app tracking only — Surrenderless has not filed, submitted, sent, or contacted
+                      anyone on your behalf.
+                    </>
+                  ) : approvedNextActionStarted ? (
                     <>
                       You opened your approved next in-app step
                       {approvedNextAction?.label ? (
@@ -1210,9 +1264,21 @@ export default function JusticePlanPage() {
                   )}
                 </p>
                 {approvedNextActionStarted ? (
-                  <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
-                    Opened for next step.
-                  </p>
+                  <>
+                    <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                      Opened for next step.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleMarkApprovedNextActionHandled()}
+                      className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+                    >
+                      Record action handled for now
+                    </button>
+                    <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                      Tracking only — not automatic filing or submission.
+                    </p>
+                  </>
                 ) : null}
               </div>
             ) : null}
@@ -1221,9 +1287,11 @@ export default function JusticePlanPage() {
             </p>
             <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
               {preparedPacketApproved
-                ? approvedNextActionStarted
-                  ? "Your prepared case packet is approved and your next in-app step is started."
-                  : "Your prepared case packet is approved. Continue with the next in-app step below when you are ready."
+                ? approvedNextActionCompleted
+                  ? "Your prepared case packet is approved and your next in-app step is recorded as handled for now."
+                  : approvedNextActionStarted
+                    ? "Your prepared case packet is approved and your next in-app step is started."
+                    : "Your prepared case packet is approved. Continue with the next in-app step below when you are ready."
                 : "From your reviewed submission draft, Surrenderless assembled your case for in-app review. Your current focus is"}{" "}
               {!preparedPacketApproved ? (
                 <>
@@ -1232,7 +1300,11 @@ export default function JusticePlanPage() {
               ) : (
                 <>
                   Approved next step: <strong>{approvedStepLabel}</strong>
-                  {approvedNextActionStarted ? " (started)." : "."}
+                  {approvedNextActionCompleted
+                    ? " (recorded as handled)."
+                    : approvedNextActionStarted
+                      ? " (started)."
+                      : "."}
                 </>
               )}{" "}
               Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on
@@ -1244,7 +1316,11 @@ export default function JusticePlanPage() {
                 onClick={() => void handleViewApprovedCasePacketClick()}
                 className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
               >
-                {approvedNextActionStarted ? "Continue approved case packet" : "View approved case packet"}
+                {approvedNextActionCompleted
+                  ? "View case packet"
+                  : approvedNextActionStarted
+                    ? "Continue approved case packet"
+                    : "View approved case packet"}
               </button>
             ) : (
               <Link
@@ -1255,7 +1331,7 @@ export default function JusticePlanPage() {
               </Link>
             )}
             {approvedStepHref ? (
-              showApprovedNextActionCta && !approvedNextActionStarted ? (
+              showApprovedNextActionCta && !approvedNextActionStarted && !approvedNextActionCompleted ? (
                 approvedStepHref !== preparedNextAction.href ? (
                   <button
                     type="button"
@@ -1286,12 +1362,26 @@ export default function JusticePlanPage() {
             role="status"
           >
             <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-              {approvedNextActionStarted
-                ? "Next action started"
-                : "Prepared packet approved for next action"}
+              {approvedNextActionCompleted
+                ? "Next action recorded as handled"
+                : approvedNextActionStarted
+                  ? "Next action started"
+                  : "Prepared packet approved for next action"}
             </p>
             <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
-              {approvedNextActionStarted ? (
+              {approvedNextActionCompleted ? (
+                <>
+                  You recorded that your approved next step was handled for now
+                  {approvedNextAction?.label ? (
+                    <>
+                      {" "}
+                      (<strong>{approvedNextAction.label}</strong>)
+                    </>
+                  ) : null}
+                  . This is in-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone
+                  on your behalf.
+                </>
+              ) : approvedNextActionStarted ? (
                 <>
                   You opened your approved next in-app step
                   {approvedNextAction?.label ? (
@@ -1317,11 +1407,23 @@ export default function JusticePlanPage() {
               )}
             </p>
             {approvedNextActionStarted ? (
-              <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
-                Opened for next step.
-              </p>
+              <>
+                <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                  Opened for next step.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleMarkApprovedNextActionHandled()}
+                  className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+                >
+                  Record action handled for now
+                </button>
+                <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                  Tracking only — not automatic filing or submission.
+                </p>
+              </>
             ) : null}
-            {showApprovedNextActionCta && !approvedNextActionStarted ? (
+            {showApprovedNextActionCta && !approvedNextActionStarted && !approvedNextActionCompleted ? (
               <button
                 type="button"
                 onClick={() => void handleApprovedNextActionOpen(approvedStepHref)}
@@ -1332,10 +1434,10 @@ export default function JusticePlanPage() {
                   : `Open ${preparedNextAction.stepLabel} preparation`}
               </button>
             ) : null}
-            {approvedNextActionStarted ? (
+            {approvedNextActionStarted || approvedNextActionCompleted ? (
               <button
                 type="button"
-                onClick={() => void handleApprovedNextActionOpen("/justice/packet")}
+                onClick={() => void handleViewApprovedCasePacketClick()}
                 className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
               >
                 View case packet
@@ -1343,7 +1445,7 @@ export default function JusticePlanPage() {
             ) : (
               <Link
                 href="/justice/packet"
-                className={`${showApprovedNextActionCta && !approvedNextActionStarted ? "mt-2 ml-4" : "mt-2"} inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100`}
+                className={`${showApprovedNextActionCta && !approvedNextActionStarted && !approvedNextActionCompleted ? "mt-2 ml-4" : "mt-2"} inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100`}
               >
                 View case packet
               </Link>

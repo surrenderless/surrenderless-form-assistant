@@ -104,16 +104,21 @@ function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | unde
   return {
     ...(label ? { label } : {}),
     ...(href ? { href } : {}),
-    ...(o.status === "approved"
-      ? { status: "approved" as const }
+    ...(o.status === "completed"
+      ? { status: "completed" as const }
       : o.status === "started"
         ? { status: "started" as const }
-        : {}),
+        : o.status === "approved"
+          ? { status: "approved" as const }
+          : {}),
     ...(typeof o.approved_at === "string" && o.approved_at.trim()
       ? { approved_at: o.approved_at.trim() }
       : {}),
     ...(typeof o.started_at === "string" && o.started_at.trim()
       ? { started_at: o.started_at.trim() }
+      : {}),
+    ...(typeof o.completed_at === "string" && o.completed_at.trim()
+      ? { completed_at: o.completed_at.trim() }
       : {}),
   };
 }
@@ -211,7 +216,23 @@ function resolveApprovedNextAction(
   const label = fromServer.label ?? fromSession.label;
   const href = fromServer.href ?? fromSession.href;
   const approved_at = fromServer.approved_at ?? fromSession.approved_at;
-  const started = fromServer.status === "started" || fromSession.status === "started";
+  const started_at = fromServer.started_at ?? fromSession.started_at;
+  const completed_at = fromServer.completed_at ?? fromSession.completed_at;
+  const completed =
+    fromServer.status === "completed" || fromSession.status === "completed";
+  const started =
+    !completed && (fromServer.status === "started" || fromSession.status === "started");
+
+  if (completed) {
+    return {
+      ...(label ? { label } : {}),
+      ...(href ? { href } : {}),
+      ...(approved_at ? { approved_at } : {}),
+      status: "completed",
+      ...(started_at ? { started_at } : {}),
+      ...(completed_at ? { completed_at } : {}),
+    };
+  }
 
   if (started) {
     return {
@@ -219,7 +240,7 @@ function resolveApprovedNextAction(
       ...(href ? { href } : {}),
       ...(approved_at ? { approved_at } : {}),
       status: "started",
-      started_at: fromServer.started_at ?? fromSession.started_at,
+      ...(started_at ? { started_at } : {}),
     };
   }
 
@@ -643,6 +664,7 @@ export default function JusticePacketPage() {
 
   const resolution = desiredResolutionPhrase(intake.problem_category);
   const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
+  const approvedNextActionCompleted = approvedNextAction?.status === "completed";
   const approvedNextActionStarted = approvedNextAction?.status === "started";
 
   async function handleApprovePreparedPacket() {
@@ -749,12 +771,26 @@ export default function JusticePacketPage() {
                 role="status"
               >
                 <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-                  {approvedNextActionStarted
-                    ? "Next action started"
-                    : "Packet approved for next action"}
+                  {approvedNextActionCompleted
+                    ? "Next action recorded as handled"
+                    : approvedNextActionStarted
+                      ? "Next action started"
+                      : "Packet approved for next action"}
                 </p>
                 <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
-                  {approvedNextActionStarted ? (
+                  {approvedNextActionCompleted ? (
+                    <>
+                      You recorded that your approved next step was handled for now
+                      {approvedNextAction?.label ? (
+                        <>
+                          {" "}
+                          (<strong>{approvedNextAction.label}</strong>)
+                        </>
+                      ) : null}
+                      . This is in-app tracking only — Surrenderless has not filed, submitted, sent, or contacted
+                      anyone on your behalf.
+                    </>
+                  ) : approvedNextActionStarted ? (
                     <>
                       You opened your approved next in-app step
                       {approvedNextAction?.label ? (
@@ -763,7 +799,8 @@ export default function JusticePacketPage() {
                           (<strong>{approvedNextAction.label}</strong>)
                         </>
                       ) : null}
-                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.
+                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled
+                      status from your action plan when ready.
                     </>
                   ) : (
                     <>
@@ -784,7 +821,10 @@ export default function JusticePacketPage() {
                     Opened for next step.
                   </p>
                 ) : null}
-                {!approvedNextActionStarted && approvedNextAction?.href && approvedNextAction.label ? (
+                {!approvedNextActionStarted &&
+                !approvedNextActionCompleted &&
+                approvedNextAction?.href &&
+                approvedNextAction.label ? (
                   <Link
                     href={approvedNextAction.href}
                     className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
