@@ -104,9 +104,10 @@ export type TimelineEntry = {
 export type JusticeApprovedNextAction = {
   label?: string;
   href?: string;
-  status?: "approved" | "started";
+  status?: "approved" | "started" | "completed";
   approved_at?: string;
   started_at?: string;
+  completed_at?: string;
 };
 
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */
