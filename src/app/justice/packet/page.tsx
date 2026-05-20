@@ -198,8 +198,37 @@ function resolveApprovedNextAction(
   caseId: string,
   clientState: unknown
 ): JusticeApprovedNextAction | undefined {
-  const fromServer = parseJusticeCaseClientState(clientState).approved_next_action;
-  return fromServer ?? readSessionApprovedNextAction(caseId);
+  const fromSession = readSessionApprovedNextAction(caseId);
+  let fromServer: JusticeApprovedNextAction | undefined;
+  if (clientState !== null && clientState !== undefined && typeof clientState === "object") {
+    fromServer = parseApprovedNextAction(
+      (clientState as Record<string, unknown>).approved_next_action
+    );
+  }
+  if (!fromServer) return fromSession;
+  if (!fromSession) return fromServer;
+
+  const label = fromServer.label ?? fromSession.label;
+  const href = fromServer.href ?? fromSession.href;
+  const approved_at = fromServer.approved_at ?? fromSession.approved_at;
+  const started = fromServer.status === "started" || fromSession.status === "started";
+
+  if (started) {
+    return {
+      ...(label ? { label } : {}),
+      ...(href ? { href } : {}),
+      ...(approved_at ? { approved_at } : {}),
+      status: "started",
+      started_at: fromServer.started_at ?? fromSession.started_at,
+    };
+  }
+
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(approved_at ? { approved_at } : {}),
+    status: fromServer.status ?? fromSession.status,
+  };
 }
 
 function isPreparedPacketApprovedInClientState(raw: unknown): boolean {
@@ -463,7 +492,7 @@ export default function JusticePacketPage() {
       return;
     }
     const sessionApproved = readPreparedPacketApproved(caseId);
-    const sessionNextAction = readSessionApprovedNextAction(caseId);
+    const sessionNextAction = resolveApprovedNextAction(caseId, undefined);
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) {
       setPacketApproved(sessionApproved);
       setApprovedNextAction(sessionNextAction);
@@ -488,13 +517,10 @@ export default function JusticePacketPage() {
         const parsed = parseJusticeCaseClientState(data.client_state);
         const serverApproved = parsed.prepared_packet_approved === true;
         if (serverApproved) writePreparedPacketApproved(caseId);
-        if (parsed.approved_next_action) {
-          writeSessionApprovedNextAction(caseId, parsed.approved_next_action);
-        }
+        const resolved = resolveApprovedNextAction(caseId, data.client_state) ?? sessionNextAction;
+        if (resolved) writeSessionApprovedNextAction(caseId, resolved);
         setPacketApproved(sessionApproved || serverApproved);
-        setApprovedNextAction(
-          resolveApprovedNextAction(caseId, data.client_state) ?? sessionNextAction
-        );
+        setApprovedNextAction(resolved);
       } catch {
         if (!ac.signal.aborted) {
           setPacketApproved(sessionApproved);
@@ -617,6 +643,7 @@ export default function JusticePacketPage() {
 
   const resolution = desiredResolutionPhrase(intake.problem_category);
   const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
+  const approvedNextActionStarted = approvedNextAction?.status === "started";
 
   async function handleApprovePreparedPacket() {
     if (!caseId || !approveChecked || !intake) return;
@@ -722,20 +749,42 @@ export default function JusticePacketPage() {
                 role="status"
               >
                 <p className="font-semibold text-emerald-950 dark:text-emerald-100">
-                  Packet approved for next action
+                  {approvedNextActionStarted
+                    ? "Next action started"
+                    : "Packet approved for next action"}
                 </p>
                 <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
-                  You reviewed this prepared packet
-                  {approvedNextAction?.label ? (
+                  {approvedNextActionStarted ? (
                     <>
-                      {" "}
-                      for <strong>{approvedNextAction.label}</strong>
+                      You opened your approved next in-app step
+                      {approvedNextAction?.label ? (
+                        <>
+                          {" "}
+                          (<strong>{approvedNextAction.label}</strong>)
+                        </>
+                      ) : null}
+                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.
                     </>
-                  ) : null}
-                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Continue from your
-                  action plan when you are ready for the next in-app step.
+                  ) : (
+                    <>
+                      You reviewed this prepared packet
+                      {approvedNextAction?.label ? (
+                        <>
+                          {" "}
+                          for <strong>{approvedNextAction.label}</strong>
+                        </>
+                      ) : null}
+                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Continue from
+                      your action plan when you are ready for the next in-app step.
+                    </>
+                  )}
                 </p>
-                {approvedNextAction?.href && approvedNextAction.label ? (
+                {approvedNextActionStarted ? (
+                  <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                    Opened for next step.
+                  </p>
+                ) : null}
+                {!approvedNextActionStarted && approvedNextAction?.href && approvedNextAction.label ? (
                   <Link
                     href={approvedNextAction.href}
                     className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
