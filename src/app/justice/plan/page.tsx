@@ -26,6 +26,33 @@ import {
   STORAGE_INTAKE,
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
+
+/** Page-local; mirrors packet approval session key. */
+const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+
+function readSessionPreparedPacketApproved(caseId: string): boolean {
+  if (typeof window === "undefined" || !caseId) return false;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    if (!raw) return false;
+    const map = JSON.parse(raw) as Record<string, boolean>;
+    return map[caseId] === true;
+  } catch {
+    return false;
+  }
+}
+
+function isPreparedPacketApprovedInClientState(raw: unknown): boolean {
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw !== "object" || Array.isArray(raw)) return false;
+  return (raw as Record<string, unknown>).prepared_packet_approved === true;
+}
+
+function resolvePreparedPacketApproved(caseId: string, clientState: unknown): boolean {
+  return (
+    isPreparedPacketApprovedInClientState(clientState) || readSessionPreparedPacketApproved(caseId)
+  );
+}
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import {
@@ -394,6 +421,7 @@ export default function JusticePlanPage() {
   const [evidenceRowsForPlan, setEvidenceRowsForPlan] = useState<JusticeCaseEvidenceRow[]>([]);
   const [tasksForReadiness, setTasksForReadiness] = useState<JusticeCaseTaskRow[]>([]);
   const [readinessTick, setReadinessTick] = useState(0);
+  const [preparedPacketApproved, setPreparedPacketApproved] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -416,6 +444,7 @@ export default function JusticePlanPage() {
       setCaseLabel(null);
       setServerPaymentDisputeDraft(null);
       setIntake(parsed);
+      setPreparedPacketApproved(resolvePreparedPacketApproved(cid, undefined));
       return;
     }
 
@@ -468,6 +497,7 @@ export default function JusticePlanPage() {
             timeline?: unknown;
             case_label?: string | null;
             payment_dispute_draft?: unknown;
+            client_state?: unknown;
           };
           if (ac.signal.aborted) return;
           if (!data?.id || !data.intake) {
@@ -497,6 +527,7 @@ export default function JusticePlanPage() {
           setIntake(data.intake);
           setCaseId(cid);
           setTimeline(readTimeline(cid));
+          setPreparedPacketApproved(resolvePreparedPacketApproved(cid, data.client_state));
         } catch (e) {
           if (ac.signal.aborted) return;
           console.warn("justice plan: GET /api/justice/cases/[id] error", e);
@@ -536,6 +567,7 @@ export default function JusticePlanPage() {
           timeline?: unknown;
           case_label?: string | null;
           payment_dispute_draft?: unknown;
+          client_state?: unknown;
         };
         if (!latest?.id || !latest.intake) {
           console.warn("justice plan: list response missing id or intake");
@@ -556,6 +588,9 @@ export default function JusticePlanPage() {
         setIntake(latest.intake);
         setCaseId(latest.id);
         setTimeline(readTimeline(latest.id));
+        setPreparedPacketApproved(
+          resolvePreparedPacketApproved(latest.id, latest.client_state)
+        );
       } catch (e) {
         if (ac.signal.aborted) return;
         console.warn("justice plan: GET /api/justice/cases error", e);
@@ -903,20 +938,44 @@ export default function JusticePlanPage() {
             role="status"
             aria-label="Prepared next step from reviewed draft"
           >
+            {preparedPacketApproved ? (
+              <div
+                className="mb-3 rounded-lg border border-emerald-300/80 bg-emerald-50/90 px-3 py-2.5 ring-1 ring-emerald-600/15 dark:border-emerald-700/80 dark:bg-emerald-950/40 dark:ring-emerald-400/15"
+                role="status"
+              >
+                <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+                  Prepared packet approved for next action
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
+                  You reviewed and approved your prepared case packet. Surrenderless has not filed, submitted, sent, or
+                  contacted anyone on your behalf.
+                </p>
+              </div>
+            ) : null}
             <p className="font-semibold text-emerald-950 dark:text-emerald-100">
               Surrenderless prepared your next step
             </p>
             <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
-              From your reviewed submission draft, Surrenderless assembled your case for in-app review. Your current
-              focus is <strong>{preparedNextAction.stepLabel}</strong> — open your prepared review below when you are
-              ready. Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted
-              anyone on your behalf.
+              {preparedPacketApproved
+                ? "Your prepared case packet is approved. Continue with the next in-app step below when you are ready."
+                : "From your reviewed submission draft, Surrenderless assembled your case for in-app review. Your current focus is"}{" "}
+              {!preparedPacketApproved ? (
+                <>
+                  <strong>{preparedNextAction.stepLabel}</strong> — open your prepared review below when you are ready.
+                </>
+              ) : (
+                <>
+                  Current focus: <strong>{preparedNextAction.stepLabel}</strong>.
+                </>
+              )}{" "}
+              Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on
+              your behalf.
             </p>
             <Link
               href={preparedNextAction.href}
               className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500"
             >
-              {preparedNextAction.buttonLabel}
+              {preparedPacketApproved ? "View approved case packet" : preparedNextAction.buttonLabel}
             </Link>
             {preparedNextAction.detailHref ? (
               <Link
@@ -929,6 +988,25 @@ export default function JusticePlanPage() {
             <p className="mt-3 text-xs text-emerald-800/85 dark:text-emerald-200/85">
               Your full action plan, prep pages, and filing records remain below if you need them.
             </p>
+          </div>
+        ) : preparedPacketApproved ? (
+          <div
+            className="mt-4 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-3 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10"
+            role="status"
+          >
+            <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+              Prepared packet approved for next action
+            </p>
+            <p className="mt-1.5 text-emerald-900/90 dark:text-emerald-100/90">
+              You approved your prepared case packet. Surrenderless has not filed, submitted, sent, or contacted anyone
+              on your behalf. Use the action plan below for your next steps.
+            </p>
+            <Link
+              href="/justice/packet"
+              className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              View case packet
+            </Link>
           </div>
         ) : null}
 
