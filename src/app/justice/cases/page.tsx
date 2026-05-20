@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
@@ -24,7 +24,93 @@ type CaseRow = {
   timeline: unknown;
   updated_at: string;
   case_label: string | null;
+  client_state?: unknown;
 };
+
+function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const label = typeof o.label === "string" ? o.label.trim() : "";
+  const href = typeof o.href === "string" ? o.href.trim() : "";
+  if (!label && !href) return undefined;
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(o.status === "completed"
+      ? { status: "completed" as const }
+      : o.status === "started"
+        ? { status: "started" as const }
+        : o.status === "approved"
+          ? { status: "approved" as const }
+          : {}),
+    ...(typeof o.approved_at === "string" && o.approved_at.trim()
+      ? { approved_at: o.approved_at.trim() }
+      : {}),
+    ...(typeof o.started_at === "string" && o.started_at.trim()
+      ? { started_at: o.started_at.trim() }
+      : {}),
+    ...(typeof o.completed_at === "string" && o.completed_at.trim()
+      ? { completed_at: o.completed_at.trim() }
+      : {}),
+    ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
+      ? { outcome_note: o.outcome_note.trim() }
+      : {}),
+    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
+    ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
+      ? { follow_up_at: o.follow_up_at.trim() }
+      : {}),
+  };
+}
+
+function parseApprovedNextActionFromClientState(clientState: unknown): JusticeApprovedNextAction | undefined {
+  if (clientState === null || clientState === undefined || typeof clientState !== "object" || Array.isArray(clientState)) {
+    return undefined;
+  }
+  return parseApprovedNextAction((clientState as Record<string, unknown>).approved_next_action);
+}
+
+function approvedNextActionStatusDisplay(status: JusticeApprovedNextAction["status"]): string | null {
+  switch (status) {
+    case "approved":
+      return "Approved";
+    case "started":
+      return "Started";
+    case "completed":
+      return "Handled";
+    default:
+      return null;
+  }
+}
+
+function formatApprovedNextActionFollowUpDate(iso?: string): string | null {
+  if (!iso?.trim()) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
+  const next = parseApprovedNextActionFromClientState(clientState);
+  const statusLabel = approvedNextActionStatusDisplay(next?.status);
+  if (!statusLabel) return null;
+  const followUpDate = formatApprovedNextActionFollowUpDate(next?.follow_up_at);
+  return (
+    <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+      <p>
+        <span className="font-medium text-neutral-700 dark:text-neutral-300">Approved next action:</span>{" "}
+        {statusLabel}
+      </p>
+      {next?.follow_up_needed === true ? (
+        <p className="font-medium text-amber-800 dark:text-amber-200">Follow-up needed</p>
+      ) : null}
+      {followUpDate ? <p>Follow-up date: {followUpDate}</p> : null}
+      <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
+        In-app tracking only — not filed or submitted automatically.
+      </p>
+    </div>
+  );
+}
 
 type CaseProgressSummary = {
   evidenceCount: number;
@@ -618,6 +704,7 @@ export default function JusticeCasesPage() {
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                   Updated {formatUpdatedAt(row.updated_at)}
                 </p>
+                <CaseApprovedNextActionTracking clientState={row.client_state} />
                 {progressLoading && progressById[row.id] === undefined ? (
                   <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Loading progress…</p>
                 ) : (
