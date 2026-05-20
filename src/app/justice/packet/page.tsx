@@ -3,6 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
@@ -14,7 +15,12 @@ import {
 } from "@/lib/justice/evidence";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { isMerchantResolved } from "@/lib/justice/rules";
-import type { JusticeIntake, TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
+import type {
+  JusticeCaseClientState,
+  JusticeIntake,
+  TimelineEntry,
+  TimelineEntryType,
+} from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { readTimeline } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
@@ -69,6 +75,20 @@ function writePreparedPacketApproved(caseId: string): void {
   } catch {
     // ignore corrupt session data
   }
+}
+
+function parseJusticeCaseClientState(raw: unknown): JusticeCaseClientState {
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) return {};
+  const o = raw as Record<string, unknown>;
+  return {
+    ...(o as JusticeCaseClientState),
+    prepared_packet_approved: o.prepared_packet_approved === true,
+  };
+}
+
+function isPreparedPacketApprovedInClientState(raw: unknown): boolean {
+  return parseJusticeCaseClientState(raw).prepared_packet_approved === true;
 }
 
 const cardCls =
@@ -323,8 +343,34 @@ export default function JusticePacketPage() {
       setApproveChecked(false);
       return;
     }
-    setPacketApproved(readPreparedPacketApproved(caseId));
-  }, [caseId, hydrationStatus]);
+    const sessionApproved = readPreparedPacketApproved(caseId);
+    if (!isLoaded || !isSignedIn || !isUuid(caseId)) {
+      setPacketApproved(sessionApproved);
+      return;
+    }
+
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          if (!ac.signal.aborted) setPacketApproved(sessionApproved);
+          return;
+        }
+        const data = (await res.json()) as { client_state?: unknown };
+        if (ac.signal.aborted) return;
+        const serverApproved = isPreparedPacketApprovedInClientState(data.client_state);
+        if (serverApproved) writePreparedPacketApproved(caseId);
+        setPacketApproved(sessionApproved || serverApproved);
+      } catch {
+        if (!ac.signal.aborted) setPacketApproved(sessionApproved);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [caseId, hydrationStatus, isLoaded, isSignedIn]);
 
   const packetText = useMemo(() => {
     if (!intake || !caseId) return "";
@@ -438,10 +484,35 @@ export default function JusticePacketPage() {
   const resolution = desiredResolutionPhrase(intake.problem_category);
   const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
 
-  function handleApprovePreparedPacket() {
+  async function handleApprovePreparedPacket() {
     if (!caseId || !approveChecked) return;
     writePreparedPacketApproved(caseId);
     setPacketApproved(true);
+
+    if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
+
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice packet: GET /api/justice/cases/[id] (client_state) failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged: JusticeCaseClientState = {
+        ...parseJusticeCaseClientState(existing.client_state),
+        prepared_packet_approved: true,
+      };
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) error", e);
+    }
   }
 
   return (
@@ -543,7 +614,7 @@ export default function JusticePacketPage() {
                 <button
                   type="button"
                   disabled={!approveChecked}
-                  onClick={handleApprovePreparedPacket}
+                  onClick={() => void handleApprovePreparedPacket()}
                   className="mt-4 w-full rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/20 transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
                 >
                   Approve prepared packet for next action
