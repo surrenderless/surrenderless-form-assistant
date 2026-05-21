@@ -4,8 +4,14 @@ import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
-import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import type {
+  JusticeApprovedNextAction,
+  JusticeCaseClientState,
+  JusticeIntake,
+  TimelineEntry,
+} from "@/lib/justice/types";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
@@ -290,6 +296,34 @@ const cardCls =
 /** Must match default `GET /api/justice/cases` page size and stay within API `MAX_LIST_LIMIT`. */
 const CASES_PAGE_LIMIT = 10;
 
+const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
+
+function mergeClientStateWithClearedFollowUp(
+  existing: unknown,
+  clearedAction: JusticeApprovedNextAction
+): JusticeCaseClientState {
+  const merged: JusticeCaseClientState = { approved_next_action: clearedAction };
+  if (existing !== null && existing !== undefined && typeof existing === "object" && !Array.isArray(existing)) {
+    const o = existing as Record<string, unknown>;
+    if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
+  }
+  return merged;
+}
+
+function writeSessionApprovedNextAction(caseId: string, action: JusticeApprovedNextAction): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+    const map: Record<string, JusticeApprovedNextAction> = raw
+      ? (JSON.parse(raw) as Record<string, JusticeApprovedNextAction>)
+      : {};
+    map[caseId] = action;
+    sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
+  }
+}
+
 const labelInputCls =
   "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
 
@@ -304,6 +338,7 @@ export default function JusticeCasesPage() {
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [labelDraftById, setLabelDraftById] = useState<Record<string, string>>({});
   const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
+  const [clearingFollowUpCaseId, setClearingFollowUpCaseId] = useState<string | null>(null);
   const [progressById, setProgressById] = useState<Record<string, CaseProgressSummary>>({});
   const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [progressLoading, setProgressLoading] = useState(false);
@@ -579,6 +614,57 @@ export default function JusticeCasesPage() {
     router.push(resolveApprovedNextActionFollowUpHref(next));
   }
 
+  function buildClearedFollowUpAction(next: JusticeApprovedNextAction): JusticeApprovedNextAction {
+    const cleared: JusticeApprovedNextAction = { ...next };
+    delete cleared.follow_up_needed;
+    return cleared;
+  }
+
+  function applyClearedFollowUpToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
+    const cleared = parseApprovedNextAction(mergedClientState.approved_next_action);
+    setCases(
+      (prev) =>
+        prev?.map((c) => (c.id === caseId ? { ...c, client_state: mergedClientState } : c)) ?? prev
+    );
+    if (cleared) writeSessionApprovedNextAction(caseId, cleared);
+  }
+
+  async function clearApprovedNextActionFollowUp(caseRow: CaseRow, next: JusticeApprovedNextAction) {
+    const cleared = buildClearedFollowUpAction(next);
+    const mergedLocal = mergeClientStateWithClearedFollowUp(caseRow.client_state, cleared);
+    setClearingFollowUpCaseId(caseRow.id);
+    applyClearedFollowUpToCaseRow(caseRow.id, mergedLocal);
+
+    if (isLoaded && isSignedIn && isUuid(caseRow.id)) {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+        if (!getRes.ok) {
+          console.warn("justice cases: GET before clear follow-up failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithClearedFollowUp(existing.client_state, cleared);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (patchRes.ok) {
+          const data = (await patchRes.json()) as { client_state?: unknown };
+          if (data.client_state !== undefined) {
+            applyClearedFollowUpToCaseRow(caseRow.id, data.client_state as JusticeCaseClientState);
+          }
+        } else {
+          console.warn("justice cases: PATCH clear follow-up failed", patchRes.status);
+        }
+      } catch (e) {
+        console.warn("justice cases: clear follow-up error", e);
+      }
+    }
+
+    setClearingFollowUpCaseId(null);
+  }
+
   return (
     <>
       <Header />
@@ -681,13 +767,27 @@ export default function JusticeCasesPage() {
                         <p className="mt-2 text-[11px] text-neutral-500 dark:text-neutral-500">
                           In-app tracking only — not filed or submitted automatically.
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => openApprovedNextActionFollowUp(caseRow, next)}
-                          className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
-                        >
-                          {approvedNextActionFollowUpOpenLabel(next)}
-                        </button>
+                        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => openApprovedNextActionFollowUp(caseRow, next)}
+                            className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                          >
+                            {approvedNextActionFollowUpOpenLabel(next)}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={clearingFollowUpCaseId === caseRow.id}
+                            onClick={() => void clearApprovedNextActionFollowUp(caseRow, next)}
+                            className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
+                          >
+                            {clearingFollowUpCaseId === caseRow.id ? "Clearing…" : "Clear follow-up"}
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-[11px] text-neutral-500 dark:text-neutral-500">
+                          Clears this from Needs attention; your outcome note and dates stay saved. Not automatic
+                          filing or submission.
+                        </p>
                       </li>
                     );
                   })}
