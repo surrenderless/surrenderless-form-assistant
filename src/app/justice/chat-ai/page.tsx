@@ -8,7 +8,7 @@ import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
-import type { JusticeApprovedNextAction } from "@/lib/justice/types";
+import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
   buildJusticeIntakeFromParts,
@@ -212,9 +212,76 @@ export default function JusticeChatAiPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [contactProofError, setContactProofError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [clearingFollowUp, setClearingFollowUp] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
+
+  function buildClearedFollowUpAction(next: JusticeApprovedNextAction): JusticeApprovedNextAction {
+    const cleared: JusticeApprovedNextAction = { ...next };
+    delete cleared.follow_up_needed;
+    return cleared;
+  }
+
+  function mergeClientStateWithClearedFollowUp(
+    existing: unknown,
+    clearedAction: JusticeApprovedNextAction
+  ): JusticeCaseClientState {
+    const merged: JusticeCaseClientState = { approved_next_action: clearedAction };
+    if (existing !== null && existing !== undefined && typeof existing === "object" && !Array.isArray(existing)) {
+      const o = existing as Record<string, unknown>;
+      if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
+    }
+    return merged;
+  }
+
+  async function clearApprovedNextActionFollowUp() {
+    if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return;
+
+    const cleared = buildClearedFollowUpAction(approvedNextAction);
+    setApprovedNextAction(cleared);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+        if (raw) {
+          const map = JSON.parse(raw) as Record<string, JusticeApprovedNextAction>;
+          map[caseId] = cleared;
+          sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
+        }
+      } catch {
+        // ignore corrupt session data
+      }
+    }
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    setClearingFollowUp(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before clear follow-up failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithClearedFollowUp(existing, cleared);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH clear follow-up failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: clear follow-up error", e);
+    } finally {
+      setClearingFollowUp(false);
+    }
+  }
 
   useEffect(() => {
     if (sessionHydratedRef.current) return;
@@ -550,6 +617,21 @@ export default function JusticeChatAiPage() {
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                   In-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone.
                 </p>
+                {approvedNextAction.follow_up_needed === true ? (
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <button
+                      type="button"
+                      disabled={clearingFollowUp}
+                      onClick={() => void clearApprovedNextActionFollowUp()}
+                      className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      {clearingFollowUp ? "Clearing…" : "Mark follow-up handled"}
+                    </button>
+                    <p className="text-[11px] text-neutral-600 dark:text-neutral-400 sm:max-w-[14rem]">
+                      Clears this from Needs attention on Saved cases. Your outcome note and dates stay saved. Not automatic filing or submission.
+                    </p>
+                  </div>
+                ) : null}
                 <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                   <Link
                     href="/justice/plan"
