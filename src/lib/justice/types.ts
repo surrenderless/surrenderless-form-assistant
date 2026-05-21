@@ -112,6 +112,9 @@ export type JusticeApprovedNextAction = {
   outcome_note?: string;
   follow_up_needed?: boolean;
   follow_up_at?: string;
+  /** User requested Surrenderless handling (in-app tracking only; not a queue worker or filing). */
+  handling_requested_at?: string;
+  handling_request_note?: string;
 };
 
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */

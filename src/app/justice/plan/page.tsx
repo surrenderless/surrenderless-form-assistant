@@ -561,6 +561,60 @@ function ApprovedNextActionOutcomeTrackingForm({
   );
 }
 
+function ApprovedNextActionHandlingRequestBlock({
+  action,
+  onRequest,
+  requesting,
+}: {
+  action: JusticeApprovedNextAction;
+  onRequest: () => Promise<void>;
+  requesting: boolean;
+}) {
+  if (action.status === "completed") return null;
+
+  const requestedAt = action.handling_requested_at?.trim();
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+      aria-label="Surrenderless handling request tracking"
+    >
+      {requestedAt ? (
+        <>
+          <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+            Surrenderless handling requested
+          </p>
+          <p className="mt-1 text-xs text-emerald-900/90 dark:text-emerald-100/90">
+            Recorded {formatTimelineTs(requestedAt)}.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+            Surrenderless handling (tracking)
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
+            Mark that you want Surrenderless to handle this approved step inside the app when that workflow
+            exists. This does not start any external process today.
+          </p>
+          <button
+            type="button"
+            onClick={() => void onRequest()}
+            disabled={requesting}
+            className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+          >
+            {requesting ? "Saving…" : "Request Surrenderless handling"}
+          </button>
+        </>
+      )}
+      <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+        In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
+        anyone yet.
+      </p>
+    </div>
+  );
+}
+
 export default function JusticePlanPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -587,6 +641,7 @@ export default function JusticePlanPage() {
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
+  const [requestingHandling, setRequestingHandling] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -1117,6 +1172,21 @@ export default function JusticePlanPage() {
     await persistApprovedNextAction(next);
   }
 
+  async function handleRequestSurrenderlessHandling() {
+    if (!approvedNextAction || approvedNextAction.status === "completed") return;
+    if (approvedNextAction.handling_requested_at?.trim()) return;
+    setRequestingHandling(true);
+    try {
+      const next: JusticeApprovedNextAction = {
+        ...approvedNextAction,
+        handling_requested_at: new Date().toISOString(),
+      };
+      await persistApprovedNextAction(next);
+    } finally {
+      setRequestingHandling(false);
+    }
+  }
+
   async function handleViewApprovedCasePacketClick() {
     if (approvedNextActionCompleted) {
       router.push(approvedNextAction?.href ?? preparedNextAction.href ?? "/justice/packet");
@@ -1306,6 +1376,13 @@ export default function JusticePlanPage() {
                     </p>
                   </>
                 ) : null}
+                {approvedNextAction && !approvedNextActionCompleted ? (
+                  <ApprovedNextActionHandlingRequestBlock
+                    action={approvedNextAction}
+                    onRequest={handleRequestSurrenderlessHandling}
+                    requesting={requestingHandling}
+                  />
+                ) : null}
                 {approvedNextActionCompleted && approvedNextAction ? (
                   <>
                     <ApprovedNextActionTrackingSummary action={approvedNextAction} />
@@ -1457,6 +1534,13 @@ export default function JusticePlanPage() {
                   Tracking only — not automatic filing or submission.
                 </p>
               </>
+            ) : null}
+            {approvedNextAction && !approvedNextActionCompleted ? (
+              <ApprovedNextActionHandlingRequestBlock
+                action={approvedNextAction}
+                onRequest={handleRequestSurrenderlessHandling}
+                requesting={requestingHandling}
+              />
             ) : null}
             {approvedNextActionCompleted && approvedNextAction ? (
               <>
