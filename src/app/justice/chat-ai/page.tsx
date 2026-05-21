@@ -11,10 +11,9 @@ import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNext
 import {
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
-  mergeApprovedNextActionForHydrate,
   mergeClientStateWithClearedFollowUp,
-  parseApprovedNextAction,
   readSessionApprovedNextAction,
+  resolveApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
@@ -196,8 +195,8 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
-    const fromSession = caseId ? readSessionApprovedNextAction(caseId) : undefined;
-    setApprovedNextAction(fromSession);
+    const sessionFallback = caseId ? readSessionApprovedNextAction(caseId) : undefined;
+    setApprovedNextAction(sessionFallback);
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
@@ -209,13 +208,11 @@ export default function JusticeChatAiPage() {
         });
         if (!res.ok) return;
         const data = (await res.json()) as { client_state?: unknown };
-        const cs = data.client_state;
-        if (cs !== null && cs !== undefined && typeof cs === "object" && !Array.isArray(cs)) {
-          const fromServer = parseApprovedNextAction(
-            (cs as Record<string, unknown>).approved_next_action
-          );
-          setApprovedNextAction(mergeApprovedNextActionForHydrate(fromSession, fromServer));
-        }
+        if (ac.signal.aborted) return;
+        const resolved =
+          resolveApprovedNextAction(caseId, data.client_state) ?? sessionFallback;
+        if (resolved) writeSessionApprovedNextAction(caseId, resolved);
+        setApprovedNextAction(resolved);
       } catch {
         // keep session fallback
       }
