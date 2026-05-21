@@ -542,13 +542,41 @@ export default function JusticeCasesPage() {
     }
   }
 
-  function openCase(row: CaseRow) {
+  function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
     const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
     replaceTimelineForCase(row.id, tl);
     setSessionCaseId(row.id);
+  }
+
+  function openCase(row: CaseRow) {
+    activateCaseInSession(row);
     router.push("/justice/plan");
+  }
+
+  function isInternalJusticeHref(href: string): boolean {
+    const t = href.trim();
+    return t.startsWith("/justice/") && !t.startsWith("//");
+  }
+
+  function resolveApprovedNextActionFollowUpHref(next: JusticeApprovedNextAction): string {
+    const href = next.href?.trim();
+    if (href && isInternalJusticeHref(href)) return href;
+    return "/justice/plan";
+  }
+
+  function approvedNextActionFollowUpOpenLabel(next: JusticeApprovedNextAction): string {
+    const href = next.href?.trim();
+    if (href && isInternalJusticeHref(href) && href !== "/justice/plan") {
+      return "Open action";
+    }
+    return "Open tracking";
+  }
+
+  function openApprovedNextActionFollowUp(caseRow: CaseRow, next: JusticeApprovedNextAction) {
+    activateCaseInSession(caseRow);
+    router.push(resolveApprovedNextActionFollowUpHref(next));
   }
 
   return (
@@ -655,10 +683,10 @@ export default function JusticeCasesPage() {
                         </p>
                         <button
                           type="button"
-                          onClick={() => openCase(caseRow)}
+                          onClick={() => openApprovedNextActionFollowUp(caseRow, next)}
                           className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
                         >
-                          Open case
+                          {approvedNextActionFollowUpOpenLabel(next)}
                         </button>
                       </li>
                     );
