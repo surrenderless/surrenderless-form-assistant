@@ -161,3 +161,108 @@ export function writeSessionApprovedNextAction(
     // ignore corrupt session data
   }
 }
+
+/** Plan/packet hydrate: merge session + server; never downgrade completed → started → approved. */
+export function resolveApprovedNextAction(
+  caseId: string,
+  clientState: unknown
+): JusticeApprovedNextAction | undefined {
+  const fromSession = readSessionApprovedNextAction(caseId);
+  const fromServer = parseApprovedNextActionFromClientState(clientState);
+  if (!fromServer) return fromSession;
+  if (!fromSession) return fromServer;
+
+  const label = fromServer.label ?? fromSession.label;
+  const href = fromServer.href ?? fromSession.href;
+  const approved_at = fromServer.approved_at ?? fromSession.approved_at;
+  const started_at = fromServer.started_at ?? fromSession.started_at;
+  const completed_at = fromServer.completed_at ?? fromSession.completed_at;
+  const outcome_note = fromServer.outcome_note ?? fromSession.outcome_note;
+  const follow_up_needed = fromServer.follow_up_needed ?? fromSession.follow_up_needed;
+  const follow_up_at = fromServer.follow_up_at ?? fromSession.follow_up_at;
+  const completed =
+    fromServer.status === "completed" || fromSession.status === "completed";
+  const started =
+    !completed && (fromServer.status === "started" || fromSession.status === "started");
+  const trackingFields = {
+    ...(outcome_note ? { outcome_note } : {}),
+    ...(follow_up_needed === true ? { follow_up_needed: true } : {}),
+    ...(follow_up_at ? { follow_up_at } : {}),
+  };
+
+  if (completed) {
+    return {
+      ...(label ? { label } : {}),
+      ...(href ? { href } : {}),
+      ...(approved_at ? { approved_at } : {}),
+      status: "completed",
+      ...(started_at ? { started_at } : {}),
+      ...(completed_at ? { completed_at } : {}),
+      ...trackingFields,
+    };
+  }
+
+  if (started) {
+    return {
+      ...(label ? { label } : {}),
+      ...(href ? { href } : {}),
+      ...(approved_at ? { approved_at } : {}),
+      status: "started",
+      ...(started_at ? { started_at } : {}),
+      ...trackingFields,
+    };
+  }
+
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(approved_at ? { approved_at } : {}),
+    status: fromServer.status ?? fromSession.status,
+    ...trackingFields,
+  };
+}
+
+export function parseJusticeCaseClientState(raw: unknown): JusticeCaseClientState {
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) return {};
+  const o = raw as Record<string, unknown>;
+  const approvedNext = parseApprovedNextAction(o.approved_next_action);
+  return {
+    ...(o as JusticeCaseClientState),
+    prepared_packet_approved: o.prepared_packet_approved === true,
+    ...(approvedNext ? { approved_next_action: approvedNext } : {}),
+  };
+}
+
+/** Plan persist: merge approved_next_action; preserve prior fields; force prepared_packet_approved. */
+export function mergeClientStateWithApprovedNextAction(
+  existingClientState: unknown,
+  approvedNext: JusticeApprovedNextAction
+): JusticeCaseClientState {
+  const merged: JusticeCaseClientState = { approved_next_action: approvedNext };
+  if (
+    existingClientState !== null &&
+    existingClientState !== undefined &&
+    typeof existingClientState === "object" &&
+    !Array.isArray(existingClientState)
+  ) {
+    const o = existingClientState as Record<string, unknown>;
+    if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
+    const prev = parseApprovedNextAction(o.approved_next_action);
+    if (prev) {
+      merged.approved_next_action = {
+        ...approvedNext,
+        ...(prev.approved_at && !approvedNext.approved_at ? { approved_at: prev.approved_at } : {}),
+        ...(prev.started_at && !approvedNext.started_at ? { started_at: prev.started_at } : {}),
+        ...(prev.completed_at && !approvedNext.completed_at ? { completed_at: prev.completed_at } : {}),
+        ...(prev.outcome_note && !approvedNext.outcome_note ? { outcome_note: prev.outcome_note } : {}),
+        ...(prev.follow_up_needed === true && approvedNext.follow_up_needed !== true
+          ? { follow_up_needed: true }
+          : {}),
+        ...(prev.follow_up_at && !approvedNext.follow_up_at ? { follow_up_at: prev.follow_up_at } : {}),
+      };
+    }
+  }
+  merged.prepared_packet_approved = true;
+  return merged;
+}

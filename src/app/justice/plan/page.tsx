@@ -29,10 +29,14 @@ import {
   STORAGE_INTAKE,
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
+import {
+  mergeClientStateWithApprovedNextAction,
+  resolveApprovedNextAction,
+  writeSessionApprovedNextAction,
+} from "@/lib/justice/approvedNextActionState";
 
 /** Page-local; mirrors packet approval session keys. */
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
-const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
 
 function readSessionPreparedPacketApproved(caseId: string): boolean {
   if (typeof window === "undefined" || !caseId) return false;
@@ -56,159 +60,6 @@ function resolvePreparedPacketApproved(caseId: string, clientState: unknown): bo
   return (
     isPreparedPacketApprovedInClientState(clientState) || readSessionPreparedPacketApproved(caseId)
   );
-}
-
-function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
-  if (raw === null || raw === undefined) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const o = raw as Record<string, unknown>;
-  const label = typeof o.label === "string" ? o.label.trim() : "";
-  const href = typeof o.href === "string" ? o.href.trim() : "";
-  if (!label && !href) return undefined;
-  return {
-    ...(label ? { label } : {}),
-    ...(href ? { href } : {}),
-    ...(o.status === "completed"
-      ? { status: "completed" as const }
-      : o.status === "started"
-        ? { status: "started" as const }
-        : o.status === "approved"
-          ? { status: "approved" as const }
-          : {}),
-    ...(typeof o.approved_at === "string" && o.approved_at.trim()
-      ? { approved_at: o.approved_at.trim() }
-      : {}),
-    ...(typeof o.started_at === "string" && o.started_at.trim()
-      ? { started_at: o.started_at.trim() }
-      : {}),
-    ...(typeof o.completed_at === "string" && o.completed_at.trim()
-      ? { completed_at: o.completed_at.trim() }
-      : {}),
-    ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
-      ? { outcome_note: o.outcome_note.trim() }
-      : {}),
-    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
-    ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
-      ? { follow_up_at: o.follow_up_at.trim() }
-      : {}),
-  };
-}
-
-function readSessionApprovedNextAction(caseId: string): JusticeApprovedNextAction | undefined {
-  if (typeof window === "undefined" || !caseId) return undefined;
-  try {
-    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
-    if (!raw) return undefined;
-    const map = JSON.parse(raw) as Record<string, unknown>;
-    return parseApprovedNextAction(map[caseId]);
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveApprovedNextAction(
-  caseId: string,
-  clientState: unknown
-): JusticeApprovedNextAction | undefined {
-  const fromSession = readSessionApprovedNextAction(caseId);
-  let fromServer: JusticeApprovedNextAction | undefined;
-  if (clientState !== null && clientState !== undefined && typeof clientState === "object") {
-    fromServer = parseApprovedNextAction(
-      (clientState as Record<string, unknown>).approved_next_action
-    );
-  }
-  if (!fromServer) return fromSession;
-  if (!fromSession) return fromServer;
-
-  const label = fromServer.label ?? fromSession.label;
-  const href = fromServer.href ?? fromSession.href;
-  const approved_at = fromServer.approved_at ?? fromSession.approved_at;
-  const started_at = fromServer.started_at ?? fromSession.started_at;
-  const completed_at = fromServer.completed_at ?? fromSession.completed_at;
-  const outcome_note = fromServer.outcome_note ?? fromSession.outcome_note;
-  const follow_up_needed = fromServer.follow_up_needed ?? fromSession.follow_up_needed;
-  const follow_up_at = fromServer.follow_up_at ?? fromSession.follow_up_at;
-  const completed =
-    fromServer.status === "completed" || fromSession.status === "completed";
-  const started =
-    !completed && (fromServer.status === "started" || fromSession.status === "started");
-  const trackingFields = {
-    ...(outcome_note ? { outcome_note } : {}),
-    ...(follow_up_needed === true ? { follow_up_needed: true } : {}),
-    ...(follow_up_at ? { follow_up_at } : {}),
-  };
-
-  if (completed) {
-    return {
-      ...(label ? { label } : {}),
-      ...(href ? { href } : {}),
-      ...(approved_at ? { approved_at } : {}),
-      status: "completed",
-      ...(started_at ? { started_at } : {}),
-      ...(completed_at ? { completed_at } : {}),
-      ...trackingFields,
-    };
-  }
-
-  if (started) {
-    return {
-      ...(label ? { label } : {}),
-      ...(href ? { href } : {}),
-      ...(approved_at ? { approved_at } : {}),
-      status: "started",
-      ...(started_at ? { started_at } : {}),
-      ...trackingFields,
-    };
-  }
-
-  return {
-    ...(label ? { label } : {}),
-    ...(href ? { href } : {}),
-    ...(approved_at ? { approved_at } : {}),
-    status: fromServer.status ?? fromSession.status,
-    ...trackingFields,
-  };
-}
-
-function writeSessionApprovedNextAction(caseId: string, action: JusticeApprovedNextAction): void {
-  if (typeof window === "undefined" || !caseId) return;
-  try {
-    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
-    const map: Record<string, JusticeApprovedNextAction> = raw
-      ? (JSON.parse(raw) as Record<string, JusticeApprovedNextAction>)
-      : {};
-    map[caseId] = action;
-    sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
-  } catch {
-    // ignore corrupt session data
-  }
-}
-
-function mergeClientStateWithApprovedNextAction(
-  existing: unknown,
-  approvedNext: JusticeApprovedNextAction
-): JusticeCaseClientState {
-  const merged: JusticeCaseClientState = { approved_next_action: approvedNext };
-  if (existing !== null && existing !== undefined && typeof existing === "object" && !Array.isArray(existing)) {
-    const o = existing as Record<string, unknown>;
-    if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
-    const prev = parseApprovedNextAction(o.approved_next_action);
-    if (prev) {
-      merged.approved_next_action = {
-        ...approvedNext,
-        ...(prev.approved_at && !approvedNext.approved_at ? { approved_at: prev.approved_at } : {}),
-        ...(prev.started_at && !approvedNext.started_at ? { started_at: prev.started_at } : {}),
-        ...(prev.completed_at && !approvedNext.completed_at ? { completed_at: prev.completed_at } : {}),
-        ...(prev.outcome_note && !approvedNext.outcome_note ? { outcome_note: prev.outcome_note } : {}),
-        ...(prev.follow_up_needed === true && approvedNext.follow_up_needed !== true
-          ? { follow_up_needed: true }
-          : {}),
-        ...(prev.follow_up_at && !approvedNext.follow_up_at ? { follow_up_at: prev.follow_up_at } : {}),
-      };
-    }
-  }
-  merged.prepared_packet_approved = true;
-  return merged;
 }
 
 async function persistApprovedNextActionClientState(
