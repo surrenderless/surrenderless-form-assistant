@@ -36,6 +36,12 @@ export function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction
     ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
       ? { follow_up_at: o.follow_up_at.trim() }
       : {}),
+    ...(typeof o.handling_requested_at === "string" && o.handling_requested_at.trim()
+      ? { handling_requested_at: o.handling_requested_at.trim() }
+      : {}),
+    ...(typeof o.handling_request_note === "string" && o.handling_request_note.trim()
+      ? { handling_request_note: o.handling_request_note.trim() }
+      : {}),
   };
 }
 
@@ -130,6 +136,18 @@ export function mergeApprovedNextActionForHydrate(
     ...(fromServer?.follow_up_at ?? fromSession?.follow_up_at
       ? { follow_up_at: fromServer?.follow_up_at ?? fromSession?.follow_up_at }
       : {}),
+    ...(fromServer?.handling_requested_at ?? fromSession?.handling_requested_at
+      ? {
+          handling_requested_at:
+            fromServer?.handling_requested_at ?? fromSession?.handling_requested_at,
+        }
+      : {}),
+    ...(fromServer?.handling_request_note ?? fromSession?.handling_request_note
+      ? {
+          handling_request_note:
+            fromServer?.handling_request_note ?? fromSession?.handling_request_note,
+        }
+      : {}),
   };
 }
 
@@ -180,6 +198,10 @@ export function resolveApprovedNextAction(
   const outcome_note = fromServer.outcome_note ?? fromSession.outcome_note;
   const follow_up_needed = fromServer.follow_up_needed ?? fromSession.follow_up_needed;
   const follow_up_at = fromServer.follow_up_at ?? fromSession.follow_up_at;
+  const handling_requested_at =
+    fromServer.handling_requested_at ?? fromSession.handling_requested_at;
+  const handling_request_note =
+    fromServer.handling_request_note ?? fromSession.handling_request_note;
   const completed =
     fromServer.status === "completed" || fromSession.status === "completed";
   const started =
@@ -188,6 +210,8 @@ export function resolveApprovedNextAction(
     ...(outcome_note ? { outcome_note } : {}),
     ...(follow_up_needed === true ? { follow_up_needed: true } : {}),
     ...(follow_up_at ? { follow_up_at } : {}),
+    ...(handling_requested_at ? { handling_requested_at } : {}),
+    ...(handling_request_note ? { handling_request_note } : {}),
   };
 
   if (completed) {
@@ -260,6 +284,12 @@ export function mergeClientStateWithApprovedNextAction(
           ? { follow_up_needed: true }
           : {}),
         ...(prev.follow_up_at && !approvedNext.follow_up_at ? { follow_up_at: prev.follow_up_at } : {}),
+        ...(prev.handling_requested_at && !approvedNext.handling_requested_at
+          ? { handling_requested_at: prev.handling_requested_at }
+          : {}),
+        ...(prev.handling_request_note && !approvedNext.handling_request_note
+          ? { handling_request_note: prev.handling_request_note }
+          : {}),
       };
     }
   }
