@@ -4,8 +4,12 @@ import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
+import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
+import type { JusticeApprovedNextAction } from "@/lib/justice/types";
+import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
   buildJusticeIntakeFromParts,
   justiceIntakeToBuildJusticeIntakeParts,
@@ -45,6 +49,95 @@ const UPDATE_GREETING =
   "Your current case is loaded in the recap below. Tell me what you’d like to add or change — I’ll update the details as we go. When you’re ready, continue to your submission preview.";
 
 const RECAP_STORY_MAX_LEN = 120;
+
+const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
+
+function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const label = typeof o.label === "string" ? o.label.trim() : "";
+  const href = typeof o.href === "string" ? o.href.trim() : "";
+  if (!label && !href) return undefined;
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(o.status === "completed"
+      ? { status: "completed" as const }
+      : o.status === "started"
+        ? { status: "started" as const }
+        : o.status === "approved"
+          ? { status: "approved" as const }
+          : {}),
+    ...(typeof o.approved_at === "string" && o.approved_at.trim()
+      ? { approved_at: o.approved_at.trim() }
+      : {}),
+    ...(typeof o.started_at === "string" && o.started_at.trim()
+      ? { started_at: o.started_at.trim() }
+      : {}),
+    ...(typeof o.completed_at === "string" && o.completed_at.trim()
+      ? { completed_at: o.completed_at.trim() }
+      : {}),
+    ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
+      ? { outcome_note: o.outcome_note.trim() }
+      : {}),
+    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
+    ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
+      ? { follow_up_at: o.follow_up_at.trim() }
+      : {}),
+  };
+}
+
+function mergeApprovedNextAction(
+  fromSession?: JusticeApprovedNextAction,
+  fromServer?: JusticeApprovedNextAction
+): JusticeApprovedNextAction | undefined {
+  if (!fromSession && !fromServer) return undefined;
+  const label = fromServer?.label ?? fromSession?.label;
+  const href = fromServer?.href ?? fromSession?.href;
+  if (!label && !href && !fromServer?.status && !fromSession?.status) return undefined;
+  return {
+    ...(label ? { label } : {}),
+    ...(href ? { href } : {}),
+    ...(fromServer?.status ?? fromSession?.status
+      ? { status: fromServer?.status ?? fromSession?.status }
+      : {}),
+    ...(fromServer?.approved_at ?? fromSession?.approved_at
+      ? { approved_at: fromServer?.approved_at ?? fromSession?.approved_at }
+      : {}),
+    ...(fromServer?.started_at ?? fromSession?.started_at
+      ? { started_at: fromServer?.started_at ?? fromSession?.started_at }
+      : {}),
+    ...(fromServer?.completed_at ?? fromSession?.completed_at
+      ? { completed_at: fromServer?.completed_at ?? fromSession?.completed_at }
+      : {}),
+    ...(fromServer?.outcome_note ?? fromSession?.outcome_note
+      ? { outcome_note: fromServer?.outcome_note ?? fromSession?.outcome_note }
+      : {}),
+    ...(fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true
+      ? {
+          follow_up_needed:
+            fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true,
+        }
+      : {}),
+    ...(fromServer?.follow_up_at ?? fromSession?.follow_up_at
+      ? { follow_up_at: fromServer?.follow_up_at ?? fromSession?.follow_up_at }
+      : {}),
+  };
+}
+
+function approvedNextActionStatusLabel(status?: JusticeApprovedNextAction["status"]): string | null {
+  switch (status) {
+    case "approved":
+      return "Approved";
+    case "started":
+      return "Started";
+    case "completed":
+      return "Handled";
+    default:
+      return null;
+  }
+}
 
 function getPreviewBasicsMissing(parts: BuildJusticeIntakeParts): string[] {
   const missing: string[] = [];
@@ -119,6 +212,9 @@ export default function JusticeChatAiPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [contactProofError, setContactProofError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     if (sessionHydratedRef.current) return;
@@ -130,6 +226,54 @@ export default function JusticeChatAiPage() {
       setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isUpdatingExistingCase) {
+      setApprovedNextAction(undefined);
+      return;
+    }
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    let fromSession: JusticeApprovedNextAction | undefined;
+    if (caseId) {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+        if (raw) {
+          const map = JSON.parse(raw) as Record<string, unknown>;
+          fromSession = parseApprovedNextAction(map[caseId]);
+        }
+      } catch {
+        // ignore corrupt session data
+      }
+    }
+    setApprovedNextAction(fromSession);
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+          signal: ac.signal,
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { client_state?: unknown };
+        const cs = data.client_state;
+        if (cs !== null && cs !== undefined && typeof cs === "object" && !Array.isArray(cs)) {
+          const fromServer = parseApprovedNextAction(
+            (cs as Record<string, unknown>).approved_next_action
+          );
+          setApprovedNextAction(mergeApprovedNextAction(fromSession, fromServer));
+        }
+      } catch {
+        // keep session fallback
+      }
+    })();
+
+    return () => ac.abort();
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -372,6 +516,56 @@ export default function JusticeChatAiPage() {
             ) : null}
             {contactProofError && contactProofError !== stillNeededHint ? (
               <p className="mt-2 text-sm text-red-600 dark:text-red-400">{contactProofError}</p>
+            ) : null}
+
+            {isUpdatingExistingCase && approvedNextAction ? (
+              <div className="mt-4 rounded-xl border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 ring-1 ring-emerald-600/15 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:ring-emerald-400/10">
+                <p className="text-xs font-semibold text-emerald-950 dark:text-emerald-100">
+                  Current action tracking
+                </p>
+                {approvedNextAction.label ? (
+                  <p className="mt-1 text-xs text-emerald-900/95 dark:text-emerald-100/95">
+                    Next step: <strong>{approvedNextAction.label}</strong>
+                  </p>
+                ) : null}
+                {approvedNextActionStatusLabel(approvedNextAction.status) ? (
+                  <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                    Status: {approvedNextActionStatusLabel(approvedNextAction.status)}
+                  </p>
+                ) : null}
+                {approvedNextAction.outcome_note?.trim() ? (
+                  <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                    {approvedNextAction.outcome_note.trim()}
+                  </p>
+                ) : null}
+                {approvedNextAction.follow_up_needed === true ? (
+                  <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                    Follow-up needed
+                  </p>
+                ) : null}
+                <ApprovedNextActionFollowUpTimingLine
+                  followUpAt={approvedNextAction.follow_up_at}
+                  className="mt-1 text-emerald-800 dark:text-emerald-200"
+                />
+                <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                  In-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone.
+                </p>
+                <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  <Link
+                    href="/justice/plan"
+                    className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  >
+                    Action plan
+                  </Link>
+                  <span className="text-emerald-700/60 dark:text-emerald-400/60">·</span>
+                  <Link
+                    href="/justice/packet"
+                    className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  >
+                    Case packet
+                  </Link>
+                </p>
+              </div>
             ) : null}
 
             <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 p-3 ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/50 dark:ring-white/[0.04]">
