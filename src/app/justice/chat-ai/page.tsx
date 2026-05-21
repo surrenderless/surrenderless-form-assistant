@@ -38,6 +38,20 @@ type UiMessage = {
   text: string;
 };
 
+function formatTimelineTs(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] = [
   { value: "online_purchase", label: "Something I bought online" },
   {
@@ -479,6 +493,20 @@ export default function JusticeChatAiPage() {
                     Status: {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
                 ) : null}
+                {approvedNextAction.handling_requested_at?.trim() ? (
+                  <div className="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40">
+                    <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+                      Surrenderless handling requested
+                    </p>
+                    <p className="mt-0.5 text-xs text-emerald-900/90 dark:text-emerald-100/90">
+                      Recorded {formatTimelineTs(approvedNextAction.handling_requested_at.trim())}.
+                    </p>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                      In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
+                      contacted anyone yet.
+                    </p>
+                  </div>
+                ) : null}
                 {approvedNextAction.outcome_note?.trim() ? (
                   <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
                     {approvedNextAction.outcome_note.trim()}
@@ -494,7 +522,8 @@ export default function JusticeChatAiPage() {
                   className="mt-1 text-emerald-800 dark:text-emerald-200"
                 />
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                  In-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone.
+                  In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
+                  contacted anyone.
                 </p>
                 {approvedNextAction.follow_up_needed === true ? (
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
