@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Header from "@/app/components/Header";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
@@ -83,18 +84,10 @@ function approvedNextActionStatusDisplay(status: JusticeApprovedNextAction["stat
   }
 }
 
-function formatApprovedNextActionFollowUpDate(iso?: string): string | null {
-  if (!iso?.trim()) return null;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toLocaleDateString(undefined, { dateStyle: "medium" });
-}
-
 function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
   const next = parseApprovedNextActionFromClientState(clientState);
   const statusLabel = approvedNextActionStatusDisplay(next?.status);
   if (!statusLabel) return null;
-  const followUpDate = formatApprovedNextActionFollowUpDate(next?.follow_up_at);
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
       <p>
@@ -104,7 +97,7 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
       {next?.follow_up_needed === true ? (
         <p className="font-medium text-amber-800 dark:text-amber-200">Follow-up needed</p>
       ) : null}
-      {followUpDate ? <p>Follow-up date: {followUpDate}</p> : null}
+      <ApprovedNextActionFollowUpTimingLine followUpAt={next?.follow_up_at} className="mt-0.5" />
       <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
         In-app tracking only — not filed or submitted automatically.
       </p>
@@ -627,7 +620,6 @@ export default function JusticeCasesPage() {
                     const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
                     const product = caseRow.intake.purchase_or_signup.trim();
                     const statusLabel = approvedNextActionStatusDisplay(next.status);
-                    const followUpDate = formatApprovedNextActionFollowUpDate(next.follow_up_at);
                     const outcomeNote = next.outcome_note?.trim();
                     return (
                       <li
@@ -649,11 +641,10 @@ export default function JusticeCasesPage() {
                             Status: {statusLabel}
                           </p>
                         ) : null}
-                        {followUpDate ? (
-                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                            Follow-up date: {followUpDate}
-                          </p>
-                        ) : null}
+                        <ApprovedNextActionFollowUpTimingLine
+                          followUpAt={next.follow_up_at}
+                          className="mt-1"
+                        />
                         {outcomeNote ? (
                           <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-600 dark:text-neutral-400">
                             {truncateAttentionNote(outcomeNote, 200)}

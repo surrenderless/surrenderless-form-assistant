@@ -236,6 +236,7 @@ async function persistApprovedNextActionClientState(
   }
 }
 
+import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import {
@@ -588,20 +589,12 @@ function isoToDateInputValue(iso?: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
 }
 
-function formatTrackingFollowUpDate(iso?: string): string | null {
-  if (!iso?.trim()) return null;
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toLocaleDateString(undefined, { dateStyle: "medium" });
-}
-
 function hasApprovedNextActionTrackingSummary(action: JusticeApprovedNextAction): boolean {
   return Boolean(action.outcome_note?.trim()) || action.follow_up_needed === true;
 }
 
 function ApprovedNextActionTrackingSummary({ action }: { action: JusticeApprovedNextAction }) {
   if (!hasApprovedNextActionTrackingSummary(action)) return null;
-  const followUpDate = formatTrackingFollowUpDate(action.follow_up_at);
   return (
     <div className="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-3 py-2 text-xs text-emerald-950 dark:border-emerald-600/40 dark:bg-emerald-950/30 dark:text-emerald-100">
       <p className="font-medium text-emerald-900 dark:text-emerald-50">Tracking note saved</p>
@@ -609,9 +602,15 @@ function ApprovedNextActionTrackingSummary({ action }: { action: JusticeApproved
         <p className="mt-1 whitespace-pre-wrap leading-relaxed">{action.outcome_note.trim()}</p>
       ) : null}
       {action.follow_up_needed === true ? (
-        <p className="mt-1 text-emerald-800 dark:text-emerald-200">
-          Follow-up needed
-          {followUpDate ? <> — target date {followUpDate}</> : null}
+        <p className="mt-1 text-emerald-800 dark:text-emerald-200">Follow-up needed</p>
+      ) : null}
+      <ApprovedNextActionFollowUpTimingLine
+        followUpAt={action.follow_up_at}
+        className="mt-1 text-emerald-800 dark:text-emerald-200"
+      />
+      {action.follow_up_at?.trim() ? (
+        <p className="mt-0.5 text-[11px] text-emerald-800/75 dark:text-emerald-200/75">
+          Your chosen date is a tracking aid — move at your own pace.
         </p>
       ) : null}
       <p className="mt-1 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
@@ -685,13 +684,16 @@ function ApprovedNextActionOutcomeTrackingForm({
       </label>
       {followUpNeeded ? (
         <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-          Follow-up date (optional)
+          Follow-up date (optional, your pace)
           <input
             type="date"
             value={followUpAt}
             onChange={(e) => setFollowUpAt(e.target.value)}
             className="mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100"
           />
+          <span className="mt-1 block font-normal text-emerald-800/80 dark:text-emerald-200/75">
+            Optional reminder for you — not a deadline.
+          </span>
         </label>
       ) : null}
       <button
