@@ -8,7 +8,16 @@ import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
-import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
+import {
+  approvedNextActionStatusLabel,
+  clearFollowUpFromApprovedNextAction,
+  mergeApprovedNextActionForHydrate,
+  mergeClientStateWithClearedFollowUp,
+  parseApprovedNextAction,
+  readSessionApprovedNextAction,
+  writeSessionApprovedNextAction,
+} from "@/lib/justice/approvedNextActionState";
+import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
   buildJusticeIntakeFromParts,
@@ -49,95 +58,6 @@ const UPDATE_GREETING =
   "Your current case is loaded in the recap below. Tell me what you’d like to add or change — I’ll update the details as we go. When you’re ready, continue to your submission preview.";
 
 const RECAP_STORY_MAX_LEN = 120;
-
-const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
-
-function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
-  if (raw === null || raw === undefined) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const o = raw as Record<string, unknown>;
-  const label = typeof o.label === "string" ? o.label.trim() : "";
-  const href = typeof o.href === "string" ? o.href.trim() : "";
-  if (!label && !href) return undefined;
-  return {
-    ...(label ? { label } : {}),
-    ...(href ? { href } : {}),
-    ...(o.status === "completed"
-      ? { status: "completed" as const }
-      : o.status === "started"
-        ? { status: "started" as const }
-        : o.status === "approved"
-          ? { status: "approved" as const }
-          : {}),
-    ...(typeof o.approved_at === "string" && o.approved_at.trim()
-      ? { approved_at: o.approved_at.trim() }
-      : {}),
-    ...(typeof o.started_at === "string" && o.started_at.trim()
-      ? { started_at: o.started_at.trim() }
-      : {}),
-    ...(typeof o.completed_at === "string" && o.completed_at.trim()
-      ? { completed_at: o.completed_at.trim() }
-      : {}),
-    ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
-      ? { outcome_note: o.outcome_note.trim() }
-      : {}),
-    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
-    ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
-      ? { follow_up_at: o.follow_up_at.trim() }
-      : {}),
-  };
-}
-
-function mergeApprovedNextAction(
-  fromSession?: JusticeApprovedNextAction,
-  fromServer?: JusticeApprovedNextAction
-): JusticeApprovedNextAction | undefined {
-  if (!fromSession && !fromServer) return undefined;
-  const label = fromServer?.label ?? fromSession?.label;
-  const href = fromServer?.href ?? fromSession?.href;
-  if (!label && !href && !fromServer?.status && !fromSession?.status) return undefined;
-  return {
-    ...(label ? { label } : {}),
-    ...(href ? { href } : {}),
-    ...(fromServer?.status ?? fromSession?.status
-      ? { status: fromServer?.status ?? fromSession?.status }
-      : {}),
-    ...(fromServer?.approved_at ?? fromSession?.approved_at
-      ? { approved_at: fromServer?.approved_at ?? fromSession?.approved_at }
-      : {}),
-    ...(fromServer?.started_at ?? fromSession?.started_at
-      ? { started_at: fromServer?.started_at ?? fromSession?.started_at }
-      : {}),
-    ...(fromServer?.completed_at ?? fromSession?.completed_at
-      ? { completed_at: fromServer?.completed_at ?? fromSession?.completed_at }
-      : {}),
-    ...(fromServer?.outcome_note ?? fromSession?.outcome_note
-      ? { outcome_note: fromServer?.outcome_note ?? fromSession?.outcome_note }
-      : {}),
-    ...(fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true
-      ? {
-          follow_up_needed:
-            fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true,
-        }
-      : {}),
-    ...(fromServer?.follow_up_at ?? fromSession?.follow_up_at
-      ? { follow_up_at: fromServer?.follow_up_at ?? fromSession?.follow_up_at }
-      : {}),
-  };
-}
-
-function approvedNextActionStatusLabel(status?: JusticeApprovedNextAction["status"]): string | null {
-  switch (status) {
-    case "approved":
-      return "Approved";
-    case "started":
-      return "Started";
-    case "completed":
-      return "Handled";
-    default:
-      return null;
-  }
-}
 
 function getPreviewBasicsMissing(parts: BuildJusticeIntakeParts): string[] {
   const missing: string[] = [];
@@ -217,44 +137,17 @@ export default function JusticeChatAiPage() {
     undefined
   );
 
-  function buildClearedFollowUpAction(next: JusticeApprovedNextAction): JusticeApprovedNextAction {
-    const cleared: JusticeApprovedNextAction = { ...next };
-    delete cleared.follow_up_needed;
-    return cleared;
-  }
-
-  function mergeClientStateWithClearedFollowUp(
-    existing: unknown,
-    clearedAction: JusticeApprovedNextAction
-  ): JusticeCaseClientState {
-    const merged: JusticeCaseClientState = { approved_next_action: clearedAction };
-    if (existing !== null && existing !== undefined && typeof existing === "object" && !Array.isArray(existing)) {
-      const o = existing as Record<string, unknown>;
-      if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
-    }
-    return merged;
-  }
-
   async function clearApprovedNextActionFollowUp() {
     if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return;
 
-    const cleared = buildClearedFollowUpAction(approvedNextAction);
+    const cleared = clearFollowUpFromApprovedNextAction(approvedNextAction);
     setApprovedNextAction(cleared);
 
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
     if (caseId) {
-      try {
-        const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
-        if (raw) {
-          const map = JSON.parse(raw) as Record<string, JusticeApprovedNextAction>;
-          map[caseId] = cleared;
-          sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
-        }
-      } catch {
-        // ignore corrupt session data
-      }
+      writeSessionApprovedNextAction(caseId, cleared);
     }
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
@@ -267,7 +160,7 @@ export default function JusticeChatAiPage() {
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithClearedFollowUp(existing, cleared);
+      const merged = mergeClientStateWithClearedFollowUp(existing.client_state, cleared);
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -303,18 +196,7 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
-    let fromSession: JusticeApprovedNextAction | undefined;
-    if (caseId) {
-      try {
-        const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
-        if (raw) {
-          const map = JSON.parse(raw) as Record<string, unknown>;
-          fromSession = parseApprovedNextAction(map[caseId]);
-        }
-      } catch {
-        // ignore corrupt session data
-      }
-    }
+    const fromSession = caseId ? readSessionApprovedNextAction(caseId) : undefined;
     setApprovedNextAction(fromSession);
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
@@ -332,7 +214,7 @@ export default function JusticeChatAiPage() {
           const fromServer = parseApprovedNextAction(
             (cs as Record<string, unknown>).approved_next_action
           );
-          setApprovedNextAction(mergeApprovedNextAction(fromSession, fromServer));
+          setApprovedNextAction(mergeApprovedNextActionForHydrate(fromSession, fromServer));
         }
       } catch {
         // keep session fallback

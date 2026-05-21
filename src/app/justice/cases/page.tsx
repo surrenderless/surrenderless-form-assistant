@@ -13,6 +13,14 @@ import type {
   TimelineEntry,
 } from "@/lib/justice/types";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
+import {
+  approvedNextActionStatusLabel,
+  clearFollowUpFromApprovedNextAction,
+  mergeClientStateWithClearedFollowUp,
+  parseApprovedNextAction,
+  parseApprovedNextActionFromClientState,
+  writeSessionApprovedNextAction,
+} from "@/lib/justice/approvedNextActionState";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
@@ -34,65 +42,9 @@ type CaseRow = {
   client_state?: unknown;
 };
 
-function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
-  if (raw === null || raw === undefined) return undefined;
-  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const o = raw as Record<string, unknown>;
-  const label = typeof o.label === "string" ? o.label.trim() : "";
-  const href = typeof o.href === "string" ? o.href.trim() : "";
-  if (!label && !href) return undefined;
-  return {
-    ...(label ? { label } : {}),
-    ...(href ? { href } : {}),
-    ...(o.status === "completed"
-      ? { status: "completed" as const }
-      : o.status === "started"
-        ? { status: "started" as const }
-        : o.status === "approved"
-          ? { status: "approved" as const }
-          : {}),
-    ...(typeof o.approved_at === "string" && o.approved_at.trim()
-      ? { approved_at: o.approved_at.trim() }
-      : {}),
-    ...(typeof o.started_at === "string" && o.started_at.trim()
-      ? { started_at: o.started_at.trim() }
-      : {}),
-    ...(typeof o.completed_at === "string" && o.completed_at.trim()
-      ? { completed_at: o.completed_at.trim() }
-      : {}),
-    ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
-      ? { outcome_note: o.outcome_note.trim() }
-      : {}),
-    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
-    ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
-      ? { follow_up_at: o.follow_up_at.trim() }
-      : {}),
-  };
-}
-
-function parseApprovedNextActionFromClientState(clientState: unknown): JusticeApprovedNextAction | undefined {
-  if (clientState === null || clientState === undefined || typeof clientState !== "object" || Array.isArray(clientState)) {
-    return undefined;
-  }
-  return parseApprovedNextAction((clientState as Record<string, unknown>).approved_next_action);
-}
-
-function approvedNextActionStatusDisplay(status: JusticeApprovedNextAction["status"]): string | null {
-  switch (status) {
-    case "approved":
-      return "Approved";
-    case "started":
-      return "Started";
-    case "completed":
-      return "Handled";
-    default:
-      return null;
-  }
-}
-
 function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
   const next = parseApprovedNextActionFromClientState(clientState);
-  const statusLabel = approvedNextActionStatusDisplay(next?.status);
+  const statusLabel = approvedNextActionStatusLabel(next?.status);
   if (!statusLabel) return null;
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
@@ -295,34 +247,6 @@ const cardCls =
 
 /** Must match default `GET /api/justice/cases` page size and stay within API `MAX_LIST_LIMIT`. */
 const CASES_PAGE_LIMIT = 10;
-
-const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
-
-function mergeClientStateWithClearedFollowUp(
-  existing: unknown,
-  clearedAction: JusticeApprovedNextAction
-): JusticeCaseClientState {
-  const merged: JusticeCaseClientState = { approved_next_action: clearedAction };
-  if (existing !== null && existing !== undefined && typeof existing === "object" && !Array.isArray(existing)) {
-    const o = existing as Record<string, unknown>;
-    if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
-  }
-  return merged;
-}
-
-function writeSessionApprovedNextAction(caseId: string, action: JusticeApprovedNextAction): void {
-  if (typeof window === "undefined" || !caseId) return;
-  try {
-    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
-    const map: Record<string, JusticeApprovedNextAction> = raw
-      ? (JSON.parse(raw) as Record<string, JusticeApprovedNextAction>)
-      : {};
-    map[caseId] = action;
-    sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
-  } catch {
-    // ignore corrupt session data
-  }
-}
 
 const labelInputCls =
   "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
@@ -614,12 +538,6 @@ export default function JusticeCasesPage() {
     router.push(resolveApprovedNextActionFollowUpHref(next));
   }
 
-  function buildClearedFollowUpAction(next: JusticeApprovedNextAction): JusticeApprovedNextAction {
-    const cleared: JusticeApprovedNextAction = { ...next };
-    delete cleared.follow_up_needed;
-    return cleared;
-  }
-
   function applyClearedFollowUpToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
     const cleared = parseApprovedNextAction(mergedClientState.approved_next_action);
     setCases(
@@ -630,7 +548,7 @@ export default function JusticeCasesPage() {
   }
 
   async function clearApprovedNextActionFollowUp(caseRow: CaseRow, next: JusticeApprovedNextAction) {
-    const cleared = buildClearedFollowUpAction(next);
+    const cleared = clearFollowUpFromApprovedNextAction(next);
     const mergedLocal = mergeClientStateWithClearedFollowUp(caseRow.client_state, cleared);
     setClearingFollowUpCaseId(caseRow.id);
     applyClearedFollowUpToCaseRow(caseRow.id, mergedLocal);
@@ -733,7 +651,7 @@ export default function JusticeCasesPage() {
                   {followUpAttentionItems.map(({ caseRow, next }) => {
                     const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
                     const product = caseRow.intake.purchase_or_signup.trim();
-                    const statusLabel = approvedNextActionStatusDisplay(next.status);
+                    const statusLabel = approvedNextActionStatusLabel(next.status);
                     const outcomeNote = next.outcome_note?.trim();
                     return (
                       <li
