@@ -86,6 +86,34 @@ export function formatHandlingAcknowledgedLine(acknowledgedAt: string): string {
   return `Acknowledged ${formatApprovedNextActionHandlingTimestamp(acknowledgedAt)} — internal triage only.`;
 }
 
+const HANDLING_ACKNOWLEDGED_EMERALD_CLS =
+  "mt-1.5 text-xs text-emerald-900/90 dark:text-emerald-100/90";
+
+const HANDLING_ACKNOWLEDGED_NEUTRAL_CLS =
+  "mt-1.5 text-xs text-neutral-700 dark:text-neutral-300";
+
+export function ApprovedNextActionHandlingAcknowledgedReadOnly({
+  acknowledgedAt,
+  tone = "emerald",
+  className,
+}: {
+  acknowledgedAt?: string;
+  tone?: "emerald" | "neutral";
+  className?: string;
+}) {
+  const trimmed = acknowledgedAt?.trim();
+  if (!trimmed) return null;
+  return (
+    <p
+      className={
+        className ?? (tone === "neutral" ? HANDLING_ACKNOWLEDGED_NEUTRAL_CLS : HANDLING_ACKNOWLEDGED_EMERALD_CLS)
+      }
+    >
+      {formatHandlingAcknowledgedLine(trimmed)}
+    </p>
+  );
+}
+
 export function formatHubHandlingRequestedLine(requestedAt: string): string {
   return `${APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL} — recorded ${formatApprovedNextActionHandlingTimestamp(requestedAt)}`;
 }
@@ -129,12 +157,14 @@ export function ApprovedNextActionHandlingRequestNoteReadOnly({
 export function ApprovedNextActionHandlingRequestedReadOnly({
   requestedAt,
   requestNote,
+  acknowledgedAt,
   wrapperClassName = `mt-3 ${HANDLING_REQUESTED_EMERALD_BOX_CLS}`,
   recordedClassName = "mt-0.5",
   disclaimerClassName = `mt-1.5 ${HANDLING_REQUESTED_DISCLAIMER_CLS}`,
 }: {
   requestedAt: string;
   requestNote?: string;
+  acknowledgedAt?: string;
   wrapperClassName?: string;
   recordedClassName?: string;
   disclaimerClassName?: string;
@@ -146,6 +176,7 @@ export function ApprovedNextActionHandlingRequestedReadOnly({
         {formatHandlingRecordedLine(requestedAt)}
       </p>
       <ApprovedNextActionHandlingRequestNoteReadOnly note={requestNote} />
+      <ApprovedNextActionHandlingAcknowledgedReadOnly acknowledgedAt={acknowledgedAt} />
       <p className={disclaimerClassName}>{APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET}</p>
     </div>
   );
@@ -153,6 +184,7 @@ export function ApprovedNextActionHandlingRequestedReadOnly({
 
 export function ApprovedNextActionHandlingRequestBlock({
   action,
+  acknowledgedAt,
   onRequest,
   requesting,
   allowEditNote = false,
@@ -162,6 +194,8 @@ export function ApprovedNextActionHandlingRequestBlock({
   recordedClassName = "mt-1",
 }: {
   action: JusticeApprovedNextAction;
+  /** Falls back to `action.handling_acknowledged_at` when omitted. */
+  acknowledgedAt?: string;
   onRequest: (note?: string) => Promise<void>;
   requesting: boolean;
   allowEditNote?: boolean;
@@ -223,6 +257,9 @@ export function ApprovedNextActionHandlingRequestBlock({
           ) : (
             <ApprovedNextActionHandlingRequestNoteReadOnly note={action.handling_request_note} />
           )}
+          <ApprovedNextActionHandlingAcknowledgedReadOnly
+            acknowledgedAt={acknowledgedAt ?? action.handling_acknowledged_at}
+          />
         </>
       ) : (
         <>

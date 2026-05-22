@@ -112,6 +112,82 @@ export function applyHandlingRequestNoteToApprovedNextAction(
   return next;
 }
 
+function pickTrimmedIsoField(...values: (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+/** Raw read before strict parse — used when hydrating display state from client_state. */
+export function readHandlingAcknowledgedAtFromClientState(clientState: unknown): string | undefined {
+  if (
+    clientState === null ||
+    clientState === undefined ||
+    typeof clientState !== "object" ||
+    Array.isArray(clientState)
+  ) {
+    return undefined;
+  }
+  const approved = (clientState as Record<string, unknown>).approved_next_action;
+  if (
+    approved === null ||
+    approved === undefined ||
+    typeof approved !== "object" ||
+    Array.isArray(approved)
+  ) {
+    return undefined;
+  }
+  const raw = (approved as Record<string, unknown>).handling_acknowledged_at;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+}
+
+/** Preserves handling_requested_at / handling_acknowledged_at when a persist patch omits them. */
+export function mergeApprovedNextActionTrackingFields(
+  base: JusticeApprovedNextAction | undefined,
+  incoming: JusticeApprovedNextAction
+): JusticeApprovedNextAction {
+  const merged = { ...incoming };
+  const requested = pickTrimmedIsoField(incoming.handling_requested_at, base?.handling_requested_at);
+  const acknowledged = pickTrimmedIsoField(
+    incoming.handling_acknowledged_at,
+    base?.handling_acknowledged_at
+  );
+  if (requested) merged.handling_requested_at = requested;
+  else delete merged.handling_requested_at;
+  if (acknowledged) merged.handling_acknowledged_at = acknowledged;
+  else delete merged.handling_acknowledged_at;
+  return merged;
+}
+
+/**
+ * Resolve approved next action for UI, coalescing handling_acknowledged_at from
+ * server client_state, session map, and raw client_state.
+ */
+export function hydrateApprovedNextActionForDisplay(
+  caseId: string,
+  clientState?: unknown
+): JusticeApprovedNextAction | undefined {
+  const fromSession = readSessionApprovedNextAction(caseId);
+  const resolved =
+    clientState !== undefined
+      ? resolveApprovedNextAction(caseId, clientState)
+      : fromSession;
+  const base = resolved ?? fromSession;
+  if (!base) return undefined;
+
+  const rawAck =
+    clientState !== undefined ? readHandlingAcknowledgedAtFromClientState(clientState) : undefined;
+  const acknowledged = pickTrimmedIsoField(
+    base.handling_acknowledged_at,
+    fromSession?.handling_acknowledged_at,
+    rawAck
+  );
+  if (!acknowledged) return base;
+  return { ...base, handling_acknowledged_at: acknowledged };
+}
+
 /** Sets handling_acknowledged_at; preserves handling_requested_at and other fields. */
 export function acknowledgeHandlingRequestInApprovedNextAction(
   next: JusticeApprovedNextAction
@@ -276,8 +352,10 @@ export function resolveApprovedNextAction(
   const handling_request_note = handling_request_noteRaw?.trim()
     ? handling_request_noteRaw.trim()
     : undefined;
-  const handling_acknowledged_at =
-    fromServer.handling_acknowledged_at ?? fromSession.handling_acknowledged_at;
+  const handling_acknowledged_at = pickTrimmedIsoField(
+    fromServer.handling_acknowledged_at,
+    fromSession.handling_acknowledged_at
+  );
   const completed =
     fromServer.status === "completed" || fromSession.status === "completed";
   const started =
@@ -367,8 +445,9 @@ export function mergeClientStateWithApprovedNextAction(
         ...(prev.handling_request_note?.trim() && !("handling_request_note" in approvedNext)
           ? { handling_request_note: prev.handling_request_note.trim() }
           : {}),
-        ...(prev.handling_acknowledged_at && !approvedNext.handling_acknowledged_at
-          ? { handling_acknowledged_at: prev.handling_acknowledged_at }
+        ...(prev.handling_acknowledged_at?.trim() &&
+        !approvedNext.handling_acknowledged_at?.trim()
+          ? { handling_acknowledged_at: prev.handling_acknowledged_at.trim() }
           : {}),
       };
     }

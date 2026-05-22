@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
+  ApprovedNextActionHandlingAcknowledgedReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -40,6 +41,7 @@ type CurrentCaseSnapshot = {
   reviewed: boolean;
   handlingRequestedAt: string | null;
   handlingRequestNote: string | null;
+  handlingAcknowledgedAt: string | null;
 };
 
 /** Client-only snapshot of active case card state from session/timeline helpers. */
@@ -50,11 +52,13 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
   const approvedNext = caseId ? readSessionApprovedNextAction(caseId) : undefined;
   const handlingAt = approvedNext?.handling_requested_at?.trim();
   const handlingNote = approvedNext?.handling_request_note?.trim();
+  const handlingAck = approvedNext?.handling_acknowledged_at?.trim();
   return {
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
     handlingRequestedAt: handlingAt || null,
     handlingRequestNote: handlingNote || null,
+    handlingAcknowledgedAt: handlingAck || null,
   };
 }
 
@@ -119,6 +123,10 @@ export default function JusticeHubWorkspaceBody() {
                   note={snapshot.handlingRequestNote ?? undefined}
                   tone="neutral"
                   className="mt-1"
+                />
+                <ApprovedNextActionHandlingAcknowledgedReadOnly
+                  acknowledgedAt={snapshot.handlingAcknowledgedAt ?? undefined}
+                  tone="neutral"
                 />
                 <span className="mt-1 block text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}

@@ -18,8 +18,8 @@ import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
   APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
+  ApprovedNextActionHandlingAcknowledgedReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
-  formatHandlingAcknowledgedLine,
   formatHandlingRecordedInline,
   formatHandlingRecordedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -27,6 +27,7 @@ import {
   acknowledgeHandlingRequestInApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
+  hydrateApprovedNextActionForDisplay,
   mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithClearedFollowUp,
   parseApprovedNextAction,
@@ -82,11 +83,10 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
           />
         </>
       ) : null}
-      {next?.handling_acknowledged_at?.trim() ? (
-        <p className="text-neutral-700 dark:text-neutral-300">
-          {formatHandlingAcknowledgedLine(next.handling_acknowledged_at.trim())}
-        </p>
-      ) : null}
+      <ApprovedNextActionHandlingAcknowledgedReadOnly
+        acknowledgedAt={next?.handling_acknowledged_at}
+        tone="neutral"
+      />
       {next?.follow_up_needed === true ? (
         <p className="font-medium text-amber-800 dark:text-amber-200">Follow-up needed</p>
       ) : null}
@@ -576,6 +576,8 @@ export default function JusticeCasesPage() {
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
     const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
     replaceTimelineForCase(row.id, tl);
+    const hydrated = hydrateApprovedNextActionForDisplay(row.id, row.client_state);
+    if (hydrated) writeSessionApprovedNextAction(row.id, hydrated);
     setSessionCaseId(row.id);
   }
 
