@@ -42,6 +42,9 @@ export function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction
     ...(typeof o.handling_request_note === "string" && o.handling_request_note.trim()
       ? { handling_request_note: o.handling_request_note.trim() }
       : {}),
+    ...(typeof o.handling_acknowledged_at === "string" && o.handling_acknowledged_at.trim()
+      ? { handling_acknowledged_at: o.handling_acknowledged_at.trim() }
+      : {}),
   };
 }
 
@@ -74,7 +77,34 @@ export function approvedNextActionStatusLabel(
   }
 }
 
-/** Removes follow_up_needed; preserves outcome_note, follow_up_at, status, href, label, timestamps, etc. */
+/** Sets handling_acknowledged_at; preserves handling_requested_at and other fields. */
+export function acknowledgeHandlingRequestInApprovedNextAction(
+  next: JusticeApprovedNextAction
+): JusticeApprovedNextAction {
+  return {
+    ...next,
+    handling_acknowledged_at: new Date().toISOString(),
+  };
+}
+
+export function mergeClientStateWithAcknowledgedHandling(
+  existingClientState: unknown,
+  acknowledgedAction: JusticeApprovedNextAction
+): JusticeCaseClientState {
+  const merged: JusticeCaseClientState = { approved_next_action: acknowledgedAction };
+  if (
+    existingClientState !== null &&
+    existingClientState !== undefined &&
+    typeof existingClientState === "object" &&
+    !Array.isArray(existingClientState)
+  ) {
+    const o = existingClientState as Record<string, unknown>;
+    if (o.prepared_packet_approved === true) merged.prepared_packet_approved = true;
+  }
+  return merged;
+}
+
+/** Removes follow_up_needed; preserves outcome_note, follow_up_at, handling_*, status, href, label, timestamps, etc. */
 export function clearFollowUpFromApprovedNextAction(
   next: JusticeApprovedNextAction
 ): JusticeApprovedNextAction {
@@ -148,6 +178,12 @@ export function mergeApprovedNextActionForHydrate(
             fromServer?.handling_request_note ?? fromSession?.handling_request_note,
         }
       : {}),
+    ...(fromServer?.handling_acknowledged_at ?? fromSession?.handling_acknowledged_at
+      ? {
+          handling_acknowledged_at:
+            fromServer?.handling_acknowledged_at ?? fromSession?.handling_acknowledged_at,
+        }
+      : {}),
   };
 }
 
@@ -202,6 +238,8 @@ export function resolveApprovedNextAction(
     fromServer.handling_requested_at ?? fromSession.handling_requested_at;
   const handling_request_note =
     fromServer.handling_request_note ?? fromSession.handling_request_note;
+  const handling_acknowledged_at =
+    fromServer.handling_acknowledged_at ?? fromSession.handling_acknowledged_at;
   const completed =
     fromServer.status === "completed" || fromSession.status === "completed";
   const started =
@@ -212,6 +250,7 @@ export function resolveApprovedNextAction(
     ...(follow_up_at ? { follow_up_at } : {}),
     ...(handling_requested_at ? { handling_requested_at } : {}),
     ...(handling_request_note ? { handling_request_note } : {}),
+    ...(handling_acknowledged_at ? { handling_acknowledged_at } : {}),
   };
 
   if (completed) {
@@ -289,6 +328,9 @@ export function mergeClientStateWithApprovedNextAction(
           : {}),
         ...(prev.handling_request_note && !approvedNext.handling_request_note
           ? { handling_request_note: prev.handling_request_note }
+          : {}),
+        ...(prev.handling_acknowledged_at && !approvedNext.handling_acknowledged_at
+          ? { handling_acknowledged_at: prev.handling_acknowledged_at }
           : {}),
       };
     }
