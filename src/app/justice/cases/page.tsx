@@ -14,8 +14,10 @@ import type {
 } from "@/lib/justice/types";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
+  acknowledgeHandlingRequestInApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
+  mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithClearedFollowUp,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
@@ -61,6 +63,11 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
             Surrenderless handling requested
           </span>{" "}
           — recorded {formatUpdatedAt(handlingAt)}.
+        </p>
+      ) : null}
+      {next?.handling_acknowledged_at?.trim() ? (
+        <p className="text-neutral-700 dark:text-neutral-300">
+          Acknowledged {formatUpdatedAt(next.handling_acknowledged_at.trim())} — internal triage only.
         </p>
       ) : null}
       {next?.follow_up_needed === true ? (
@@ -228,6 +235,7 @@ function buildHandlingRequestedAttentionItems(caseList: CaseRow[]): HandlingRequ
   for (const c of caseList) {
     const next = parseApprovedNextActionFromClientState(c.client_state);
     if (!next?.handling_requested_at?.trim()) continue;
+    if (next.handling_acknowledged_at?.trim()) continue;
     if (next.status === "completed") continue;
     items.push({ caseRow: c, next });
   }
@@ -301,6 +309,7 @@ export default function JusticeCasesPage() {
   const [labelDraftById, setLabelDraftById] = useState<Record<string, string>>({});
   const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
   const [clearingFollowUpCaseId, setClearingFollowUpCaseId] = useState<string | null>(null);
+  const [acknowledgingHandlingCaseId, setAcknowledgingHandlingCaseId] = useState<string | null>(null);
   const [progressById, setProgressById] = useState<Record<string, CaseProgressSummary>>({});
   const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [progressLoading, setProgressLoading] = useState(false);
@@ -628,6 +637,51 @@ export default function JusticeCasesPage() {
     setClearingFollowUpCaseId(null);
   }
 
+  function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
+    const acknowledged = parseApprovedNextAction(mergedClientState.approved_next_action);
+    setCases(
+      (prev) =>
+        prev?.map((c) => (c.id === caseId ? { ...c, client_state: mergedClientState } : c)) ?? prev
+    );
+    if (acknowledged) writeSessionApprovedNextAction(caseId, acknowledged);
+  }
+
+  async function acknowledgeHandlingRequest(caseRow: CaseRow, next: JusticeApprovedNextAction) {
+    const acknowledged = acknowledgeHandlingRequestInApprovedNextAction(next);
+    const mergedLocal = mergeClientStateWithAcknowledgedHandling(caseRow.client_state, acknowledged);
+    setAcknowledgingHandlingCaseId(caseRow.id);
+    applyAcknowledgedHandlingToCaseRow(caseRow.id, mergedLocal);
+
+    if (isLoaded && isSignedIn && isUuid(caseRow.id)) {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+        if (!getRes.ok) {
+          console.warn("justice cases: GET before acknowledge handling failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithAcknowledgedHandling(existing.client_state, acknowledged);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (patchRes.ok) {
+          const data = (await patchRes.json()) as { client_state?: unknown };
+          if (data.client_state !== undefined) {
+            applyAcknowledgedHandlingToCaseRow(caseRow.id, data.client_state as JusticeCaseClientState);
+          }
+        } else {
+          console.warn("justice cases: PATCH acknowledge handling failed", patchRes.status);
+        }
+      } catch (e) {
+        console.warn("justice cases: acknowledge handling error", e);
+      }
+    }
+
+    setAcknowledgingHandlingCaseId(null);
+  }
+
   return (
     <>
       <Header />
@@ -724,13 +778,29 @@ export default function JusticeCasesPage() {
                           In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
                           contacted anyone.
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => openCase(caseRow)}
-                          className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
-                        >
-                          Open case
-                        </button>
+                        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => openCase(caseRow)}
+                            className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                          >
+                            Open case
+                          </button>
+                          <button
+                            type="button"
+                            disabled={acknowledgingHandlingCaseId === caseRow.id}
+                            onClick={() => void acknowledgeHandlingRequest(caseRow, next)}
+                            className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
+                          >
+                            {acknowledgingHandlingCaseId === caseRow.id
+                              ? "Saving…"
+                              : "Mark acknowledged"}
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                          Acknowledged means internal tracking triage only. Surrenderless has not filed, submitted,
+                          sent, queued externally, or contacted anyone.
+                        </p>
                       </li>
                     );
                   })}

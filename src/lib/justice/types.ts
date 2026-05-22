@@ -115,6 +115,8 @@ export type JusticeApprovedNextAction = {
   /** User requested Surrenderless handling (in-app tracking only; not a queue worker or filing). */
   handling_requested_at?: string;
   handling_request_note?: string;
+  /** In-app triage ack (not handled/submitted/queued externally; not a filing record). */
+  handling_acknowledged_at?: string;
 };
 
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */
