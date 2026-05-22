@@ -86,6 +86,57 @@ export function formatHandlingAcknowledgedLine(acknowledgedAt: string): string {
   return `Acknowledged ${formatApprovedNextActionHandlingTimestamp(acknowledgedAt)} — internal tracking triage only.`;
 }
 
+/** Display-only queue state derived from existing handling_* fields (not persisted). */
+export type HandlingQueueDisplayStatus =
+  | "awaiting_internal_triage"
+  | "acknowledged_internal_triage";
+
+export const HANDLING_QUEUE_STATUS_AWAITING_TRIAGE_LINE =
+  "Queue status: Awaiting internal triage.";
+
+export const HANDLING_QUEUE_STATUS_ACKNOWLEDGED_LINE =
+  "Queue status: Acknowledged for internal tracking triage only.";
+
+export function deriveHandlingQueueDisplayStatus(
+  action:
+    | Pick<JusticeApprovedNextAction, "handling_requested_at" | "handling_acknowledged_at">
+    | undefined
+): HandlingQueueDisplayStatus | undefined {
+  if (!action?.handling_requested_at?.trim()) return undefined;
+  if (action.handling_acknowledged_at?.trim()) return "acknowledged_internal_triage";
+  return "awaiting_internal_triage";
+}
+
+export function formatHandlingQueueStatusLine(status: HandlingQueueDisplayStatus): string {
+  return status === "acknowledged_internal_triage"
+    ? HANDLING_QUEUE_STATUS_ACKNOWLEDGED_LINE
+    : HANDLING_QUEUE_STATUS_AWAITING_TRIAGE_LINE;
+}
+
+const HANDLING_QUEUE_STATUS_NEUTRAL_CLS =
+  "mt-1 text-xs text-neutral-600 dark:text-neutral-400";
+
+export function ApprovedNextActionHandlingQueueStatusReadOnly({
+  handlingRequestedAt,
+  handlingAcknowledgedAt,
+  className,
+}: {
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+  className?: string;
+}) {
+  const status = deriveHandlingQueueDisplayStatus({
+    handling_requested_at: handlingRequestedAt,
+    handling_acknowledged_at: handlingAcknowledgedAt,
+  });
+  if (!status) return null;
+  return (
+    <p className={className ?? HANDLING_QUEUE_STATUS_NEUTRAL_CLS}>
+      {formatHandlingQueueStatusLine(status)}
+    </p>
+  );
+}
+
 const HANDLING_ACKNOWLEDGED_EMERALD_CLS =
   "mt-1.5 text-xs text-emerald-900/90 dark:text-emerald-100/90";
 

@@ -19,6 +19,7 @@ import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
   APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
+  ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHandlingRecordedInline,
   formatHandlingRecordedLine,
@@ -80,6 +81,10 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
             note={next?.handling_request_note}
             tone="neutral"
             className="mt-1"
+          />
+          <ApprovedNextActionHandlingQueueStatusReadOnly
+            handlingRequestedAt={handlingAt}
+            handlingAcknowledgedAt={next?.handling_acknowledged_at}
           />
         </>
       ) : null}
