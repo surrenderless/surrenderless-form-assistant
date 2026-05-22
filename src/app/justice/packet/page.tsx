@@ -689,11 +689,21 @@ export default function JusticePacketPage() {
             </Link>
           </div>
           {approvedNextAction?.handling_requested_at?.trim() ? (
-            <ApprovedNextActionHandlingRequestedReadOnly
-              requestedAt={approvedNextAction.handling_requested_at.trim()}
-              requestNote={approvedNextAction.handling_request_note}
-              acknowledgedAt={approvedNextAction.handling_acknowledged_at}
-            />
+            <>
+              <ApprovedNextActionHandlingRequestedReadOnly
+                requestedAt={approvedNextAction.handling_requested_at.trim()}
+                requestNote={approvedNextAction.handling_request_note}
+                acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+              />
+              <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                <Link
+                  href="/justice/handling"
+                  className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  View in handling workbench
+                </Link>
+              </p>
+            </>
           ) : null}
           {packetApproved ? (
               <div
