@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
+  ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
@@ -38,6 +39,7 @@ type CurrentCaseSnapshot = {
   intake: JusticeIntake;
   reviewed: boolean;
   handlingRequestedAt: string | null;
+  handlingRequestNote: string | null;
 };
 
 /** Client-only snapshot of active case card state from session/timeline helpers. */
@@ -45,13 +47,14 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
   const intake = readValidLocalJusticeIntake();
   if (!intake) return null;
   const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
-  const handlingAt = caseId
-    ? readSessionApprovedNextAction(caseId)?.handling_requested_at?.trim()
-    : undefined;
+  const approvedNext = caseId ? readSessionApprovedNextAction(caseId) : undefined;
+  const handlingAt = approvedNext?.handling_requested_at?.trim();
+  const handlingNote = approvedNext?.handling_request_note?.trim();
   return {
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
     handlingRequestedAt: handlingAt || null,
+    handlingRequestNote: handlingNote || null,
   };
 }
 
@@ -112,6 +115,11 @@ export default function JusticeHubWorkspaceBody() {
                 <span className="mt-2 block text-xs font-medium text-emerald-800 dark:text-emerald-200">
                   {formatHubHandlingRequestedLine(snapshot.handlingRequestedAt)}
                 </span>
+                <ApprovedNextActionHandlingRequestNoteReadOnly
+                  note={snapshot.handlingRequestNote ?? undefined}
+                  tone="neutral"
+                  className="mt-1"
+                />
                 <span className="mt-1 block text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </span>
