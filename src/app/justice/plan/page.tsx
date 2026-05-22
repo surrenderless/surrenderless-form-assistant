@@ -34,6 +34,16 @@ import {
   resolveApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import {
+  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
+  APPROVED_NEXT_ACTION_HANDLING_PENDING_DESCRIPTION,
+  APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
+  APPROVED_NEXT_ACTION_HANDLING_TRACKING_ARIA_LABEL,
+  APPROVED_NEXT_ACTION_HANDLING_TRACKING_SECTION_LABEL,
+  APPROVED_NEXT_ACTION_REQUEST_HANDLING_BUTTON_LABEL,
+  APPROVED_NEXT_ACTION_REQUEST_HANDLING_SAVING_LABEL,
+  formatHandlingRecordedLine,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
 
 /** Page-local; mirrors packet approval session keys. */
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
@@ -577,25 +587,24 @@ function ApprovedNextActionHandlingRequestBlock({
   return (
     <div
       className="mt-3 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
-      aria-label="Surrenderless handling request tracking"
+      aria-label={APPROVED_NEXT_ACTION_HANDLING_TRACKING_ARIA_LABEL}
     >
       {requestedAt ? (
         <>
           <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
-            Surrenderless handling requested
+            {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
           </p>
           <p className="mt-1 text-xs text-emerald-900/90 dark:text-emerald-100/90">
-            Recorded {formatTimelineTs(requestedAt)}.
+            {formatHandlingRecordedLine(requestedAt)}
           </p>
         </>
       ) : (
         <>
           <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
-            Surrenderless handling (tracking)
+            {APPROVED_NEXT_ACTION_HANDLING_TRACKING_SECTION_LABEL}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
-            Mark that you want Surrenderless to handle this approved step inside the app when that workflow
-            exists. This does not start any external process today.
+            {APPROVED_NEXT_ACTION_HANDLING_PENDING_DESCRIPTION}
           </p>
           <button
             type="button"
@@ -603,13 +612,14 @@ function ApprovedNextActionHandlingRequestBlock({
             disabled={requesting}
             className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
           >
-            {requesting ? "Saving…" : "Request Surrenderless handling"}
+            {requesting
+              ? APPROVED_NEXT_ACTION_REQUEST_HANDLING_SAVING_LABEL
+              : APPROVED_NEXT_ACTION_REQUEST_HANDLING_BUTTON_LABEL}
           </button>
         </>
       )}
       <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-        In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
-        anyone yet.
+        {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET}
       </p>
     </div>
   );

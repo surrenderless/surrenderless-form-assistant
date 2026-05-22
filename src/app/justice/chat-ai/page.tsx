@@ -9,6 +9,16 @@ import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
+  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
+  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
+  APPROVED_NEXT_ACTION_HANDLING_PENDING_DESCRIPTION,
+  APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
+  APPROVED_NEXT_ACTION_HANDLING_TRACKING_SECTION_LABEL,
+  APPROVED_NEXT_ACTION_REQUEST_HANDLING_BUTTON_LABEL,
+  APPROVED_NEXT_ACTION_REQUEST_HANDLING_SAVING_LABEL,
+  formatHandlingRecordedLine,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
+import {
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   mergeClientStateWithApprovedNextAction,
@@ -38,20 +48,6 @@ type UiMessage = {
   role: "user" | "assistant";
   text: string;
 };
-
-function formatTimelineTs(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] = [
   { value: "online_purchase", label: "Something I bought online" },
@@ -542,24 +538,22 @@ export default function JusticeChatAiPage() {
                 {approvedNextAction.handling_requested_at?.trim() ? (
                   <div className="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40">
                     <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
-                      Surrenderless handling requested
+                      {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
                     </p>
                     <p className="mt-0.5 text-xs text-emerald-900/90 dark:text-emerald-100/90">
-                      Recorded {formatTimelineTs(approvedNextAction.handling_requested_at.trim())}.
+                      {formatHandlingRecordedLine(approvedNextAction.handling_requested_at.trim())}
                     </p>
                     <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                      In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
-                      contacted anyone yet.
+                      {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET}
                     </p>
                   </div>
                 ) : approvedNextAction.status !== "completed" ? (
                   <div className="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40">
                     <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
-                      Surrenderless handling (tracking)
+                      {APPROVED_NEXT_ACTION_HANDLING_TRACKING_SECTION_LABEL}
                     </p>
                     <p className="mt-1 text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
-                      Mark that you want Surrenderless to handle this approved step inside the app when that
-                      workflow exists. This does not start any external process today.
+                      {APPROVED_NEXT_ACTION_HANDLING_PENDING_DESCRIPTION}
                     </p>
                     <button
                       type="button"
@@ -567,11 +561,12 @@ export default function JusticeChatAiPage() {
                       onClick={() => void handleRequestSurrenderlessHandling()}
                       className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
                     >
-                      {requestingHandling ? "Saving…" : "Request Surrenderless handling"}
+                      {requestingHandling
+                        ? APPROVED_NEXT_ACTION_REQUEST_HANDLING_SAVING_LABEL
+                        : APPROVED_NEXT_ACTION_REQUEST_HANDLING_BUTTON_LABEL}
                     </button>
                     <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                      In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
-                      contacted anyone yet.
+                      {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET}
                     </p>
                   </div>
                 ) : null}
@@ -590,8 +585,7 @@ export default function JusticeChatAiPage() {
                   className="mt-1 text-emerald-800 dark:text-emerald-200"
                 />
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                  In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
-                  contacted anyone.
+                  {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </p>
                 {approvedNextAction.follow_up_needed === true ? (
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
