@@ -17,10 +17,10 @@ import {
   omitClearedHandlingRequestNoteFromApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
+  hydrateApprovedNextActionForDisplay,
+  mergeApprovedNextActionTrackingFields,
   mergeClientStateWithApprovedNextAction,
   mergeClientStateWithClearedFollowUp,
-  readSessionApprovedNextAction,
-  resolveApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
@@ -154,14 +154,16 @@ export default function JusticeChatAiPage() {
       handling_requested_at: new Date().toISOString(),
       ...(note ? { handling_request_note: note } : {}),
     };
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
 
-    setApprovedNextAction(next);
+    setApprovedNextAction(local);
 
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
     if (caseId) {
-      writeSessionApprovedNextAction(caseId, next);
+      writeSessionApprovedNextAction(caseId, local);
     }
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
@@ -174,7 +176,7 @@ export default function JusticeChatAiPage() {
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, next);
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -197,7 +199,8 @@ export default function JusticeChatAiPage() {
       approvedNextAction,
       note ?? ""
     );
-    const next = omitClearedHandlingRequestNoteFromApprovedNextAction(withNoteUpdate);
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, withNoteUpdate);
+    const next = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
     setApprovedNextAction(next);
 
     const caseId =
@@ -217,7 +220,7 @@ export default function JusticeChatAiPage() {
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withNoteUpdate);
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -237,13 +240,15 @@ export default function JusticeChatAiPage() {
     if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return;
 
     const cleared = clearFollowUpFromApprovedNextAction(approvedNextAction);
-    setApprovedNextAction(cleared);
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, cleared);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    setApprovedNextAction(local);
 
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
     if (caseId) {
-      writeSessionApprovedNextAction(caseId, cleared);
+      writeSessionApprovedNextAction(caseId, local);
     }
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
@@ -256,7 +261,7 @@ export default function JusticeChatAiPage() {
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithClearedFollowUp(existing.client_state, cleared);
+      const merged = mergeClientStateWithClearedFollowUp(existing.client_state, withTracking);
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -292,7 +297,7 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
-    const sessionFallback = caseId ? readSessionApprovedNextAction(caseId) : undefined;
+    const sessionFallback = caseId ? hydrateApprovedNextActionForDisplay(caseId) : undefined;
     setApprovedNextAction(sessionFallback);
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
@@ -306,10 +311,10 @@ export default function JusticeChatAiPage() {
         if (!res.ok) return;
         const data = (await res.json()) as { client_state?: unknown };
         if (ac.signal.aborted) return;
-        const resolved =
-          resolveApprovedNextAction(caseId, data.client_state) ?? sessionFallback;
-        if (resolved) writeSessionApprovedNextAction(caseId, resolved);
-        setApprovedNextAction(resolved);
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
+        if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
+        setApprovedNextAction(hydrated);
       } catch {
         // keep session fallback
       }

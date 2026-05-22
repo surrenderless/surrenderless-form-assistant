@@ -16,8 +16,9 @@ import {
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { ApprovedNextActionHandlingRequestedReadOnly } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
+  hydrateApprovedNextActionForDisplay,
+  mergeApprovedNextActionTrackingFields,
   parseJusticeCaseClientState,
-  resolveApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
@@ -430,7 +431,7 @@ export default function JusticePacketPage() {
       return;
     }
     const sessionApproved = readPreparedPacketApproved(caseId);
-    const sessionNextAction = resolveApprovedNextAction(caseId, undefined);
+    const sessionNextAction = hydrateApprovedNextActionForDisplay(caseId);
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) {
       setPacketApproved(sessionApproved);
       setApprovedNextAction(sessionNextAction);
@@ -455,10 +456,11 @@ export default function JusticePacketPage() {
         const parsed = parseJusticeCaseClientState(data.client_state);
         const serverApproved = parsed.prepared_packet_approved === true;
         if (serverApproved) writePreparedPacketApproved(caseId);
-        const resolved = resolveApprovedNextAction(caseId, data.client_state) ?? sessionNextAction;
-        if (resolved) writeSessionApprovedNextAction(caseId, resolved);
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionNextAction;
+        if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
         setPacketApproved(sessionApproved || serverApproved);
-        setApprovedNextAction(resolved);
+        setApprovedNextAction(hydrated);
       } catch {
         if (!ac.signal.aborted) {
           setPacketApproved(sessionApproved);
@@ -597,11 +599,15 @@ export default function JusticePacketPage() {
     const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
     const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
     const nextActionTarget = buildApprovedNextActionTarget(prepared);
+    const withTracking = mergeApprovedNextActionTrackingFields(
+      approvedNextAction,
+      nextActionTarget
+    );
 
     writePreparedPacketApproved(caseId);
-    writeSessionApprovedNextAction(caseId, nextActionTarget);
+    writeSessionApprovedNextAction(caseId, withTracking);
     setPacketApproved(true);
-    setApprovedNextAction(nextActionTarget);
+    setApprovedNextAction(withTracking);
 
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
@@ -615,7 +621,7 @@ export default function JusticePacketPage() {
       const merged: JusticeCaseClientState = {
         ...parseJusticeCaseClientState(existing.client_state),
         prepared_packet_approved: true,
-        approved_next_action: nextActionTarget,
+        approved_next_action: withTracking,
       };
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
