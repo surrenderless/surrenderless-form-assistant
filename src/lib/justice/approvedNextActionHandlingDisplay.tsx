@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 /** Read-only / interactive copy for approved-next-action handling request tracking. */
@@ -29,6 +29,13 @@ export const APPROVED_NEXT_ACTION_HANDLING_REQUEST_NOTE_DISPLAY_LABEL =
   "What you asked Surrenderless to handle";
 
 export const APPROVED_NEXT_ACTION_HANDLING_REQUEST_NOTE_MAX_LENGTH = 500;
+
+export const APPROVED_NEXT_ACTION_SAVE_HANDLING_NOTE_BUTTON_LABEL = "Save request note";
+
+export const APPROVED_NEXT_ACTION_SAVE_HANDLING_NOTE_SAVING_LABEL = "Saving…";
+
+const HANDLING_NOTE_TEXTAREA_CLS =
+  "mt-1 w-full resize-y rounded-lg border border-emerald-300/80 bg-white px-2.5 py-1.5 text-xs text-emerald-950 placeholder:text-emerald-800/50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/40 disabled:opacity-60 dark:border-emerald-700/60 dark:bg-emerald-950/50 dark:text-emerald-50 dark:placeholder:text-emerald-200/40";
 
 /** Emerald callout blocks (plan, chat, packet). */
 export const APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET =
@@ -148,20 +155,31 @@ export function ApprovedNextActionHandlingRequestBlock({
   action,
   onRequest,
   requesting,
+  allowEditNote = false,
+  onUpdateNote,
+  updatingNote = false,
   wrapperClassName = `mt-3 ${HANDLING_REQUESTED_EMERALD_BOX_CLS}`,
   recordedClassName = "mt-1",
 }: {
   action: JusticeApprovedNextAction;
   onRequest: (note?: string) => Promise<void>;
   requesting: boolean;
+  allowEditNote?: boolean;
+  onUpdateNote?: (note?: string) => Promise<void>;
+  updatingNote?: boolean;
   wrapperClassName?: string;
   recordedClassName?: string;
 }) {
   const noteFieldId = useId();
-  const [noteDraft, setNoteDraft] = useState("");
+  const [noteDraft, setNoteDraft] = useState(action.handling_request_note ?? "");
 
   const requestedAt = action.handling_requested_at?.trim();
-  const requestNote = action.handling_request_note?.trim();
+  const canEditNote = Boolean(allowEditNote && onUpdateNote && requestedAt);
+  const inputsDisabled = requesting || updatingNote;
+
+  useEffect(() => {
+    setNoteDraft(action.handling_request_note ?? "");
+  }, [action.handling_request_note, requestedAt]);
 
   if (action.status === "completed" && !requestedAt) return null;
 
@@ -173,7 +191,38 @@ export function ApprovedNextActionHandlingRequestBlock({
           <p className={`${recordedClassName} ${HANDLING_REQUESTED_RECORDED_CLS}`}>
             {formatHandlingRecordedLine(requestedAt)}
           </p>
-          <ApprovedNextActionHandlingRequestNoteReadOnly note={requestNote} />
+          {canEditNote ? (
+            <>
+              <label
+                htmlFor={noteFieldId}
+                className="mt-2 block text-[11px] font-medium text-emerald-950 dark:text-emerald-100"
+              >
+                {APPROVED_NEXT_ACTION_HANDLING_REQUEST_NOTE_PROMPT}
+              </label>
+              <textarea
+                id={noteFieldId}
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                maxLength={APPROVED_NEXT_ACTION_HANDLING_REQUEST_NOTE_MAX_LENGTH}
+                rows={2}
+                disabled={inputsDisabled}
+                placeholder="Optional — leave blank to remove the saved note"
+                className={HANDLING_NOTE_TEXTAREA_CLS}
+              />
+              <button
+                type="button"
+                onClick={() => void onUpdateNote!(noteDraft)}
+                disabled={inputsDisabled}
+                className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+              >
+                {updatingNote
+                  ? APPROVED_NEXT_ACTION_SAVE_HANDLING_NOTE_SAVING_LABEL
+                  : APPROVED_NEXT_ACTION_SAVE_HANDLING_NOTE_BUTTON_LABEL}
+              </button>
+            </>
+          ) : (
+            <ApprovedNextActionHandlingRequestNoteReadOnly note={action.handling_request_note} />
+          )}
         </>
       ) : (
         <>
@@ -193,14 +242,14 @@ export function ApprovedNextActionHandlingRequestBlock({
             onChange={(e) => setNoteDraft(e.target.value)}
             maxLength={APPROVED_NEXT_ACTION_HANDLING_REQUEST_NOTE_MAX_LENGTH}
             rows={2}
-            disabled={requesting}
+            disabled={inputsDisabled}
             placeholder="Optional"
-            className="mt-1 w-full resize-y rounded-lg border border-emerald-300/80 bg-white px-2.5 py-1.5 text-xs text-emerald-950 placeholder:text-emerald-800/50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/40 disabled:opacity-60 dark:border-emerald-700/60 dark:bg-emerald-950/50 dark:text-emerald-50 dark:placeholder:text-emerald-200/40"
+            className={HANDLING_NOTE_TEXTAREA_CLS}
           />
           <button
             type="button"
             onClick={() => void onRequest(normalizeHandlingRequestNote(noteDraft))}
-            disabled={requesting}
+            disabled={inputsDisabled}
             className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
           >
             {requesting

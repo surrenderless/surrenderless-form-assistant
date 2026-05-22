@@ -30,6 +30,8 @@ import {
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
 import {
+  applyHandlingRequestNoteToApprovedNextAction,
+  omitClearedHandlingRequestNoteFromApprovedNextAction,
   mergeClientStateWithApprovedNextAction,
   resolveApprovedNextAction,
   writeSessionApprovedNextAction,
@@ -589,6 +591,7 @@ export default function JusticePlanPage() {
     undefined
   );
   const [requestingHandling, setRequestingHandling] = useState(false);
+  const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -1076,12 +1079,16 @@ export default function JusticePlanPage() {
   const showApprovedNextActionCta =
     preparedPacketApproved && approvedNextAction && approvedStepHref && !approvedNextActionCompleted;
 
-  async function persistApprovedNextAction(next: JusticeApprovedNextAction) {
-    if (caseId) writeSessionApprovedNextAction(caseId, next);
-    setApprovedNextAction(next);
+  async function persistApprovedNextAction(
+    next: JusticeApprovedNextAction,
+    mergeApprovedNext?: JusticeApprovedNextAction
+  ) {
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(next);
+    if (caseId) writeSessionApprovedNextAction(caseId, local);
+    setApprovedNextAction(local);
     setPreparedPacketApproved(true);
     if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
-      await persistApprovedNextActionClientState(caseId, next);
+      await persistApprovedNextActionClientState(caseId, mergeApprovedNext ?? next);
     }
   }
 
@@ -1132,6 +1139,23 @@ export default function JusticePlanPage() {
       await persistApprovedNextAction(next);
     } finally {
       setRequestingHandling(false);
+    }
+  }
+
+  async function handleUpdateHandlingRequestNote(note?: string) {
+    if (!approvedNextAction?.handling_requested_at?.trim()) return;
+    setUpdatingHandlingNote(true);
+    try {
+      const withNoteUpdate = applyHandlingRequestNoteToApprovedNextAction(
+        approvedNextAction,
+        note ?? ""
+      );
+      await persistApprovedNextAction(
+        omitClearedHandlingRequestNoteFromApprovedNextAction(withNoteUpdate),
+        withNoteUpdate
+      );
+    } finally {
+      setUpdatingHandlingNote(false);
     }
   }
 
@@ -1328,7 +1352,10 @@ export default function JusticePlanPage() {
                   <ApprovedNextActionHandlingRequestBlock
                     action={approvedNextAction}
                     onRequest={handleRequestSurrenderlessHandling}
+                    onUpdateNote={handleUpdateHandlingRequestNote}
+                    allowEditNote
                     requesting={requestingHandling}
+                    updatingNote={updatingHandlingNote}
                   />
                 ) : null}
                 {approvedNextActionCompleted && approvedNextAction ? (
@@ -1487,7 +1514,10 @@ export default function JusticePlanPage() {
               <ApprovedNextActionHandlingRequestBlock
                 action={approvedNextAction}
                 onRequest={handleRequestSurrenderlessHandling}
+                onUpdateNote={handleUpdateHandlingRequestNote}
+                allowEditNote
                 requesting={requestingHandling}
+                updatingNote={updatingHandlingNote}
               />
             ) : null}
             {approvedNextActionCompleted && approvedNextAction ? (

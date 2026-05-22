@@ -77,6 +77,41 @@ export function approvedNextActionStatusLabel(
   }
 }
 
+const HANDLING_REQUEST_NOTE_MAX_LENGTH = 500;
+
+/** Empty string on approved_next_action means the user explicitly cleared the note (merge only). */
+export const HANDLING_REQUEST_NOTE_EXPLICIT_CLEAR = "";
+
+/** True when the action object carries an intentional note clear (empty string field). */
+export function isExplicitHandlingRequestNoteClear(action: JusticeApprovedNextAction): boolean {
+  return "handling_request_note" in action && !String(action.handling_request_note ?? "").trim();
+}
+
+/** Removes cleared/blank handling_request_note before session write or PATCH body. */
+export function omitClearedHandlingRequestNoteFromApprovedNextAction(
+  action: JusticeApprovedNextAction
+): JusticeApprovedNextAction {
+  if (!isExplicitHandlingRequestNoteClear(action)) return action;
+  const { handling_request_note: _cleared, ...rest } = action;
+  return rest;
+}
+
+/** Sets or clears handling_request_note; preserves handling_requested_at and other fields. */
+export function applyHandlingRequestNoteToApprovedNextAction(
+  action: JusticeApprovedNextAction,
+  rawNote: string
+): JusticeApprovedNextAction {
+  const trimmed = rawNote.trim();
+  const next = { ...action };
+  if (trimmed) {
+    next.handling_request_note = trimmed.slice(0, HANDLING_REQUEST_NOTE_MAX_LENGTH);
+  } else {
+    // Explicit clear: keep key as "" so merge does not restore a prior note.
+    next.handling_request_note = HANDLING_REQUEST_NOTE_EXPLICIT_CLEAR;
+  }
+  return next;
+}
+
 /** Sets handling_acknowledged_at; preserves handling_requested_at and other fields. */
 export function acknowledgeHandlingRequestInApprovedNextAction(
   next: JusticeApprovedNextAction
@@ -172,12 +207,12 @@ export function mergeApprovedNextActionForHydrate(
             fromServer?.handling_requested_at ?? fromSession?.handling_requested_at,
         }
       : {}),
-    ...(fromServer?.handling_request_note ?? fromSession?.handling_request_note
-      ? {
-          handling_request_note:
-            fromServer?.handling_request_note ?? fromSession?.handling_request_note,
-        }
-      : {}),
+    ...(() => {
+      const note = (
+        fromServer?.handling_request_note ?? fromSession?.handling_request_note
+      )?.trim();
+      return note ? { handling_request_note: note } : {};
+    })(),
     ...(fromServer?.handling_acknowledged_at ?? fromSession?.handling_acknowledged_at
       ? {
           handling_acknowledged_at:
@@ -236,8 +271,11 @@ export function resolveApprovedNextAction(
   const follow_up_at = fromServer.follow_up_at ?? fromSession.follow_up_at;
   const handling_requested_at =
     fromServer.handling_requested_at ?? fromSession.handling_requested_at;
-  const handling_request_note =
+  const handling_request_noteRaw =
     fromServer.handling_request_note ?? fromSession.handling_request_note;
+  const handling_request_note = handling_request_noteRaw?.trim()
+    ? handling_request_noteRaw.trim()
+    : undefined;
   const handling_acknowledged_at =
     fromServer.handling_acknowledged_at ?? fromSession.handling_acknowledged_at;
   const completed =
@@ -326,8 +364,8 @@ export function mergeClientStateWithApprovedNextAction(
         ...(prev.handling_requested_at && !approvedNext.handling_requested_at
           ? { handling_requested_at: prev.handling_requested_at }
           : {}),
-        ...(prev.handling_request_note && !approvedNext.handling_request_note
-          ? { handling_request_note: prev.handling_request_note }
+        ...(prev.handling_request_note?.trim() && !("handling_request_note" in approvedNext)
+          ? { handling_request_note: prev.handling_request_note.trim() }
           : {}),
         ...(prev.handling_acknowledged_at && !approvedNext.handling_acknowledged_at
           ? { handling_acknowledged_at: prev.handling_acknowledged_at }
@@ -336,5 +374,10 @@ export function mergeClientStateWithApprovedNextAction(
     }
   }
   merged.prepared_packet_approved = true;
+  if (merged.approved_next_action) {
+    merged.approved_next_action = omitClearedHandlingRequestNoteFromApprovedNextAction(
+      merged.approved_next_action
+    );
+  }
   return merged;
 }
