@@ -735,6 +735,10 @@ export default function JusticeCasesPage() {
           <Link href="/justice/cases/archived" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
             Archived cases
           </Link>
+          {" · "}
+          <Link href="/justice/handling" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+            Handling workbench
+          </Link>
         </p>
         <p className="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400">
           Clears this browser&apos;s active case and returns to the Justice workspace, where chat intake is first and
