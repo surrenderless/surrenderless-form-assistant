@@ -218,6 +218,32 @@ function buildFollowUpAttentionItems(caseList: CaseRow[]): FollowUpAttentionItem
   return items;
 }
 
+type HandlingRequestedAttentionItem = {
+  caseRow: CaseRow;
+  next: JusticeApprovedNextAction;
+};
+
+function buildHandlingRequestedAttentionItems(caseList: CaseRow[]): HandlingRequestedAttentionItem[] {
+  const items: HandlingRequestedAttentionItem[] = [];
+  for (const c of caseList) {
+    const next = parseApprovedNextActionFromClientState(c.client_state);
+    if (!next?.handling_requested_at?.trim()) continue;
+    if (next.status === "completed") continue;
+    items.push({ caseRow: c, next });
+  }
+  items.sort((a, b) => {
+    const da = a.next.handling_requested_at?.trim() ?? "";
+    const db = b.next.handling_requested_at?.trim() ?? "";
+    if (!da && !db) return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = db.localeCompare(da);
+    if (cmp !== 0) return cmp;
+    return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+  });
+  return items;
+}
+
 function caseDisplayTitle(row: CaseRow, labelDraft: string): string {
   const custom = row.case_label?.trim() || labelDraft.trim();
   return custom || row.intake.company_name;
@@ -301,6 +327,11 @@ export default function JusticeCasesPage() {
     [filteredSortedCases]
   );
 
+  const handlingRequestedAttentionItems = useMemo(
+    () => buildHandlingRequestedAttentionItems(filteredSortedCases),
+    [filteredSortedCases]
+  );
+
   const attentionItems = useMemo(
     () =>
       filteredSortedCases.length > 0
@@ -310,7 +341,9 @@ export default function JusticeCasesPage() {
   );
 
   const hasNeedsAttentionContent =
-    followUpAttentionItems.length > 0 || attentionItems.length > 0;
+    handlingRequestedAttentionItems.length > 0 ||
+    followUpAttentionItems.length > 0 ||
+    attentionItems.length > 0;
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -660,6 +693,47 @@ export default function JusticeCasesPage() {
                 )
               ) : (
                 <ul className="mt-3 space-y-3">
+                  {handlingRequestedAttentionItems.map(({ caseRow, next }) => {
+                    const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
+                    const product = caseRow.intake.purchase_or_signup.trim();
+                    const statusLabel = approvedNextActionStatusLabel(next.status);
+                    const handlingAt = next.handling_requested_at?.trim();
+                    return (
+                      <li
+                        key={`handling-requested-${caseRow.id}`}
+                        className={`${cardCls} border-emerald-200/80 ring-emerald-950/[0.06] dark:border-emerald-900/40 dark:ring-emerald-500/10`}
+                      >
+                        <p className="font-medium text-neutral-900 dark:text-neutral-100">
+                          Surrenderless handling requested
+                        </p>
+                        <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">{title}</p>
+                        {product ? (
+                          <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
+                        ) : null}
+                        {statusLabel ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Status: {statusLabel}
+                          </p>
+                        ) : null}
+                        {handlingAt ? (
+                          <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                            Recorded {formatUpdatedAt(handlingAt)}
+                          </p>
+                        ) : null}
+                        <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                          In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
+                          contacted anyone.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => openCase(caseRow)}
+                          className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                        >
+                          Open case
+                        </button>
+                      </li>
+                    );
+                  })}
                   {followUpAttentionItems.map(({ caseRow, next }) => {
                     const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
                     const product = caseRow.intake.purchase_or_signup.trim();
