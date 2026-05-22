@@ -14,7 +14,10 @@ import {
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
-import { ApprovedNextActionHandlingRequestedReadOnly } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import {
+  ApprovedNextActionHandlingQueueStatusReadOnly,
+  ApprovedNextActionHandlingRequestedReadOnly,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
@@ -694,6 +697,11 @@ export default function JusticePacketPage() {
                 requestedAt={approvedNextAction.handling_requested_at.trim()}
                 requestNote={approvedNextAction.handling_request_note}
                 acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+              />
+              <ApprovedNextActionHandlingQueueStatusReadOnly
+                handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
+                handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
               />
               <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                 <Link
