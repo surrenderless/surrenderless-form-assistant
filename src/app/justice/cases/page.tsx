@@ -18,6 +18,7 @@ import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
   APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
+  ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHandlingAcknowledgedLine,
   formatHandlingRecordedInline,
   formatHandlingRecordedLine,
@@ -67,12 +68,19 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
         </p>
       ) : null}
       {handlingAt ? (
-        <p>
-          <span className="font-medium text-emerald-800 dark:text-emerald-200">
-            {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
-          </span>{" "}
-          — {formatHandlingRecordedInline(handlingAt)}
-        </p>
+        <>
+          <p>
+            <span className="font-medium text-emerald-800 dark:text-emerald-200">
+              {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
+            </span>{" "}
+            — {formatHandlingRecordedInline(handlingAt)}
+          </p>
+          <ApprovedNextActionHandlingRequestNoteReadOnly
+            note={next?.handling_request_note}
+            tone="neutral"
+            className="mt-1"
+          />
+        </>
       ) : null}
       {next?.handling_acknowledged_at?.trim() ? (
         <p className="text-neutral-700 dark:text-neutral-300">
@@ -782,6 +790,10 @@ export default function JusticeCasesPage() {
                             {formatHandlingRecordedLine(handlingAt)}
                           </p>
                         ) : null}
+                        <ApprovedNextActionHandlingRequestNoteReadOnly
+                          note={next.handling_request_note}
+                          tone="neutral"
+                        />
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                           {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                         </p>
