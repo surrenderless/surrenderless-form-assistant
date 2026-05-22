@@ -101,17 +101,42 @@ async function fetchAllActiveCases(signal: AbortSignal): Promise<CaseRow[]> {
   return all;
 }
 
+function isInternalJusticeHref(href: string): boolean {
+  const t = href.trim();
+  return t.startsWith("/justice/") && !t.startsWith("//");
+}
+
+/** Internal approved-step route for workbench (not plan-only duplicate). */
+function resolveWorkbenchApprovedStepHref(next: JusticeApprovedNextAction): string | undefined {
+  const href = next.href?.trim();
+  if (!href || !isInternalJusticeHref(href)) return undefined;
+  if (href === "/justice/plan") return undefined;
+  return href;
+}
+
+const navButtonPrimaryCls =
+  "w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto";
+
+const navButtonSecondaryCls =
+  "w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto";
+
 function HandlingWorkbenchCaseCard({
   item,
   showMarkAcknowledged,
   acknowledging,
-  onOpenCase,
+  onOpenActionPlan,
+  onOpenPacket,
+  onOpenChat,
+  onOpenApprovedStep,
   onAcknowledge,
 }: {
   item: HandlingWorkbenchItem;
   showMarkAcknowledged: boolean;
   acknowledging: boolean;
-  onOpenCase: () => void;
+  onOpenActionPlan: () => void;
+  onOpenPacket: () => void;
+  onOpenChat: () => void;
+  onOpenApprovedStep?: () => void;
   onAcknowledge?: () => void;
 }) {
   const { caseRow, next } = item;
@@ -120,6 +145,7 @@ function HandlingWorkbenchCaseCard({
   const statusLabel = approvedNextActionStatusLabel(next.status);
   const actionLabel = next.label?.trim();
   const handlingAt = next.handling_requested_at?.trim();
+  const showApprovedStep = Boolean(onOpenApprovedStep);
 
   return (
     <li
@@ -164,26 +190,36 @@ function HandlingWorkbenchCaseCard({
         {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <button
-          type="button"
-          onClick={onOpenCase}
-          className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
-        >
-          Open case
+        <button type="button" onClick={onOpenActionPlan} className={navButtonPrimaryCls}>
+          Open action plan
         </button>
+        <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
+          Open case packet
+        </button>
+        <button type="button" onClick={onOpenChat} className={navButtonSecondaryCls}>
+          Update in chat
+        </button>
+        {showApprovedStep ? (
+          <button type="button" onClick={onOpenApprovedStep} className={navButtonSecondaryCls}>
+            Open approved step
+          </button>
+        ) : null}
         {showMarkAcknowledged ? (
           <button
             type="button"
             disabled={acknowledging}
             onClick={() => onAcknowledge?.()}
-            className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
+            className={`${navButtonSecondaryCls} disabled:opacity-60`}
           >
             {acknowledging ? "Saving…" : "Mark acknowledged"}
           </button>
         ) : null}
       </div>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Opens this case in your browser session first.
+      </p>
       {showMarkAcknowledged ? (
-        <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
           {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
         </p>
       ) : null}
@@ -242,9 +278,27 @@ export default function JusticeHandlingWorkbenchPage() {
     if (hydrated) writeSessionApprovedNextAction(row.id, hydrated);
   }
 
-  function openCase(row: CaseRow) {
+  function navigateWithCase(row: CaseRow, path: string) {
     activateCaseInSession(row);
-    router.push("/justice/plan");
+    router.push(path);
+  }
+
+  function openActionPlan(row: CaseRow) {
+    navigateWithCase(row, "/justice/plan");
+  }
+
+  function openPacket(row: CaseRow) {
+    navigateWithCase(row, "/justice/packet");
+  }
+
+  function openChat(row: CaseRow) {
+    navigateWithCase(row, "/justice/chat-ai");
+  }
+
+  function openApprovedStep(row: CaseRow, next: JusticeApprovedNextAction) {
+    const href = resolveWorkbenchApprovedStepHref(next);
+    if (!href) return;
+    navigateWithCase(row, href);
   }
 
   function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
@@ -349,16 +403,28 @@ export default function JusticeHandlingWorkbenchPage() {
                 </p>
               ) : (
                 <ul className="mt-3 space-y-3">
-                  {awaitingItems.map((item) => (
-                    <HandlingWorkbenchCaseCard
-                      key={item.caseRow.id}
-                      item={item}
-                      showMarkAcknowledged
-                      acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
-                      onOpenCase={() => openCase(item.caseRow)}
-                      onAcknowledge={() => void acknowledgeHandlingRequest(item.caseRow, item.next)}
-                    />
-                  ))}
+                  {awaitingItems.map((item) => {
+                    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
+                    return (
+                      <HandlingWorkbenchCaseCard
+                        key={item.caseRow.id}
+                        item={item}
+                        showMarkAcknowledged
+                        acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
+                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenPacket={() => openPacket(item.caseRow)}
+                        onOpenChat={() => openChat(item.caseRow)}
+                        onOpenApprovedStep={
+                          approvedStepHref
+                            ? () => openApprovedStep(item.caseRow, item.next)
+                            : undefined
+                        }
+                        onAcknowledge={() =>
+                          void acknowledgeHandlingRequest(item.caseRow, item.next)
+                        }
+                      />
+                    );
+                  })}
                 </ul>
               )}
             </section>
@@ -381,15 +447,25 @@ export default function JusticeHandlingWorkbenchPage() {
                 </p>
               ) : (
                 <ul className="mt-3 space-y-3">
-                  {acknowledgedItems.map((item) => (
-                    <HandlingWorkbenchCaseCard
-                      key={item.caseRow.id}
-                      item={item}
-                      showMarkAcknowledged={false}
-                      acknowledging={false}
-                      onOpenCase={() => openCase(item.caseRow)}
-                    />
-                  ))}
+                  {acknowledgedItems.map((item) => {
+                    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
+                    return (
+                      <HandlingWorkbenchCaseCard
+                        key={item.caseRow.id}
+                        item={item}
+                        showMarkAcknowledged={false}
+                        acknowledging={false}
+                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenPacket={() => openPacket(item.caseRow)}
+                        onOpenChat={() => openChat(item.caseRow)}
+                        onOpenApprovedStep={
+                          approvedStepHref
+                            ? () => openApprovedStep(item.caseRow, item.next)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
                 </ul>
               )}
             </section>
