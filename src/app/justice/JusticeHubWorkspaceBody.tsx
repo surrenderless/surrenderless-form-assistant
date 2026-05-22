@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionState";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeIntake, ProblemCategory } from "@/lib/justice/types";
@@ -22,6 +23,19 @@ const cardCls =
 const activeCardCls =
   "block rounded-2xl border border-blue-200/90 bg-white p-5 shadow-md shadow-neutral-900/5 ring-1 ring-blue-950/[0.06] transition hover:border-blue-300 hover:shadow-lg dark:border-blue-900/50 dark:bg-neutral-900 dark:ring-blue-500/10 dark:hover:border-blue-800";
 
+function formatHandlingRequestedAt(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
   return entries.some(
@@ -29,19 +43,29 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   );
 }
 
+type CurrentCaseSnapshot = {
+  intake: JusticeIntake;
+  reviewed: boolean;
+  handlingRequestedAt: string | null;
+};
+
 /** Client-only snapshot of active case card state from session/timeline helpers. */
-function readSnapshotFromLocalSession(): { intake: JusticeIntake; reviewed: boolean } | null {
+function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
   const intake = readValidLocalJusticeIntake();
   if (!intake) return null;
-  const caseId = sessionStorage.getItem(STORAGE_CASE_ID) ?? "";
-  return { intake, reviewed: submissionDraftReviewedInTimeline(caseId) };
+  const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+  const handlingAt = caseId
+    ? readSessionApprovedNextAction(caseId)?.handling_requested_at?.trim()
+    : undefined;
+  return {
+    intake,
+    reviewed: submissionDraftReviewedInTimeline(caseId),
+    handlingRequestedAt: handlingAt || null,
+  };
 }
 
 export default function JusticeHubWorkspaceBody() {
-  const [snapshot, setSnapshot] = useState<{
-    intake: JusticeIntake;
-    reviewed: boolean;
-  } | null>(null);
+  const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
 
   useEffect(() => {
     function refreshFromLocalSession() {
@@ -92,6 +116,17 @@ export default function JusticeHubWorkspaceBody() {
             <span className="mt-2 block text-xs font-medium text-neutral-700 dark:text-neutral-300">
               {snapshot.reviewed ? "Submission draft reviewed" : "Submission draft not reviewed"}
             </span>
+            {snapshot.handlingRequestedAt ? (
+              <>
+                <span className="mt-2 block text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                  Surrenderless handling requested — recorded {formatHandlingRequestedAt(snapshot.handlingRequestedAt)}
+                </span>
+                <span className="mt-1 block text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                  In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
+                  anyone.
+                </span>
+              </>
+            ) : null}
             <span className="mt-3 inline-flex text-sm font-semibold text-blue-600 dark:text-blue-400">
               {snapshot.reviewed ? "Continue to action plan" : "Continue to submission preview"}
             </span>
