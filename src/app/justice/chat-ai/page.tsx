@@ -11,6 +11,7 @@ import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNext
 import {
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
+  mergeClientStateWithApprovedNextAction,
   mergeClientStateWithClearedFollowUp,
   readSessionApprovedNextAction,
   resolveApprovedNextAction,
@@ -146,9 +147,54 @@ export default function JusticeChatAiPage() {
   const [contactProofError, setContactProofError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
+  const [requestingHandling, setRequestingHandling] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
+
+  async function handleRequestSurrenderlessHandling() {
+    if (!approvedNextAction || approvedNextAction.status === "completed") return;
+    if (approvedNextAction.handling_requested_at?.trim()) return;
+
+    const next: JusticeApprovedNextAction = {
+      ...approvedNextAction,
+      handling_requested_at: new Date().toISOString(),
+    };
+
+    setApprovedNextAction(next);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, next);
+    }
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    setRequestingHandling(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before handling request failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, next);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH handling request failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: handling request error", e);
+    } finally {
+      setRequestingHandling(false);
+    }
+  }
 
   async function clearApprovedNextActionFollowUp() {
     if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return;
@@ -502,6 +548,28 @@ export default function JusticeChatAiPage() {
                       Recorded {formatTimelineTs(approvedNextAction.handling_requested_at.trim())}.
                     </p>
                     <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                      In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
+                      contacted anyone yet.
+                    </p>
+                  </div>
+                ) : approvedNextAction.status !== "completed" ? (
+                  <div className="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40">
+                    <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+                      Surrenderless handling (tracking)
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-emerald-900/90 dark:text-emerald-100/90">
+                      Mark that you want Surrenderless to handle this approved step inside the app when that
+                      workflow exists. This does not start any external process today.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={requestingHandling}
+                      onClick={() => void handleRequestSurrenderlessHandling()}
+                      className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                    >
+                      {requestingHandling ? "Saving…" : "Request Surrenderless handling"}
+                    </button>
+                    <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
                       In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
                       contacted anyone yet.
                     </p>
