@@ -137,6 +137,16 @@ export default function JusticeHubWorkspaceBody() {
               {snapshot.reviewed ? "Continue to action plan" : "Continue to submission preview"}
             </span>
           </Link>
+          {snapshot.handlingRequestedAt ? (
+            <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+              <Link
+                href="/justice/handling"
+                className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+              >
+                View in handling workbench
+              </Link>
+            </p>
+          ) : null}
         </div>
       ) : null}
 
