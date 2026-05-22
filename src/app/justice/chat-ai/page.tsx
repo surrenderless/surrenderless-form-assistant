@@ -13,6 +13,8 @@ import {
   ApprovedNextActionHandlingRequestBlock,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
+  applyHandlingRequestNoteToApprovedNextAction,
+  omitClearedHandlingRequestNoteFromApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   mergeClientStateWithApprovedNextAction,
@@ -138,6 +140,7 @@ export default function JusticeChatAiPage() {
   const [submitting, setSubmitting] = useState(false);
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
   const [requestingHandling, setRequestingHandling] = useState(false);
+  const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
@@ -184,6 +187,49 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: handling request error", e);
     } finally {
       setRequestingHandling(false);
+    }
+  }
+
+  async function handleUpdateHandlingRequestNote(note?: string) {
+    if (!approvedNextAction?.handling_requested_at?.trim()) return;
+
+    const withNoteUpdate = applyHandlingRequestNoteToApprovedNextAction(
+      approvedNextAction,
+      note ?? ""
+    );
+    const next = omitClearedHandlingRequestNoteFromApprovedNextAction(withNoteUpdate);
+    setApprovedNextAction(next);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, next);
+    }
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    setUpdatingHandlingNote(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before handling note update failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withNoteUpdate);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH handling note update failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: handling note update error", e);
+    } finally {
+      setUpdatingHandlingNote(false);
     }
   }
 
@@ -535,7 +581,10 @@ export default function JusticeChatAiPage() {
                   <ApprovedNextActionHandlingRequestBlock
                     action={approvedNextAction}
                     onRequest={handleRequestSurrenderlessHandling}
+                    onUpdateNote={handleUpdateHandlingRequestNote}
+                    allowEditNote
                     requesting={requestingHandling}
+                    updatingNote={updatingHandlingNote}
                     wrapperClassName="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40"
                     recordedClassName="mt-0.5"
                   />
