@@ -104,6 +104,26 @@ function hasApprovedNextActionTrackingSummary(action: JusticeApprovedNextAction)
   return Boolean(action.outcome_note?.trim()) || action.follow_up_needed === true;
 }
 
+function ApprovedNextActionHandlingRequestedBlock({ requestedAt }: { requestedAt: string }) {
+  return (
+    <div
+      className="mt-3 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+      aria-label="Surrenderless handling request tracking"
+    >
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+        Surrenderless handling requested
+      </p>
+      <p className="mt-0.5 text-xs text-emerald-900/90 dark:text-emerald-100/90">
+        Recorded {formatTimelineTs(requestedAt)}.
+      </p>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+        In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
+        anyone yet.
+      </p>
+    </div>
+  );
+}
+
 function ApprovedNextActionTrackingSummary({ action }: { action: JusticeApprovedNextAction }) {
   if (!hasApprovedNextActionTrackingSummary(action)) return null;
   return (
@@ -681,6 +701,11 @@ export default function JusticePacketPage() {
               Back to action plan
             </Link>
           </div>
+          {approvedNextAction?.handling_requested_at?.trim() ? (
+            <ApprovedNextActionHandlingRequestedBlock
+              requestedAt={approvedNextAction.handling_requested_at.trim()}
+            />
+          ) : null}
           {packetApproved ? (
               <div
                 className="mt-3 rounded-xl border border-emerald-300/80 bg-emerald-50/90 px-4 py-3 text-sm ring-1 ring-emerald-600/15 dark:border-emerald-700/80 dark:bg-emerald-950/40 dark:ring-emerald-400/15"
