@@ -1354,23 +1354,33 @@ export default function JusticePlanPage() {
                   </>
                 ) : null}
                 {approvedNextAction?.handling_requested_at?.trim() ? (
-                  approvedNextActionCompleted ? (
-                    <ApprovedNextActionHandlingRequestedReadOnly
-                      requestedAt={approvedNextAction.handling_requested_at.trim()}
-                      requestNote={approvedNextAction.handling_request_note}
-                      acknowledgedAt={approvedNextAction.handling_acknowledged_at}
-                    />
-                  ) : (
-                    <ApprovedNextActionHandlingRequestBlock
-                      action={approvedNextAction}
-                      acknowledgedAt={approvedNextAction.handling_acknowledged_at}
-                      onRequest={handleRequestSurrenderlessHandling}
-                      onUpdateNote={handleUpdateHandlingRequestNote}
-                      allowEditNote
-                      requesting={requestingHandling}
-                      updatingNote={updatingHandlingNote}
-                    />
-                  )
+                  <>
+                    {approvedNextActionCompleted ? (
+                      <ApprovedNextActionHandlingRequestedReadOnly
+                        requestedAt={approvedNextAction.handling_requested_at.trim()}
+                        requestNote={approvedNextAction.handling_request_note}
+                        acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                      />
+                    ) : (
+                      <ApprovedNextActionHandlingRequestBlock
+                        action={approvedNextAction}
+                        acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                        onRequest={handleRequestSurrenderlessHandling}
+                        onUpdateNote={handleUpdateHandlingRequestNote}
+                        allowEditNote
+                        requesting={requestingHandling}
+                        updatingNote={updatingHandlingNote}
+                      />
+                    )}
+                    <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                      <Link
+                        href="/justice/handling"
+                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        View in handling workbench
+                      </Link>
+                    </p>
+                  </>
                 ) : null}
                 {approvedNextActionCompleted && approvedNextAction ? (
                   <>
@@ -1525,23 +1535,33 @@ export default function JusticePlanPage() {
               </>
             ) : null}
             {approvedNextAction?.handling_requested_at?.trim() ? (
-              approvedNextActionCompleted ? (
-                <ApprovedNextActionHandlingRequestedReadOnly
-                  requestedAt={approvedNextAction.handling_requested_at.trim()}
-                  requestNote={approvedNextAction.handling_request_note}
-                  acknowledgedAt={approvedNextAction.handling_acknowledged_at}
-                />
-              ) : (
-                <ApprovedNextActionHandlingRequestBlock
-                  action={approvedNextAction}
-                  acknowledgedAt={approvedNextAction.handling_acknowledged_at}
-                  onRequest={handleRequestSurrenderlessHandling}
-                  onUpdateNote={handleUpdateHandlingRequestNote}
-                  allowEditNote
-                  requesting={requestingHandling}
-                  updatingNote={updatingHandlingNote}
-                />
-              )
+              <>
+                {approvedNextActionCompleted ? (
+                  <ApprovedNextActionHandlingRequestedReadOnly
+                    requestedAt={approvedNextAction.handling_requested_at.trim()}
+                    requestNote={approvedNextAction.handling_request_note}
+                    acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                  />
+                ) : (
+                  <ApprovedNextActionHandlingRequestBlock
+                    action={approvedNextAction}
+                    acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                    onRequest={handleRequestSurrenderlessHandling}
+                    onUpdateNote={handleUpdateHandlingRequestNote}
+                    allowEditNote
+                    requesting={requestingHandling}
+                    updatingNote={updatingHandlingNote}
+                  />
+                )}
+                <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                  <Link
+                    href="/justice/handling"
+                    className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  >
+                    View in handling workbench
+                  </Link>
+                </p>
+              </>
             ) : null}
             {approvedNextActionCompleted && approvedNextAction ? (
               <>

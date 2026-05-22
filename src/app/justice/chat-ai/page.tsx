@@ -594,6 +594,16 @@ export default function JusticeChatAiPage() {
                     recordedClassName="mt-0.5"
                   />
                 ) : null}
+                {approvedNextAction.handling_requested_at?.trim() ? (
+                  <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                    <Link
+                      href="/justice/handling"
+                      className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      View in handling workbench
+                    </Link>
+                  </p>
+                ) : null}
                 {approvedNextAction.outcome_note?.trim() ? (
                   <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
                     {approvedNextAction.outcome_note.trim()}
