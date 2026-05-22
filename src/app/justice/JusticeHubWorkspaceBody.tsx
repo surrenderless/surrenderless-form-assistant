@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionState";
+import {
+  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
+  formatHubHandlingRequestedLine,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeIntake, ProblemCategory } from "@/lib/justice/types";
@@ -22,19 +26,6 @@ const cardCls =
 
 const activeCardCls =
   "block rounded-2xl border border-blue-200/90 bg-white p-5 shadow-md shadow-neutral-900/5 ring-1 ring-blue-950/[0.06] transition hover:border-blue-300 hover:shadow-lg dark:border-blue-900/50 dark:bg-neutral-900 dark:ring-blue-500/10 dark:hover:border-blue-800";
-
-function formatHandlingRequestedAt(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
@@ -119,11 +110,10 @@ export default function JusticeHubWorkspaceBody() {
             {snapshot.handlingRequestedAt ? (
               <>
                 <span className="mt-2 block text-xs font-medium text-emerald-800 dark:text-emerald-200">
-                  Surrenderless handling requested — recorded {formatHandlingRequestedAt(snapshot.handlingRequestedAt)}
+                  {formatHubHandlingRequestedLine(snapshot.handlingRequestedAt)}
                 </span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                  In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
-                  anyone.
+                  {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </span>
               </>
             ) : null}

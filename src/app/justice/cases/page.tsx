@@ -14,6 +14,15 @@ import type {
 } from "@/lib/justice/types";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
+  APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
+  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
+  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
+  APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
+  formatHandlingAcknowledgedLine,
+  formatHandlingRecordedInline,
+  formatHandlingRecordedLine,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
+import {
   acknowledgeHandlingRequestInApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
@@ -60,14 +69,14 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
       {handlingAt ? (
         <p>
           <span className="font-medium text-emerald-800 dark:text-emerald-200">
-            Surrenderless handling requested
+            {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
           </span>{" "}
-          — recorded {formatUpdatedAt(handlingAt)}.
+          — {formatHandlingRecordedInline(handlingAt)}
         </p>
       ) : null}
       {next?.handling_acknowledged_at?.trim() ? (
         <p className="text-neutral-700 dark:text-neutral-300">
-          Acknowledged {formatUpdatedAt(next.handling_acknowledged_at.trim())} — internal triage only.
+          {formatHandlingAcknowledgedLine(next.handling_acknowledged_at.trim())}
         </p>
       ) : null}
       {next?.follow_up_needed === true ? (
@@ -75,8 +84,7 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
       ) : null}
       <ApprovedNextActionFollowUpTimingLine followUpAt={next?.follow_up_at} className="mt-0.5" />
       <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
-        In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
-        anyone yet.
+        {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET}
       </p>
     </div>
   );
@@ -758,7 +766,7 @@ export default function JusticeCasesPage() {
                         className={`${cardCls} border-emerald-200/80 ring-emerald-950/[0.06] dark:border-emerald-900/40 dark:ring-emerald-500/10`}
                       >
                         <p className="font-medium text-neutral-900 dark:text-neutral-100">
-                          Surrenderless handling requested
+                          {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
                         </p>
                         <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">{title}</p>
                         {product ? (
@@ -771,12 +779,11 @@ export default function JusticeCasesPage() {
                         ) : null}
                         {handlingAt ? (
                           <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
-                            Recorded {formatUpdatedAt(handlingAt)}
+                            {formatHandlingRecordedLine(handlingAt)}
                           </p>
                         ) : null}
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                          In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or
-                          contacted anyone.
+                          {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                         </p>
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                           <button
@@ -798,8 +805,7 @@ export default function JusticeCasesPage() {
                           </button>
                         </div>
                         <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                          Acknowledged means internal tracking triage only. Surrenderless has not filed, submitted,
-                          sent, queued externally, or contacted anyone.
+                          {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
                         </p>
                       </li>
                     );

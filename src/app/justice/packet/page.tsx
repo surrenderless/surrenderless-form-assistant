@@ -14,6 +14,7 @@ import {
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
+import { ApprovedNextActionHandlingRequestedReadOnly } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   parseJusticeCaseClientState,
   resolveApprovedNextAction,
@@ -102,26 +103,6 @@ function buildApprovedNextActionTarget(
 
 function hasApprovedNextActionTrackingSummary(action: JusticeApprovedNextAction): boolean {
   return Boolean(action.outcome_note?.trim()) || action.follow_up_needed === true;
-}
-
-function ApprovedNextActionHandlingRequestedBlock({ requestedAt }: { requestedAt: string }) {
-  return (
-    <div
-      className="mt-3 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
-      aria-label="Surrenderless handling request tracking"
-    >
-      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
-        Surrenderless handling requested
-      </p>
-      <p className="mt-0.5 text-xs text-emerald-900/90 dark:text-emerald-100/90">
-        Recorded {formatTimelineTs(requestedAt)}.
-      </p>
-      <p className="mt-1.5 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-        In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
-        anyone yet.
-      </p>
-    </div>
-  );
 }
 
 function ApprovedNextActionTrackingSummary({ action }: { action: JusticeApprovedNextAction }) {
@@ -702,7 +683,7 @@ export default function JusticePacketPage() {
             </Link>
           </div>
           {approvedNextAction?.handling_requested_at?.trim() ? (
-            <ApprovedNextActionHandlingRequestedBlock
+            <ApprovedNextActionHandlingRequestedReadOnly
               requestedAt={approvedNextAction.handling_requested_at.trim()}
             />
           ) : null}
