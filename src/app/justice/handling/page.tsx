@@ -122,6 +122,7 @@ const navButtonSecondaryCls =
 
 function HandlingWorkbenchCaseCard({
   item,
+  isActiveSessionCase,
   showMarkAcknowledged,
   acknowledging,
   onOpenActionPlan,
@@ -131,6 +132,7 @@ function HandlingWorkbenchCaseCard({
   onAcknowledge,
 }: {
   item: HandlingWorkbenchItem;
+  isActiveSessionCase: boolean;
   showMarkAcknowledged: boolean;
   acknowledging: boolean;
   onOpenActionPlan: () => void;
@@ -152,6 +154,11 @@ function HandlingWorkbenchCaseCard({
       className={`${cardCls} border-emerald-200/80 ring-emerald-950/[0.06] dark:border-emerald-900/40 dark:ring-emerald-500/10`}
     >
       <p className="font-medium text-neutral-900 dark:text-neutral-100">{title}</p>
+      {isActiveSessionCase ? (
+        <p className="mt-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+          Current case in this browser
+        </p>
+      ) : null}
       {product ? (
         <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
       ) : null}
@@ -233,6 +240,26 @@ export default function JusticeHandlingWorkbenchPage() {
   const [cases, setCases] = useState<CaseRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [acknowledgingHandlingCaseId, setAcknowledgingHandlingCaseId] = useState<string | null>(null);
+  const [sessionCaseId, setSessionCaseId] = useState<string | null>(null);
+
+  function refreshSessionCaseIdFromStorage() {
+    if (typeof window === "undefined") return;
+    const id = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+    setSessionCaseId(id || null);
+  }
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    refreshSessionCaseIdFromStorage();
+    const onFocus = () => refreshSessionCaseIdFromStorage();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    refreshSessionCaseIdFromStorage();
+  }, [cases]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -271,6 +298,7 @@ export default function JusticeHandlingWorkbenchPage() {
 
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
+    setSessionCaseId(row.id);
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
     const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
     replaceTimelineForCase(row.id, tl);
@@ -409,6 +437,9 @@ export default function JusticeHandlingWorkbenchPage() {
                       <HandlingWorkbenchCaseCard
                         key={item.caseRow.id}
                         item={item}
+                        isActiveSessionCase={
+                          Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
+                        }
                         showMarkAcknowledged
                         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
                         onOpenActionPlan={() => openActionPlan(item.caseRow)}
@@ -453,6 +484,9 @@ export default function JusticeHandlingWorkbenchPage() {
                       <HandlingWorkbenchCaseCard
                         key={item.caseRow.id}
                         item={item}
+                        isActiveSessionCase={
+                          Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
+                        }
                         showMarkAcknowledged={false}
                         acknowledging={false}
                         onOpenActionPlan={() => openActionPlan(item.caseRow)}
