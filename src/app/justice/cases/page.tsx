@@ -801,6 +801,10 @@ export default function JusticeCasesPage() {
                           note={next.handling_request_note}
                           tone="neutral"
                         />
+                        <ApprovedNextActionHandlingQueueStatusReadOnly
+                          handlingRequestedAt={handlingAt}
+                          handlingAcknowledgedAt={next.handling_acknowledged_at}
+                        />
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                           {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                         </p>
