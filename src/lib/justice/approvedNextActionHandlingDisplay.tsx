@@ -83,7 +83,7 @@ export function formatHandlingRecordedInline(requestedAt: string): string {
 }
 
 export function formatHandlingAcknowledgedLine(acknowledgedAt: string): string {
-  return `Acknowledged ${formatApprovedNextActionHandlingTimestamp(acknowledgedAt)} — internal triage only.`;
+  return `Acknowledged ${formatApprovedNextActionHandlingTimestamp(acknowledgedAt)} — internal tracking triage only.`;
 }
 
 const HANDLING_ACKNOWLEDGED_EMERALD_CLS =
