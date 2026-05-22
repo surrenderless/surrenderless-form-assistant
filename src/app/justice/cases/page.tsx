@@ -45,19 +45,31 @@ type CaseRow = {
 function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
   const next = parseApprovedNextActionFromClientState(clientState);
   const statusLabel = approvedNextActionStatusLabel(next?.status);
-  if (!statusLabel) return null;
+  const handlingAt = next?.handling_requested_at?.trim();
+  if (!statusLabel && !handlingAt) return null;
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
-      <p>
-        <span className="font-medium text-neutral-700 dark:text-neutral-300">Approved next action:</span>{" "}
-        {statusLabel}
-      </p>
+      {statusLabel ? (
+        <p>
+          <span className="font-medium text-neutral-700 dark:text-neutral-300">Approved next action:</span>{" "}
+          {statusLabel}
+        </p>
+      ) : null}
+      {handlingAt ? (
+        <p>
+          <span className="font-medium text-emerald-800 dark:text-emerald-200">
+            Surrenderless handling requested
+          </span>{" "}
+          — recorded {formatUpdatedAt(handlingAt)}.
+        </p>
+      ) : null}
       {next?.follow_up_needed === true ? (
         <p className="font-medium text-amber-800 dark:text-amber-200">Follow-up needed</p>
       ) : null}
       <ApprovedNextActionFollowUpTimingLine followUpAt={next?.follow_up_at} className="mt-0.5" />
       <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
-        In-app tracking only — not filed or submitted automatically.
+        In-app tracking only — Surrenderless has not filed, submitted, sent, queued externally, or contacted
+        anyone yet.
       </p>
     </div>
   );
