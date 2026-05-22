@@ -31,12 +31,16 @@ import {
 } from "@/lib/justice/types";
 import {
   applyHandlingRequestNoteToApprovedNextAction,
+  hydrateApprovedNextActionForDisplay,
+  mergeApprovedNextActionTrackingFields,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
   mergeClientStateWithApprovedNextAction,
-  resolveApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
-import { ApprovedNextActionHandlingRequestBlock } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import {
+  ApprovedNextActionHandlingRequestBlock,
+  ApprovedNextActionHandlingRequestedReadOnly,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
 
 /** Page-local; mirrors packet approval session keys. */
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
@@ -616,9 +620,9 @@ export default function JusticePlanPage() {
       setIntake(parsed);
       setPreparedPacketApproved(resolvePreparedPacketApproved(cid, undefined));
       {
-        const resolved = resolveApprovedNextAction(cid, undefined);
-        if (resolved) writeSessionApprovedNextAction(cid, resolved);
-        setApprovedNextAction(resolved);
+        const hydrated = hydrateApprovedNextActionForDisplay(cid);
+        if (hydrated) writeSessionApprovedNextAction(cid, hydrated);
+        setApprovedNextAction(hydrated);
       }
       return;
     }
@@ -704,9 +708,9 @@ export default function JusticePlanPage() {
           setTimeline(readTimeline(cid));
           setPreparedPacketApproved(resolvePreparedPacketApproved(cid, data.client_state));
           {
-            const resolved = resolveApprovedNextAction(cid, data.client_state);
-            if (resolved) writeSessionApprovedNextAction(cid, resolved);
-            setApprovedNextAction(resolved);
+            const hydrated = hydrateApprovedNextActionForDisplay(cid, data.client_state);
+            if (hydrated) writeSessionApprovedNextAction(cid, hydrated);
+            setApprovedNextAction(hydrated);
           }
         } catch (e) {
           if (ac.signal.aborted) return;
@@ -772,9 +776,9 @@ export default function JusticePlanPage() {
           resolvePreparedPacketApproved(latest.id, latest.client_state)
         );
         {
-          const resolved = resolveApprovedNextAction(latest.id, latest.client_state);
-          if (resolved) writeSessionApprovedNextAction(latest.id, resolved);
-          setApprovedNextAction(resolved);
+          const hydrated = hydrateApprovedNextActionForDisplay(latest.id, latest.client_state);
+          if (hydrated) writeSessionApprovedNextAction(latest.id, hydrated);
+          setApprovedNextAction(hydrated);
         }
       } catch (e) {
         if (ac.signal.aborted) return;
@@ -1083,12 +1087,13 @@ export default function JusticePlanPage() {
     next: JusticeApprovedNextAction,
     mergeApprovedNext?: JusticeApprovedNextAction
   ) {
-    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(next);
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
     if (caseId) writeSessionApprovedNextAction(caseId, local);
     setApprovedNextAction(local);
     setPreparedPacketApproved(true);
     if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
-      await persistApprovedNextActionClientState(caseId, mergeApprovedNext ?? next);
+      await persistApprovedNextActionClientState(caseId, mergeApprovedNext ?? withTracking);
     }
   }
 
@@ -1348,15 +1353,24 @@ export default function JusticePlanPage() {
                     </p>
                   </>
                 ) : null}
-                {approvedNextAction && !approvedNextActionCompleted ? (
-                  <ApprovedNextActionHandlingRequestBlock
-                    action={approvedNextAction}
-                    onRequest={handleRequestSurrenderlessHandling}
-                    onUpdateNote={handleUpdateHandlingRequestNote}
-                    allowEditNote
-                    requesting={requestingHandling}
-                    updatingNote={updatingHandlingNote}
-                  />
+                {approvedNextAction?.handling_requested_at?.trim() ? (
+                  approvedNextActionCompleted ? (
+                    <ApprovedNextActionHandlingRequestedReadOnly
+                      requestedAt={approvedNextAction.handling_requested_at.trim()}
+                      requestNote={approvedNextAction.handling_request_note}
+                      acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                    />
+                  ) : (
+                    <ApprovedNextActionHandlingRequestBlock
+                      action={approvedNextAction}
+                      acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                      onRequest={handleRequestSurrenderlessHandling}
+                      onUpdateNote={handleUpdateHandlingRequestNote}
+                      allowEditNote
+                      requesting={requestingHandling}
+                      updatingNote={updatingHandlingNote}
+                    />
+                  )
                 ) : null}
                 {approvedNextActionCompleted && approvedNextAction ? (
                   <>
@@ -1510,15 +1524,24 @@ export default function JusticePlanPage() {
                 </p>
               </>
             ) : null}
-            {approvedNextAction && !approvedNextActionCompleted ? (
-              <ApprovedNextActionHandlingRequestBlock
-                action={approvedNextAction}
-                onRequest={handleRequestSurrenderlessHandling}
-                onUpdateNote={handleUpdateHandlingRequestNote}
-                allowEditNote
-                requesting={requestingHandling}
-                updatingNote={updatingHandlingNote}
-              />
+            {approvedNextAction?.handling_requested_at?.trim() ? (
+              approvedNextActionCompleted ? (
+                <ApprovedNextActionHandlingRequestedReadOnly
+                  requestedAt={approvedNextAction.handling_requested_at.trim()}
+                  requestNote={approvedNextAction.handling_request_note}
+                  acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                />
+              ) : (
+                <ApprovedNextActionHandlingRequestBlock
+                  action={approvedNextAction}
+                  acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                  onRequest={handleRequestSurrenderlessHandling}
+                  onUpdateNote={handleUpdateHandlingRequestNote}
+                  allowEditNote
+                  requesting={requestingHandling}
+                  updatingNote={updatingHandlingNote}
+                />
+              )
             ) : null}
             {approvedNextActionCompleted && approvedNextAction ? (
               <>

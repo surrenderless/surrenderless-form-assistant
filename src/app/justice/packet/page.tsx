@@ -686,6 +686,7 @@ export default function JusticePacketPage() {
             <ApprovedNextActionHandlingRequestedReadOnly
               requestedAt={approvedNextAction.handling_requested_at.trim()}
               requestNote={approvedNextAction.handling_request_note}
+              acknowledgedAt={approvedNextAction.handling_acknowledged_at}
             />
           ) : null}
           {packetApproved ? (
