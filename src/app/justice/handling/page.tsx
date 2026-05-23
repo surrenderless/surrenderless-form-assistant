@@ -282,18 +282,18 @@ export default function JusticeHandlingWorkbenchPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn]);
 
-  const { awaitingItems, acknowledgedItems } = useMemo(() => {
+  const { awaitingItems, acknowledgedItems, allHandlingItems } = useMemo(() => {
     const all = sortByHandlingRequestedAtDesc(buildHandlingWorkbenchItems(cases ?? []));
     const awaiting: HandlingWorkbenchItem[] = [];
     const acknowledged: HandlingWorkbenchItem[] = [];
     for (const item of all) {
       if (item.next.handling_acknowledged_at?.trim()) {
         acknowledged.push(item);
-      } else {
+      } else if (item.next.status !== "completed") {
         awaiting.push(item);
       }
     }
-    return { awaitingItems: awaiting, acknowledgedItems: acknowledged };
+    return { awaitingItems: awaiting, acknowledgedItems: acknowledged, allHandlingItems: all };
   }, [cases]);
 
   function activateCaseInSession(row: CaseRow) {
@@ -374,7 +374,7 @@ export default function JusticeHandlingWorkbenchPage() {
     setAcknowledgingHandlingCaseId(null);
   }
 
-  const hasAnyHandling = awaitingItems.length > 0 || acknowledgedItems.length > 0;
+  const hasAnyHandling = allHandlingItems.length > 0;
 
   return (
     <>
@@ -425,6 +425,11 @@ export default function JusticeHandlingWorkbenchPage() {
                   </span>
                 ) : null}
               </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                Same active-case rule as Saved cases Needs attention. If the approved action is already
+                marked handled, acknowledge the handling request from your action plan or chat intake —
+                not in this inbox.
+              </p>
               {awaitingItems.length === 0 ? (
                 <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
                   No cases awaiting internal triage.
