@@ -655,6 +655,14 @@ export default function JusticeChatAiPage() {
                       handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
                       className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
                     />
+                    {approvedNextAction.status === "completed" &&
+                    !approvedNextAction.handling_acknowledged_at?.trim() ? (
+                      <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                        This handling request is not listed in Awaiting or Saved cases Needs attention.
+                        Mark acknowledged below for internal triage only. Surrenderless has not filed,
+                        submitted, or queued anything externally.
+                      </p>
+                    ) : null}
                     <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                       <Link
                         href="/justice/handling"
