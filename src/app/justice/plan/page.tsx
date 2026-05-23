@@ -38,6 +38,7 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -1372,6 +1373,11 @@ export default function JusticePlanPage() {
                         updatingNote={updatingHandlingNote}
                       />
                     )}
+                    <ApprovedNextActionHandlingQueueStatusReadOnly
+                      handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
+                      handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                      className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                    />
                     <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                       <Link
                         href="/justice/handling"
@@ -1553,6 +1559,11 @@ export default function JusticePlanPage() {
                     updatingNote={updatingHandlingNote}
                   />
                 )}
+                <ApprovedNextActionHandlingQueueStatusReadOnly
+                  handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
+                  handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                  className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                />
                 <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                   <Link
                     href="/justice/handling"
