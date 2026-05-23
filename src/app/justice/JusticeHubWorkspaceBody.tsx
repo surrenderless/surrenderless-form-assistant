@@ -6,6 +6,7 @@ import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionS
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
+  ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -138,14 +139,21 @@ export default function JusticeHubWorkspaceBody() {
             </span>
           </Link>
           {snapshot.handlingRequestedAt ? (
-            <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-              <Link
-                href="/justice/handling"
-                className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-              >
-                View in handling workbench
-              </Link>
-            </p>
+            <>
+              <ApprovedNextActionHandlingQueueStatusReadOnly
+                handlingRequestedAt={snapshot.handlingRequestedAt}
+                handlingAcknowledgedAt={snapshot.handlingAcknowledgedAt ?? undefined}
+                className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+              />
+              <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                <Link
+                  href="/justice/handling"
+                  className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  View in handling workbench
+                </Link>
+              </p>
+            </>
           ) : null}
         </div>
       ) : null}
