@@ -92,6 +92,16 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
         acknowledgedAt={next?.handling_acknowledged_at}
         tone="neutral"
       />
+      {handlingAt ? (
+        <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+          <Link
+            href="/justice/handling"
+            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+          >
+            View in handling workbench
+          </Link>
+        </p>
+      ) : null}
       {next?.follow_up_needed === true ? (
         <p className="font-medium text-amber-800 dark:text-amber-200">Follow-up needed</p>
       ) : null}
