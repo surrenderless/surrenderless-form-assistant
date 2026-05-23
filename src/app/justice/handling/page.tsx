@@ -282,19 +282,28 @@ export default function JusticeHandlingWorkbenchPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn]);
 
-  const { awaitingItems, acknowledgedItems, allHandlingItems } = useMemo(() => {
-    const all = sortByHandlingRequestedAtDesc(buildHandlingWorkbenchItems(cases ?? []));
-    const awaiting: HandlingWorkbenchItem[] = [];
-    const acknowledged: HandlingWorkbenchItem[] = [];
-    for (const item of all) {
-      if (item.next.handling_acknowledged_at?.trim()) {
-        acknowledged.push(item);
-      } else if (item.next.status !== "completed") {
-        awaiting.push(item);
+  const { awaitingItems, acknowledgedItems, allHandlingItems, completedUnacknowledgedCount } =
+    useMemo(() => {
+      const all = sortByHandlingRequestedAtDesc(buildHandlingWorkbenchItems(cases ?? []));
+      const awaiting: HandlingWorkbenchItem[] = [];
+      const acknowledged: HandlingWorkbenchItem[] = [];
+      let completedUnacknowledgedCount = 0;
+      for (const item of all) {
+        if (item.next.handling_acknowledged_at?.trim()) {
+          acknowledged.push(item);
+        } else if (item.next.status !== "completed") {
+          awaiting.push(item);
+        } else {
+          completedUnacknowledgedCount += 1;
+        }
       }
-    }
-    return { awaitingItems: awaiting, acknowledgedItems: acknowledged, allHandlingItems: all };
-  }, [cases]);
+      return {
+        awaitingItems: awaiting,
+        acknowledgedItems: acknowledged,
+        allHandlingItems: all,
+        completedUnacknowledgedCount,
+      };
+    }, [cases]);
 
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
@@ -430,6 +439,13 @@ export default function JusticeHandlingWorkbenchPage() {
                 marked handled, acknowledge the handling request from your action plan or chat intake —
                 not in this inbox.
               </p>
+              {completedUnacknowledgedCount > 0 ? (
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                  {completedUnacknowledgedCount} handled approved action
+                  {completedUnacknowledgedCount === 1 ? "" : "s"} still have an open handling request —
+                  acknowledge from your action plan or chat intake.
+                </p>
+              ) : null}
               {awaitingItems.length === 0 ? (
                 <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
                   No cases awaiting internal triage.
