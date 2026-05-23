@@ -13,6 +13,7 @@ import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
+  ApprovedNextActionHandlingRequestedReadOnly,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -635,8 +636,28 @@ export default function JusticeChatAiPage() {
                     Status: {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
                 ) : null}
-                {approvedNextAction.handling_requested_at?.trim() ||
-                approvedNextAction.status !== "completed" ? (
+                {approvedNextAction.handling_requested_at?.trim() ? (
+                  approvedNextAction.status === "completed" ? (
+                    <ApprovedNextActionHandlingRequestedReadOnly
+                      requestedAt={approvedNextAction.handling_requested_at.trim()}
+                      requestNote={approvedNextAction.handling_request_note}
+                      acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                      wrapperClassName="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+                      recordedClassName="mt-0.5"
+                    />
+                  ) : (
+                    <ApprovedNextActionHandlingRequestBlock
+                      action={approvedNextAction}
+                      onRequest={handleRequestSurrenderlessHandling}
+                      onUpdateNote={handleUpdateHandlingRequestNote}
+                      allowEditNote
+                      requesting={requestingHandling}
+                      updatingNote={updatingHandlingNote}
+                      wrapperClassName="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+                      recordedClassName="mt-0.5"
+                    />
+                  )
+                ) : approvedNextAction.status !== "completed" ? (
                   <ApprovedNextActionHandlingRequestBlock
                     action={approvedNextAction}
                     onRequest={handleRequestSurrenderlessHandling}
