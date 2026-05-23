@@ -124,6 +124,7 @@ function HandlingWorkbenchCaseCard({
   item,
   isActiveSessionCase,
   showMarkAcknowledged,
+  compactNavigation,
   acknowledging,
   onOpenActionPlan,
   onOpenPacket,
@@ -134,6 +135,8 @@ function HandlingWorkbenchCaseCard({
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
   showMarkAcknowledged: boolean;
+  /** Plan + chat only (handled approved action with open handling request). */
+  compactNavigation?: boolean;
   acknowledging: boolean;
   onOpenActionPlan: () => void;
   onOpenPacket: () => void;
@@ -147,7 +150,7 @@ function HandlingWorkbenchCaseCard({
   const statusLabel = approvedNextActionStatusLabel(next.status);
   const actionLabel = next.label?.trim();
   const handlingAt = next.handling_requested_at?.trim();
-  const showApprovedStep = Boolean(onOpenApprovedStep);
+  const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
 
   return (
     <li
@@ -200,9 +203,11 @@ function HandlingWorkbenchCaseCard({
         <button type="button" onClick={onOpenActionPlan} className={navButtonPrimaryCls}>
           Open action plan
         </button>
-        <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
-          Open case packet
-        </button>
+        {!compactNavigation ? (
+          <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
+            Open case packet
+          </button>
+        ) : null}
         <button type="button" onClick={onOpenChat} className={navButtonSecondaryCls}>
           Update in chat
         </button>
@@ -282,28 +287,34 @@ export default function JusticeHandlingWorkbenchPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn]);
 
-  const { awaitingItems, acknowledgedItems, allHandlingItems, completedUnacknowledgedCount } =
-    useMemo(() => {
-      const all = sortByHandlingRequestedAtDesc(buildHandlingWorkbenchItems(cases ?? []));
-      const awaiting: HandlingWorkbenchItem[] = [];
-      const acknowledged: HandlingWorkbenchItem[] = [];
-      let completedUnacknowledgedCount = 0;
-      for (const item of all) {
-        if (item.next.handling_acknowledged_at?.trim()) {
-          acknowledged.push(item);
-        } else if (item.next.status !== "completed") {
-          awaiting.push(item);
-        } else {
-          completedUnacknowledgedCount += 1;
-        }
+  const {
+    awaitingItems,
+    acknowledgedItems,
+    allHandlingItems,
+    completedUnacknowledgedItems,
+    completedUnacknowledgedCount,
+  } = useMemo(() => {
+    const all = sortByHandlingRequestedAtDesc(buildHandlingWorkbenchItems(cases ?? []));
+    const awaiting: HandlingWorkbenchItem[] = [];
+    const acknowledged: HandlingWorkbenchItem[] = [];
+    const completedUnacknowledged: HandlingWorkbenchItem[] = [];
+    for (const item of all) {
+      if (item.next.handling_acknowledged_at?.trim()) {
+        acknowledged.push(item);
+      } else if (item.next.status !== "completed") {
+        awaiting.push(item);
+      } else {
+        completedUnacknowledged.push(item);
       }
-      return {
-        awaitingItems: awaiting,
-        acknowledgedItems: acknowledged,
-        allHandlingItems: all,
-        completedUnacknowledgedCount,
-      };
-    }, [cases]);
+    }
+    return {
+      awaitingItems: awaiting,
+      acknowledgedItems: acknowledged,
+      allHandlingItems: all,
+      completedUnacknowledgedItems: completedUnacknowledged,
+      completedUnacknowledgedCount: completedUnacknowledged.length,
+    };
+  }, [cases]);
 
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
@@ -479,6 +490,35 @@ export default function JusticeHandlingWorkbenchPage() {
                   })}
                 </ul>
               )}
+              {completedUnacknowledgedItems.length > 0 ? (
+                <div className="mt-6 border-t border-neutral-200/90 pt-5 dark:border-neutral-700">
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                    Handled — open handling request
+                  </h3>
+                  <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                    These cases are not in Awaiting or Saved cases Needs attention. Mark acknowledged
+                    from the action plan or chat intake. Surrenderless has not filed, submitted, or
+                    queued anything externally.
+                  </p>
+                  <ul className="mt-3 space-y-3">
+                    {completedUnacknowledgedItems.map((item) => (
+                      <HandlingWorkbenchCaseCard
+                        key={item.caseRow.id}
+                        item={item}
+                        isActiveSessionCase={
+                          Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
+                        }
+                        showMarkAcknowledged={false}
+                        compactNavigation
+                        acknowledging={false}
+                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenPacket={() => openPacket(item.caseRow)}
+                        onOpenChat={() => openChat(item.caseRow)}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </section>
 
             <section aria-labelledby="handling-acknowledged-heading">
