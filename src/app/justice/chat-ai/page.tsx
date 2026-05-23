@@ -9,17 +9,20 @@ import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
+  APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
+  acknowledgeHandlingRequestInApprovedNextAction,
   applyHandlingRequestNoteToApprovedNextAction,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
+  mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithApprovedNextAction,
   mergeClientStateWithClearedFollowUp,
   writeSessionApprovedNextAction,
@@ -142,6 +145,7 @@ export default function JusticeChatAiPage() {
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
   const [requestingHandling, setRequestingHandling] = useState(false);
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
+  const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
@@ -234,6 +238,55 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: handling note update error", e);
     } finally {
       setUpdatingHandlingNote(false);
+    }
+  }
+
+  async function handleAcknowledgeHandlingRequest() {
+    if (!approvedNextAction?.handling_requested_at?.trim()) return;
+    if (approvedNextAction.handling_acknowledged_at?.trim()) return;
+
+    const acknowledged = acknowledgeHandlingRequestInApprovedNextAction(approvedNextAction);
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, acknowledged);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    setApprovedNextAction(local);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, local);
+    }
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    setAcknowledgingHandling(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before acknowledge handling failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithAcknowledgedHandling(existing.client_state, acknowledged);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH acknowledge handling failed", patchRes.status);
+        return;
+      }
+      const data = (await patchRes.json()) as { client_state?: unknown };
+      if (data.client_state !== undefined) {
+        const hydrated = hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? local;
+        writeSessionApprovedNextAction(caseId, hydrated);
+        setApprovedNextAction(hydrated);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: acknowledge handling error", e);
+    } finally {
+      setAcknowledgingHandling(false);
     }
   }
 
@@ -610,6 +663,21 @@ export default function JusticeChatAiPage() {
                         View in handling workbench
                       </Link>
                     </p>
+                    {!approvedNextAction.handling_acknowledged_at?.trim() ? (
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                        <button
+                          type="button"
+                          disabled={acknowledgingHandling}
+                          onClick={() => void handleAcknowledgeHandlingRequest()}
+                          className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        >
+                          {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
+                        </button>
+                        <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+                          {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
+                        </p>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
                 {approvedNextAction.outcome_note?.trim() ? (
