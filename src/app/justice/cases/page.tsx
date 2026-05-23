@@ -29,6 +29,7 @@ import {
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
+  isHandlingAwaitingTriageApprovedNextAction,
   mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithClearedFollowUp,
   parseApprovedNextAction,
@@ -265,9 +266,7 @@ function buildHandlingRequestedAttentionItems(caseList: CaseRow[]): HandlingRequ
   const items: HandlingRequestedAttentionItem[] = [];
   for (const c of caseList) {
     const next = parseApprovedNextActionFromClientState(c.client_state);
-    if (!next?.handling_requested_at?.trim()) continue;
-    if (next.handling_acknowledged_at?.trim()) continue;
-    if (next.status === "completed") continue;
+    if (!isHandlingAwaitingTriageApprovedNextAction(next)) continue;
     items.push({ caseRow: c, next });
   }
   items.sort((a, b) => {

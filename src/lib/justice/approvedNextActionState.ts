@@ -79,6 +79,17 @@ export function approvedNextActionStatusLabel(
 
 const HANDLING_REQUEST_NOTE_MAX_LENGTH = 500;
 
+/** Same rule as Saved cases Needs attention and workbench Awaiting internal triage. */
+export function isHandlingAwaitingTriageApprovedNextAction(
+  next: JusticeApprovedNextAction | undefined
+): next is JusticeApprovedNextAction {
+  if (!next) return false;
+  if (!next.handling_requested_at?.trim()) return false;
+  if (next.handling_acknowledged_at?.trim()) return false;
+  if (next.status === "completed") return false;
+  return true;
+}
+
 /** Empty string on approved_next_action means the user explicitly cleared the note (merge only). */
 export const HANDLING_REQUEST_NOTE_EXPLICIT_CLEAR = "";
 

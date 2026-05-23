@@ -19,6 +19,7 @@ import {
   acknowledgeHandlingRequestInApprovedNextAction,
   approvedNextActionStatusLabel,
   hydrateApprovedNextActionForDisplay,
+  isHandlingAwaitingTriageApprovedNextAction,
   mergeClientStateWithAcknowledgedHandling,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
@@ -301,7 +302,7 @@ export default function JusticeHandlingWorkbenchPage() {
     for (const item of all) {
       if (item.next.handling_acknowledged_at?.trim()) {
         acknowledged.push(item);
-      } else if (item.next.status !== "completed") {
+      } else if (isHandlingAwaitingTriageApprovedNextAction(item.next)) {
         awaiting.push(item);
       } else {
         completedUnacknowledged.push(item);
