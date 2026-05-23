@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import {
@@ -247,6 +247,7 @@ export default function JusticeHandlingWorkbenchPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [acknowledgingHandlingCaseId, setAcknowledgingHandlingCaseId] = useState<string | null>(null);
   const [sessionCaseId, setSessionCaseId] = useState<string | null>(null);
+  const refetchAbortRef = useRef<AbortController | null>(null);
 
   function refreshSessionCaseIdFromStorage() {
     if (typeof window === "undefined") return;
@@ -254,13 +255,50 @@ export default function JusticeHandlingWorkbenchPage() {
     setSessionCaseId(id || null);
   }
 
+  const loadCases = useCallback(async (signal: AbortSignal) => {
+    try {
+      const rows = await fetchAllActiveCases(signal);
+      if (!signal.aborted) {
+        setLoadError(null);
+        setCases(rows);
+      }
+    } catch {
+      if (signal.aborted) return;
+      setLoadError("Could not load cases.");
+      setCases([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
-    refreshSessionCaseIdFromStorage();
-    const onFocus = () => refreshSessionCaseIdFromStorage();
+
+    function refetchCases() {
+      refetchAbortRef.current?.abort();
+      const ac = new AbortController();
+      refetchAbortRef.current = ac;
+      void loadCases(ac.signal);
+    }
+
+    function onFocus() {
+      refreshSessionCaseIdFromStorage();
+      refetchCases();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshSessionCaseIdFromStorage();
+        refetchCases();
+      }
+    }
+
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [isLoaded, isSignedIn]);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      refetchAbortRef.current?.abort();
+    };
+  }, [isLoaded, isSignedIn, loadCases]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -271,22 +309,10 @@ export default function JusticeHandlingWorkbenchPage() {
     if (!isLoaded || !isSignedIn) return;
 
     const ac = new AbortController();
-    void (async () => {
-      try {
-        const rows = await fetchAllActiveCases(ac.signal);
-        if (!ac.signal.aborted) {
-          setLoadError(null);
-          setCases(rows);
-        }
-      } catch (e) {
-        if (ac.signal.aborted) return;
-        setLoadError("Could not load cases.");
-        setCases([]);
-      }
-    })();
+    void loadCases(ac.signal);
 
     return () => ac.abort();
-  }, [isLoaded, isSignedIn]);
+  }, [isLoaded, isSignedIn, loadCases]);
 
   const {
     awaitingItems,
