@@ -30,6 +30,7 @@ import {
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
 import {
+  acknowledgeHandlingRequestInApprovedNextAction,
   applyHandlingRequestNoteToApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
@@ -38,6 +39,7 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
@@ -597,6 +599,7 @@ export default function JusticePlanPage() {
   );
   const [requestingHandling, setRequestingHandling] = useState(false);
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
+  const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_INTAKE);
@@ -1165,6 +1168,18 @@ export default function JusticePlanPage() {
     }
   }
 
+  async function handleAcknowledgeHandlingRequest() {
+    if (!approvedNextAction?.handling_requested_at?.trim()) return;
+    if (approvedNextAction.handling_acknowledged_at?.trim()) return;
+    setAcknowledgingHandling(true);
+    try {
+      const acknowledged = acknowledgeHandlingRequestInApprovedNextAction(approvedNextAction);
+      await persistApprovedNextAction(acknowledged, acknowledged);
+    } finally {
+      setAcknowledgingHandling(false);
+    }
+  }
+
   async function handleViewApprovedCasePacketClick() {
     if (approvedNextActionCompleted) {
       router.push(approvedNextAction?.href ?? preparedNextAction.href ?? "/justice/packet");
@@ -1386,6 +1401,21 @@ export default function JusticePlanPage() {
                         View in handling workbench
                       </Link>
                     </p>
+                    {!approvedNextAction.handling_acknowledged_at?.trim() ? (
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                        <button
+                          type="button"
+                          disabled={acknowledgingHandling}
+                          onClick={() => void handleAcknowledgeHandlingRequest()}
+                          className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        >
+                          {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
+                        </button>
+                        <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+                          {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
+                        </p>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
                 {approvedNextActionCompleted && approvedNextAction ? (
@@ -1572,6 +1602,21 @@ export default function JusticePlanPage() {
                     View in handling workbench
                   </Link>
                 </p>
+                {!approvedNextAction.handling_acknowledged_at?.trim() ? (
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <button
+                      type="button"
+                      disabled={acknowledgingHandling}
+                      onClick={() => void handleAcknowledgeHandlingRequest()}
+                      className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
+                    </button>
+                    <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+                      {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
+                    </p>
+                  </div>
+                ) : null}
               </>
             ) : null}
             {approvedNextActionCompleted && approvedNextAction ? (
