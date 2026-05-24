@@ -30,6 +30,9 @@ const cardCls =
 const activeCardCls =
   "block rounded-2xl border border-blue-200/90 bg-white p-5 shadow-md shadow-neutral-900/5 ring-1 ring-blue-950/[0.06] transition hover:border-blue-300 hover:shadow-lg dark:border-blue-900/50 dark:bg-neutral-900 dark:ring-blue-500/10 dark:hover:border-blue-800";
 
+const HUB_HANDLED_OPEN_HANDLING_TRIAGE_NOTE =
+  "This handling request is not listed in workbench Awaiting or Saved cases Needs attention. Acknowledge it from the action plan or chat intake for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
+
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
   return entries.some(
@@ -43,6 +46,8 @@ type CurrentCaseSnapshot = {
   handlingRequestedAt: string | null;
   handlingRequestNote: string | null;
   handlingAcknowledgedAt: string | null;
+  /** Handled approved action with open, unacknowledged handling request. */
+  showHandledOpenHandlingTriageNote: boolean;
 };
 
 /** Client-only snapshot of active case card state from session/timeline helpers. */
@@ -54,12 +59,18 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
   const handlingAt = approvedNext?.handling_requested_at?.trim();
   const handlingNote = approvedNext?.handling_request_note?.trim();
   const handlingAck = approvedNext?.handling_acknowledged_at?.trim();
+  const showHandledOpenHandlingTriageNote = Boolean(
+    handlingAt &&
+      !handlingAck &&
+      approvedNext?.status === "completed"
+  );
   return {
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
     handlingRequestedAt: handlingAt || null,
     handlingRequestNote: handlingNote || null,
     handlingAcknowledgedAt: handlingAck || null,
+    showHandledOpenHandlingTriageNote,
   };
 }
 
@@ -145,6 +156,11 @@ export default function JusticeHubWorkspaceBody() {
                 handlingAcknowledgedAt={snapshot.handlingAcknowledgedAt ?? undefined}
                 className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
               />
+              {snapshot.showHandledOpenHandlingTriageNote ? (
+                <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  {HUB_HANDLED_OPEN_HANDLING_TRIAGE_NOTE}
+                </p>
+              ) : null}
               <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                 <Link
                   href="/justice/handling"
