@@ -6,6 +6,7 @@ import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionS
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
+  ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHubHandlingRequestedLine,
@@ -29,9 +30,6 @@ const cardCls =
 
 const activeCardCls =
   "block rounded-2xl border border-blue-200/90 bg-white p-5 shadow-md shadow-neutral-900/5 ring-1 ring-blue-950/[0.06] transition hover:border-blue-300 hover:shadow-lg dark:border-blue-900/50 dark:bg-neutral-900 dark:ring-blue-500/10 dark:hover:border-blue-800";
-
-const HUB_HANDLED_OPEN_HANDLING_TRIAGE_NOTE =
-  "This handling request is not listed in workbench Awaiting or Saved cases Needs attention. Acknowledge it from the action plan or chat intake for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
 
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
@@ -157,9 +155,7 @@ export default function JusticeHubWorkspaceBody() {
                 className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
               />
               {snapshot.showHandledOpenHandlingTriageNote ? (
-                <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                  {HUB_HANDLED_OPEN_HANDLING_TRIAGE_NOTE}
-                </p>
+                <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
               ) : null}
               <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                 <Link
