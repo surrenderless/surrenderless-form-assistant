@@ -40,6 +40,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
+  ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
@@ -1395,11 +1396,7 @@ export default function JusticePlanPage() {
                     />
                     {approvedNextActionCompleted &&
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
-                      <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                        This handling request is not listed in Awaiting or Saved cases Needs attention.
-                        Mark acknowledged below for internal triage only. Surrenderless has not filed,
-                        submitted, or queued anything externally.
-                      </p>
+                      <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                     ) : null}
                     <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                       <Link
@@ -1604,11 +1601,7 @@ export default function JusticePlanPage() {
                 />
                 {approvedNextActionCompleted &&
                 !approvedNextAction.handling_acknowledged_at?.trim() ? (
-                  <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                    This handling request is not listed in Awaiting or Saved cases Needs attention.
-                    Mark acknowledged below for internal triage only. Surrenderless has not filed,
-                    submitted, or queued anything externally.
-                  </p>
+                  <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                 ) : null}
                 <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                   <Link

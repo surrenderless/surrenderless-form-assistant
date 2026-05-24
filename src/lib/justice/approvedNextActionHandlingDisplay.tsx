@@ -137,6 +137,41 @@ export function ApprovedNextActionHandlingQueueStatusReadOnly({
   );
 }
 
+/** Hub + packet: handled approved action with open, unacknowledged handling request. */
+export const HANDLING_HANDLED_OPEN_TRIAGE_NOTE_REDIRECT =
+  "This handling request is not listed in workbench Awaiting or Saved cases Needs attention. Acknowledge it from the action plan or chat intake for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
+
+/** Plan + chat: same case; acknowledge via Mark acknowledged on that surface. */
+export const HANDLING_HANDLED_OPEN_TRIAGE_NOTE_INLINE_ACK =
+  "This handling request is not listed in Awaiting or Saved cases Needs attention. Mark acknowledged below for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
+
+export type HandlingHandledOpenTriageNoteVariant = "redirect" | "inlineAck";
+
+const HANDLING_HANDLED_OPEN_TRIAGE_NOTE_EMERALD_CLS =
+  "mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90";
+
+export function formatHandlingHandledOpenTriageNote(
+  variant: HandlingHandledOpenTriageNoteVariant
+): string {
+  return variant === "redirect"
+    ? HANDLING_HANDLED_OPEN_TRIAGE_NOTE_REDIRECT
+    : HANDLING_HANDLED_OPEN_TRIAGE_NOTE_INLINE_ACK;
+}
+
+export function ApprovedNextActionHandlingHandledOpenTriageNote({
+  variant,
+  className,
+}: {
+  variant: HandlingHandledOpenTriageNoteVariant;
+  className?: string;
+}) {
+  return (
+    <p className={className ?? HANDLING_HANDLED_OPEN_TRIAGE_NOTE_EMERALD_CLS}>
+      {formatHandlingHandledOpenTriageNote(variant)}
+    </p>
+  );
+}
+
 const HANDLING_ACKNOWLEDGED_EMERALD_CLS =
   "mt-1.5 text-xs text-emerald-900/90 dark:text-emerald-100/90";
 
