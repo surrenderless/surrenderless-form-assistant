@@ -45,6 +45,9 @@ import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { readTimeline } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
+const PACKET_HANDLED_OPEN_HANDLING_TRIAGE_NOTE =
+  "This handling request is not listed in workbench Awaiting or Saved cases Needs attention. Acknowledge it from the action plan or chat intake for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
+
 /** Mirrors post-review callout gates on `/justice/plan` (page-local; does not change rules). */
 const PREP_OPENED_TYPES: TimelineEntryType[] = [
   "state_ag_prep_opened",
@@ -703,6 +706,12 @@ export default function JusticePacketPage() {
                 handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
                 className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
               />
+              {approvedNextActionCompleted &&
+              !approvedNextAction.handling_acknowledged_at?.trim() ? (
+                <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  {PACKET_HANDLED_OPEN_HANDLING_TRIAGE_NOTE}
+                </p>
+              ) : null}
               <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                 <Link
                   href="/justice/handling"
