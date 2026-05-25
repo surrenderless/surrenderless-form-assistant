@@ -19,6 +19,7 @@ import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
   APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
+  ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHandlingRecordedInline,
@@ -61,6 +62,11 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
   const next = parseApprovedNextActionFromClientState(clientState);
   const statusLabel = approvedNextActionStatusLabel(next?.status);
   const handlingAt = next?.handling_requested_at?.trim();
+  const showHandledOpenHandlingTriageNote = Boolean(
+    handlingAt &&
+      !next?.handling_acknowledged_at?.trim() &&
+      next?.status === "completed"
+  );
   if (!statusLabel && !handlingAt) return null;
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
@@ -87,6 +93,9 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
             handlingRequestedAt={handlingAt}
             handlingAcknowledgedAt={next?.handling_acknowledged_at}
           />
+          {showHandledOpenHandlingTriageNote ? (
+            <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
+          ) : null}
         </>
       ) : null}
       <ApprovedNextActionHandlingAcknowledgedReadOnly
