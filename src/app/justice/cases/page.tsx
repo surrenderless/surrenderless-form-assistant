@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import type {
@@ -355,8 +355,43 @@ export default function JusticeCasesPage() {
   const [caseSearch, setCaseSearch] = useState("");
   const [caseStatusFilter, setCaseStatusFilter] = useState<CaseStatusFilter>("all");
   const [caseSort, setCaseSort] = useState<CaseSortOption>("updated");
+  const refetchAbortRef = useRef<AbortController | null>(null);
+  const casesLengthRef = useRef(0);
 
   const caseIdsKey = useMemo(() => (cases ?? []).map((c) => c.id).sort().join(","), [cases]);
+
+  const loadCases = useCallback(async (signal: AbortSignal, listLimit = CASES_PAGE_LIMIT) => {
+    try {
+      const res = await fetch(
+        `/api/justice/cases?limit=${listLimit}&offset=0`,
+        { signal }
+      );
+      if (!res.ok) {
+        setLoadError("Could not load cases.");
+        setCases([]);
+        setHasMoreCases(false);
+        return;
+      }
+      const body = (await res.json()) as unknown;
+      const env = parseJusticeCasesListEnvelope(body);
+      if (!env) {
+        setLoadError("Could not load cases.");
+        setCases([]);
+        setHasMoreCases(false);
+        return;
+      }
+      if (!signal.aborted) {
+        setLoadError(null);
+        setCases(env.cases as CaseRow[]);
+        setHasMoreCases(env.has_more);
+      }
+    } catch {
+      if (signal.aborted) return;
+      setLoadError("Could not load cases.");
+      setCases([]);
+      setHasMoreCases(false);
+    }
+  }, []);
 
   const filteredSortedCases = useMemo(() => {
     if (!cases?.length) return [];
@@ -394,44 +429,54 @@ export default function JusticeCasesPage() {
     attentionItems.length > 0;
 
   useEffect(() => {
+    casesLengthRef.current = cases?.length ?? 0;
+  }, [cases]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+
+    function refreshSessionCaseIdFromStorage() {
+      if (typeof window === "undefined") return;
+      setSessionCaseId(sessionStorage.getItem(STORAGE_CASE_ID));
+    }
+
+    function refetchCases() {
+      refetchAbortRef.current?.abort();
+      const ac = new AbortController();
+      refetchAbortRef.current = ac;
+      const limit = Math.max(casesLengthRef.current, CASES_PAGE_LIMIT);
+      void loadCases(ac.signal, limit);
+    }
+
+    function onFocus() {
+      refreshSessionCaseIdFromStorage();
+      refetchCases();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshSessionCaseIdFromStorage();
+        refetchCases();
+      }
+    }
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      refetchAbortRef.current?.abort();
+    };
+  }, [isLoaded, isSignedIn, loadCases]);
+
+  useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
 
     const ac = new AbortController();
-    void (async () => {
-      try {
-        const res = await fetch(
-          `/api/justice/cases?limit=${CASES_PAGE_LIMIT}&offset=0`,
-          { signal: ac.signal }
-        );
-        if (!res.ok) {
-          setLoadError("Could not load cases.");
-          setCases([]);
-          setHasMoreCases(false);
-          return;
-        }
-        const body = (await res.json()) as unknown;
-        const env = parseJusticeCasesListEnvelope(body);
-        if (!env) {
-          setLoadError("Could not load cases.");
-          setCases([]);
-          setHasMoreCases(false);
-          return;
-        }
-        if (!ac.signal.aborted) {
-          setLoadError(null);
-          setCases(env.cases as CaseRow[]);
-          setHasMoreCases(env.has_more);
-        }
-      } catch (e) {
-        if (ac.signal.aborted) return;
-        setLoadError("Could not load cases.");
-        setCases([]);
-        setHasMoreCases(false);
-      }
-    })();
+    void loadCases(ac.signal, CASES_PAGE_LIMIT);
 
     return () => ac.abort();
-  }, [isLoaded, isSignedIn]);
+  }, [isLoaded, isSignedIn, loadCases]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !caseIdsKey) {
