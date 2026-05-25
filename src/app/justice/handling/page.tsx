@@ -11,6 +11,7 @@ import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
+  ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHandlingRecordedLine,
@@ -151,6 +152,11 @@ function HandlingWorkbenchCaseCard({
   const statusLabel = approvedNextActionStatusLabel(next.status);
   const actionLabel = next.label?.trim();
   const handlingAt = next.handling_requested_at?.trim();
+  const showHandledOpenHandlingTriageNote = Boolean(
+    handlingAt &&
+      !next.handling_acknowledged_at?.trim() &&
+      next.status === "completed"
+  );
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
 
   return (
@@ -193,6 +199,9 @@ function HandlingWorkbenchCaseCard({
         handlingRequestedAt={handlingAt}
         handlingAcknowledgedAt={next.handling_acknowledged_at}
       />
+      {showHandledOpenHandlingTriageNote ? (
+        <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
+      ) : null}
       <ApprovedNextActionHandlingAcknowledgedReadOnly
         acknowledgedAt={next.handling_acknowledged_at}
         tone="neutral"
