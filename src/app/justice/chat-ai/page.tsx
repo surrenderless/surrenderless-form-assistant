@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
@@ -151,6 +151,8 @@ export default function JusticeChatAiPage() {
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
+  const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
+  const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
 
   async function handleRequestSurrenderlessHandling(note?: string) {
     if (!approvedNextAction || approvedNextAction.status === "completed") return;
@@ -344,9 +346,93 @@ export default function JusticeChatAiPage() {
     }
   }, []);
 
+  const loadSavedEvidenceCount = useCallback(async (signal: AbortSignal) => {
+    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
+      setSavedEvidenceCount(null);
+      return;
+    }
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) {
+      setSavedEvidenceCount(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, {
+        signal,
+      });
+      if (!res.ok) {
+        if (!signal.aborted) setSavedEvidenceCount(null);
+        return;
+      }
+      const evJson: unknown = await res.json();
+      if (!signal.aborted) {
+        setSavedEvidenceCount(Array.isArray(evJson) ? evJson.length : 0);
+      }
+    } catch {
+      if (!signal.aborted) setSavedEvidenceCount(null);
+    }
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
+
+  useEffect(() => {
+    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
+      setSavedEvidenceCount(null);
+      return;
+    }
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) {
+      setSavedEvidenceCount(null);
+      return;
+    }
+
+    const ac = new AbortController();
+    void loadSavedEvidenceCount(ac.signal);
+    return () => ac.abort();
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidenceCount]);
+
+  useEffect(() => {
+    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
+
+    function refetchEvidence() {
+      const caseId =
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+      if (!caseId || !isUuid(caseId)) return;
+      evidenceRefetchAbortRef.current?.abort();
+      const ac = new AbortController();
+      evidenceRefetchAbortRef.current = ac;
+      void loadSavedEvidenceCount(ac.signal);
+    }
+
+    function onFocus() {
+      refetchEvidence();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refetchEvidence();
+      }
+    }
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      evidenceRefetchAbortRef.current?.abort();
+    };
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidenceCount]);
+
+  const showSavedEvidenceCount =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    isSignedIn &&
+    savedEvidenceCount !== null;
+
   useEffect(() => {
     if (!isUpdatingExistingCase) {
       setApprovedNextAction(undefined);
+      setSavedEvidenceCount(null);
       return;
     }
 
@@ -760,6 +846,13 @@ export default function JusticeChatAiPage() {
               <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
                 Proof / evidence
               </p>
+              {showSavedEvidenceCount ? (
+                <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                  {savedEvidenceCount === 0
+                    ? "No saved evidence yet."
+                    : `Saved evidence: ${savedEvidenceCount} item${savedEvidenceCount === 1 ? "" : "s"}.`}
+                </p>
+              ) : null}
               <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
                 As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
                 screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
