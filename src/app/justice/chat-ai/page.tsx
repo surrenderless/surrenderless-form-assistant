@@ -149,6 +149,19 @@ function truncateChatEvidenceDescription(text: string | null, max: number): stri
   return `${trimmed.slice(0, max)}â€¦`;
 }
 
+const PROOF_KEYWORD_STRONG =
+  /\b(screenshots?|receipts?|invoices?|tracking|confirmations?|transcripts?|call\s+notes?|chat\s+logs?|account\s+pages?)\b/i;
+
+const PROOF_KEYWORD_NEGATIVE =
+  /\b(?:no|not|don'?t|doesn'?t|didn'?t|without|never)\b[^.?!]{0,48}\b(?:proof|evidence|screenshots?|receipts?)\b/i;
+
+function userMessageSuggestsProofNote(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (PROOF_KEYWORD_NEGATIVE.test(trimmed)) return false;
+  return PROOF_KEYWORD_STRONG.test(trimmed);
+}
+
 export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
@@ -193,7 +206,9 @@ export default function JusticeChatAiPage() {
   const [deletingRecentEvidenceId, setDeletingRecentEvidenceId] = useState<string | null>(null);
   const [recentEvidenceDeleteError, setRecentEvidenceDeleteError] = useState<string | null>(null);
   const [recentEvidenceDeleteSuccess, setRecentEvidenceDeleteSuccess] = useState<string | null>(null);
+  const [showProofKeywordNudge, setShowProofKeywordNudge] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
+  const proofKeywordNudgeOfferedRef = useRef(false);
 
   async function handleRequestSurrenderlessHandling(note?: string) {
     if (!approvedNextAction || approvedNextAction.status === "completed") return;
@@ -498,6 +513,13 @@ export default function JusticeChatAiPage() {
   const canAddProofNoteInChat =
     isUpdatingExistingCase && isLoaded && isSignedIn && Boolean(activeUuidCaseId);
 
+  function tryShowProofKeywordNudge(userMessage: string) {
+    if (proofKeywordNudgeOfferedRef.current || !canAddProofNoteInChat) return;
+    if (!userMessageSuggestsProofNote(userMessage)) return;
+    proofKeywordNudgeOfferedRef.current = true;
+    setShowProofKeywordNudge(true);
+  }
+
   async function handleAddProofNote(e: React.FormEvent) {
     e.preventDefault();
     setProofNoteSuccess(null);
@@ -540,6 +562,7 @@ export default function JusticeChatAiPage() {
       setProofNoteEvidenceDate("");
       setProofNoteDescription("");
       setProofNoteSuccess("Proof note saved.");
+      setShowProofKeywordNudge(false);
       const ac = new AbortController();
       void loadSavedEvidencePreview(ac.signal);
     } catch {
@@ -655,6 +678,7 @@ export default function JusticeChatAiPage() {
       setDeletingRecentEvidenceId(null);
       setRecentEvidenceDeleteError(null);
       setRecentEvidenceDeleteSuccess(null);
+      setShowProofKeywordNudge(false);
       return;
     }
 
@@ -743,6 +767,7 @@ export default function JusticeChatAiPage() {
       ]);
       setParts(data.parts);
       setInputValue("");
+      tryShowProofKeywordNudge(trimmed);
     } catch {
       setApiError("Could not reach AI intake. Please try again.");
     } finally {
@@ -1287,6 +1312,21 @@ export default function JusticeChatAiPage() {
                 You can continue to your submission preview without proof for now. Before you escalate or submit
                 complaints, saving at least one proof note helps â€” nothing is filed automatically from this app yet.
               </p>
+              {canAddProofNoteInChat && showProofKeywordNudge ? (
+                <div className="mt-3 rounded-lg border border-amber-200/90 bg-amber-50/80 px-3 py-2 dark:border-amber-800/60 dark:bg-amber-950/30">
+                  <p className="text-[11px] leading-relaxed text-amber-950 dark:text-amber-100">
+                    You mentioned records that could support your case. Add a short proof note below — title,
+                    type, optional date/description. This saves metadata only, not a file upload.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowProofKeywordNudge(false)}
+                    className="mt-2 rounded-lg border border-amber-300/80 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-950 shadow-sm transition hover:bg-amber-50 dark:border-amber-700/60 dark:bg-neutral-900 dark:text-amber-100 dark:hover:bg-amber-950/50"
+                  >
+                    Got it
+                  </button>
+                </div>
+              ) : null}
               {canAddProofNoteInChat ? (
                 <details className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
                   <summary className="cursor-pointer text-xs font-medium text-neutral-800 dark:text-neutral-200">
