@@ -1462,6 +1462,28 @@ export default function JusticePlanPage() {
               Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on
               your behalf.
             </p>
+            {isSignedIn ? (
+              readinessLoading ? (
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  Loading saved proof notes...
+                </p>
+              ) : evidenceCount > 0 ? (
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  Saved proof notes on your case: {evidenceCount}. Metadata only — titles were included in your
+                  reviewed draft.
+                </p>
+              ) : (
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  No saved proof notes on this case yet. You can add short notes in chat before you escalate.{" "}
+                  <Link
+                    href="/justice/chat-ai"
+                    className="font-medium text-emerald-900 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-100 dark:hover:text-emerald-50"
+                  >
+                    Add proof in chat
+                  </Link>
+                </p>
+              )
+            ) : null}
             {preparedPacketApproved ? (
               <button
                 type="button"
@@ -2067,6 +2089,19 @@ export default function JusticePlanPage() {
                   className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Manage evidence →
+                </Link>
+              </div>
+            ) : null}
+            {isSignedIn && !readinessLoading && evidenceRowsForPlan.length === 0 ? (
+              <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/90 px-3 py-3 text-left shadow-inner ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/40 dark:ring-white/[0.04]">
+                <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                  No saved proof notes on this case yet.
+                </p>
+                <Link
+                  href="/justice/chat-ai"
+                  className="mt-2 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Add proof in chat →
                 </Link>
               </div>
             ) : null}
