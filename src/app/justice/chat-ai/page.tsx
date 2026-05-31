@@ -162,6 +162,32 @@ function userMessageSuggestsProofNote(text: string): boolean {
   return PROOF_KEYWORD_STRONG.test(trimmed);
 }
 
+const PROOF_NOTE_PREFILL_TITLE_MAX = 120;
+
+function collapseProofNoteWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function truncateProofNoteTitle(collapsed: string): string {
+  if (collapsed.length <= PROOF_NOTE_PREFILL_TITLE_MAX) return collapsed;
+  const slice = collapsed.slice(0, PROOF_NOTE_PREFILL_TITLE_MAX);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut =
+    lastSpace > PROOF_NOTE_PREFILL_TITLE_MAX * 0.5 ? slice.slice(0, lastSpace) : slice;
+  return `${cut.trimEnd()}…`;
+}
+
+function buildProofNotePrefillFromUserMessage(text: string): { title: string; description: string } {
+  const collapsed = collapseProofNoteWhitespace(text);
+  if (collapsed.length <= PROOF_NOTE_PREFILL_TITLE_MAX) {
+    return { title: collapsed, description: "" };
+  }
+  return {
+    title: truncateProofNoteTitle(collapsed),
+    description: collapsed,
+  };
+}
+
 export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
@@ -207,6 +233,7 @@ export default function JusticeChatAiPage() {
   const [recentEvidenceDeleteError, setRecentEvidenceDeleteError] = useState<string | null>(null);
   const [recentEvidenceDeleteSuccess, setRecentEvidenceDeleteSuccess] = useState<string | null>(null);
   const [showProofKeywordNudge, setShowProofKeywordNudge] = useState(false);
+  const [proofNoteDetailsOpen, setProofNoteDetailsOpen] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -518,6 +545,15 @@ export default function JusticeChatAiPage() {
     if (!userMessageSuggestsProofNote(userMessage)) return;
     proofKeywordNudgeOfferedRef.current = true;
     setShowProofKeywordNudge(true);
+
+    const { title, description } = buildProofNotePrefillFromUserMessage(userMessage);
+    if (!proofNoteTitle.trim()) {
+      setProofNoteTitle(title);
+    }
+    if (!proofNoteDescription.trim() && description) {
+      setProofNoteDescription(description);
+    }
+    setProofNoteDetailsOpen(true);
   }
 
   async function handleAddProofNote(e: React.FormEvent) {
@@ -679,6 +715,7 @@ export default function JusticeChatAiPage() {
       setRecentEvidenceDeleteError(null);
       setRecentEvidenceDeleteSuccess(null);
       setShowProofKeywordNudge(false);
+      setProofNoteDetailsOpen(false);
       return;
     }
 
@@ -1328,7 +1365,11 @@ export default function JusticeChatAiPage() {
                 </div>
               ) : null}
               {canAddProofNoteInChat ? (
-                <details className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
+                <details
+                  open={proofNoteDetailsOpen}
+                  onToggle={(e) => setProofNoteDetailsOpen(e.currentTarget.open)}
+                  className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40"
+                >
                   <summary className="cursor-pointer text-xs font-medium text-neutral-800 dark:text-neutral-200">
                     Add a proof note
                   </summary>
