@@ -306,7 +306,7 @@ export default function JusticePreviewPage() {
           </Link>
           {" · "}
           <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
-            Chat intake
+            Update in chat
           </Link>
           {" · "}
           <Link href="/justice/chat" className="text-blue-600 hover:underline dark:text-blue-400">
