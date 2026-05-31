@@ -66,16 +66,16 @@ const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] 
     label: "Bank, credit, loan, payment, debt, billing, or financial account issue",
   },
   { value: "subscription", label: "A subscription or recurring charge" },
-  { value: "service_failed", label: "A service that didn’t work as promised" },
-  { value: "charge_dispute", label: "A charge I didn’t agree to" },
+  { value: "service_failed", label: "A service that didnâ€™t work as promised" },
+  { value: "charge_dispute", label: "A charge I didnâ€™t agree to" },
   { value: "something_else", label: "Something else" },
 ];
 
 const OPENING_GREETING =
-  "Hi — tell me what’s going on with your consumer issue. I’ll ask follow-up questions and keep track of your case details. When we’re done, you can review everything and continue to your submission preview.";
+  "Hi â€” tell me whatâ€™s going on with your consumer issue. Iâ€™ll ask follow-up questions and keep track of your case details. When weâ€™re done, you can review everything and continue to your submission preview.";
 
 const UPDATE_GREETING =
-  "Your current case is loaded in the recap below. Tell me what you’d like to add or change — I’ll update the details as we go. When you’re ready, continue to your submission preview.";
+  "Your current case is loaded in the recap below. Tell me what youâ€™d like to add or change â€” Iâ€™ll update the details as we go. When youâ€™re ready, continue to your submission preview.";
 
 const RECAP_STORY_MAX_LEN = 120;
 
@@ -95,9 +95,9 @@ function stillNeededBeforePreviewMessage(missing: string[]): string {
 
 function recapStoryDisplay(story: string): string {
   const trimmed = story.trim();
-  if (!trimmed) return "—";
+  if (!trimmed) return "â€”";
   if (trimmed.length <= RECAP_STORY_MAX_LEN) return trimmed;
-  return `${trimmed.slice(0, RECAP_STORY_MAX_LEN)}…`;
+  return `${trimmed.slice(0, RECAP_STORY_MAX_LEN)}â€¦`;
 }
 
 function formatIntakeChatApiError(status: number, serverError?: string): string {
@@ -106,14 +106,14 @@ function formatIntakeChatApiError(status: number, serverError?: string): string 
     return "Your session may have expired. Sign in again, then resend your message.";
   }
   if (status === 429) {
-    return "You’re sending messages too quickly. Wait a moment, then try again.";
+    return "Youâ€™re sending messages too quickly. Wait a moment, then try again.";
   }
   if (status === 502) {
-    return "We couldn’t get a usable AI reply. Check your message and try again.";
+    return "We couldnâ€™t get a usable AI reply. Check your message and try again.";
   }
   if (status === 500) {
     if (err.includes("OPENAI_API_KEY")) {
-      return "AI intake isn’t available right now. Please try again later.";
+      return "AI intake isnâ€™t available right now. Please try again later.";
     }
     return "Something went wrong on our side. Please try again.";
   }
@@ -146,7 +146,7 @@ function truncateChatEvidenceDescription(text: string | null, max: number): stri
   if (!text?.trim()) return "";
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max)}…`;
+  return `${trimmed.slice(0, max)}â€¦`;
 }
 
 export default function JusticeChatAiPage() {
@@ -182,6 +182,14 @@ export default function JusticeChatAiPage() {
   const [savingProofNote, setSavingProofNote] = useState(false);
   const [proofNoteError, setProofNoteError] = useState<string | null>(null);
   const [proofNoteSuccess, setProofNoteSuccess] = useState<string | null>(null);
+  const [editingRecentEvidenceId, setEditingRecentEvidenceId] = useState<string | null>(null);
+  const [editRecentEvidenceTitle, setEditRecentEvidenceTitle] = useState("");
+  const [editRecentEvidenceType, setEditRecentEvidenceType] = useState<JusticeEvidenceType>("other");
+  const [editRecentEvidenceDate, setEditRecentEvidenceDate] = useState("");
+  const [editRecentEvidenceDescription, setEditRecentEvidenceDescription] = useState("");
+  const [savingRecentEvidenceEdit, setSavingRecentEvidenceEdit] = useState(false);
+  const [recentEvidenceEditError, setRecentEvidenceEditError] = useState<string | null>(null);
+  const [recentEvidenceEditSuccess, setRecentEvidenceEditSuccess] = useState<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
 
   async function handleRequestSurrenderlessHandling(note?: string) {
@@ -538,11 +546,73 @@ export default function JusticeChatAiPage() {
     }
   }
 
+  function cancelEditRecentEvidence() {
+    setEditingRecentEvidenceId(null);
+    setRecentEvidenceEditError(null);
+  }
+
+  function startEditRecentEvidence(row: JusticeCaseEvidenceRow) {
+    setEditingRecentEvidenceId(row.id);
+    setEditRecentEvidenceTitle(row.title);
+    setEditRecentEvidenceType(
+      isJusticeEvidenceType(row.evidence_type) ? row.evidence_type : "other"
+    );
+    setEditRecentEvidenceDate(row.evidence_date ?? "");
+    setEditRecentEvidenceDescription(row.description ?? "");
+    setRecentEvidenceEditError(null);
+    setRecentEvidenceEditSuccess(null);
+  }
+
+  async function handleSaveRecentEvidenceEdit(e: React.FormEvent, id: string) {
+    e.preventDefault();
+    if (!isSignedIn) return;
+    const trimmedTitle = editRecentEvidenceTitle.trim();
+    if (!trimmedTitle) {
+      setRecentEvidenceEditError("Title is required.");
+      return;
+    }
+    setSavingRecentEvidenceEdit(true);
+    setRecentEvidenceEditError(null);
+    setRecentEvidenceEditSuccess(null);
+    try {
+      const body: Record<string, unknown> = {
+        title: trimmedTitle,
+        evidence_type: editRecentEvidenceType,
+        evidence_date: editRecentEvidenceDate.trim() ? editRecentEvidenceDate.trim() : null,
+        description: editRecentEvidenceDescription.trim() ? editRecentEvidenceDescription.trim() : null,
+      };
+      const res = await fetch(`/api/justice/evidence/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (
+          payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}
+        ) as { error?: string };
+        setRecentEvidenceEditError(err.error ?? "Could not update proof note.");
+        return;
+      }
+      setEditingRecentEvidenceId(null);
+      setRecentEvidenceEditSuccess("Proof note updated.");
+      const ac = new AbortController();
+      void loadSavedEvidencePreview(ac.signal);
+    } catch {
+      setRecentEvidenceEditError("Could not update proof note.");
+    } finally {
+      setSavingRecentEvidenceEdit(false);
+    }
+  }
+
   useEffect(() => {
     if (!isUpdatingExistingCase) {
       setApprovedNextAction(undefined);
       setSavedEvidenceCount(null);
       setRecentEvidenceRows([]);
+      setEditingRecentEvidenceId(null);
+      setRecentEvidenceEditError(null);
+      setRecentEvidenceEditSuccess(null);
       return;
     }
 
@@ -682,7 +752,7 @@ export default function JusticeChatAiPage() {
       <>
         <Header />
         <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loading…
+          Loadingâ€¦
         </main>
       </>
     );
@@ -704,15 +774,15 @@ export default function JusticeChatAiPage() {
           <Link href="/" className="text-blue-600 hover:underline">
             Home
           </Link>
-          {" · "}
+          {" Â· "}
           <Link href="/justice/plan" className="text-blue-600 hover:underline">
             Action plan
           </Link>
-          {" · "}
+          {" Â· "}
           <Link href="/justice/chat" className="text-blue-600 hover:underline">
             Step-by-step chat
           </Link>
-          {" · "}
+          {" Â· "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
             Structured form
           </Link>
@@ -723,7 +793,7 @@ export default function JusticeChatAiPage() {
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           {isUpdatingExistingCase
-            ? "Update your loaded case in a conversation — describe what to add or change, then continue to preview."
+            ? "Update your loaded case in a conversation â€” describe what to add or change, then continue to preview."
             : "Tell us what happened in a conversation; we'll ask follow-up questions and track your case details."}{" "}
           Prefer one question at a time?{" "}
           <Link href="/justice/chat" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
@@ -750,7 +820,7 @@ export default function JusticeChatAiPage() {
               </div>
             ))}
             {loading ? (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">Thinking…</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Thinkingâ€¦</p>
             ) : null}
           </div>
 
@@ -781,7 +851,7 @@ export default function JusticeChatAiPage() {
               onClick={() => void handleSend()}
               className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
             >
-              {loading ? "Sending…" : "Send"}
+              {loading ? "Sendingâ€¦" : "Send"}
             </button>
           </div>
 
@@ -789,26 +859,26 @@ export default function JusticeChatAiPage() {
             <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Recap</p>
             <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
               <li>
-                <span className="font-medium">Company:</span> {parts.company_name || "—"}
+                <span className="font-medium">Company:</span> {parts.company_name || "â€”"}
               </li>
               <li>
                 <span className="font-medium">Category:</span> {categoryLabel(parts.problem_category)}
               </li>
               <li>
-                <span className="font-medium">Product / service:</span> {parts.purchase_or_signup || "—"}
+                <span className="font-medium">Product / service:</span> {parts.purchase_or_signup || "â€”"}
               </li>
               <li>
                 <span className="font-medium">What happened:</span> {recapStoryDisplay(parts.story)}
               </li>
               <li>
                 <span className="font-medium">Money / outcome:</span>{" "}
-                {[parts.money_amount, parts.desired_resolution].filter(Boolean).join(" — ") || "—"}
+                {[parts.money_amount, parts.desired_resolution].filter(Boolean).join(" â€” ") || "â€”"}
               </li>
               <li>
                 <span className="font-medium">Contacted company:</span> {parts.already_contacted}
               </li>
               <li>
-                <span className="font-medium">Email:</span> {parts.reply_email || "—"}
+                <span className="font-medium">Email:</span> {parts.reply_email || "â€”"}
               </li>
             </ul>
             {stillNeededHint ? (
@@ -893,7 +963,7 @@ export default function JusticeChatAiPage() {
                           onClick={() => void handleAcknowledgeHandlingRequest()}
                           className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                         >
-                          {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
+                          {acknowledgingHandling ? "Savingâ€¦" : "Mark acknowledged"}
                         </button>
                         <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
                           {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
@@ -927,7 +997,7 @@ export default function JusticeChatAiPage() {
                       onClick={() => void clearApprovedNextActionFollowUp()}
                       className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                     >
-                      {clearingFollowUp ? "Clearing…" : "Mark follow-up handled"}
+                      {clearingFollowUp ? "Clearingâ€¦" : "Mark follow-up handled"}
                     </button>
                     <p className="text-[11px] text-neutral-600 dark:text-neutral-400 sm:max-w-[14rem]">
                       Clears this from Needs attention on Saved cases. Your outcome note and dates stay saved. Not automatic filing or submission.
@@ -941,7 +1011,7 @@ export default function JusticeChatAiPage() {
                   >
                     Action plan
                   </Link>
-                  <span className="text-emerald-700/60 dark:text-emerald-400/60">·</span>
+                  <span className="text-emerald-700/60 dark:text-emerald-400/60">Â·</span>
                   <Link
                     href="/justice/packet"
                     className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
@@ -972,9 +1042,14 @@ export default function JusticeChatAiPage() {
                       : ` (${recentEvidenceRows.length})`}
                   </summary>
                   <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
-                    Metadata only — descriptions are shortened here. Use Organize evidence below to view or edit all
-                    records.
+                    Metadata only â€” descriptions are shortened in the list. You can edit recent notes here; use Organize
+                    evidence below for the full list, delete, and optional links.
                   </p>
+                  {recentEvidenceEditSuccess ? (
+                    <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                      {recentEvidenceEditSuccess}
+                    </p>
+                  ) : null}
                   <ul className="mt-2 space-y-2">
                     {recentEvidenceRows.map((row) => {
                       const descPreview = truncateChatEvidenceDescription(
@@ -986,20 +1061,151 @@ export default function JusticeChatAiPage() {
                           key={row.id}
                           className="border-t border-neutral-100 pt-2 first:border-t-0 first:pt-0 dark:border-neutral-700/80"
                         >
-                          <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">{row.title}</p>
-                          <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
-                            {chatEvidenceTypeLabel(row.evidence_type)}
-                          </p>
-                          {row.evidence_date ? (
-                            <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
-                              {row.evidence_date}
-                            </p>
-                          ) : null}
-                          {descPreview ? (
-                            <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
-                              {descPreview}
-                            </p>
-                          ) : null}
+                          {editingRecentEvidenceId === row.id ? (
+                            <form
+                              className="space-y-2"
+                              onSubmit={(e) => void handleSaveRecentEvidenceEdit(e, row.id)}
+                            >
+                              <p className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200">
+                                Edit proof note
+                              </p>
+                              <div>
+                                <label className={labelCls} htmlFor={`chat-ai-edit-proof-title-${row.id}`}>
+                                  Title
+                                </label>
+                                <input
+                                  id={`chat-ai-edit-proof-title-${row.id}`}
+                                  className={inputCls}
+                                  value={editRecentEvidenceTitle}
+                                  onChange={(e) => {
+                                    setEditRecentEvidenceTitle(e.target.value);
+                                    setRecentEvidenceEditError(null);
+                                    setRecentEvidenceEditSuccess(null);
+                                  }}
+                                  required
+                                  maxLength={500}
+                                  autoComplete="off"
+                                  disabled={savingRecentEvidenceEdit}
+                                />
+                              </div>
+                              <div>
+                                <label className={labelCls} htmlFor={`chat-ai-edit-proof-type-${row.id}`}>
+                                  Type
+                                </label>
+                                <select
+                                  id={`chat-ai-edit-proof-type-${row.id}`}
+                                  className={inputCls}
+                                  value={editRecentEvidenceType}
+                                  onChange={(e) => {
+                                    setEditRecentEvidenceType(e.target.value as JusticeEvidenceType);
+                                    setRecentEvidenceEditSuccess(null);
+                                  }}
+                                  disabled={savingRecentEvidenceEdit}
+                                >
+                                  {JUSTICE_EVIDENCE_TYPES.map((t) => (
+                                    <option key={t} value={t}>
+                                      {JUSTICE_EVIDENCE_TYPE_LABELS[t]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className={labelCls} htmlFor={`chat-ai-edit-proof-date-${row.id}`}>
+                                  Evidence date{" "}
+                                  <span className="font-normal text-neutral-500 dark:text-neutral-400">
+                                    (optional)
+                                  </span>
+                                </label>
+                                <input
+                                  id={`chat-ai-edit-proof-date-${row.id}`}
+                                  className={inputCls}
+                                  value={editRecentEvidenceDate}
+                                  onChange={(e) => {
+                                    setEditRecentEvidenceDate(e.target.value);
+                                    setRecentEvidenceEditError(null);
+                                    setRecentEvidenceEditSuccess(null);
+                                  }}
+                                  maxLength={200}
+                                  autoComplete="off"
+                                  disabled={savingRecentEvidenceEdit}
+                                  placeholder="e.g. 2026-01-15 or March phone call"
+                                />
+                              </div>
+                              <div>
+                                <label className={labelCls} htmlFor={`chat-ai-edit-proof-desc-${row.id}`}>
+                                  Description{" "}
+                                  <span className="font-normal text-neutral-500 dark:text-neutral-400">
+                                    (optional)
+                                  </span>
+                                </label>
+                                <textarea
+                                  id={`chat-ai-edit-proof-desc-${row.id}`}
+                                  className={`${inputCls} min-h-[72px] resize-y`}
+                                  value={editRecentEvidenceDescription}
+                                  onChange={(e) => {
+                                    setEditRecentEvidenceDescription(e.target.value);
+                                    setRecentEvidenceEditError(null);
+                                    setRecentEvidenceEditSuccess(null);
+                                  }}
+                                  maxLength={8000}
+                                  disabled={savingRecentEvidenceEdit}
+                                  placeholder="What this shows, ticket numbers, etc."
+                                />
+                              </div>
+                              {recentEvidenceEditError ? (
+                                <p className="text-xs text-red-600 dark:text-red-400">
+                                  {recentEvidenceEditError}
+                                </p>
+                              ) : null}
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="submit"
+                                  disabled={savingRecentEvidenceEdit || !editRecentEvidenceTitle.trim()}
+                                  className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                                >
+                                  {savingRecentEvidenceEdit ? "Savingâ€¦" : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={savingRecentEvidenceEdit}
+                                  onClick={cancelEditRecentEvidence}
+                                  className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                                {row.title}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                                {chatEvidenceTypeLabel(row.evidence_type)}
+                              </p>
+                              {row.evidence_date ? (
+                                <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                                  {row.evidence_date}
+                                </p>
+                              ) : null}
+                              {descPreview ? (
+                                <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+                                  {descPreview}
+                                </p>
+                              ) : null}
+                              <button
+                                type="button"
+                                disabled={
+                                  savingRecentEvidenceEdit ||
+                                  (Boolean(editingRecentEvidenceId) && editingRecentEvidenceId !== row.id)
+                                }
+                                onClick={() => startEditRecentEvidence(row)}
+                                className="mt-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                              >
+                                Edit
+                              </button>
+                            </>
+                          )}
                         </li>
                       );
                     })}
@@ -1007,14 +1213,14 @@ export default function JusticeChatAiPage() {
                 </details>
               ) : null}
               <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
-                As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
+                As we build your case in this chat, Surrenderless can organize proof that strengthens it â€” for example
                 screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
                 transcripts. Add short notes (and optional links) for what you have on file; file uploads are not
                 available yet.
               </p>
               <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
                 You can continue to your submission preview without proof for now. Before you escalate or submit
-                complaints, saving at least one proof note helps — nothing is filed automatically from this app yet.
+                complaints, saving at least one proof note helps â€” nothing is filed automatically from this app yet.
               </p>
               {canAddProofNoteInChat ? (
                 <details className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
@@ -1118,7 +1324,7 @@ export default function JusticeChatAiPage() {
                       disabled={savingProofNote || !proofNoteTitle.trim()}
                       className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                     >
-                      {savingProofNote ? "Saving…" : "Save proof note"}
+                      {savingProofNote ? "Savingâ€¦" : "Save proof note"}
                     </button>
                   </form>
                 </details>
@@ -1137,7 +1343,7 @@ export default function JusticeChatAiPage() {
               onClick={() => void handleContinueToPreview()}
               className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? "Saving…" : "Continue to submission preview"}
+              {submitting ? "Savingâ€¦" : "Continue to submission preview"}
             </button>
           </div>
         </div>
