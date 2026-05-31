@@ -29,6 +29,12 @@ import {
   mergeClientStateWithClearedFollowUp,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import {
+  JUSTICE_EVIDENCE_TYPE_LABELS,
+  JUSTICE_EVIDENCE_TYPES,
+  type JusticeEvidenceType,
+} from "@/lib/justice/evidence";
+import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
@@ -152,6 +158,11 @@ export default function JusticeChatAiPage() {
     undefined
   );
   const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
+  const [proofNoteTitle, setProofNoteTitle] = useState("");
+  const [proofNoteType, setProofNoteType] = useState<JusticeEvidenceType>("other");
+  const [savingProofNote, setSavingProofNote] = useState(false);
+  const [proofNoteError, setProofNoteError] = useState<string | null>(null);
+  const [proofNoteSuccess, setProofNoteSuccess] = useState<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
 
   async function handleRequestSurrenderlessHandling(note?: string) {
@@ -428,6 +439,60 @@ export default function JusticeChatAiPage() {
     isLoaded &&
     isSignedIn &&
     savedEvidenceCount !== null;
+
+  const activeUuidCaseId =
+    typeof window !== "undefined"
+      ? (() => {
+          const id = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+          return id && isUuid(id) ? id : "";
+        })()
+      : "";
+
+  const canAddProofNoteInChat =
+    isUpdatingExistingCase && isLoaded && isSignedIn && Boolean(activeUuidCaseId);
+
+  async function handleAddProofNote(e: React.FormEvent) {
+    e.preventDefault();
+    setProofNoteSuccess(null);
+    const trimmed = proofNoteTitle.trim();
+    if (!trimmed) {
+      setProofNoteError("Title is required.");
+      return;
+    }
+    const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+    if (!caseId || !isUuid(caseId) || !isSignedIn) return;
+
+    setSavingProofNote(true);
+    setProofNoteError(null);
+    try {
+      const res = await fetch("/api/justice/evidence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: caseId,
+          title: trimmed,
+          evidence_type: proofNoteType,
+        }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (
+          payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}
+        ) as { error?: string };
+        setProofNoteError(err.error ?? "Could not save proof note.");
+        return;
+      }
+      applyServerTimelineFromResponse(caseId, payload);
+      setProofNoteTitle("");
+      setProofNoteSuccess("Proof note saved.");
+      const ac = new AbortController();
+      void loadSavedEvidenceCount(ac.signal);
+    } catch {
+      setProofNoteError("Could not save proof note.");
+    } finally {
+      setSavingProofNote(false);
+    }
+  }
 
   useEffect(() => {
     if (!isUpdatingExistingCase) {
@@ -861,8 +926,76 @@ export default function JusticeChatAiPage() {
               </p>
               <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
                 You can continue to your submission preview without proof for now. Before you escalate or submit
-                complaints, saving at least one evidence item helps — nothing is filed automatically from this app yet.
+                complaints, saving at least one proof note helps — nothing is filed automatically from this app yet.
               </p>
+              {canAddProofNoteInChat ? (
+                <details className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
+                  <summary className="cursor-pointer text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                    Add a proof note
+                  </summary>
+                  <form className="mt-2 space-y-2" onSubmit={(e) => void handleAddProofNote(e)}>
+                    <p className="text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+                      Save metadata about what you have on file (not a file upload).
+                    </p>
+                    <div>
+                      <label className={labelCls} htmlFor="chat-ai-proof-title">
+                        Title
+                      </label>
+                      <input
+                        id="chat-ai-proof-title"
+                        className={inputCls}
+                        value={proofNoteTitle}
+                        onChange={(e) => {
+                          setProofNoteTitle(e.target.value);
+                          setProofNoteError(null);
+                          setProofNoteSuccess(null);
+                        }}
+                        required
+                        maxLength={500}
+                        autoComplete="off"
+                        disabled={savingProofNote}
+                        placeholder="e.g. Receipt for order #1234"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="chat-ai-proof-type">
+                        Type
+                      </label>
+                      <select
+                        id="chat-ai-proof-type"
+                        className={inputCls}
+                        value={proofNoteType}
+                        onChange={(e) => {
+                          setProofNoteType(e.target.value as JusticeEvidenceType);
+                          setProofNoteSuccess(null);
+                        }}
+                        disabled={savingProofNote}
+                      >
+                        {JUSTICE_EVIDENCE_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {JUSTICE_EVIDENCE_TYPE_LABELS[t]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {proofNoteError ? (
+                      <p className="text-xs text-red-600 dark:text-red-400">{proofNoteError}</p>
+                    ) : null}
+                    {proofNoteSuccess ? (
+                      <p className="text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                        {proofNoteSuccess}
+                      </p>
+                    ) : null}
+                    <button
+                      type="submit"
+                      disabled={savingProofNote || !proofNoteTitle.trim()}
+                      className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      {savingProofNote ? "Saving…" : "Save proof note"}
+                    </button>
+                  </form>
+                </details>
+              ) : null}
               <Link
                 href="/justice/evidence"
                 className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-blue-600 bg-white px-4 py-2 text-sm font-semibold text-blue-600 shadow-sm transition hover:bg-blue-50 dark:border-blue-500 dark:bg-neutral-900 dark:text-blue-400 dark:hover:bg-neutral-800"
