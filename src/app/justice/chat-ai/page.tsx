@@ -190,6 +190,9 @@ export default function JusticeChatAiPage() {
   const [savingRecentEvidenceEdit, setSavingRecentEvidenceEdit] = useState(false);
   const [recentEvidenceEditError, setRecentEvidenceEditError] = useState<string | null>(null);
   const [recentEvidenceEditSuccess, setRecentEvidenceEditSuccess] = useState<string | null>(null);
+  const [deletingRecentEvidenceId, setDeletingRecentEvidenceId] = useState<string | null>(null);
+  const [recentEvidenceDeleteError, setRecentEvidenceDeleteError] = useState<string | null>(null);
+  const [recentEvidenceDeleteSuccess, setRecentEvidenceDeleteSuccess] = useState<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
 
   async function handleRequestSurrenderlessHandling(note?: string) {
@@ -561,6 +564,8 @@ export default function JusticeChatAiPage() {
     setEditRecentEvidenceDescription(row.description ?? "");
     setRecentEvidenceEditError(null);
     setRecentEvidenceEditSuccess(null);
+    setRecentEvidenceDeleteError(null);
+    setRecentEvidenceDeleteSuccess(null);
   }
 
   async function handleSaveRecentEvidenceEdit(e: React.FormEvent, id: string) {
@@ -574,6 +579,8 @@ export default function JusticeChatAiPage() {
     setSavingRecentEvidenceEdit(true);
     setRecentEvidenceEditError(null);
     setRecentEvidenceEditSuccess(null);
+    setRecentEvidenceDeleteError(null);
+    setRecentEvidenceDeleteSuccess(null);
     try {
       const body: Record<string, unknown> = {
         title: trimmedTitle,
@@ -605,6 +612,38 @@ export default function JusticeChatAiPage() {
     }
   }
 
+  async function handleDeleteRecentEvidence(id: string) {
+    if (!window.confirm("Delete this proof note?")) return;
+    if (!isSignedIn) return;
+
+    setDeletingRecentEvidenceId(id);
+    setRecentEvidenceDeleteError(null);
+    setRecentEvidenceDeleteSuccess(null);
+    setRecentEvidenceEditSuccess(null);
+
+    try {
+      const res = await fetch(`/api/justice/evidence/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (
+          payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}
+        ) as { error?: string };
+        setRecentEvidenceDeleteError(err.error ?? "Could not delete proof note.");
+        return;
+      }
+      if (editingRecentEvidenceId === id) {
+        cancelEditRecentEvidence();
+      }
+      setRecentEvidenceDeleteSuccess("Proof note deleted.");
+      const ac = new AbortController();
+      void loadSavedEvidencePreview(ac.signal);
+    } catch {
+      setRecentEvidenceDeleteError("Could not delete proof note.");
+    } finally {
+      setDeletingRecentEvidenceId(null);
+    }
+  }
+
   useEffect(() => {
     if (!isUpdatingExistingCase) {
       setApprovedNextAction(undefined);
@@ -613,6 +652,9 @@ export default function JusticeChatAiPage() {
       setEditingRecentEvidenceId(null);
       setRecentEvidenceEditError(null);
       setRecentEvidenceEditSuccess(null);
+      setDeletingRecentEvidenceId(null);
+      setRecentEvidenceDeleteError(null);
+      setRecentEvidenceDeleteSuccess(null);
       return;
     }
 
@@ -1042,13 +1084,21 @@ export default function JusticeChatAiPage() {
                       : ` (${recentEvidenceRows.length})`}
                   </summary>
                   <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
-                    Metadata only â€” descriptions are shortened in the list. You can edit recent notes here; use Organize
-                    evidence below for the full list, delete, and optional links.
+                    Metadata only — descriptions are shortened in the list. Edit or delete recent notes here. Use
+                    Organize evidence for the full list and optional links.
                   </p>
                   {recentEvidenceEditSuccess ? (
                     <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-300">
                       {recentEvidenceEditSuccess}
                     </p>
+                  ) : null}
+                  {recentEvidenceDeleteSuccess ? (
+                    <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                      {recentEvidenceDeleteSuccess}
+                    </p>
+                  ) : null}
+                  {recentEvidenceDeleteError ? (
+                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">{recentEvidenceDeleteError}</p>
                   ) : null}
                   <ul className="mt-2 space-y-2">
                     {recentEvidenceRows.map((row) => {
@@ -1193,17 +1243,32 @@ export default function JusticeChatAiPage() {
                                   {descPreview}
                                 </p>
                               ) : null}
-                              <button
-                                type="button"
-                                disabled={
-                                  savingRecentEvidenceEdit ||
-                                  (Boolean(editingRecentEvidenceId) && editingRecentEvidenceId !== row.id)
-                                }
-                                onClick={() => startEditRecentEvidence(row)}
-                                className="mt-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                              >
-                                Edit
-                              </button>
+                              <div className="mt-1.5 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={
+                                    savingRecentEvidenceEdit ||
+                                    deletingRecentEvidenceId !== null ||
+                                    Boolean(editingRecentEvidenceId)
+                                  }
+                                  onClick={() => startEditRecentEvidence(row)}
+                                  className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    savingRecentEvidenceEdit ||
+                                    Boolean(editingRecentEvidenceId) ||
+                                    deletingRecentEvidenceId !== null
+                                  }
+                                  onClick={() => void handleDeleteRecentEvidence(row.id)}
+                                  className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-800 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
+                                >
+                                  {deletingRecentEvidenceId === row.id ? "Deleting…" : "Delete"}
+                                </button>
+                              </div>
                             </>
                           )}
                         </li>
