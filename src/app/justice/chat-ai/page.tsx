@@ -434,9 +434,8 @@ export default function JusticeChatAiPage() {
       setParts(justiceIntakeToBuildJusticeIntakeParts(intake));
       setIsUpdatingExistingCase(true);
       setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
-    } else {
-      setStagedProofNotes(readStagedProofNotes());
     }
+    setStagedProofNotes(readStagedProofNotes());
   }, []);
 
   const loadSavedEvidencePreview = useCallback(async (signal: AbortSignal) => {
@@ -554,7 +553,7 @@ export default function JusticeChatAiPage() {
 
   const canUseProofNoteForm = canAddProofNoteInChat || canStageProofNoteInChat;
 
-  const showStagedProofNotes = canStageProofNoteInChat && stagedProofNotes.length > 0;
+  const showStagedProofNotes = Boolean(isSignedIn) && stagedProofNotes.length > 0;
 
   function tryShowProofKeywordNudge(userMessage: string) {
     if (proofKeywordNudgeOfferedRef.current || !canAddProofNoteInChat) return;
@@ -923,15 +922,14 @@ export default function JusticeChatAiPage() {
     const existingCaseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     const existingLocalIntake = readValidLocalJusticeIntake();
-    const isFreshStagedFlushRetry =
-      !isUpdatingExistingCase &&
+    const isStagedFlushRetry =
       stagedToFlush.length > 0 &&
       Boolean(existingLocalIntake) &&
       Boolean(existingCaseId && isUuid(existingCaseId));
 
     setSubmitting(true);
     try {
-      if (isFreshStagedFlushRetry) {
+      if (isStagedFlushRetry) {
         const { flushedClientIds, errorMessage } = await flushStagedProofNotesToServer(
           existingCaseId,
           stagedToFlush
@@ -1285,8 +1283,11 @@ export default function JusticeChatAiPage() {
               {showStagedProofNotes ? (
                 <>
                   <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
-                    Staged proof notes: {stagedProofNotes.length} item
-                    {stagedProofNotes.length === 1 ? "" : "s"} (on this device until you continue to preview).
+                    Pending proof notes: {stagedProofNotes.length} item
+                    {stagedProofNotes.length === 1 ? "" : "s"}
+                    {canStageProofNoteInChat
+                      ? " (on this device until you continue to preview)."
+                      : " (pending upload — Continue to save to your case)."}
                   </p>
                   <ul className="mt-2 space-y-2">
                     {stagedProofNotes.map((note) => {
@@ -1676,6 +1677,12 @@ export default function JusticeChatAiPage() {
               </Link>
             </div>
 
+            {showStagedProofNotes ? (
+              <p className="mt-4 text-xs text-neutral-600 dark:text-neutral-400">
+                You have {stagedProofNotes.length} pending proof note
+                {stagedProofNotes.length === 1 ? "" : "s"} to save when you continue.
+              </p>
+            ) : null}
             <button
               type="button"
               disabled={submitting || loading}
