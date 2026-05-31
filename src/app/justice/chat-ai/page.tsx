@@ -919,10 +919,38 @@ export default function JusticeChatAiPage() {
       return;
     }
 
-    const stagedBeforeCommit = canStageProofNoteInChat ? readStagedProofNotes() : [];
+    const stagedToFlush = readStagedProofNotes();
+    const existingCaseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    const existingLocalIntake = readValidLocalJusticeIntake();
+    const isFreshStagedFlushRetry =
+      !isUpdatingExistingCase &&
+      stagedToFlush.length > 0 &&
+      Boolean(existingLocalIntake) &&
+      Boolean(existingCaseId && isUuid(existingCaseId));
 
     setSubmitting(true);
     try {
+      if (isFreshStagedFlushRetry) {
+        const { flushedClientIds, errorMessage } = await flushStagedProofNotesToServer(
+          existingCaseId,
+          stagedToFlush
+        );
+        const remaining = removeStagedProofNotesByClientIds(flushedClientIds);
+        setStagedProofNotes(remaining);
+
+        if (errorMessage || remaining.length > 0) {
+          setStagedProofFlushError(
+            errorMessage ??
+              "Some staged proof notes could not be saved. Remaining notes stay staged on this device."
+          );
+          return;
+        }
+
+        router.push("/justice/preview");
+        return;
+      }
+
       const intake = buildJusticeIntakeFromParts(parts);
       const commitResult = await commitIntakeToSessionAndServer({
         intake,
@@ -932,7 +960,7 @@ export default function JusticeChatAiPage() {
         mode: isUpdatingExistingCase ? "update" : "create",
       });
 
-      if (!isUpdatingExistingCase && stagedBeforeCommit.length > 0) {
+      if (!isUpdatingExistingCase && stagedToFlush.length > 0) {
         if (!commitResult.serverPersisted || !isUuid(commitResult.caseId)) {
           setStagedProofFlushError(
             "Your case could not be saved on the server yet. Staged proof notes were not uploaded. Try again."
@@ -942,7 +970,7 @@ export default function JusticeChatAiPage() {
 
         const { flushedClientIds, errorMessage } = await flushStagedProofNotesToServer(
           commitResult.caseId,
-          stagedBeforeCommit
+          stagedToFlush
         );
         const remaining = removeStagedProofNotesByClientIds(flushedClientIds);
         setStagedProofNotes(remaining);
