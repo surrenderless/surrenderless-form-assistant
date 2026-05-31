@@ -8,7 +8,11 @@ import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
-import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
+import {
+  JUSTICE_EVIDENCE_TYPE_LABELS,
+  isJusticeEvidenceType,
+  type JusticeCaseEvidenceRow,
+} from "@/lib/justice/evidence";
 import {
   appendSubmissionDraftReviewedOnce,
   applyServerTimelineFromResponse,
@@ -28,6 +32,10 @@ const cardCls =
 
 function isPreviewSelectableDestination(d: JusticeDestination): boolean {
   return d.status === "recommended" || d.status === "available";
+}
+
+function previewEvidenceTypeLabel(t: string): string {
+  return isJusticeEvidenceType(t) ? JUSTICE_EVIDENCE_TYPE_LABELS[t] : t;
 }
 
 export default function JusticePreviewPage() {
@@ -142,6 +150,14 @@ export default function JusticePreviewPage() {
       evidenceLines: evidence.map((e) => ({ title: e.title })),
     });
   }, [intake, selectedDestination, evidence]);
+
+  const recentEvidence = useMemo(
+    () =>
+      [...evidence]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .slice(0, 3),
+    [evidence]
+  );
 
   useEffect(() => {
     setReviewed(false);
@@ -320,7 +336,8 @@ export default function JusticePreviewPage() {
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Submission draft preview</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Review a plain-text draft built from your saved answers. Nothing here is filed automatically.
+          Your chat intake and case are saved. Review the plain-text draft below — saved proof note titles are
+          included when they are on your case. Nothing here is filed automatically.
         </p>
 
         <div className={`mt-6 ${cardCls}`}>
@@ -346,11 +363,60 @@ export default function JusticePreviewPage() {
           </p>
         </div>
 
-        {isSignedIn && evidenceLoading ? (
-          <p className="mt-4 text-sm text-neutral-500 dark:text-neutral-400">Loading evidence titles…</p>
-        ) : null}
-        {isSignedIn && evidenceError ? (
-          <p className="mt-4 text-sm text-amber-800 dark:text-amber-200">Could not load evidence titles (draft still shown).</p>
+        {isSignedIn ? (
+          <div className={`mt-6 ${cardCls}`}>
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Proof on your case</h2>
+            {evidenceLoading ? (
+              <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">Loading saved proof notes...</p>
+            ) : evidenceError ? (
+              <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
+                Could not load evidence titles (draft still shown).
+              </p>
+            ) : evidence.length > 0 ? (
+              <>
+                <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">
+                  Saved proof notes on your case: {evidence.length} item
+                  {evidence.length === 1 ? "" : "s"}.
+                </p>
+                <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                  Metadata only — not file uploads. Titles appear in the draft below.
+                </p>
+                <ul className="mt-3 space-y-2">
+                  {recentEvidence.map((row) => (
+                    <li
+                      key={row.id}
+                      className="rounded-lg border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-800/40"
+                    >
+                      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{row.title}</p>
+                      <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+                        {previewEvidenceTypeLabel(row.evidence_type)}
+                      </p>
+                      {row.evidence_date ? (
+                        <p className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400">{row.evidence_date}</p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                {evidence.length > recentEvidence.length ? (
+                  <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                    Showing {recentEvidence.length} of {evidence.length} saved proof notes.
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">
+                  No saved proof notes on this case yet.
+                </p>
+                <Link
+                  href="/justice/chat-ai"
+                  className="mt-3 inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Add proof in chat →
+                </Link>
+              </>
+            )}
+          </div>
         ) : null}
 
         <div className={`mt-6 ${cardCls}`}>
