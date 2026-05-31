@@ -177,6 +177,8 @@ export default function JusticeChatAiPage() {
   const [recentEvidenceRows, setRecentEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [proofNoteTitle, setProofNoteTitle] = useState("");
   const [proofNoteType, setProofNoteType] = useState<JusticeEvidenceType>("other");
+  const [proofNoteEvidenceDate, setProofNoteEvidenceDate] = useState("");
+  const [proofNoteDescription, setProofNoteDescription] = useState("");
   const [savingProofNote, setSavingProofNote] = useState(false);
   const [proofNoteError, setProofNoteError] = useState<string | null>(null);
   const [proofNoteSuccess, setProofNoteSuccess] = useState<string | null>(null);
@@ -499,14 +501,20 @@ export default function JusticeChatAiPage() {
     setSavingProofNote(true);
     setProofNoteError(null);
     try {
+      const body: Record<string, unknown> = {
+        case_id: caseId,
+        title: trimmed,
+        evidence_type: proofNoteType,
+      };
+      const d = proofNoteEvidenceDate.trim();
+      if (d) body.evidence_date = d;
+      const desc = proofNoteDescription.trim();
+      if (desc) body.description = desc;
+
       const res = await fetch("/api/justice/evidence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          case_id: caseId,
-          title: trimmed,
-          evidence_type: proofNoteType,
-        }),
+        body: JSON.stringify(body),
       });
       const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -518,6 +526,8 @@ export default function JusticeChatAiPage() {
       }
       applyServerTimelineFromResponse(caseId, payload);
       setProofNoteTitle("");
+      setProofNoteEvidenceDate("");
+      setProofNoteDescription("");
       setProofNoteSuccess("Proof note saved.");
       const ac = new AbortController();
       void loadSavedEvidencePreview(ac.signal);
@@ -1055,6 +1065,45 @@ export default function JusticeChatAiPage() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="chat-ai-proof-date">
+                        Evidence date{" "}
+                        <span className="font-normal text-neutral-500 dark:text-neutral-400">(optional)</span>
+                      </label>
+                      <input
+                        id="chat-ai-proof-date"
+                        className={inputCls}
+                        value={proofNoteEvidenceDate}
+                        onChange={(e) => {
+                          setProofNoteEvidenceDate(e.target.value);
+                          setProofNoteError(null);
+                          setProofNoteSuccess(null);
+                        }}
+                        maxLength={200}
+                        autoComplete="off"
+                        disabled={savingProofNote}
+                        placeholder="e.g. 2026-01-15 or March phone call"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls} htmlFor="chat-ai-proof-desc">
+                        Description{" "}
+                        <span className="font-normal text-neutral-500 dark:text-neutral-400">(optional)</span>
+                      </label>
+                      <textarea
+                        id="chat-ai-proof-desc"
+                        className={`${inputCls} min-h-[72px] resize-y`}
+                        value={proofNoteDescription}
+                        onChange={(e) => {
+                          setProofNoteDescription(e.target.value);
+                          setProofNoteError(null);
+                          setProofNoteSuccess(null);
+                        }}
+                        maxLength={8000}
+                        disabled={savingProofNote}
+                        placeholder="What this shows, ticket numbers, etc."
+                      />
                     </div>
                     {proofNoteError ? (
                       <p className="text-xs text-red-600 dark:text-red-400">{proofNoteError}</p>
