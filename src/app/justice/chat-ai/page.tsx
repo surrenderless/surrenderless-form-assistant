@@ -99,6 +99,47 @@ function stillNeededBeforePreviewMessage(missing: string[]): string {
   return `Still needed before preview: ${missing.join(", ")}.`;
 }
 
+type ContinueHandoffStepsInput = {
+  isUpdatingExistingCase: boolean;
+  stagedCount: number;
+  isStagedFlushRetry: boolean;
+  savedEvidenceCount: number;
+};
+
+function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
+  const previewStep =
+    "Open submission draft preview to review your case text (nothing is filed automatically).";
+  const actionPlanStep = "From preview, continue to your action plan when you're ready.";
+
+  if (input.isStagedFlushRetry) {
+    const noteWord = input.stagedCount === 1 ? "note" : "notes";
+    return [
+      `Save ${input.stagedCount} pending proof ${noteWord} to your case.`,
+      previewStep,
+      actionPlanStep,
+    ];
+  }
+
+  const steps: string[] = [];
+
+  if (input.isUpdatingExistingCase) {
+    steps.push("Save updates to your case.");
+    if (input.savedEvidenceCount > 0) {
+      const itemWord = input.savedEvidenceCount === 1 ? "item" : "items";
+      steps.push(`Your ${input.savedEvidenceCount} saved proof ${itemWord} stay on your case.`);
+    }
+  } else {
+    steps.push("Save your case.");
+    if (input.stagedCount > 0) {
+      const noteWord = input.stagedCount === 1 ? "note" : "notes";
+      steps.push(`Save ${input.stagedCount} pending proof ${noteWord} to your case.`);
+    }
+  }
+
+  steps.push(previewStep, actionPlanStep);
+  return steps;
+}
+
 function recapStoryDisplay(story: string): string {
   const trimmed = story.trim();
   if (!trimmed) return "â€”";
@@ -1012,6 +1053,23 @@ export default function JusticeChatAiPage() {
   const basicsMissing = getPreviewBasicsMissing(parts);
   const stillNeededHint =
     basicsMissing.length > 0 ? stillNeededBeforePreviewMessage(basicsMissing) : null;
+  const contactProofCheck = validateContactProofForIntake({
+    already_contacted: parts.already_contacted,
+    contact_proof_type: parts.contact_proof_type,
+    contact_proof_text: parts.contact_proof_text,
+  });
+  const hasValidLocalIntake = Boolean(readValidLocalJusticeIntake());
+  const isStagedFlushRetry =
+    stagedProofNotes.length > 0 && hasValidLocalIntake && Boolean(activeUuidCaseId);
+  const showContinueHandoff = basicsMissing.length === 0 && contactProofCheck.ok;
+  const continueHandoffSteps = showContinueHandoff
+    ? getContinueHandoffSteps({
+        isUpdatingExistingCase,
+        stagedCount: stagedProofNotes.length,
+        isStagedFlushRetry,
+        savedEvidenceCount: savedEvidenceCount ?? 0,
+      })
+    : [];
 
   return (
     <>
@@ -1677,19 +1735,30 @@ export default function JusticeChatAiPage() {
               </Link>
             </div>
 
-            {showStagedProofNotes ? (
-              <p className="mt-4 text-xs text-neutral-600 dark:text-neutral-400">
-                You have {stagedProofNotes.length} pending proof note
-                {stagedProofNotes.length === 1 ? "" : "s"} to save when you continue.
+            {basicsMissing.length === 0 && !contactProofCheck.ok ? (
+              <p className="mt-4 text-sm text-amber-800 dark:text-amber-300">
+                {contactProofCheck.message}
               </p>
+            ) : null}
+            {showContinueHandoff ? (
+              <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 px-3 py-2.5 ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/50 dark:ring-white/[0.04]">
+                <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
+                  What happens next
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  {continueHandoffSteps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
             <button
               type="button"
-              disabled={submitting || loading}
+              disabled={submitting || loading || basicsMissing.length > 0}
               onClick={() => void handleContinueToPreview()}
               className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? "Savingâ€¦" : "Continue to submission preview"}
+              {submitting ? "Saving…" : "Continue to submission preview"}
             </button>
           </div>
         </div>
