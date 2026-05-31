@@ -1,3 +1,4 @@
+import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 import {
   STORAGE_CASE_ID,
   STORAGE_FTC_MANUAL_UNLOCK,
@@ -16,4 +17,5 @@ export function clearLocalJusticeSession(): void {
   sessionStorage.removeItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1);
   sessionStorage.removeItem(STORAGE_FTC_MOCK_COMPLETED);
   sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
+  sessionStorage.removeItem(STORAGE_STAGED_PROOF_NOTES_V1);
 }

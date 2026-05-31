@@ -48,6 +48,12 @@ import {
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
+  appendStagedProofNote,
+  readStagedProofNotes,
+  removeStagedProofNotesByClientIds,
+  type StagedProofNote,
+} from "@/lib/justice/stagedProofNotes";
+import {
   defaultBuildJusticeIntakeParts,
   MAX_INTAKE_CHAT_USER_MESSAGE,
 } from "@/lib/justice/parseIntakeChatAiResponse";
@@ -234,6 +240,8 @@ export default function JusticeChatAiPage() {
   const [recentEvidenceDeleteSuccess, setRecentEvidenceDeleteSuccess] = useState<string | null>(null);
   const [showProofKeywordNudge, setShowProofKeywordNudge] = useState(false);
   const [proofNoteDetailsOpen, setProofNoteDetailsOpen] = useState(false);
+  const [stagedProofNotes, setStagedProofNotes] = useState<StagedProofNote[]>([]);
+  const [stagedProofFlushError, setStagedProofFlushError] = useState<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -426,6 +434,8 @@ export default function JusticeChatAiPage() {
       setParts(justiceIntakeToBuildJusticeIntakeParts(intake));
       setIsUpdatingExistingCase(true);
       setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
+    } else {
+      setStagedProofNotes(readStagedProofNotes());
     }
   }, []);
 
@@ -540,6 +550,12 @@ export default function JusticeChatAiPage() {
   const canAddProofNoteInChat =
     isUpdatingExistingCase && isLoaded && isSignedIn && Boolean(activeUuidCaseId);
 
+  const canStageProofNoteInChat = !isUpdatingExistingCase && isLoaded && Boolean(isSignedIn);
+
+  const canUseProofNoteForm = canAddProofNoteInChat || canStageProofNoteInChat;
+
+  const showStagedProofNotes = canStageProofNoteInChat && stagedProofNotes.length > 0;
+
   function tryShowProofKeywordNudge(userMessage: string) {
     if (proofKeywordNudgeOfferedRef.current || !canAddProofNoteInChat) return;
     if (!userMessageSuggestsProofNote(userMessage)) return;
@@ -564,8 +580,36 @@ export default function JusticeChatAiPage() {
       setProofNoteError("Title is required.");
       return;
     }
+    if (!isSignedIn) return;
+
+    if (canStageProofNoteInChat) {
+      setSavingProofNote(true);
+      setProofNoteError(null);
+      try {
+        const d = proofNoteEvidenceDate.trim();
+        const desc = proofNoteDescription.trim();
+        const next = appendStagedProofNote({
+          title: trimmed,
+          evidence_type: proofNoteType,
+          ...(d ? { evidence_date: d } : {}),
+          ...(desc ? { description: desc } : {}),
+        });
+        setStagedProofNotes(next);
+        setProofNoteTitle("");
+        setProofNoteEvidenceDate("");
+        setProofNoteDescription("");
+        setProofNoteSuccess("Proof note staged on this device.");
+        setStagedProofFlushError(null);
+      } catch {
+        setProofNoteError("Could not stage proof note.");
+      } finally {
+        setSavingProofNote(false);
+      }
+      return;
+    }
+
     const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
-    if (!caseId || !isUuid(caseId) || !isSignedIn) return;
+    if (!caseId || !isUuid(caseId)) return;
 
     setSavingProofNote(true);
     setProofNoteError(null);
@@ -606,6 +650,51 @@ export default function JusticeChatAiPage() {
     } finally {
       setSavingProofNote(false);
     }
+  }
+
+  async function flushStagedProofNotesToServer(
+    caseId: string,
+    notes: StagedProofNote[]
+  ): Promise<{ flushedClientIds: string[]; errorMessage: string | null }> {
+    const flushedClientIds: string[] = [];
+    for (const note of notes) {
+      try {
+        const body: Record<string, unknown> = {
+          case_id: caseId,
+          title: note.title,
+          evidence_type: note.evidence_type,
+        };
+        if (note.evidence_date) body.evidence_date = note.evidence_date;
+        if (note.description) body.description = note.description;
+
+        const res = await fetch("/api/justice/evidence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const payload: unknown = await res.json().catch(() => null);
+        if (!res.ok) {
+          const err = (
+            payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}
+          ) as { error?: string };
+          return {
+            flushedClientIds,
+            errorMessage:
+              err.error ??
+              "Some staged proof notes could not be saved. Remaining notes stay staged on this device.",
+          };
+        }
+        applyServerTimelineFromResponse(caseId, payload);
+        flushedClientIds.push(note.clientId);
+      } catch {
+        return {
+          flushedClientIds,
+          errorMessage:
+            "Some staged proof notes could not be saved. Remaining notes stay staged on this device.",
+        };
+      }
+    }
+    return { flushedClientIds, errorMessage: null };
   }
 
   function cancelEditRecentEvidence() {
@@ -815,6 +904,7 @@ export default function JusticeChatAiPage() {
 
   async function handleContinueToPreview() {
     setContactProofError(null);
+    setStagedProofFlushError(null);
     const basicsMissing = getPreviewBasicsMissing(parts);
     if (basicsMissing.length > 0) {
       return;
@@ -829,16 +919,43 @@ export default function JusticeChatAiPage() {
       return;
     }
 
+    const stagedBeforeCommit = canStageProofNoteInChat ? readStagedProofNotes() : [];
+
     setSubmitting(true);
     try {
       const intake = buildJusticeIntakeFromParts(parts);
-      await commitIntakeToSessionAndServer({
+      const commitResult = await commitIntakeToSessionAndServer({
         intake,
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
         commitLogLabel: "justice chat-ai",
         mode: isUpdatingExistingCase ? "update" : "create",
       });
+
+      if (!isUpdatingExistingCase && stagedBeforeCommit.length > 0) {
+        if (!commitResult.serverPersisted || !isUuid(commitResult.caseId)) {
+          setStagedProofFlushError(
+            "Your case could not be saved on the server yet. Staged proof notes were not uploaded. Try again."
+          );
+          return;
+        }
+
+        const { flushedClientIds, errorMessage } = await flushStagedProofNotesToServer(
+          commitResult.caseId,
+          stagedBeforeCommit
+        );
+        const remaining = removeStagedProofNotesByClientIds(flushedClientIds);
+        setStagedProofNotes(remaining);
+
+        if (errorMessage || remaining.length > 0) {
+          setStagedProofFlushError(
+            errorMessage ??
+              "Some staged proof notes could not be saved. Remaining notes stay staged on this device."
+          );
+          return;
+        }
+      }
+
       router.push("/justice/preview");
     } finally {
       setSubmitting(false);
@@ -1137,6 +1254,45 @@ export default function JusticeChatAiPage() {
                     : `Saved evidence: ${savedEvidenceCount} item${savedEvidenceCount === 1 ? "" : "s"}.`}
                 </p>
               ) : null}
+              {showStagedProofNotes ? (
+                <>
+                  <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                    Staged proof notes: {stagedProofNotes.length} item
+                    {stagedProofNotes.length === 1 ? "" : "s"} (on this device until you continue to preview).
+                  </p>
+                  <ul className="mt-2 space-y-2">
+                    {stagedProofNotes.map((note) => {
+                      const descPreview = truncateChatEvidenceDescription(
+                        note.description ?? null,
+                        CHAT_EVIDENCE_DESC_PREVIEW_MAX
+                      );
+                      return (
+                        <li
+                          key={note.clientId}
+                          className="rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40"
+                        >
+                          <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                            {note.title}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                            {chatEvidenceTypeLabel(note.evidence_type)}
+                          </p>
+                          {note.evidence_date ? (
+                            <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                              {note.evidence_date}
+                            </p>
+                          ) : null}
+                          {descPreview ? (
+                            <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+                              {descPreview}
+                            </p>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              ) : null}
               {showRecentEvidencePreview ? (
                 <details className="mt-2 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
                   <summary className="cursor-pointer text-xs font-medium text-neutral-800 dark:text-neutral-200">
@@ -1364,7 +1520,7 @@ export default function JusticeChatAiPage() {
                   </button>
                 </div>
               ) : null}
-              {canAddProofNoteInChat ? (
+              {canUseProofNoteForm ? (
                 <details
                   open={proofNoteDetailsOpen}
                   onToggle={(e) => setProofNoteDetailsOpen(e.currentTarget.open)}
@@ -1375,7 +1531,9 @@ export default function JusticeChatAiPage() {
                   </summary>
                   <form className="mt-2 space-y-2" onSubmit={(e) => void handleAddProofNote(e)}>
                     <p className="text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
-                      Save metadata about what you have on file (not a file upload).
+                      {canStageProofNoteInChat
+                        ? "Stage metadata about what you have on file (not a file upload). Staged on this device until you continue to preview."
+                        : "Save metadata about what you have on file (not a file upload)."}
                     </p>
                     <div>
                       <label className={labelCls} htmlFor="chat-ai-proof-title">
@@ -1470,10 +1628,17 @@ export default function JusticeChatAiPage() {
                       disabled={savingProofNote || !proofNoteTitle.trim()}
                       className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                     >
-                      {savingProofNote ? "Savingâ€¦" : "Save proof note"}
+                      {savingProofNote
+                        ? "Saving…"
+                        : canStageProofNoteInChat
+                          ? "Stage proof note"
+                          : "Save proof note"}
                     </button>
                   </form>
                 </details>
+              ) : null}
+              {stagedProofFlushError ? (
+                <p className="mt-3 text-xs text-red-600 dark:text-red-400">{stagedProofFlushError}</p>
               ) : null}
               <Link
                 href="/justice/evidence"

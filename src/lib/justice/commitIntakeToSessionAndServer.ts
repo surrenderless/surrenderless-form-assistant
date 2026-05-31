@@ -10,6 +10,13 @@ import {
 
 export type CommitIntakeMode = "create" | "update";
 
+export type CommitIntakeResult = {
+  caseId: string;
+  serverPersisted: boolean;
+};
+
+const EMPTY_COMMIT_RESULT: CommitIntakeResult = { caseId: "", serverPersisted: false };
+
 const FTC_MOCK_COMPLETED_KEY = "justice_ftc_mock_completed";
 
 function newCaseId(): string {
@@ -50,11 +57,11 @@ async function commitIntakeUpdateToSessionAndServer({
   isLoaded,
   isSignedIn,
   commitLogLabel,
-}: CommitIntakeToSessionAndServerParams): Promise<void> {
+}: CommitIntakeToSessionAndServerParams): Promise<CommitIntakeResult> {
   sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(intake));
   const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
   if (!caseId || !isLoaded || !isSignedIn || !isUuid(caseId)) {
-    return;
+    return { caseId, serverPersisted: false };
   }
 
   const timeline = readTimeline(caseId);
@@ -75,12 +82,13 @@ async function commitIntakeUpdateToSessionAndServer({
       if (Array.isArray(data.timeline)) {
         replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
       }
-    } else {
-      console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
+      return { caseId, serverPersisted: true };
     }
+    console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
   } catch (e) {
     console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] error`, e);
   }
+  return { caseId, serverPersisted: false };
 }
 
 /**
@@ -93,12 +101,11 @@ export async function commitIntakeToSessionAndServer({
   isSignedIn,
   commitLogLabel,
   mode = "create",
-}: CommitIntakeToSessionAndServerParams): Promise<void> {
-  if (typeof window === "undefined") return;
+}: CommitIntakeToSessionAndServerParams): Promise<CommitIntakeResult> {
+  if (typeof window === "undefined") return EMPTY_COMMIT_RESULT;
 
   if (mode === "update") {
-    await commitIntakeUpdateToSessionAndServer({ intake, isLoaded, isSignedIn, commitLogLabel });
-    return;
+    return commitIntakeUpdateToSessionAndServer({ intake, isLoaded, isSignedIn, commitLogLabel });
   }
 
   const prev_case_id = sessionStorage.getItem(STORAGE_CASE_ID);
@@ -111,6 +118,7 @@ export async function commitIntakeToSessionAndServer({
   sessionStorage.removeItem(FTC_MOCK_COMPLETED_KEY);
 
   let finalCaseId = case_id;
+  let serverPersisted = false;
   if (isLoaded && isSignedIn) {
     const timeline = readTimeline(case_id);
     try {
@@ -127,6 +135,7 @@ export async function commitIntakeToSessionAndServer({
         };
         if (data?.id) {
           finalCaseId = data.id;
+          serverPersisted = true;
           sessionStorage.setItem(STORAGE_CASE_ID, data.id);
           if (data.intake) {
             sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
@@ -147,4 +156,5 @@ export async function commitIntakeToSessionAndServer({
   }
 
   await logIntakeCompleted(finalCaseId, intake.already_contacted);
+  return { caseId: finalCaseId, serverPersisted };
 }
