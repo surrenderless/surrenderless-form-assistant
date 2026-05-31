@@ -30,8 +30,10 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
   JUSTICE_EVIDENCE_TYPES,
+  type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
@@ -133,6 +135,20 @@ function categoryLabel(cat: JusticeIntake["problem_category"]): string {
   return CATEGORIES.find((c) => c.value === cat)?.label ?? cat.replace(/_/g, " ");
 }
 
+const CHAT_RECENT_EVIDENCE_MAX = 3;
+const CHAT_EVIDENCE_DESC_PREVIEW_MAX = 120;
+
+function chatEvidenceTypeLabel(t: string): string {
+  return isJusticeEvidenceType(t) ? JUSTICE_EVIDENCE_TYPE_LABELS[t] : t.replace(/_/g, " ");
+}
+
+function truncateChatEvidenceDescription(text: string | null, max: number): string {
+  if (!text?.trim()) return "";
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
+}
+
 export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
@@ -158,6 +174,7 @@ export default function JusticeChatAiPage() {
     undefined
   );
   const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
+  const [recentEvidenceRows, setRecentEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [proofNoteTitle, setProofNoteTitle] = useState("");
   const [proofNoteType, setProofNoteType] = useState<JusticeEvidenceType>("other");
   const [savingProofNote, setSavingProofNote] = useState(false);
@@ -357,15 +374,17 @@ export default function JusticeChatAiPage() {
     }
   }, []);
 
-  const loadSavedEvidenceCount = useCallback(async (signal: AbortSignal) => {
+  const loadSavedEvidencePreview = useCallback(async (signal: AbortSignal) => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
+      setRecentEvidenceRows([]);
       return;
     }
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
+      setRecentEvidenceRows([]);
       return;
     }
     try {
@@ -373,34 +392,44 @@ export default function JusticeChatAiPage() {
         signal,
       });
       if (!res.ok) {
-        if (!signal.aborted) setSavedEvidenceCount(null);
+        if (!signal.aborted) {
+          setSavedEvidenceCount(null);
+          setRecentEvidenceRows([]);
+        }
         return;
       }
       const evJson: unknown = await res.json();
       if (!signal.aborted) {
-        setSavedEvidenceCount(Array.isArray(evJson) ? evJson.length : 0);
+        const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
+        setSavedEvidenceCount(rows.length);
+        setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
       }
     } catch {
-      if (!signal.aborted) setSavedEvidenceCount(null);
+      if (!signal.aborted) {
+        setSavedEvidenceCount(null);
+        setRecentEvidenceRows([]);
+      }
     }
   }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
+      setRecentEvidenceRows([]);
       return;
     }
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
+      setRecentEvidenceRows([]);
       return;
     }
 
     const ac = new AbortController();
-    void loadSavedEvidenceCount(ac.signal);
+    void loadSavedEvidencePreview(ac.signal);
     return () => ac.abort();
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidenceCount]);
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidencePreview]);
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
@@ -412,7 +441,7 @@ export default function JusticeChatAiPage() {
       evidenceRefetchAbortRef.current?.abort();
       const ac = new AbortController();
       evidenceRefetchAbortRef.current = ac;
-      void loadSavedEvidenceCount(ac.signal);
+      void loadSavedEvidencePreview(ac.signal);
     }
 
     function onFocus() {
@@ -432,13 +461,18 @@ export default function JusticeChatAiPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       evidenceRefetchAbortRef.current?.abort();
     };
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidenceCount]);
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidencePreview]);
 
   const showSavedEvidenceCount =
     isUpdatingExistingCase &&
     isLoaded &&
     isSignedIn &&
     savedEvidenceCount !== null;
+
+  const showRecentEvidencePreview =
+    showSavedEvidenceCount &&
+    savedEvidenceCount > 0 &&
+    recentEvidenceRows.length > 0;
 
   const activeUuidCaseId =
     typeof window !== "undefined"
@@ -486,7 +520,7 @@ export default function JusticeChatAiPage() {
       setProofNoteTitle("");
       setProofNoteSuccess("Proof note saved.");
       const ac = new AbortController();
-      void loadSavedEvidenceCount(ac.signal);
+      void loadSavedEvidencePreview(ac.signal);
     } catch {
       setProofNoteError("Could not save proof note.");
     } finally {
@@ -498,6 +532,7 @@ export default function JusticeChatAiPage() {
     if (!isUpdatingExistingCase) {
       setApprovedNextAction(undefined);
       setSavedEvidenceCount(null);
+      setRecentEvidenceRows([]);
       return;
     }
 
@@ -917,6 +952,49 @@ export default function JusticeChatAiPage() {
                     ? "No saved evidence yet."
                     : `Saved evidence: ${savedEvidenceCount} item${savedEvidenceCount === 1 ? "" : "s"}.`}
                 </p>
+              ) : null}
+              {showRecentEvidencePreview ? (
+                <details className="mt-2 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
+                  <summary className="cursor-pointer text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                    Recent proof notes
+                    {savedEvidenceCount > CHAT_RECENT_EVIDENCE_MAX
+                      ? ` (${CHAT_RECENT_EVIDENCE_MAX} of ${savedEvidenceCount})`
+                      : ` (${recentEvidenceRows.length})`}
+                  </summary>
+                  <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+                    Metadata only — descriptions are shortened here. Use Organize evidence below to view or edit all
+                    records.
+                  </p>
+                  <ul className="mt-2 space-y-2">
+                    {recentEvidenceRows.map((row) => {
+                      const descPreview = truncateChatEvidenceDescription(
+                        row.description,
+                        CHAT_EVIDENCE_DESC_PREVIEW_MAX
+                      );
+                      return (
+                        <li
+                          key={row.id}
+                          className="border-t border-neutral-100 pt-2 first:border-t-0 first:pt-0 dark:border-neutral-700/80"
+                        >
+                          <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">{row.title}</p>
+                          <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                            {chatEvidenceTypeLabel(row.evidence_type)}
+                          </p>
+                          {row.evidence_date ? (
+                            <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                              {row.evidence_date}
+                            </p>
+                          ) : null}
+                          {descPreview ? (
+                            <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+                              {descPreview}
+                            </p>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
               ) : null}
               <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
                 As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
