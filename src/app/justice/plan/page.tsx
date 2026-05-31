@@ -1484,6 +1484,17 @@ export default function JusticePlanPage() {
                 </p>
               )
             ) : null}
+            <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+              Need to fix details or add more proof notes?{" "}
+              <Link
+                href="/justice/chat-ai"
+                className="font-medium text-emerald-900 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-100 dark:hover:text-emerald-50"
+              >
+                Update in chat
+              </Link>
+              {" "}
+              — Surrenderless keeps your case aligned with your draft and plan.
+            </p>
             {preparedPacketApproved ? (
               <button
                 type="button"
