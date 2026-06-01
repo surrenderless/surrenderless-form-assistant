@@ -25,6 +25,7 @@ import {
 } from "@/lib/justice/rules";
 import type { DestinationId, JusticeDestination } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
+import { readAndClearPreviewChatUpdateSummary } from "@/lib/justice/previewChatUpdateHandoff";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const cardCls =
@@ -55,6 +56,7 @@ export default function JusticePreviewPage() {
   const [aiDraft, setAiDraft] = useState<string | null>(null);
   const [continueError, setContinueError] = useState<string | null>(null);
   const [continueLoading, setContinueLoading] = useState(false);
+  const [chatUpdateLines, setChatUpdateLines] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -73,6 +75,14 @@ export default function JusticePreviewPage() {
       window.clearTimeout(t0);
       window.clearTimeout(t1);
     };
+  }, [hydrationStatus, intake]);
+
+  useEffect(() => {
+    if (hydrationStatus !== "ready" || !intake) return;
+    const lines = readAndClearPreviewChatUpdateSummary();
+    if (lines) {
+      setChatUpdateLines(lines);
+    }
   }, [hydrationStatus, intake]);
 
   const useCompanyContactLabels = useMemo(
@@ -339,6 +349,35 @@ export default function JusticePreviewPage() {
           Your chat intake and case are saved. Review the plain-text draft below — saved proof note titles are
           included when they are on your case. Nothing here is filed automatically.
         </p>
+
+        {chatUpdateLines.length > 0 ? (
+          <div
+            className="mt-4 rounded-xl border border-blue-200/90 bg-blue-50/50 p-4 ring-1 ring-blue-950/[0.04] dark:border-blue-900/50 dark:bg-blue-950/20 dark:ring-blue-500/10 sm:p-5"
+            role="status"
+            aria-label="From your chat update"
+          >
+            <h2 className="text-sm font-semibold text-blue-900 dark:text-blue-100">From your chat update</h2>
+            {intake.company_name.trim() ? (
+              <p className="mt-1 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                {intake.company_name.trim()}
+              </p>
+            ) : null}
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+              {chatUpdateLines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+              The draft below reflects your saved case. Nothing is filed automatically.
+            </p>
+            <Link
+              href="/justice/chat-ai"
+              className="mt-3 inline-flex text-sm font-semibold text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              Update in chat
+            </Link>
+          </div>
+        ) : null}
 
         <div className={`mt-6 ${cardCls}`}>
           <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300" htmlFor="preview-destination">

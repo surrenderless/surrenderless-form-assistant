@@ -52,6 +52,10 @@ import {
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
+  clearPreviewChatUpdateSummary,
+  writePreviewChatUpdateSummary,
+} from "@/lib/justice/previewChatUpdateHandoff";
+import {
   cloneBuildJusticeIntakeParts,
   summarizeBuildJusticeIntakePartsSessionChanges,
 } from "@/lib/justice/summarizeBuildJusticeIntakePartsSessionChanges";
@@ -1078,6 +1082,12 @@ export default function JusticeChatAiPage() {
           );
           return;
         }
+      }
+
+      if (isUpdatingExistingCase && sessionChangeLines.length > 0) {
+        writePreviewChatUpdateSummary(sessionChangeLines);
+      } else {
+        clearPreviewChatUpdateSummary();
       }
 
       router.push("/justice/preview");
