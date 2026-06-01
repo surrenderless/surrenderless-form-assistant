@@ -1,7 +1,9 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { validate as isUuid } from "uuid";
 import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
@@ -11,6 +13,7 @@ import {
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeIntake, ProblemCategory } from "@/lib/justice/types";
@@ -31,6 +34,9 @@ const cardCls =
 const activeCardCls =
   "block rounded-2xl border border-blue-200/90 bg-white p-5 shadow-md shadow-neutral-900/5 ring-1 ring-blue-950/[0.06] transition hover:border-blue-300 hover:shadow-lg dark:border-blue-900/50 dark:bg-neutral-900 dark:ring-blue-500/10 dark:hover:border-blue-800";
 
+const hubSecondaryBtnCls =
+  "mt-2 inline-flex rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800";
+
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
   return entries.some(
@@ -39,6 +45,7 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
 }
 
 type CurrentCaseSnapshot = {
+  caseId: string;
   intake: JusticeIntake;
   reviewed: boolean;
   handlingRequestedAt: string | null;
@@ -63,6 +70,7 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
       approvedNext?.status === "completed"
   );
   return {
+    caseId,
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
     handlingRequestedAt: handlingAt || null,
@@ -73,31 +81,74 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
 }
 
 export default function JusticeHubWorkspaceBody() {
+  const { isLoaded, isSignedIn } = useAuth();
   const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
+  const [evidenceCount, setEvidenceCount] = useState<number | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
 
   useEffect(() => {
-    function refreshFromLocalSession() {
-      setSnapshot(readSnapshotFromLocalSession());
-    }
+    const ac = new AbortController();
 
-    refreshFromLocalSession();
+    async function refreshHubState() {
+      const nextSnapshot = readSnapshotFromLocalSession();
+      setSnapshot(nextSnapshot);
 
-    function onVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        refreshFromLocalSession();
+      if (!isLoaded) return;
+
+      const caseId = nextSnapshot?.caseId ?? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+      if (!isSignedIn || !caseId || !isUuid(caseId)) {
+        setEvidenceCount(null);
+        setEvidenceLoading(false);
+        return;
+      }
+
+      setEvidenceLoading(true);
+      try {
+        const res = await fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, {
+          signal: ac.signal,
+        });
+        if (ac.signal.aborted) return;
+        const json: unknown = res.ok ? await res.json() : [];
+        setEvidenceCount(Array.isArray(json) ? json.length : 0);
+      } catch {
+        if (!ac.signal.aborted) setEvidenceCount(0);
+      } finally {
+        if (!ac.signal.aborted) setEvidenceLoading(false);
       }
     }
 
-    window.addEventListener("focus", refreshFromLocalSession);
-    window.addEventListener("storage", refreshFromLocalSession);
+    void refreshHubState();
+
+    function onHubRefresh() {
+      void refreshHubState();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void refreshHubState();
+      }
+    }
+
+    window.addEventListener("focus", onHubRefresh);
+    window.addEventListener("storage", onHubRefresh);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.removeEventListener("focus", refreshFromLocalSession);
-      window.removeEventListener("storage", refreshFromLocalSession);
+      ac.abort();
+      window.removeEventListener("focus", onHubRefresh);
+      window.removeEventListener("storage", onHubRefresh);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [isLoaded, isSignedIn]);
+
+  const basicsReady = snapshot ? isBasicCaseInfoReadyForEscalation(snapshot.intake) : false;
+  const showUpdateInChat = snapshot !== null && !basicsReady;
+  const showAddProofInChat =
+    snapshot !== null &&
+    basicsReady &&
+    !evidenceLoading &&
+    evidenceCount !== null &&
+    evidenceCount < 1;
 
   return (
     <>
@@ -147,6 +198,15 @@ export default function JusticeHubWorkspaceBody() {
               {snapshot.reviewed ? "Continue to action plan" : "Continue to submission preview"}
             </span>
           </Link>
+          {showUpdateInChat ? (
+            <Link href="/justice/chat-ai" className={hubSecondaryBtnCls}>
+              Update in chat
+            </Link>
+          ) : showAddProofInChat ? (
+            <Link href="/justice/chat-ai" className={hubSecondaryBtnCls}>
+              Add proof in chat
+            </Link>
+          ) : null}
           {snapshot.handlingRequestedAt ? (
             <>
               <ApprovedNextActionHandlingQueueStatusReadOnly
