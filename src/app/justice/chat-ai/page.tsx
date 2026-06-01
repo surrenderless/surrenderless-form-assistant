@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
@@ -51,6 +51,10 @@ import {
 } from "@/lib/justice/buildJusticeIntake";
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
+import {
+  cloneBuildJusticeIntakeParts,
+  summarizeBuildJusticeIntakePartsSessionChanges,
+} from "@/lib/justice/summarizeBuildJusticeIntakePartsSessionChanges";
 import {
   appendStagedProofNote,
   readStagedProofNotes,
@@ -260,6 +264,8 @@ export default function JusticeChatAiPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendInFlightRef = useRef(false);
   const sessionHydratedRef = useRef(false);
+  const sessionBaselinePartsRef = useRef<BuildJusticeIntakeParts | null>(null);
+  const sessionBaselineEvidenceCountRef = useRef<number | null>(null);
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
   const [isUpdatingExistingCase, setIsUpdatingExistingCase] = useState(false);
@@ -491,7 +497,9 @@ export default function JusticeChatAiPage() {
     sessionHydratedRef.current = true;
     const intake = readValidLocalJusticeIntake();
     if (intake) {
-      setParts(justiceIntakeToBuildJusticeIntakeParts(intake));
+      const hydrated = justiceIntakeToBuildJusticeIntakeParts(intake);
+      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
+      setParts(hydrated);
       setIsUpdatingExistingCase(true);
       setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
     }
@@ -525,7 +533,11 @@ export default function JusticeChatAiPage() {
       const evJson: unknown = await res.json();
       if (!signal.aborted) {
         const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
-        setSavedEvidenceCount(rows.length);
+        const count = rows.length;
+        if (sessionBaselineEvidenceCountRef.current === null) {
+          sessionBaselineEvidenceCountRef.current = count;
+        }
+        setSavedEvidenceCount(count);
         setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
       }
     } catch {
@@ -597,6 +609,24 @@ export default function JusticeChatAiPage() {
     showSavedEvidenceCount &&
     savedEvidenceCount > 0 &&
     recentEvidenceRows.length > 0;
+
+  const sessionChangeLines = useMemo(() => {
+    if (!isUpdatingExistingCase) return [];
+    const baseline = sessionBaselinePartsRef.current;
+    if (!baseline) return [];
+    const evidenceAddedThisVisit =
+      showSavedEvidenceCount &&
+      sessionBaselineEvidenceCountRef.current !== null &&
+      savedEvidenceCount !== null &&
+      savedEvidenceCount > sessionBaselineEvidenceCountRef.current;
+    return summarizeBuildJusticeIntakePartsSessionChanges({
+      baseline,
+      current: parts,
+      evidenceAddedThisVisit,
+    });
+  }, [isUpdatingExistingCase, parts, showSavedEvidenceCount, savedEvidenceCount]);
+
+  const showSessionChangesPanel = sessionChangeLines.length > 0;
 
   const activeUuidCaseId =
     typeof window !== "undefined"
@@ -1814,6 +1844,25 @@ export default function JusticeChatAiPage() {
               <p className="mt-4 text-sm text-amber-800 dark:text-amber-300">
                 {contactProofCheck.message}
               </p>
+            ) : null}
+            {showSessionChangesPanel ? (
+              <div
+                className="mt-4 rounded-xl border border-blue-200/90 bg-blue-50/50 px-3 py-2.5 ring-1 ring-blue-950/[0.04] dark:border-blue-900/50 dark:bg-blue-950/20 dark:ring-blue-500/10"
+                role="status"
+                aria-label="Updated in this chat"
+              >
+                <p className="text-xs font-semibold uppercase text-blue-800 dark:text-blue-200">
+                  Updated in this chat
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  {sessionChangeLines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                  Review these updates, then continue to your submission draft preview when ready.
+                </p>
+              </div>
             ) : null}
             {showContinueHandoff ? (
               <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 px-3 py-2.5 ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/50 dark:ring-white/[0.04]">
