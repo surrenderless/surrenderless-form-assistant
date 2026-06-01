@@ -183,7 +183,7 @@ function caseReadinessHint(intake: JusticeIntake, evidenceCount: number): string
   if (!basicsReady) {
     return "Complete basic case details: company, category, product/service, what happened, and desired outcome.";
   }
-  return "Add at least one evidence item from the action plan.";
+  return "Add at least one proof note in chat, or add evidence from the evidence page.";
 }
 
 function caseMatchesStatusFilter(
@@ -652,6 +652,11 @@ export default function JusticeCasesPage() {
   function openCase(row: CaseRow) {
     activateCaseInSession(row);
     router.push("/justice/plan");
+  }
+
+  function openUpdateInChat(row: CaseRow) {
+    activateCaseInSession(row);
+    router.push("/justice/chat-ai");
   }
 
   function isInternalJusticeHref(href: string): boolean {
@@ -1124,9 +1129,28 @@ export default function JusticeCasesPage() {
                       isBasicCaseInfoReadyForEscalation(row.intake) &&
                       (progressById[row.id]?.evidenceCount ?? 0) >= 1
                     ) ? (
-                      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                        {caseReadinessHint(row.intake, progressById[row.id]?.evidenceCount ?? 0)}
-                      </p>
+                      <>
+                        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                          {caseReadinessHint(row.intake, progressById[row.id]?.evidenceCount ?? 0)}
+                        </p>
+                        {!isBasicCaseInfoReadyForEscalation(row.intake) ? (
+                          <button
+                            type="button"
+                            onClick={() => openUpdateInChat(row)}
+                            className="mt-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                          >
+                            Update in chat
+                          </button>
+                        ) : (progressById[row.id]?.evidenceCount ?? 0) < 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => openUpdateInChat(row)}
+                            className="mt-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                          >
+                            Add proof in chat
+                          </button>
+                        ) : null}
+                      </>
                     ) : null}
                   </>
                 )}
