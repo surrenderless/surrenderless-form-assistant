@@ -108,11 +108,14 @@ function stillNeededBeforePreviewMessage(missing: string[]): string {
   return `Still needed before preview: ${missing.join(", ")}.`;
 }
 
+const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
+
 type ContinueHandoffStepsInput = {
   isUpdatingExistingCase: boolean;
   stagedCount: number;
   isStagedFlushRetry: boolean;
   savedEvidenceCount: number;
+  sessionChangeLines?: string[];
 };
 
 function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
@@ -130,10 +133,17 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
   }
 
   const steps: string[] = [];
+  const sessionChangeLines = input.sessionChangeLines ?? [];
 
   if (input.isUpdatingExistingCase) {
-    steps.push("Save updates to your case.");
-    if (input.savedEvidenceCount > 0) {
+    if (sessionChangeLines.length > 0) {
+      steps.push("Save your updates from this chat to your case:");
+      steps.push(...sessionChangeLines);
+    } else {
+      steps.push("Save updates to your case.");
+    }
+    const proofAddedInSession = sessionChangeLines.includes(SESSION_PROOF_ADDED_LINE);
+    if (input.savedEvidenceCount > 0 && !proofAddedInSession) {
       const itemWord = input.savedEvidenceCount === 1 ? "item" : "items";
       steps.push(`Your ${input.savedEvidenceCount} saved proof ${itemWord} stay on your case.`);
     }
@@ -626,8 +636,6 @@ export default function JusticeChatAiPage() {
     });
   }, [isUpdatingExistingCase, parts, showSavedEvidenceCount, savedEvidenceCount]);
 
-  const showSessionChangesPanel = sessionChangeLines.length > 0;
-
   const activeUuidCaseId =
     typeof window !== "undefined"
       ? (() => {
@@ -1114,12 +1122,15 @@ export default function JusticeChatAiPage() {
   const isStagedFlushRetry =
     stagedProofNotes.length > 0 && hasValidLocalIntake && Boolean(activeUuidCaseId);
   const showContinueHandoff = basicsMissing.length === 0 && contactProofCheck.ok;
+  const showSessionChangesPanel =
+    sessionChangeLines.length > 0 && !showContinueHandoff;
   const continueHandoffSteps = showContinueHandoff
     ? getContinueHandoffSteps({
         isUpdatingExistingCase,
         stagedCount: stagedProofNotes.length,
         isStagedFlushRetry,
         savedEvidenceCount: savedEvidenceCount ?? 0,
+        sessionChangeLines: isUpdatingExistingCase ? sessionChangeLines : [],
       })
     : [];
 
