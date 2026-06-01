@@ -36,7 +36,11 @@ import {
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
-import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
+import {
+  applyServerTimelineFromResponse,
+  readTimeline,
+  SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID,
+} from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
@@ -84,6 +88,7 @@ const UPDATE_GREETING =
   "Your current case is loaded in the recap below. Tell me what youâ€™d like to add or change â€” Iâ€™ll update the details as we go. When youâ€™re ready, continue to your submission preview.";
 
 const RECAP_STORY_MAX_LEN = 120;
+const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
 
 function getPreviewBasicsMissing(parts: BuildJusticeIntakeParts): string[] {
   const missing: string[] = [];
@@ -180,6 +185,20 @@ function msgId(): string {
 
 function categoryLabel(cat: JusticeIntake["problem_category"]): string {
   return CATEGORIES.find((c) => c.value === cat)?.label ?? cat.replace(/_/g, " ");
+}
+
+function truncateActiveCaseProduct(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= ACTIVE_CASE_PRODUCT_MAX_LEN) return trimmed;
+  return `${trimmed.slice(0, ACTIVE_CASE_PRODUCT_MAX_LEN)}…`;
+}
+
+function submissionDraftReviewedInTimeline(caseId: string): boolean {
+  const entries = caseId ? readTimeline(caseId) : [];
+  return entries.some(
+    (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
+  );
 }
 
 const CHAT_RECENT_EVIDENCE_MAX = 3;
@@ -1029,6 +1048,9 @@ export default function JusticeChatAiPage() {
     }
   }
 
+  const activeCaseBannerCls =
+    "rounded-2xl border border-blue-200/90 bg-white p-4 shadow-md shadow-neutral-900/5 ring-1 ring-blue-950/[0.06] dark:border-blue-900/50 dark:bg-neutral-900 dark:ring-blue-500/10 sm:p-5";
+
   const cardCls =
     "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
   const inputCls =
@@ -1071,6 +1093,22 @@ export default function JusticeChatAiPage() {
       })
     : [];
 
+  const activeCaseSessionCaseId =
+    typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+  const activeCaseDraftReviewed = activeCaseSessionCaseId
+    ? submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
+    : false;
+  const activeCaseProductLine = truncateActiveCaseProduct(parts.purchase_or_signup);
+  const activeCaseSubline = [categoryLabel(parts.problem_category), activeCaseProductLine]
+    .filter(Boolean)
+    .join(" · ");
+  const activeCaseFocusLine =
+    basicsMissing.length > 0
+      ? stillNeededBeforePreviewMessage(basicsMissing)
+      : showSavedEvidenceCount && savedEvidenceCount === 0
+        ? "Add proof notes in Proof / evidence below (metadata only)."
+        : "Describe what to add or change, then continue to preview.";
+
   return (
     <>
       <Header />
@@ -1109,6 +1147,43 @@ export default function JusticeChatAiPage() {
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
           Messages are sent to OpenAI to help collect your case details. Nothing is filed automatically.
         </p>
+
+        {isUpdatingExistingCase ? (
+          <div className={`mt-4 ${activeCaseBannerCls}`} role="status" aria-label="Active case">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+              Active case
+            </p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+              {parts.company_name.trim() || "Active case"}
+            </p>
+            {activeCaseSubline ? (
+              <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">{activeCaseSubline}</p>
+            ) : null}
+            {activeCaseSessionCaseId ? (
+              <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                {activeCaseDraftReviewed
+                  ? "Submission draft reviewed"
+                  : "Submission draft not reviewed yet"}
+              </p>
+            ) : null}
+            <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
+            <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              <Link
+                href="/justice/plan"
+                className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                Action plan
+              </Link>
+              <span className="text-neutral-400 dark:text-neutral-500">·</span>
+              <Link
+                href="/justice/preview"
+                className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                Submission preview
+              </Link>
+            </p>
+          </div>
+        ) : null}
 
         <div className={`mt-6 flex min-h-[280px] flex-1 flex-col ${cardCls}`}>
           <div ref={scrollRef} className="max-h-[min(420px,50vh)] flex-1 space-y-3 overflow-y-auto pr-1">
