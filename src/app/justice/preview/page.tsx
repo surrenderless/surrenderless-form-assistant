@@ -511,6 +511,19 @@ export default function JusticePreviewPage() {
             />
             <span>I reviewed the deterministic draft and any AI-assisted draft shown above.</span>
           </label>
+          <p className="mt-3 text-xs text-neutral-700 dark:text-neutral-300">
+            Need to fix something in the draft?{" "}
+            <Link
+              href="/justice/chat-ai"
+              className="font-semibold text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              Update in chat
+            </Link>
+          </p>
+          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+            Describe changes in chat, then return here to review your updated draft. Nothing is filed
+            automatically.
+          </p>
           {continueError ? (
             <p className="mt-3 text-sm text-amber-800 dark:text-amber-200" role="alert">
               {continueError}
