@@ -949,6 +949,7 @@ export default function JusticePlanPage() {
   const basicsReady = intake ? isBasicCaseInfoReadyForEscalation(intake) : false;
   const evidenceReady = evidenceCount >= 1;
   const readyToEscalate = basicsReady && evidenceReady;
+  const draftReviewed = timeline.some((e) => e.type === "submission_draft_reviewed");
 
   if (!intake) {
     if (isLoaded && !isSignedIn) {
@@ -1817,6 +1818,25 @@ export default function JusticePlanPage() {
                           className="inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
                         >
                           Add proof in chat
+                        </Link>
+                      </>
+                    ) : null}
+                  </span>
+                </li>
+                <li className="flex gap-2">
+                  <span className={draftReviewed ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                    {draftReviewed ? "✓" : "○"}
+                  </span>
+                  <span>
+                    Submission draft reviewed: {draftReviewed ? "yes" : "not yet"}
+                    {isSignedIn && !readinessLoading && !draftReviewed ? (
+                      <>
+                        {" · "}
+                        <Link
+                          href="/justice/preview"
+                          className="inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          Review submission draft
                         </Link>
                       </>
                     ) : null}
