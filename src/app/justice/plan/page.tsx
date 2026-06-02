@@ -337,6 +337,21 @@ function pickPreparedNextAction(params: {
   };
 }
 
+const planChecklistLinkCls =
+  "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
+
+type PreparedNextStepExplainerInput = {
+  preparedPacketApproved: boolean;
+  stepLabel: string;
+};
+
+function getPreparedNextStepExplainer(input: PreparedNextStepExplainerInput): string {
+  if (!input.preparedPacketApproved) {
+    return "Opening your prepared review lets you check your saved case record in one place, then approve it for the next in-app step. Surrenderless does not file or submit for you.";
+  }
+  return `Your approved in-app step is ${input.stepLabel} — use your case packet to continue tracking. Nothing is sent automatically.`;
+}
+
 const PREP_TYPES: TimelineEntryType[] = [
   "state_ag_prep_opened",
   "bbb_prep_opened",
@@ -1463,6 +1478,38 @@ export default function JusticePlanPage() {
               Nothing has been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on
               your behalf.
             </p>
+            <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+              {getPreparedNextStepExplainer({
+                preparedPacketApproved,
+                stepLabel: preparedNextAction.stepLabel,
+              })}
+            </p>
+            {isSignedIn && !readinessLoading && !readyToEscalate ? (
+              <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                Before you escalate, finish readiness:{" "}
+                {!basicsReady ? (
+                  <Link href="/justice/chat-ai" className={planChecklistLinkCls}>
+                    Update in chat
+                  </Link>
+                ) : null}
+                {!basicsReady && !evidenceReady ? (
+                  <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
+                ) : null}
+                {!evidenceReady ? (
+                  <Link href="/justice/chat-ai" className={planChecklistLinkCls}>
+                    Add proof in chat
+                  </Link>
+                ) : null}
+                {(!basicsReady || !evidenceReady) && !draftReviewed ? (
+                  <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
+                ) : null}
+                {!draftReviewed ? (
+                  <Link href="/justice/preview" className={planChecklistLinkCls}>
+                    Review submission draft
+                  </Link>
+                ) : null}
+              </p>
+            ) : null}
             {isSignedIn ? (
               readinessLoading ? (
                 <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
