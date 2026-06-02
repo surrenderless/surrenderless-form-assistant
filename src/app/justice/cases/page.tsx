@@ -41,7 +41,7 @@ import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
-import { replaceTimelineForCase } from "@/lib/justice/timeline";
+import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
   getJusticeTaskDueKind,
@@ -173,6 +173,16 @@ function caseMatchesSearch(row: CaseRow, labelDraft: string, q: string): boolean
 function isReadyToEscalate(row: CaseRow, p: CaseProgressSummary | undefined): boolean {
   return isBasicCaseInfoReadyForEscalation(row.intake) && (p?.evidenceCount ?? 0) >= 1;
 }
+
+function caseDraftReviewed(row: CaseRow): boolean {
+  const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
+  return tl.some(
+    (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
+  );
+}
+
+const casesChecklistLinkCls =
+  "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
 
 /** Display-only hint; uses same predicates as readiness badge (no logic change). */
 function caseReadinessHint(intake: JusticeIntake, evidenceCount: number): string {
@@ -659,6 +669,11 @@ export default function JusticeCasesPage() {
     router.push("/justice/chat-ai");
   }
 
+  function openReviewSubmissionDraft(row: CaseRow) {
+    activateCaseInSession(row);
+    router.push("/justice/preview");
+  }
+
   function isInternalJusticeHref(href: string): boolean {
     const t = href.trim();
     return t.startsWith("/justice/") && !t.startsWith("//");
@@ -1112,6 +1127,56 @@ export default function JusticeCasesPage() {
                         Next due: {progressById[row.id]?.nextDue?.trim() || "None"}
                       </li>
                     </ul>
+                    {progressById[row.id] !== undefined ? (
+                      <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+                        <li>
+                          Basic case info:{" "}
+                          {isBasicCaseInfoReadyForEscalation(row.intake) ? "yes" : "not yet"}
+                          {!isBasicCaseInfoReadyForEscalation(row.intake) ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                onClick={() => openUpdateInChat(row)}
+                                className={casesChecklistLinkCls}
+                              >
+                                Update in chat
+                              </button>
+                            </>
+                          ) : null}
+                        </li>
+                        <li>
+                          Evidence: {(progressById[row.id]?.evidenceCount ?? 0) >= 1 ? "yes" : "not yet"}
+                          {(progressById[row.id]?.evidenceCount ?? 0) < 1 ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                onClick={() => openUpdateInChat(row)}
+                                className={casesChecklistLinkCls}
+                              >
+                                Add proof in chat
+                              </button>
+                            </>
+                          ) : null}
+                        </li>
+                        <li>
+                          Submission draft reviewed: {caseDraftReviewed(row) ? "yes" : "not yet"}
+                          {!caseDraftReviewed(row) ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                onClick={() => openReviewSubmissionDraft(row)}
+                                className={casesChecklistLinkCls}
+                              >
+                                Review submission draft
+                              </button>
+                            </>
+                          ) : null}
+                        </li>
+                      </ul>
+                    ) : null}
                     <p
                       className={`mt-2 text-xs font-medium ${
                         isBasicCaseInfoReadyForEscalation(row.intake) &&
