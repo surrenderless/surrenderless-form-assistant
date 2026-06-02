@@ -2,6 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
@@ -22,6 +23,7 @@ import {
 import {
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
+  mergeClientStateWithApprovedNextAction,
   parseJusticeCaseClientState,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
@@ -132,6 +134,31 @@ function buildApprovedNextActionTarget(
     status: "approved",
     approved_at: new Date().toISOString(),
   };
+}
+
+async function persistApprovedNextActionClientState(
+  caseId: string,
+  approvedNext: JusticeApprovedNextAction
+): Promise<void> {
+  try {
+    const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+    if (!getRes.ok) {
+      console.warn("justice packet: GET /api/justice/cases/[id] (client_state) failed", getRes.status);
+      return;
+    }
+    const existing = (await getRes.json()) as { client_state?: unknown };
+    const merged = mergeClientStateWithApprovedNextAction(existing.client_state, approvedNext);
+    const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_state: merged }),
+    });
+    if (!patchRes.ok) {
+      console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) failed", patchRes.status);
+    }
+  } catch (e) {
+    console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) error", e);
+  }
 }
 
 function hasApprovedNextActionTrackingSummary(action: JusticeApprovedNextAction): boolean {
@@ -371,6 +398,7 @@ function buildPacketPlainText(
 }
 
 export default function JusticePacketPage() {
+  const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const { status: hydrationStatus, intake } = useJusticeActionPageHydration();
   const [caseId, setCaseId] = useState("");
@@ -641,6 +669,51 @@ export default function JusticePacketPage() {
     evidenceReady = evidence.length >= 1;
     draftReviewed = timeline.some((e) => e.type === "submission_draft_reviewed");
     readyToEscalate = basicsReady && evidenceReady;
+  }
+
+  async function persistApprovedNextAction(
+    next: JusticeApprovedNextAction,
+    mergeApprovedNext?: JusticeApprovedNextAction
+  ) {
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    if (caseId) writeSessionApprovedNextAction(caseId, withTracking);
+    setApprovedNextAction(withTracking);
+    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
+      await persistApprovedNextActionClientState(caseId, mergeApprovedNext ?? withTracking);
+    }
+  }
+
+  async function handleApprovedNextActionOpen(href: string) {
+    if (approvedNextActionCompleted) {
+      router.push(href || approvedNextAction?.href || "/justice/packet");
+      return;
+    }
+    const label = approvedNextAction?.label;
+    const targetHref = href || approvedNextAction?.href || "/justice/packet";
+    const next: JusticeApprovedNextAction = {
+      ...(approvedNextAction ?? {}),
+      ...(label ? { label } : {}),
+      href: approvedNextAction?.href ?? targetHref,
+      status: "started",
+      started_at: approvedNextAction?.started_at ?? new Date().toISOString(),
+      ...(approvedNextAction?.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
+    };
+
+    if (caseId) {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+        const map: Record<string, boolean> = raw
+          ? (JSON.parse(raw) as Record<string, boolean>)
+          : {};
+        map[caseId] = true;
+        sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+      } catch {
+        // ignore corrupt session data
+      }
+    }
+
+    await persistApprovedNextAction(next);
+    router.push(targetHref);
   }
 
   async function handleApprovePreparedPacket() {
@@ -940,13 +1013,23 @@ export default function JusticePacketPage() {
                       Opens your in-app {approvedNextAction.label} preparation for tracking — nothing is filed or sent
                       automatically.
                     </p>
-                    <Link
-                      href={approvedNextAction.href}
+                    <button
+                      type="button"
+                      onClick={() => void handleApprovedNextActionOpen(approvedNextAction.href!)}
                       className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                     >
                       Open {approvedNextAction.label}
-                    </Link>
+                    </button>
                   </>
+                ) : (approvedNextActionStarted || approvedNextActionCompleted) &&
+                  approvedNextAction?.href &&
+                  approvedNextAction.label ? (
+                  <Link
+                    href={approvedNextAction.href}
+                    className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                  >
+                    Open {approvedNextAction.label}
+                  </Link>
                 ) : null}
                 <Link
                   href="/justice/plan"
