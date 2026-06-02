@@ -43,6 +43,7 @@ import type {
 } from "@/lib/justice/types";
 import { STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readTimeline } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
@@ -93,6 +94,17 @@ function pickPreparedNextAction(params: {
     detailHref: null,
     stepLabel: "Prepared case review",
   };
+}
+
+const packetChecklistLinkCls =
+  "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
+
+type PreparedPacketReviewExplainerInput = {
+  stepLabel: string;
+};
+
+function getPreparedPacketReviewExplainer(input: PreparedPacketReviewExplainerInput): string {
+  return `When you approve below, Surrenderless marks this packet ready for ${input.stepLabel} — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.`;
 }
 
 function buildApprovedNextActionTarget(
@@ -590,6 +602,29 @@ export default function JusticePacketPage() {
   const approvedNextActionCompleted = approvedNextAction?.status === "completed";
   const approvedNextActionStarted = approvedNextAction?.status === "started";
 
+  const showPreparedReviewExplainer = showPreparedActionFraming && !packetApproved;
+  let preparedNextAction: ReturnType<typeof pickPreparedNextAction> | null = null;
+  let basicsReady = false;
+  let evidenceReady = false;
+  let draftReviewed = false;
+  let readyToEscalate = false;
+
+  if (showPreparedReviewExplainer) {
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const contacted = intake.already_contacted === "yes";
+    const cfpbRel = cfpbLikelyRelevant(intake);
+    const fccRel = fccLikelyRelevant(intake);
+    const dotRel = dotLikelyRelevant(intake);
+    const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
+    const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+    preparedNextAction = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
+    basicsReady = isBasicCaseInfoReadyForEscalation(intake);
+    evidenceReady = evidence.length >= 1;
+    draftReviewed = timeline.some((e) => e.type === "submission_draft_reviewed");
+    readyToEscalate = basicsReady && evidenceReady;
+  }
+
   async function handleApprovePreparedPacket() {
     if (!caseId || !approveChecked || !intake) return;
 
@@ -685,6 +720,51 @@ export default function JusticePacketPage() {
               When you complete an external filing yourself, record confirmations in the filing section below.
               Surrenderless does not submit or queue government complaints for you yet.
             </p>
+            {!packetApproved && preparedNextAction ? (
+              <>
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  When you approve below, Surrenderless marks this packet ready for{" "}
+                  <strong>{preparedNextAction.stepLabel}</strong>
+                  {" "}
+                  — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.
+                </p>
+                {isSignedIn && !readyToEscalate ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                    Before you approve, finish readiness:{" "}
+                    {!basicsReady ? (
+                      <Link href="/justice/chat-ai" className={packetChecklistLinkCls}>
+                        Update in chat
+                      </Link>
+                    ) : null}
+                    {!basicsReady && !evidenceReady ? (
+                      <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
+                    ) : null}
+                    {!evidenceReady ? (
+                      <Link href="/justice/chat-ai" className={packetChecklistLinkCls}>
+                        Add proof in chat
+                      </Link>
+                    ) : null}
+                    {(!basicsReady || !evidenceReady) && !draftReviewed ? (
+                      <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
+                    ) : null}
+                    {!draftReviewed ? (
+                      <Link href="/justice/preview" className={packetChecklistLinkCls}>
+                        Review submission draft
+                      </Link>
+                    ) : null}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  Need to fix details or add proof notes?{" "}
+                  <Link
+                    href="/justice/chat-ai"
+                    className="font-medium text-emerald-900 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-100 dark:hover:text-emerald-50"
+                  >
+                    Update in chat
+                  </Link>
+                </p>
+              </>
+            ) : null}
             <Link
               href="/justice/plan"
               className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
