@@ -49,6 +49,7 @@ import {
   type BuildJusticeIntakeParts,
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
+import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
@@ -97,6 +98,8 @@ const UPDATE_GREETING =
 
 const RECAP_STORY_MAX_LEN = 120;
 const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
+const activeCaseChecklistLinkCls =
+  "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
 
 function getPreviewBasicsMissing(parts: BuildJusticeIntakeParts): string[] {
   const missing: string[] = [];
@@ -1153,11 +1156,13 @@ export default function JusticeChatAiPage() {
   const activeCaseSubline = [categoryLabel(parts.problem_category), activeCaseProductLine]
     .filter(Boolean)
     .join(" · ");
+  const activeCaseBasicsReady = isBasicCaseInfoReadyForEscalation(buildJusticeIntakeFromParts(parts));
+  const activeCaseEvidenceReady = showSavedEvidenceCount && (savedEvidenceCount ?? 0) >= 1;
   const activeCaseFocusLine =
     basicsMissing.length > 0
       ? stillNeededBeforePreviewMessage(basicsMissing)
-      : showSavedEvidenceCount && savedEvidenceCount === 0
-        ? "Add proof notes in Proof / evidence below (metadata only)."
+      : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
+        ? "Review your submission draft before continuing."
         : "Describe what to add or change, then continue to preview.";
 
   return (
@@ -1210,13 +1215,60 @@ export default function JusticeChatAiPage() {
             {activeCaseSubline ? (
               <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">{activeCaseSubline}</p>
             ) : null}
-            {activeCaseSessionCaseId ? (
-              <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
-                {activeCaseDraftReviewed
-                  ? "Submission draft reviewed"
-                  : "Submission draft not reviewed yet"}
-              </p>
-            ) : null}
+            <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+              <li>
+                Basic case info: {activeCaseBasicsReady ? "yes" : "not yet"}
+                {!activeCaseBasicsReady ? (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById("chat-ai-input")?.focus()}
+                      className={activeCaseChecklistLinkCls}
+                    >
+                      Continue in chat below
+                    </button>
+                  </>
+                ) : null}
+              </li>
+              <li>
+                {!showSavedEvidenceCount ? (
+                  "Evidence: loading..."
+                ) : (
+                  <>
+                    Evidence: {activeCaseEvidenceReady ? "yes" : "not yet"}
+                    {!activeCaseEvidenceReady ? (
+                      <>
+                        {" · "}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProofNoteDetailsOpen(true);
+                            document
+                              .getElementById("chat-ai-proof-evidence-panel")
+                              ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                          }}
+                          className={activeCaseChecklistLinkCls}
+                        >
+                          Add proof below
+                        </button>
+                      </>
+                    ) : null}
+                  </>
+                )}
+              </li>
+              <li>
+                Submission draft reviewed: {activeCaseDraftReviewed ? "yes" : "not yet"}
+                {!activeCaseDraftReviewed ? (
+                  <>
+                    {" · "}
+                    <Link href="/justice/preview" className={activeCaseChecklistLinkCls}>
+                      Review submission draft
+                    </Link>
+                  </>
+                ) : null}
+              </li>
+            </ul>
             <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
             <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
               <Link
@@ -1453,7 +1505,10 @@ export default function JusticeChatAiPage() {
               </div>
             ) : null}
 
-            <div className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 p-3 ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/50 dark:ring-white/[0.04]">
+            <div
+              id="chat-ai-proof-evidence-panel"
+              className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 p-3 ring-1 ring-neutral-950/[0.03] dark:border-neutral-600 dark:bg-neutral-800/50 dark:ring-white/[0.04]"
+            >
               <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">
                 Proof / evidence
               </p>
