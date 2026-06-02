@@ -1796,7 +1796,20 @@ export default function JusticePlanPage() {
                   <span className={evidenceReady ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
                     {evidenceReady ? "✓" : "○"}
                   </span>
-                  <span>Evidence added: {evidenceCount >= 1 ? "at least 1 saved item" : "none yet"}</span>
+                  <span>
+                    Evidence added: {evidenceCount >= 1 ? "at least 1 saved item" : "none yet"}
+                    {isSignedIn && !readinessLoading && evidenceCount < 1 ? (
+                      <>
+                        {" · "}
+                        <Link
+                          href="/justice/chat-ai"
+                          className="inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          Add proof in chat
+                        </Link>
+                      </>
+                    ) : null}
+                  </span>
                 </li>
                 <li className="flex gap-2">
                   <span className={filings.length >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
