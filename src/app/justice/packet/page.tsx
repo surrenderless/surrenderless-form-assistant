@@ -107,6 +107,22 @@ function getPreparedPacketReviewExplainer(input: PreparedPacketReviewExplainerIn
   return `When you approve below, Surrenderless marks this packet ready for ${input.stepLabel} — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.`;
 }
 
+type ApprovedPacketNextStepExplainerInput = {
+  stepLabel: string;
+  started: boolean;
+  completed: boolean;
+};
+
+function getApprovedPacketNextStepExplainer(input: ApprovedPacketNextStepExplainerInput): string {
+  if (input.completed) {
+    return `You recorded that your approved next step was handled for now (${input.stepLabel}). This is in-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.`;
+  }
+  if (input.started) {
+    return `You opened your approved next in-app step (${input.stepLabel}). Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled status from your action plan when ready.`;
+  }
+  return `Your approved in-app step is ${input.stepLabel} — open it below or continue from your action plan. Nothing is sent automatically.`;
+}
+
 function buildApprovedNextActionTarget(
   prepared: ReturnType<typeof pickPreparedNextAction>
 ): JusticeApprovedNextAction {
@@ -601,6 +617,8 @@ export default function JusticePacketPage() {
   const showPreparedActionFraming = showPreparedActionPacketFraming(intake, timeline);
   const approvedNextActionCompleted = approvedNextAction?.status === "completed";
   const approvedNextActionStarted = approvedNextAction?.status === "started";
+  const showApprovedPacketExplainer =
+    showPreparedActionFraming && packetApproved && Boolean(approvedNextAction?.label);
 
   const showPreparedReviewExplainer = showPreparedActionFraming && !packetApproved;
   let preparedNextAction: ReturnType<typeof pickPreparedNextAction> | null = null;
@@ -708,52 +726,50 @@ export default function JusticePacketPage() {
           <div
             className="mt-4 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-4 py-4 text-sm shadow-sm ring-1 ring-emerald-950/[0.05] dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:ring-emerald-400/10"
             role="status"
-            aria-label="Prepared action review packet"
+            aria-label={
+              showApprovedPacketExplainer ? "Approved case packet" : "Prepared action review packet"
+            }
           >
-            <p className="font-semibold text-emerald-950 dark:text-emerald-100">Your prepared action review</p>
-            <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
-              Surrenderless assembled this packet from your reviewed submission draft so you can confirm your case
-              details, proof, and records before your next step. This is in-app preparation and review — nothing has
-              been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on your behalf.
+            <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+              {showApprovedPacketExplainer ? "Your approved case packet" : "Your prepared action review"}
             </p>
-            <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-              When you complete an external filing yourself, record confirmations in the filing section below.
-              Surrenderless does not submit or queue government complaints for you yet.
-            </p>
-            {!packetApproved && preparedNextAction ? (
+            {showApprovedPacketExplainer && approvedNextAction?.label ? (
               <>
-                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                  When you approve below, Surrenderless marks this packet ready for{" "}
-                  <strong>{preparedNextAction.stepLabel}</strong>
-                  {" "}
-                  — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.
+                <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                  Surrenderless assembled this packet from your reviewed submission draft. Your case summary,
+                  timeline, evidence notes, and filing records stay below for reference — in-app tracking only; nothing
+                  has been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on your
+                  behalf.
                 </p>
-                {isSignedIn && !readyToEscalate ? (
-                  <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                    Before you approve, finish readiness:{" "}
-                    {!basicsReady ? (
-                      <Link href="/justice/chat-ai" className={packetChecklistLinkCls}>
-                        Update in chat
-                      </Link>
-                    ) : null}
-                    {!basicsReady && !evidenceReady ? (
-                      <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
-                    ) : null}
-                    {!evidenceReady ? (
-                      <Link href="/justice/chat-ai" className={packetChecklistLinkCls}>
-                        Add proof in chat
-                      </Link>
-                    ) : null}
-                    {(!basicsReady || !evidenceReady) && !draftReviewed ? (
-                      <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
-                    ) : null}
-                    {!draftReviewed ? (
-                      <Link href="/justice/preview" className={packetChecklistLinkCls}>
-                        Review submission draft
-                      </Link>
-                    ) : null}
-                  </p>
-                ) : null}
+                <p
+                  className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90"
+                  aria-label={getApprovedPacketNextStepExplainer({
+                    stepLabel: approvedNextAction.label,
+                    started: approvedNextActionStarted,
+                    completed: approvedNextActionCompleted,
+                  })}
+                >
+                  {approvedNextActionCompleted ? (
+                    <>
+                      You recorded that your approved next step was handled for now (
+                      <strong>{approvedNextAction.label}</strong>
+                      ). This is in-app tracking only — Surrenderless has not filed, submitted, sent, or contacted
+                      anyone on your behalf.
+                    </>
+                  ) : approvedNextActionStarted ? (
+                    <>
+                      You opened your approved next in-app step (
+                      <strong>{approvedNextAction.label}</strong>
+                      ). Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled
+                      status from your action plan when ready.
+                    </>
+                  ) : (
+                    <>
+                      Your approved in-app step is <strong>{approvedNextAction.label}</strong> — open it below or
+                      continue from your action plan. Nothing is sent automatically.
+                    </>
+                  )}
+                </p>
                 <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
                   Need to fix details or add proof notes?{" "}
                   <Link
@@ -764,7 +780,65 @@ export default function JusticePacketPage() {
                   </Link>
                 </p>
               </>
-            ) : null}
+            ) : (
+              <>
+                <p className="mt-2 leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                  Surrenderless assembled this packet from your reviewed submission draft so you can confirm your case
+                  details, proof, and records before your next step. This is in-app preparation and review — nothing has
+                  been filed automatically, and Surrenderless has not submitted, filed, or contacted anyone on your
+                  behalf.
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  When you complete an external filing yourself, record confirmations in the filing section below.
+                  Surrenderless does not submit or queue government complaints for you yet.
+                </p>
+                {!packetApproved && preparedNextAction ? (
+                  <>
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                      When you approve below, Surrenderless marks this packet ready for{" "}
+                      <strong>{preparedNextAction.stepLabel}</strong>
+                      {" "}
+                      — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.
+                    </p>
+                    {isSignedIn && !readyToEscalate ? (
+                      <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                        Before you approve, finish readiness:{" "}
+                        {!basicsReady ? (
+                          <Link href="/justice/chat-ai" className={packetChecklistLinkCls}>
+                            Update in chat
+                          </Link>
+                        ) : null}
+                        {!basicsReady && !evidenceReady ? (
+                          <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
+                        ) : null}
+                        {!evidenceReady ? (
+                          <Link href="/justice/chat-ai" className={packetChecklistLinkCls}>
+                            Add proof in chat
+                          </Link>
+                        ) : null}
+                        {(!basicsReady || !evidenceReady) && !draftReviewed ? (
+                          <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
+                        ) : null}
+                        {!draftReviewed ? (
+                          <Link href="/justice/preview" className={packetChecklistLinkCls}>
+                            Review submission draft
+                          </Link>
+                        ) : null}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                      Need to fix details or add proof notes?{" "}
+                      <Link
+                        href="/justice/chat-ai"
+                        className="font-medium text-emerald-900 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-100 dark:hover:text-emerald-50"
+                      >
+                        Update in chat
+                      </Link>
+                    </p>
+                  </>
+                ) : null}
+              </>
+            )}
             <Link
               href="/justice/plan"
               className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
@@ -861,12 +935,18 @@ export default function JusticePacketPage() {
                 !approvedNextActionCompleted &&
                 approvedNextAction?.href &&
                 approvedNextAction.label ? (
-                  <Link
-                    href={approvedNextAction.href}
-                    className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                  >
-                    Open {approvedNextAction.label}
-                  </Link>
+                  <>
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                      Opens your in-app {approvedNextAction.label} preparation for tracking — nothing is filed or sent
+                      automatically.
+                    </p>
+                    <Link
+                      href={approvedNextAction.href}
+                      className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      Open {approvedNextAction.label}
+                    </Link>
+                  </>
                 ) : null}
                 <Link
                   href="/justice/plan"
