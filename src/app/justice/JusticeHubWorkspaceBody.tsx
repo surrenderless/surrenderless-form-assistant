@@ -37,6 +37,9 @@ const activeCardCls =
 const hubSecondaryBtnCls =
   "mt-2 inline-flex rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800";
 
+const hubChecklistLinkCls =
+  "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
+
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
   return entries.some(
@@ -198,6 +201,47 @@ export default function JusticeHubWorkspaceBody() {
               {snapshot.reviewed ? "Continue to action plan" : "Continue to submission preview"}
             </span>
           </Link>
+          <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
+            <li>
+              Basic case info: {basicsReady ? "yes" : "not yet"}
+              {snapshot && !basicsReady ? (
+                <>
+                  {" · "}
+                  <Link href="/justice/chat-ai" className={hubChecklistLinkCls}>
+                    Update in chat
+                  </Link>
+                </>
+              ) : null}
+            </li>
+            <li>
+              {evidenceLoading ? (
+                "Evidence: loading..."
+              ) : (
+                <>
+                  Evidence: {(evidenceCount ?? 0) >= 1 ? "yes" : "not yet"}
+                  {(evidenceCount ?? 0) < 1 ? (
+                    <>
+                      {" · "}
+                      <Link href="/justice/chat-ai" className={hubChecklistLinkCls}>
+                        Add proof in chat
+                      </Link>
+                    </>
+                  ) : null}
+                </>
+              )}
+            </li>
+            <li>
+              Submission draft reviewed: {snapshot.reviewed ? "yes" : "not yet"}
+              {snapshot && !snapshot.reviewed ? (
+                <>
+                  {" · "}
+                  <Link href="/justice/preview" className={hubChecklistLinkCls}>
+                    Review submission draft
+                  </Link>
+                </>
+              ) : null}
+            </li>
+          </ul>
           {showUpdateInChat ? (
             <Link href="/justice/chat-ai" className={hubSecondaryBtnCls}>
               Update in chat
