@@ -298,6 +298,7 @@ export default function JusticeChatAiPage() {
   const [requestingHandling, setRequestingHandling] = useState(false);
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
   const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
+  const [markingActionHandled, setMarkingActionHandled] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
@@ -465,6 +466,51 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: acknowledge handling error", e);
     } finally {
       setAcknowledgingHandling(false);
+    }
+  }
+
+  async function handleMarkApprovedNextActionHandled() {
+    if (!approvedNextAction || approvedNextAction.status !== "started") return;
+
+    const next: JusticeApprovedNextAction = {
+      ...approvedNextAction,
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    };
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    setApprovedNextAction(local);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, local);
+    }
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    setMarkingActionHandled(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before mark action handled failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH mark action handled failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: mark action handled error", e);
+    } finally {
+      setMarkingActionHandled(false);
     }
   }
 
@@ -1385,6 +1431,24 @@ export default function JusticeChatAiPage() {
                   <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
                     Status: {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
+                ) : null}
+                {approvedNextAction.status === "started" ? (
+                  <>
+                    <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                      Opened for next step.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={markingActionHandled}
+                      onClick={() => void handleMarkApprovedNextActionHandled()}
+                      className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+                    >
+                      {markingActionHandled ? "Saving…" : "Record action handled for now"}
+                    </button>
+                    <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                      Tracking only — not automatic filing or submission.
+                    </p>
+                  </>
                 ) : null}
                 {approvedNextAction.handling_requested_at?.trim() ? (
                   approvedNextAction.status === "completed" ? (
