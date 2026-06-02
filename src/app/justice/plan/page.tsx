@@ -1495,6 +1495,18 @@ export default function JusticePlanPage() {
               {" "}
               — Surrenderless keeps your case aligned with your draft and plan.
             </p>
+            <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+              Updated your case in chat?{" "}
+              <Link
+                href="/justice/preview"
+                className="font-medium text-emerald-900 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-100 dark:hover:text-emerald-50"
+              >
+                Review submission draft again
+              </Link>
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+              Confirm the draft matches your saved case before you escalate. Nothing is filed automatically.
+            </p>
             {preparedPacketApproved ? (
               <button
                 type="button"
