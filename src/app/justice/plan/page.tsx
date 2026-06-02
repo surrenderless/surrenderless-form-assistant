@@ -1790,6 +1790,17 @@ export default function JusticePlanPage() {
                   <span>
                     Basic case info present (company, issue category, product/service, what happened, requested
                     resolution).
+                    {isSignedIn && !readinessLoading && !basicsReady ? (
+                      <>
+                        {" · "}
+                        <Link
+                          href="/justice/chat-ai"
+                          className="inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          Update in chat
+                        </Link>
+                      </>
+                    ) : null}
                   </span>
                 </li>
                 <li className="flex gap-2">
