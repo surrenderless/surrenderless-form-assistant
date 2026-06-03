@@ -60,6 +60,7 @@ type CaseRow = {
 
 function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
   const next = parseApprovedNextActionFromClientState(clientState);
+  const stepLabel = next?.label?.trim();
   const statusLabel = approvedNextActionStatusLabel(next?.status);
   const handlingAt = next?.handling_requested_at?.trim();
   const showHandledOpenHandlingTriageNote = Boolean(
@@ -70,6 +71,11 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
   if (!statusLabel && !handlingAt) return null;
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+      {stepLabel ? (
+        <p>
+          Next step: <strong>{stepLabel}</strong>
+        </p>
+      ) : null}
       {statusLabel ? (
         <p>
           <span className="font-medium text-neutral-700 dark:text-neutral-300">Approved next action:</span>{" "}
