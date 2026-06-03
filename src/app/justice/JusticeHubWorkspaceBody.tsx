@@ -4,7 +4,10 @@ import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { validate as isUuid } from "uuid";
-import { readSessionApprovedNextAction } from "@/lib/justice/approvedNextActionState";
+import {
+  approvedNextActionStatusLabel,
+  readSessionApprovedNextAction,
+} from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
@@ -51,6 +54,8 @@ type CurrentCaseSnapshot = {
   caseId: string;
   intake: JusticeIntake;
   reviewed: boolean;
+  stepLabel: string | null;
+  statusLabel: string | null;
   handlingRequestedAt: string | null;
   handlingRequestNote: string | null;
   handlingAcknowledgedAt: string | null;
@@ -72,10 +77,14 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
       !handlingAck &&
       approvedNext?.status === "completed"
   );
+  const stepLabel = approvedNext?.label?.trim() || null;
+  const statusLabel = approvedNextActionStatusLabel(approvedNext?.status);
   return {
     caseId,
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
+    stepLabel,
+    statusLabel,
     handlingRequestedAt: handlingAt || null,
     handlingRequestNote: handlingNote || null,
     handlingAcknowledgedAt: handlingAck || null,
@@ -178,6 +187,17 @@ export default function JusticeHubWorkspaceBody() {
             <span className="mt-2 block text-xs font-medium text-neutral-700 dark:text-neutral-300">
               {snapshot.reviewed ? "Submission draft reviewed" : "Submission draft not reviewed"}
             </span>
+            {snapshot.stepLabel ? (
+              <span className="mt-2 block text-xs text-neutral-600 dark:text-neutral-400">
+                Next step: <strong className="text-neutral-800 dark:text-neutral-200">{snapshot.stepLabel}</strong>
+              </span>
+            ) : null}
+            {snapshot.statusLabel ? (
+              <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">Approved next action:</span>{" "}
+                {snapshot.statusLabel}
+              </span>
+            ) : null}
             {snapshot.handlingRequestedAt ? (
               <>
                 <span className="mt-2 block text-xs font-medium text-emerald-800 dark:text-emerald-200">
