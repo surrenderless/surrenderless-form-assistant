@@ -117,6 +117,8 @@ function stillNeededBeforePreviewMessage(missing: string[]): string {
 
 const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
 
+const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+
 type ContinueHandoffStepsInput = {
   isUpdatingExistingCase: boolean;
   stagedCount: number;
@@ -299,6 +301,7 @@ export default function JusticeChatAiPage() {
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
   const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
   const [markingActionHandled, setMarkingActionHandled] = useState(false);
+  const [markingActionStarted, setMarkingActionStarted] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
@@ -511,6 +514,77 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: mark action handled error", e);
     } finally {
       setMarkingActionHandled(false);
+    }
+  }
+
+  async function handleApprovedNextActionOpen() {
+    if (!approvedNextAction) return;
+    const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
+    if (approvedNextAction.status === "completed") {
+      router.push(targetHref);
+      return;
+    }
+    if (approvedNextAction.status !== "approved") return;
+
+    const label = approvedNextAction.label?.trim();
+    const next: JusticeApprovedNextAction = {
+      ...approvedNextAction,
+      ...(label ? { label } : {}),
+      href: approvedNextAction.href ?? targetHref,
+      status: "started",
+      started_at: approvedNextAction.started_at ?? new Date().toISOString(),
+      ...(approvedNextAction.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
+    };
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    setApprovedNextAction(local);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, local);
+      try {
+        const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+        const map: Record<string, boolean> = raw
+          ? (JSON.parse(raw) as Record<string, boolean>)
+          : {};
+        map[caseId] = true;
+        sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+      } catch {
+        // ignore corrupt session data
+      }
+    }
+
+    const navigateHref = local.href?.trim() || targetHref;
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) {
+      router.push(navigateHref);
+      return;
+    }
+
+    setMarkingActionStarted(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before open approved step failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH open approved step failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: open approved step error", e);
+    } finally {
+      setMarkingActionStarted(false);
+      router.push(navigateHref);
     }
   }
 
@@ -1431,6 +1505,26 @@ export default function JusticeChatAiPage() {
                   <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
                     Status: {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
+                ) : null}
+                {approvedNextAction.status === "approved" &&
+                approvedNextAction.href?.trim() &&
+                approvedNextAction.label?.trim() ? (
+                  <>
+                    <p className="mt-1.5 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                      Opens your in-app step for tracking — nothing is filed or sent automatically.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={markingActionStarted}
+                      onClick={() => void handleApprovedNextActionOpen()}
+                      className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+                    >
+                      {markingActionStarted ? "Saving…" : `Open ${approvedNextAction.label}`}
+                    </button>
+                    <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                      Tracking only — not automatic filing or submission.
+                    </p>
+                  </>
                 ) : null}
                 {approvedNextAction.status === "started" ? (
                   <>
