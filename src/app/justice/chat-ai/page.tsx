@@ -1389,6 +1389,26 @@ export default function JusticeChatAiPage() {
                 ) : null}
               </li>
             </ul>
+            {approvedNextAction ? (
+              <>
+                {approvedNextAction.label?.trim() ? (
+                  <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">
+                    Next step:{" "}
+                    <strong className="text-neutral-800 dark:text-neutral-200">
+                      {approvedNextAction.label.trim()}
+                    </strong>
+                  </p>
+                ) : null}
+                {approvedNextActionStatusLabel(approvedNextAction.status) ? (
+                  <p className="mt-1 text-xs text-neutral-700 dark:text-neutral-300">
+                    <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                      Approved next action:
+                    </span>{" "}
+                    {approvedNextActionStatusLabel(approvedNextAction.status)}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
             <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
             <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
               <Link
