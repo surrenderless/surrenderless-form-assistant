@@ -1450,6 +1450,23 @@ export default function JusticeChatAiPage() {
                     </p>
                   </>
                 ) : null}
+                {approvedNextAction.status === "completed" ? (
+                  <>
+                    <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                      Next action recorded as handled for now
+                      {approvedNextAction.label ? (
+                        <>
+                          {": "}
+                          <strong>{approvedNextAction.label}</strong>
+                        </>
+                      ) : null}
+                      .
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                      Tracking only — not automatic filing or submission.
+                    </p>
+                  </>
+                ) : null}
                 {approvedNextAction.handling_requested_at?.trim() ? (
                   approvedNextAction.status === "completed" ? (
                     <ApprovedNextActionHandlingRequestedReadOnly
