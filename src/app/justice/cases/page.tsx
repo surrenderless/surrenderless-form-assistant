@@ -882,7 +882,10 @@ export default function JusticeCasesPage() {
                         ) : null}
                         {statusLabel ? (
                           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                            Status: {statusLabel}
+                            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                              Approved next action:
+                            </span>{" "}
+                            {statusLabel}
                           </p>
                         ) : null}
                         {handlingAt ? (
@@ -954,7 +957,10 @@ export default function JusticeCasesPage() {
                         ) : null}
                         {statusLabel ? (
                           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                            Status: {statusLabel}
+                            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                              Approved next action:
+                            </span>{" "}
+                            {statusLabel}
                           </p>
                         ) : null}
                         <ApprovedNextActionFollowUpTimingLine
