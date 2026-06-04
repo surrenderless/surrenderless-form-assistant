@@ -23,10 +23,33 @@ import {
   computeJusticeDestinations,
   fccLikelyRelevant,
 } from "@/lib/justice/rules";
-import type { DestinationId, JusticeDestination } from "@/lib/justice/types";
+import type {
+  DestinationId,
+  JusticeApprovedNextAction,
+  JusticeDestination,
+} from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
+import {
+  approvedNextActionStatusLabel,
+  hydrateApprovedNextActionForDisplay,
+} from "@/lib/justice/approvedNextActionState";
 import { readAndClearPreviewChatUpdateSummary } from "@/lib/justice/previewChatUpdateHandoff";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+
+/** Page-local; mirrors plan/packet approval session keys. */
+const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+
+function readSessionPreparedPacketApproved(caseId: string): boolean {
+  if (typeof window === "undefined" || !caseId) return false;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    if (!raw) return false;
+    const map = JSON.parse(raw) as Record<string, boolean>;
+    return map[caseId] === true;
+  } catch {
+    return false;
+  }
+}
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -57,6 +80,10 @@ export default function JusticePreviewPage() {
   const [continueError, setContinueError] = useState<string | null>(null);
   const [continueLoading, setContinueLoading] = useState(false);
   const [chatUpdateLines, setChatUpdateLines] = useState<string[]>([]);
+  const [preparedPacketApproved, setPreparedPacketApproved] = useState(false);
+  const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -376,6 +403,40 @@ export default function JusticePreviewPage() {
             >
               Update in chat
             </Link>
+          </div>
+        ) : null}
+
+        {preparedPacketApproved &&
+        approvedNextAction &&
+        (approvedNextAction.label?.trim() ||
+          approvedNextActionStatusLabel(approvedNextAction.status)) ? (
+          <div
+            className="mt-4 rounded-xl border border-neutral-200/90 bg-neutral-50/80 px-4 py-3 text-sm ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-800/40 dark:ring-white/[0.06]"
+            role="status"
+            aria-label="Approved next action on your case"
+          >
+            {approvedNextAction.label?.trim() ? (
+              <p className="text-neutral-800 dark:text-neutral-200">
+                Next step:{" "}
+                <strong className="text-neutral-900 dark:text-neutral-100">
+                  {approvedNextAction.label.trim()}
+                </strong>
+              </p>
+            ) : null}
+            {approvedNextActionStatusLabel(approvedNextAction.status) ? (
+              <p
+                className={
+                  approvedNextAction.label?.trim()
+                    ? "mt-1 text-xs text-neutral-600 dark:text-neutral-400"
+                    : "text-xs text-neutral-600 dark:text-neutral-400"
+                }
+              >
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  Approved next action:
+                </span>{" "}
+                {approvedNextActionStatusLabel(approvedNextAction.status)}
+              </p>
+            ) : null}
           </div>
         ) : null}
 
