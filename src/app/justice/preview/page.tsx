@@ -112,6 +112,16 @@ export default function JusticePreviewPage() {
     }
   }, [hydrationStatus, intake]);
 
+  useEffect(() => {
+    if (hydrationStatus !== "ready" || !caseId) {
+      setPreparedPacketApproved(false);
+      setApprovedNextAction(undefined);
+      return;
+    }
+    setPreparedPacketApproved(readSessionPreparedPacketApproved(caseId));
+    setApprovedNextAction(hydrateApprovedNextActionForDisplay(caseId));
+  }, [hydrationStatus, caseId]);
+
   const useCompanyContactLabels = useMemo(
     () => (intake ? cfpbLikelyRelevant(intake) || fccLikelyRelevant(intake) : false),
     [intake]
