@@ -32,6 +32,7 @@ import {
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
   applyHandlingRequestNoteToApprovedNextAction,
+  approvedNextActionStatusLabel,
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
@@ -1889,6 +1890,32 @@ export default function JusticePlanPage() {
                     ) : null}
                   </span>
                 </li>
+                {preparedPacketApproved && approvedNextAction ? (
+                  <>
+                    {approvedNextAction.label?.trim() ? (
+                      <li className="flex gap-2">
+                        <span className="text-neutral-500 dark:text-neutral-400">•</span>
+                        <span>
+                          Next step:{" "}
+                          <strong className="text-neutral-800 dark:text-neutral-200">
+                            {approvedNextAction.label.trim()}
+                          </strong>
+                        </span>
+                      </li>
+                    ) : null}
+                    {approvedNextActionStatusLabel(approvedNextAction.status) ? (
+                      <li className="flex gap-2">
+                        <span className="text-neutral-500 dark:text-neutral-400">•</span>
+                        <span>
+                          <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                            Approved next action:
+                          </span>{" "}
+                          {approvedNextActionStatusLabel(approvedNextAction.status)}
+                        </span>
+                      </li>
+                    ) : null}
+                  </>
+                ) : null}
                 <li className="flex gap-2">
                   <span className={filings.length >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
                     {filings.length >= 1 ? "✓" : "○"}
