@@ -1523,7 +1523,10 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {approvedNextActionStatusLabel(approvedNextAction.status) ? (
                   <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
-                    Status: {approvedNextActionStatusLabel(approvedNextAction.status)}
+                    <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                      Approved next action:
+                    </span>{" "}
+                    {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
                 ) : null}
                 {approvedNextAction.status === "approved" &&
