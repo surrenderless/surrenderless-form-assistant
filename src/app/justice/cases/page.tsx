@@ -866,6 +866,7 @@ export default function JusticeCasesPage() {
                   {handlingRequestedAttentionItems.map(({ caseRow, next }) => {
                     const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
                     const product = caseRow.intake.purchase_or_signup.trim();
+                    const stepLabel = next.label?.trim();
                     const statusLabel = approvedNextActionStatusLabel(next.status);
                     const handlingAt = next.handling_requested_at?.trim();
                     return (
@@ -879,6 +880,11 @@ export default function JusticeCasesPage() {
                         <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">{title}</p>
                         {product ? (
                           <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
+                        ) : null}
+                        {stepLabel ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Next step: <strong>{stepLabel}</strong>
+                          </p>
                         ) : null}
                         {statusLabel ? (
                           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
@@ -938,6 +944,7 @@ export default function JusticeCasesPage() {
                   {followUpAttentionItems.map(({ caseRow, next }) => {
                     const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
                     const product = caseRow.intake.purchase_or_signup.trim();
+                    const stepLabel = next.label?.trim();
                     const statusLabel = approvedNextActionStatusLabel(next.status);
                     const outcomeNote = next.outcome_note?.trim();
                     return (
@@ -954,6 +961,11 @@ export default function JusticeCasesPage() {
                         <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">{title}</p>
                         {product ? (
                           <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
+                        ) : null}
+                        {stepLabel ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Next step: <strong>{stepLabel}</strong>
+                          </p>
                         ) : null}
                         {statusLabel ? (
                           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
