@@ -253,6 +253,10 @@ export default function JusticeEvidencePage() {
             Back to action plan
           </Link>
           {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+            Update in chat
+          </Link>
+          {" · "}
           <Link href="/justice/cases" className="text-blue-600 hover:underline dark:text-blue-400">
             Saved cases
           </Link>
