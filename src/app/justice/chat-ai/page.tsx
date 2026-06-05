@@ -132,6 +132,24 @@ function readSessionPreparedPacketApproved(caseId: string): boolean {
   }
 }
 
+function resolveActiveCaseWorkHref(
+  draftReviewed: boolean,
+  packetApproved: boolean
+): string {
+  if (!draftReviewed) return "/justice/preview";
+  if (!packetApproved) return "/justice/packet";
+  return "/justice/plan";
+}
+
+function resolveActiveCaseWorkLabel(
+  draftReviewed: boolean,
+  packetApproved: boolean
+): string {
+  if (!draftReviewed) return "Submission preview";
+  if (!packetApproved) return "Review prepared case packet";
+  return "Action plan";
+}
+
 type ContinueHandoffStepsInput = {
   isUpdatingExistingCase: boolean;
   stagedCount: number;
@@ -1311,6 +1329,20 @@ export default function JusticeChatAiPage() {
       : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
         ? "Review your submission draft before continuing."
         : "Describe what to add or change, then continue to preview.";
+  const activeCaseWorkHref = resolveActiveCaseWorkHref(
+    activeCaseDraftReviewed,
+    preparedPacketApproved
+  );
+  const activeCaseWorkLabel = resolveActiveCaseWorkLabel(
+    activeCaseDraftReviewed,
+    preparedPacketApproved
+  );
+  const activeCaseSecondaryWorkLink =
+    activeCaseDraftReviewed && preparedPacketApproved
+      ? { href: "/justice/preview", label: "Submission preview" }
+      : activeCaseDraftReviewed && !preparedPacketApproved
+        ? { href: "/justice/plan", label: "Action plan" }
+        : null;
 
   return (
     <>
@@ -1452,18 +1484,22 @@ export default function JusticeChatAiPage() {
             <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
             <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
               <Link
-                href="/justice/plan"
+                href={activeCaseWorkHref}
                 className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
               >
-                Action plan
+                {activeCaseWorkLabel}
               </Link>
-              <span className="text-neutral-400 dark:text-neutral-500">·</span>
-              <Link
-                href="/justice/preview"
-                className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-              >
-                Submission preview
-              </Link>
+              {activeCaseSecondaryWorkLink ? (
+                <>
+                  <span className="text-neutral-400 dark:text-neutral-500">·</span>
+                  <Link
+                    href={activeCaseSecondaryWorkLink.href}
+                    className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    {activeCaseSecondaryWorkLink.label}
+                  </Link>
+                </>
+              ) : null}
             </p>
           </div>
         ) : null}
