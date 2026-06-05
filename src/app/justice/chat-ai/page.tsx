@@ -1763,18 +1763,22 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                   <Link
-                    href="/justice/plan"
+                    href={activeCaseWorkHref}
                     className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                   >
-                    Action plan
+                    {activeCaseWorkLabel}
                   </Link>
-                  <span className="text-emerald-700/60 dark:text-emerald-400/60">Â·</span>
-                  <Link
-                    href="/justice/packet"
-                    className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                  >
-                    Case packet
-                  </Link>
+                  {activeCaseSecondaryWorkLink ? (
+                    <>
+                      <span className="text-emerald-700/60 dark:text-emerald-400/60">·</span>
+                      <Link
+                        href={activeCaseSecondaryWorkLink.href}
+                        className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        {activeCaseSecondaryWorkLink.label}
+                      </Link>
+                    </>
+                  ) : null}
                 </p>
               </div>
             ) : null}
