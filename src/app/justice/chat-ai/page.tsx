@@ -24,6 +24,7 @@ import {
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
+  parseJusticeCaseClientState,
   mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithApprovedNextAction,
   mergeClientStateWithClearedFollowUp,
@@ -118,6 +119,18 @@ function stillNeededBeforePreviewMessage(missing: string[]): string {
 const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
 
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+
+function readSessionPreparedPacketApproved(caseId: string): boolean {
+  if (typeof window === "undefined" || !caseId) return false;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    if (!raw) return false;
+    const map = JSON.parse(raw) as Record<string, boolean>;
+    return map[caseId] === true;
+  } catch {
+    return false;
+  }
+}
 
 type ContinueHandoffStepsInput = {
   isUpdatingExistingCase: boolean;
@@ -305,6 +318,7 @@ export default function JusticeChatAiPage() {
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
     undefined
   );
+  const [preparedPacketApproved, setPreparedPacketApproved] = useState(false);
   const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
   const [recentEvidenceRows, setRecentEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [proofNoteTitle, setProofNoteTitle] = useState("");
@@ -1019,6 +1033,7 @@ export default function JusticeChatAiPage() {
   useEffect(() => {
     if (!isUpdatingExistingCase) {
       setApprovedNextAction(undefined);
+      setPreparedPacketApproved(false);
       setSavedEvidenceCount(null);
       setRecentEvidenceRows([]);
       setEditingRecentEvidenceId(null);
@@ -1035,10 +1050,17 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
-    const sessionFallback = caseId ? hydrateApprovedNextActionForDisplay(caseId) : undefined;
-    setApprovedNextAction(sessionFallback);
+    if (!caseId) {
+      setPreparedPacketApproved(false);
+      setApprovedNextAction(undefined);
+      return;
+    }
 
-    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+    const sessionFallback = hydrateApprovedNextActionForDisplay(caseId);
+    setApprovedNextAction(sessionFallback);
+    setPreparedPacketApproved(readSessionPreparedPacketApproved(caseId));
+
+    if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
     const ac = new AbortController();
     void (async () => {
@@ -1053,6 +1075,10 @@ export default function JusticeChatAiPage() {
           hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
         if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
         setApprovedNextAction(hydrated);
+        const sessionPacketApproved = readSessionPreparedPacketApproved(caseId);
+        const serverPacketApproved =
+          parseJusticeCaseClientState(data.client_state).prepared_packet_approved === true;
+        setPreparedPacketApproved(sessionPacketApproved || serverPacketApproved);
       } catch {
         // keep session fallback
       }
@@ -1388,6 +1414,19 @@ export default function JusticeChatAiPage() {
                   </>
                 ) : null}
               </li>
+              {activeCaseDraftReviewed ? (
+                <li>
+                  Prepared case packet reviewed: {preparedPacketApproved ? "yes" : "not yet"}
+                  {!preparedPacketApproved ? (
+                    <>
+                      {" · "}
+                      <Link href="/justice/packet" className={activeCaseChecklistLinkCls}>
+                        Review prepared case packet
+                      </Link>
+                    </>
+                  ) : null}
+                </li>
+              ) : null}
             </ul>
             {approvedNextAction ? (
               <>
