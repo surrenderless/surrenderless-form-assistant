@@ -1352,18 +1352,18 @@ export default function JusticeChatAiPage() {
           <Link href="/" className="text-blue-600 hover:underline">
             Home
           </Link>
-          {" Â· "}
+          {" · "}
           <Link
             href={isUpdatingExistingCase ? activeCaseWorkHref : "/justice/plan"}
             className="text-blue-600 hover:underline"
           >
             {isUpdatingExistingCase ? activeCaseWorkLabel : "Action plan"}
           </Link>
-          {" Â· "}
+          {" · "}
           <Link href="/justice/chat" className="text-blue-600 hover:underline">
             Step-by-step chat
           </Link>
-          {" Â· "}
+          {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
             Structured form
           </Link>
