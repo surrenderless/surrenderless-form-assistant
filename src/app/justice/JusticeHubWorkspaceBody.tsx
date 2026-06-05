@@ -178,6 +178,17 @@ export default function JusticeHubWorkspaceBody() {
     evidenceCount !== null &&
     evidenceCount < 1;
 
+  const primaryHref = !snapshot?.reviewed
+    ? "/justice/preview"
+    : snapshot.packetApproved
+      ? "/justice/plan"
+      : "/justice/packet";
+  const primaryLabel = !snapshot?.reviewed
+    ? "Continue to submission preview"
+    : snapshot.packetApproved
+      ? "Continue to action plan"
+      : "Review prepared case packet";
+
   return (
     <>
       {snapshot ? (
@@ -185,10 +196,7 @@ export default function JusticeHubWorkspaceBody() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
             Current case
           </p>
-          <Link
-            href={snapshot.reviewed ? "/justice/plan" : "/justice/preview"}
-            className={`${activeCardCls} text-left`}
-          >
+          <Link href={primaryHref} className={`${activeCardCls} text-left`}>
             <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
               {snapshot.intake.company_name.trim() || "Current case"}
             </span>
@@ -234,7 +242,7 @@ export default function JusticeHubWorkspaceBody() {
               </>
             ) : null}
             <span className="mt-3 inline-flex text-sm font-semibold text-blue-600 dark:text-blue-400">
-              {snapshot.reviewed ? "Continue to action plan" : "Continue to submission preview"}
+              {primaryLabel}
             </span>
           </Link>
           <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
