@@ -143,14 +143,15 @@ type ContinueHandoffStepsInput = {
 function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
   const previewStep =
     "Open submission draft preview to review your case text (nothing is filed automatically).";
-  const actionPlanStep = "From preview, continue to your action plan when you're ready.";
+  const postPreviewFunnelStep =
+    "After preview, review your prepared case packet, then continue to your action plan when ready. Nothing is filed automatically.";
 
   if (input.isStagedFlushRetry) {
     const noteWord = input.stagedCount === 1 ? "note" : "notes";
     return [
       `Save ${input.stagedCount} pending proof ${noteWord} to your case.`,
       previewStep,
-      actionPlanStep,
+      postPreviewFunnelStep,
     ];
   }
 
@@ -177,7 +178,7 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
     }
   }
 
-  steps.push(previewStep, actionPlanStep);
+  steps.push(previewStep, postPreviewFunnelStep);
   return steps;
 }
 
