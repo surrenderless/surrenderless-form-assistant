@@ -35,6 +35,7 @@ import {
   mergeClientStateWithClearedFollowUp,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
+  parseJusticeCaseClientState,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
@@ -185,6 +186,10 @@ function caseDraftReviewed(row: CaseRow): boolean {
   return tl.some(
     (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
   );
+}
+
+function casePreparedPacketApproved(row: CaseRow): boolean {
+  return parseJusticeCaseClientState(row.client_state).prepared_packet_approved === true;
 }
 
 const casesChecklistLinkCls =
@@ -678,6 +683,11 @@ export default function JusticeCasesPage() {
   function openReviewSubmissionDraft(row: CaseRow) {
     activateCaseInSession(row);
     router.push("/justice/preview");
+  }
+
+  function openReviewPreparedPacket(row: CaseRow) {
+    activateCaseInSession(row);
+    router.push("/justice/packet");
   }
 
   function isInternalJusticeHref(href: string): boolean {
@@ -1199,6 +1209,24 @@ export default function JusticeCasesPage() {
                             </>
                           ) : null}
                         </li>
+                        {caseDraftReviewed(row) ? (
+                          <li>
+                            Prepared case packet reviewed:{" "}
+                            {casePreparedPacketApproved(row) ? "yes" : "not yet"}
+                            {!casePreparedPacketApproved(row) ? (
+                              <>
+                                {" · "}
+                                <button
+                                  type="button"
+                                  onClick={() => openReviewPreparedPacket(row)}
+                                  className={casesChecklistLinkCls}
+                                >
+                                  Review prepared case packet
+                                </button>
+                              </>
+                            ) : null}
+                          </li>
+                        ) : null}
                       </ul>
                     ) : null}
                     <p
