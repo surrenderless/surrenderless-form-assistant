@@ -43,6 +43,20 @@ const hubSecondaryBtnCls =
 const hubChecklistLinkCls =
   "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
 
+const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+
+function readSessionPreparedPacketApproved(caseId: string): boolean {
+  if (typeof window === "undefined" || !caseId) return false;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    if (!raw) return false;
+    const map = JSON.parse(raw) as Record<string, boolean>;
+    return map[caseId] === true;
+  } catch {
+    return false;
+  }
+}
+
 function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
   return entries.some(
@@ -54,6 +68,7 @@ type CurrentCaseSnapshot = {
   caseId: string;
   intake: JusticeIntake;
   reviewed: boolean;
+  packetApproved: boolean;
   stepLabel: string | null;
   statusLabel: string | null;
   handlingRequestedAt: string | null;
@@ -83,6 +98,7 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
     caseId,
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
+    packetApproved: caseId ? readSessionPreparedPacketApproved(caseId) : false,
     stepLabel,
     statusLabel,
     handlingRequestedAt: handlingAt || null,
@@ -261,6 +277,19 @@ export default function JusticeHubWorkspaceBody() {
                 </>
               ) : null}
             </li>
+            {snapshot.reviewed ? (
+              <li>
+                Prepared case packet reviewed: {snapshot.packetApproved ? "yes" : "not yet"}
+                {!snapshot.packetApproved ? (
+                  <>
+                    {" · "}
+                    <Link href="/justice/packet" className={hubChecklistLinkCls}>
+                      Review prepared case packet
+                    </Link>
+                  </>
+                ) : null}
+              </li>
+            ) : null}
           </ul>
           {showUpdateInChat ? (
             <Link href="/justice/chat-ai" className={hubSecondaryBtnCls}>
