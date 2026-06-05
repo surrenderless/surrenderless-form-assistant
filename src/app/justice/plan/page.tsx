@@ -1890,6 +1890,33 @@ export default function JusticePlanPage() {
                     ) : null}
                   </span>
                 </li>
+                {draftReviewed ? (
+                  <li className="flex gap-2">
+                    <span
+                      className={
+                        preparedPacketApproved
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-amber-600 dark:text-amber-400"
+                      }
+                    >
+                      {preparedPacketApproved ? "✓" : "○"}
+                    </span>
+                    <span>
+                      Prepared case packet reviewed: {preparedPacketApproved ? "yes" : "not yet"}
+                      {isSignedIn && !readinessLoading && !preparedPacketApproved ? (
+                        <>
+                          {" · "}
+                          <Link
+                            href="/justice/packet"
+                            className="inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                          >
+                            Review prepared case packet
+                          </Link>
+                        </>
+                      ) : null}
+                    </span>
+                  </li>
+                ) : null}
                 {preparedPacketApproved && approvedNextAction ? (
                   <>
                     {approvedNextAction.label?.trim() ? (
