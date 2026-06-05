@@ -305,11 +305,11 @@ export default function JusticePreviewPage() {
           usedAi,
         });
       }
-      router.push("/justice/plan");
+      router.push(preparedPacketApproved ? "/justice/plan" : "/justice/packet");
     } finally {
       setContinueLoading(false);
     }
-  }, [reviewed, isSignedIn, aiDraft, selectedDestination, router]);
+  }, [reviewed, isSignedIn, aiDraft, selectedDestination, preparedPacketApproved, router]);
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
@@ -606,7 +606,11 @@ export default function JusticePreviewPage() {
             onClick={() => void handleContinueToPlan()}
             className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {continueLoading ? "Saving…" : "Continue to action plan"}
+            {continueLoading
+              ? "Saving…"
+              : preparedPacketApproved
+                ? "Continue to action plan"
+                : "Review prepared case packet"}
           </button>
         </div>
       </main>
