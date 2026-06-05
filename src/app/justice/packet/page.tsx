@@ -616,6 +616,10 @@ export default function JusticePacketPage() {
               Back to action plan
             </Link>
             {" · "}
+            <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+              Update in chat
+            </Link>
+            {" · "}
             <Link href="/justice/evidence" className="text-blue-600 hover:underline dark:text-blue-400">
               Evidence
             </Link>
@@ -775,6 +779,10 @@ export default function JusticePacketPage() {
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
               Back to action plan
+            </Link>
+            {" · "}
+            <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+              Update in chat
             </Link>
             {" · "}
             <Link href="/justice/evidence" className="text-blue-600 hover:underline dark:text-blue-400">
