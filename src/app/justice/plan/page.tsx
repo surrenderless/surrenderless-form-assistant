@@ -1468,7 +1468,7 @@ export default function JusticePlanPage() {
                 </>
               ) : (
                 <>
-                  Approved next step: <strong>{approvedStepLabel}</strong>
+                  Next step: <strong>{approvedStepLabel}</strong>
                   {approvedNextActionCompleted
                     ? " (recorded as handled)."
                     : approvedNextActionStarted
