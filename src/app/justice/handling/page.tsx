@@ -441,6 +441,10 @@ export default function JusticeHandlingWorkbenchPage() {
             Saved cases
           </Link>
           {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+            Update in chat
+          </Link>
+          {" · "}
           <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
             Action plan
           </Link>
