@@ -819,6 +819,10 @@ export default function JusticeCasesPage() {
             Back to action plan
           </Link>
           {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+            Update in chat
+          </Link>
+          {" · "}
           <Link href="/" className="text-blue-600 hover:underline">
             Home
           </Link>
