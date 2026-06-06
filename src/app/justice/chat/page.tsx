@@ -486,12 +486,16 @@ export default function JusticeChatPage() {
             Home
           </Link>
           {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline">
+            Chat intake
+          </Link>
+          {" · "}
           <Link href="/justice/plan" className="text-blue-600 hover:underline">
             Action plan
           </Link>
           {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
-            Structured form instead
+            Structured form
           </Link>
         </p>
 
