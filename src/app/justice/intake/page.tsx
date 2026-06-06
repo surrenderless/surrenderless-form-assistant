@@ -200,6 +200,14 @@ export default function JusticeIntakePage() {
           <Link href="/" className="text-blue-600 hover:underline">
             Home
           </Link>
+          {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline">
+            Chat intake
+          </Link>
+          {" · "}
+          <Link href="/justice/chat" className="text-blue-600 hover:underline">
+            Step-by-step chat
+          </Link>
         </p>
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your consumer case</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
