@@ -22,6 +22,7 @@ import {
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
+  formatApprovedNextActionHandlingTimestamp,
   formatHandlingRecordedInline,
   formatHandlingRecordedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -35,6 +36,7 @@ import {
   mergeClientStateWithClearedFollowUp,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
+  parseApprovedPacketActionWithoutHandlingRequest,
   parseJusticeCaseClientState,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
@@ -318,6 +320,33 @@ function buildHandlingRequestedAttentionItems(caseList: CaseRow[]): HandlingRequ
   return items;
 }
 
+type ApprovedPacketActionAttentionItem = {
+  caseRow: CaseRow;
+  next: JusticeApprovedNextAction;
+};
+
+function buildApprovedPacketActionAttentionItems(
+  caseList: CaseRow[]
+): ApprovedPacketActionAttentionItem[] {
+  const items: ApprovedPacketActionAttentionItem[] = [];
+  for (const c of caseList) {
+    const next = parseApprovedPacketActionWithoutHandlingRequest(c.client_state);
+    if (!next) continue;
+    items.push({ caseRow: c, next });
+  }
+  items.sort((a, b) => {
+    const da = a.next.approved_at?.trim() ?? "";
+    const db = b.next.approved_at?.trim() ?? "";
+    if (!da && !db) return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = db.localeCompare(da);
+    if (cmp !== 0) return cmp;
+    return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+  });
+  return items;
+}
+
 function caseDisplayTitle(row: CaseRow, labelDraft: string): string {
   const custom = row.case_label?.trim() || labelDraft.trim();
   return custom || row.intake.company_name;
@@ -442,6 +471,11 @@ export default function JusticeCasesPage() {
     [filteredSortedCases]
   );
 
+  const approvedPacketActionAttentionItems = useMemo(
+    () => buildApprovedPacketActionAttentionItems(filteredSortedCases),
+    [filteredSortedCases]
+  );
+
   const attentionItems = useMemo(
     () =>
       filteredSortedCases.length > 0
@@ -451,6 +485,7 @@ export default function JusticeCasesPage() {
   );
 
   const hasNeedsAttentionContent =
+    approvedPacketActionAttentionItems.length > 0 ||
     handlingRequestedAttentionItems.length > 0 ||
     followUpAttentionItems.length > 0 ||
     attentionItems.length > 0;
@@ -883,6 +918,67 @@ export default function JusticeCasesPage() {
                 )
               ) : (
                 <ul className="mt-3 space-y-3">
+                  {approvedPacketActionAttentionItems.map(({ caseRow, next }) => {
+                    const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
+                    const product = caseRow.intake.purchase_or_signup.trim();
+                    const stepLabel = next.label?.trim();
+                    const statusLabel = approvedNextActionStatusLabel(next.status);
+                    const approvedAt = next.approved_at?.trim();
+                    return (
+                      <li
+                        key={`approved-packet-action-${caseRow.id}`}
+                        className={`${cardCls} border-blue-200/80 ring-blue-950/[0.06] dark:border-blue-900/40 dark:ring-blue-500/10`}
+                      >
+                        <p className="font-medium text-neutral-900 dark:text-neutral-100">
+                          Approved packet action
+                        </p>
+                        <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">{title}</p>
+                        {product ? (
+                          <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
+                        ) : null}
+                        {stepLabel ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Next step: <strong>{stepLabel}</strong>
+                          </p>
+                        ) : null}
+                        {statusLabel ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                              Approved next action:
+                            </span>{" "}
+                            {statusLabel}
+                          </p>
+                        ) : null}
+                        {approvedAt ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Approved {formatApprovedNextActionHandlingTimestamp(approvedAt)}
+                          </p>
+                        ) : null}
+                        <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                          Approved case packet and next in-app step — not a Surrenderless handling request.
+                          Request handling from your action plan when you want internal triage tracking.
+                        </p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                          {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
+                        </p>
+                        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => openCase(caseRow)}
+                            className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 hover:shadow-lg sm:w-auto"
+                          >
+                            Open case
+                          </button>
+                          <Link
+                            href="/justice/handling"
+                            className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-center text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
+                          >
+                            View on handling workbench
+                          </Link>
+                        </div>
+                      </li>
+                    );
+                  })}
                   {handlingRequestedAttentionItems.map(({ caseRow, next }) => {
                     const title = caseDisplayTitle(caseRow, labelDraftById[caseRow.id] ?? "");
                     const product = caseRow.intake.purchase_or_signup.trim();
