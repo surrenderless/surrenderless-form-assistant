@@ -11,7 +11,6 @@ import type {
   DestinationStatus,
   JusticeApprovedNextAction,
   JusticeCaseClientState,
-  JusticeDestination,
   JusticeIntake,
   TimelineEntry,
   TimelineEntryType,
@@ -39,6 +38,7 @@ import {
   mergeClientStateWithApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import { pickPreparedNextAction } from "@/lib/justice/preparedNextAction";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   ApprovedNextActionHandlingHandledOpenTriageNote,
@@ -296,46 +296,6 @@ function planFilingFiledAtLine(filedAt: string): string {
   const d = new Date(t);
   if (!Number.isNaN(d.getTime())) return formatFilingDateDisplay(t);
   return t;
-}
-
-/** Post-review handoff: primary CTA stays on in-app review (packet); optional detail prep route. */
-function pickPreparedNextAction(params: {
-  contacted: boolean;
-  useCompanyContactLabels: boolean;
-  destinations: JusticeDestination[];
-}): { href: string; detailHref: string | null; buttonLabel: string; stepLabel: string } {
-  const { contacted, useCompanyContactLabels, destinations } = params;
-
-  if (!contacted) {
-    return {
-      href: "/justice/packet",
-      detailHref: "/justice/merchant",
-      buttonLabel: "Review prepared next step",
-      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
-    };
-  }
-
-  const firstRoutableDest = destinations.find(
-    (d) =>
-      d.internalRoute &&
-      (d.status === "recommended" || d.status === "available")
-  );
-
-  if (firstRoutableDest?.internalRoute) {
-    return {
-      href: "/justice/packet",
-      detailHref: firstRoutableDest.internalRoute,
-      buttonLabel: "Review prepared next step",
-      stepLabel: firstRoutableDest.label,
-    };
-  }
-
-  return {
-    href: "/justice/packet",
-    detailHref: null,
-    buttonLabel: "Review prepared next step",
-    stepLabel: "Prepared case review",
-  };
 }
 
 const planChecklistLinkCls =
@@ -1086,11 +1046,17 @@ export default function JusticePlanPage() {
 
   const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
 
-  const preparedNextAction = pickPreparedNextAction({
+  const pickedPreparedNextAction = pickPreparedNextAction({
     contacted,
     useCompanyContactLabels,
     destinations,
   });
+  const preparedNextAction = {
+    href: "/justice/packet",
+    detailHref: pickedPreparedNextAction.detailHref,
+    buttonLabel: "Review prepared next step",
+    stepLabel: pickedPreparedNextAction.stepLabel,
+  };
 
   const approvedStepLabel =
     preparedPacketApproved && approvedNextAction?.label
