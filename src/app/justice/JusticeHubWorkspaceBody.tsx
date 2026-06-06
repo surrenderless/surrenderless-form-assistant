@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { validate as isUuid } from "uuid";
 import {
   approvedNextActionStatusLabel,
+  isApprovedPacketActionWithoutHandlingRequest,
   readSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
@@ -19,7 +20,7 @@ import {
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
-import type { JusticeIntake, ProblemCategory } from "@/lib/justice/types";
+import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
 const CATEGORY_LABEL: Record<ProblemCategory, string> = {
@@ -69,6 +70,7 @@ type CurrentCaseSnapshot = {
   intake: JusticeIntake;
   reviewed: boolean;
   packetApproved: boolean;
+  approvedNextAction: JusticeApprovedNextAction | undefined;
   stepLabel: string | null;
   statusLabel: string | null;
   handlingRequestedAt: string | null;
@@ -99,6 +101,7 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
     intake,
     reviewed: submissionDraftReviewedInTimeline(caseId),
     packetApproved: caseId ? readSessionPreparedPacketApproved(caseId) : false,
+    approvedNextAction: approvedNext,
     stepLabel,
     statusLabel,
     handlingRequestedAt: handlingAt || null,
@@ -324,6 +327,25 @@ export default function JusticeHubWorkspaceBody() {
                   className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                 >
                   View in handling workbench
+                </Link>
+              </p>
+            </>
+          ) : null}
+          {isApprovedPacketActionWithoutHandlingRequest({
+            prepared_packet_approved: snapshot.packetApproved,
+            approved_next_action: snapshot.approvedNextAction,
+          }) ? (
+            <>
+              <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                Approved case packet and next in-app step — not a Surrenderless handling request.
+                Request Surrenderless handling from your action plan when you want internal triage tracking.
+              </p>
+              <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                <Link
+                  href="/justice/handling"
+                  className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                >
+                  View on handling workbench
                 </Link>
               </p>
             </>
