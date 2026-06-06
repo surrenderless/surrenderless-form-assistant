@@ -14,6 +14,7 @@ import {
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
+  formatApprovedNextActionHandlingTimestamp,
   formatHandlingRecordedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
@@ -24,6 +25,7 @@ import {
   mergeClientStateWithAcknowledgedHandling,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
+  parseApprovedPacketActionWithoutHandlingRequest,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
@@ -68,6 +70,29 @@ function buildHandlingWorkbenchItems(caseList: CaseRow[]): HandlingWorkbenchItem
     items.push({ caseRow: c, next });
   }
   return items;
+}
+
+function buildApprovedPacketActionItems(caseList: CaseRow[]): HandlingWorkbenchItem[] {
+  const items: HandlingWorkbenchItem[] = [];
+  for (const c of caseList) {
+    const next = parseApprovedPacketActionWithoutHandlingRequest(c.client_state);
+    if (!next) continue;
+    items.push({ caseRow: c, next });
+  }
+  return items;
+}
+
+function sortByApprovedAtDesc(items: HandlingWorkbenchItem[]): HandlingWorkbenchItem[] {
+  return [...items].sort((a, b) => {
+    const da = a.next.approved_at?.trim() ?? "";
+    const db = b.next.approved_at?.trim() ?? "";
+    if (!da && !db) return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = db.localeCompare(da);
+    if (cmp !== 0) return cmp;
+    return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+  });
 }
 
 function sortByHandlingRequestedAtDesc(items: HandlingWorkbenchItem[]): HandlingWorkbenchItem[] {
@@ -249,6 +274,85 @@ function HandlingWorkbenchCaseCard({
   );
 }
 
+function ApprovedPacketActionCaseCard({
+  item,
+  isActiveSessionCase,
+  onOpenActionPlan,
+  onOpenPacket,
+  onOpenChat,
+  onOpenApprovedStep,
+}: {
+  item: HandlingWorkbenchItem;
+  isActiveSessionCase: boolean;
+  onOpenActionPlan: () => void;
+  onOpenPacket: () => void;
+  onOpenChat: () => void;
+  onOpenApprovedStep?: () => void;
+}) {
+  const { caseRow, next } = item;
+  const title = caseDisplayTitle(caseRow);
+  const product = caseRow.intake.purchase_or_signup.trim();
+  const statusLabel = approvedNextActionStatusLabel(next.status);
+  const actionLabel = next.label?.trim();
+  const approvedAt = next.approved_at?.trim();
+
+  return (
+    <li
+      className={`${cardCls} border-blue-200/80 ring-blue-950/[0.06] dark:border-blue-900/40 dark:ring-blue-500/10`}
+    >
+      <p className="font-medium text-neutral-900 dark:text-neutral-100">{title}</p>
+      {isActiveSessionCase ? (
+        <p className="mt-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+          Current case in this browser
+        </p>
+      ) : null}
+      {product ? (
+        <p className="mt-0.5 text-sm text-neutral-600 dark:text-neutral-400">{product}</p>
+      ) : null}
+      {actionLabel ? (
+        <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium text-neutral-700 dark:text-neutral-300">Next step:</span>{" "}
+          <span className="text-neutral-800 dark:text-neutral-200">{actionLabel}</span>
+        </p>
+      ) : null}
+      {statusLabel ? (
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium text-neutral-700 dark:text-neutral-300">Status:</span>{" "}
+          {statusLabel}
+        </p>
+      ) : null}
+      {approvedAt ? (
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          Approved {formatApprovedNextActionHandlingTimestamp(approvedAt)}
+        </p>
+      ) : null}
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Approved case packet and next in-app step — not a Surrenderless handling request. Request
+        handling from your action plan when you want internal triage tracking.
+      </p>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <button type="button" onClick={onOpenActionPlan} className={navButtonPrimaryCls}>
+          Open action plan
+        </button>
+        <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
+          Open case packet
+        </button>
+        <button type="button" onClick={onOpenChat} className={navButtonSecondaryCls}>
+          Update in chat
+        </button>
+        {onOpenApprovedStep ? (
+          <button type="button" onClick={onOpenApprovedStep} className={navButtonSecondaryCls}>
+            Open approved step
+          </button>
+        ) : null}
+      </div>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Opens this case in your browser session first.
+      </p>
+    </li>
+  );
+}
+
 export default function JusticeHandlingWorkbenchPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
@@ -322,6 +426,11 @@ export default function JusticeHandlingWorkbenchPage() {
 
     return () => ac.abort();
   }, [isLoaded, isSignedIn, loadCases]);
+
+  const approvedPacketActionItems = useMemo(
+    () => sortByApprovedAtDesc(buildApprovedPacketActionItems(cases ?? [])),
+    [cases]
+  );
 
   const {
     awaitingItems,
@@ -431,6 +540,8 @@ export default function JusticeHandlingWorkbenchPage() {
   }
 
   const hasAnyHandling = allHandlingItems.length > 0;
+  const hasApprovedPacketActions = approvedPacketActionItems.length > 0;
+  const hasAnyWorkbenchContent = hasApprovedPacketActions || hasAnyHandling;
 
   return (
     <>
@@ -466,13 +577,56 @@ export default function JusticeHandlingWorkbenchPage() {
           <p className="mt-8 text-sm text-neutral-500 dark:text-neutral-400">Loading cases…</p>
         ) : loadError ? (
           <p className="mt-8 text-sm text-red-600 dark:text-red-400">{loadError}</p>
-        ) : !hasAnyHandling ? (
+        ) : !hasAnyWorkbenchContent ? (
           <p className="mt-8 text-sm text-neutral-600 dark:text-neutral-400">
-            No handling requests yet. Request Surrenderless handling from your action plan or chat intake
-            when an approved next action is active.
+            No approved packet actions or handling requests yet. Approve your prepared case packet on
+            the action plan, or request Surrenderless handling when an approved next action is active.
           </p>
         ) : (
           <div className="mt-8 space-y-10">
+            {hasApprovedPacketActions ? (
+              <section aria-labelledby="approved-packet-actions-heading">
+                <h2
+                  id="approved-packet-actions-heading"
+                  className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+                >
+                  Approved packet actions
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({approvedPacketActionItems.length})
+                  </span>
+                </h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                  Cases where you approved your prepared case packet and next in-app step. This is not
+                  a Surrenderless handling request — request handling from your action plan when you
+                  want internal triage tracking.
+                </p>
+                <ul className="mt-3 space-y-3">
+                  {approvedPacketActionItems.map((item) => {
+                    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
+                    return (
+                      <ApprovedPacketActionCaseCard
+                        key={item.caseRow.id}
+                        item={item}
+                        isActiveSessionCase={
+                          Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
+                        }
+                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenPacket={() => openPacket(item.caseRow)}
+                        onOpenChat={() => openChat(item.caseRow)}
+                        onOpenApprovedStep={
+                          approvedStepHref
+                            ? () => openApprovedStep(item.caseRow, item.next)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </ul>
+              </section>
+            ) : null}
+
+            {hasAnyHandling ? (
+            <>
             <section aria-labelledby="handling-awaiting-heading">
               <h2
                 id="handling-awaiting-heading"
@@ -604,6 +758,8 @@ export default function JusticeHandlingWorkbenchPage() {
                 </ul>
               )}
             </section>
+            </>
+            ) : null}
           </div>
         )}
       </main>
