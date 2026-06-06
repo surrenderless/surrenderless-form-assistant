@@ -22,6 +22,7 @@ import {
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   hydrateApprovedNextActionForDisplay,
+  isApprovedPacketActionWithoutHandlingRequest,
   mergeApprovedNextActionTrackingFields,
   mergeClientStateWithApprovedNextAction,
   parseJusticeCaseClientState,
@@ -996,6 +997,25 @@ export default function JusticePacketPage() {
                   >
                     Open {approvedNextAction.label}
                   </Link>
+                ) : null}
+                {isApprovedPacketActionWithoutHandlingRequest({
+                  prepared_packet_approved: packetApproved,
+                  approved_next_action: approvedNextAction,
+                }) ? (
+                  <>
+                    <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                      Approved case packet and next in-app step — not a Surrenderless handling request.
+                      Request handling from your action plan when you want internal triage tracking.
+                    </p>
+                    <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                      <Link
+                        href="/justice/handling"
+                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        View on handling workbench
+                      </Link>
+                    </p>
+                  </>
                 ) : null}
                 <Link
                   href="/justice/plan"
