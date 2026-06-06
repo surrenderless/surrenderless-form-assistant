@@ -162,9 +162,15 @@ export default function JusticeFtcReviewPage() {
     <>
       <Header />
       <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-lg bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
-        <Link href="/justice/plan" className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
-          Back to action plan
-        </Link>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
+            Back to action plan
+          </Link>
+          {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+            Update in chat
+          </Link>
+        </p>
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Review your practice FTC form</h1>
         <div className="mt-3 rounded-2xl border border-amber-200/90 bg-amber-50/95 p-4 text-sm text-amber-950 shadow-md shadow-amber-900/10 ring-1 ring-amber-950/[0.06] dark:border-amber-800 dark:bg-amber-950/45 dark:text-amber-100 dark:shadow-black/30 dark:ring-amber-500/10">
           This runs the <strong>internal practice form</strong> only (<code className="text-xs">/mock/ftc-complaint</code>). It is{" "}
