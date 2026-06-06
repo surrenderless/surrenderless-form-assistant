@@ -245,9 +245,15 @@ export default function JusticePaymentDisputePage() {
     <>
       <Header />
       <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-lg bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
-        <Link href="/justice/plan" className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
-          Back to action plan
-        </Link>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
+            Back to action plan
+          </Link>
+          {" · "}
+          <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
+            Update in chat
+          </Link>
+        </p>
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Payment dispute checklist</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
