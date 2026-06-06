@@ -90,6 +90,27 @@ export function isHandlingAwaitingTriageApprovedNextAction(
   return true;
 }
 
+/**
+ * Approved packet next action without an explicit Surrenderless handling request.
+ * Uses existing `client_state` only — not a handling-request queue signal.
+ */
+export function parseApprovedPacketActionWithoutHandlingRequest(
+  clientState: unknown
+): JusticeApprovedNextAction | undefined {
+  const parsed = parseJusticeCaseClientState(clientState);
+  if (!parsed.prepared_packet_approved) return undefined;
+  const next = parsed.approved_next_action;
+  if (!next) return undefined;
+  if (!next.label?.trim() && !next.href?.trim()) return undefined;
+  if (next.handling_requested_at?.trim()) return undefined;
+  if (next.status === "completed") return undefined;
+  return next;
+}
+
+export function isApprovedPacketActionWithoutHandlingRequest(clientState: unknown): boolean {
+  return parseApprovedPacketActionWithoutHandlingRequest(clientState) !== undefined;
+}
+
 /** Empty string on approved_next_action means the user explicitly cleared the note (merge only). */
 export const HANDLING_REQUEST_NOTE_EXPLICIT_CLEAR = "";
 
