@@ -23,6 +23,7 @@ import {
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
+  isApprovedPacketActionWithoutHandlingRequest,
   mergeApprovedNextActionTrackingFields,
   parseJusticeCaseClientState,
   mergeClientStateWithAcknowledgedHandling,
@@ -1660,6 +1661,25 @@ export default function JusticeChatAiPage() {
                     </p>
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
+                    </p>
+                  </>
+                ) : null}
+                {isApprovedPacketActionWithoutHandlingRequest({
+                  prepared_packet_approved: preparedPacketApproved,
+                  approved_next_action: approvedNextAction,
+                }) ? (
+                  <>
+                    <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                      Approved case packet and next in-app step — not a Surrenderless handling request.
+                      Request handling below when you want internal triage tracking.
+                    </p>
+                    <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                      <Link
+                        href="/justice/handling"
+                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        View on handling workbench
+                      </Link>
                     </p>
                   </>
                 ) : null}
