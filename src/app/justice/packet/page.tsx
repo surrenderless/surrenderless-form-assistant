@@ -27,6 +27,10 @@ import {
   parseJusticeCaseClientState,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import {
+  buildApprovedNextActionTarget,
+  pickPreparedNextAction,
+} from "@/lib/justice/preparedNextAction";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   cfpbLikelyRelevant,
@@ -38,7 +42,6 @@ import {
 import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
-  JusticeDestination,
   JusticeIntake,
   TimelineEntry,
   TimelineEntryType,
@@ -63,40 +66,6 @@ const FILED_COMPLAINT_TYPES: TimelineEntryType[] = [
   "cfpb_complaint_filed",
   "fcc_complaint_filed",
 ];
-
-/** Post-review next step; mirrors `/justice/plan` `pickPreparedNextAction` (page-local). */
-function pickPreparedNextAction(params: {
-  contacted: boolean;
-  useCompanyContactLabels: boolean;
-  destinations: JusticeDestination[];
-}): { detailHref: string | null; stepLabel: string } {
-  const { contacted, useCompanyContactLabels, destinations } = params;
-
-  if (!contacted) {
-    return {
-      detailHref: "/justice/merchant",
-      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
-    };
-  }
-
-  const firstRoutableDest = destinations.find(
-    (d) =>
-      d.internalRoute &&
-      (d.status === "recommended" || d.status === "available")
-  );
-
-  if (firstRoutableDest?.internalRoute) {
-    return {
-      detailHref: firstRoutableDest.internalRoute,
-      stepLabel: firstRoutableDest.label,
-    };
-  }
-
-  return {
-    detailHref: null,
-    stepLabel: "Prepared case review",
-  };
-}
 
 const packetChecklistLinkCls =
   "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
@@ -123,17 +92,6 @@ function getApprovedPacketNextStepExplainer(input: ApprovedPacketNextStepExplain
     return `You opened your approved next in-app step (${input.stepLabel}). Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled status from your action plan or chat intake when ready.`;
   }
   return `Your approved in-app step is ${input.stepLabel} — open it below or continue from your action plan. Nothing is sent automatically.`;
-}
-
-function buildApprovedNextActionTarget(
-  prepared: ReturnType<typeof pickPreparedNextAction>
-): JusticeApprovedNextAction {
-  return {
-    label: prepared.stepLabel,
-    href: prepared.detailHref ?? "/justice/packet",
-    status: "approved",
-    approved_at: new Date().toISOString(),
-  };
 }
 
 async function persistApprovedNextActionClientState(
