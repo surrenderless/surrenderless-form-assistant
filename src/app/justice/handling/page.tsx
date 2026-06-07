@@ -34,6 +34,7 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
+import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
@@ -205,6 +206,8 @@ function HandlingWorkbenchCaseCard({
   const packetApproved =
     parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
   const draftReviewed = caseDraftReviewed(caseRow);
+  const basicsReady = isBasicCaseInfoReadyForEscalation(caseRow.intake);
+  const readyForManualReview = basicsReady && draftReviewed && packetApproved;
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
 
   return (
@@ -257,6 +260,28 @@ function HandlingWorkbenchCaseCard({
           Submission draft not reviewed yet
         </p>
       )}
+      <div className="mt-2">
+        <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+          Manual review readiness (approval funnel)
+        </p>
+        <ul className="mt-1 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+          <li>Basic case info: {basicsReady ? "yes" : "not yet"}</li>
+          <li>Submission draft reviewed: {draftReviewed ? "yes" : "not yet"}</li>
+          <li>Prepared case packet approved: {packetApproved ? "yes" : "not yet"}</li>
+        </ul>
+        <p
+          className={`mt-1 text-xs font-medium ${
+            readyForManualReview
+              ? "text-emerald-700 dark:text-emerald-400"
+              : "text-amber-800 dark:text-amber-200"
+          }`}
+        >
+          {readyForManualReview ? "Ready for manual review" : "Needs more before manual review"}
+        </p>
+        <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
+          Read-only — not filed or submitted. Evidence is not shown here.
+        </p>
+      </div>
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
           {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
