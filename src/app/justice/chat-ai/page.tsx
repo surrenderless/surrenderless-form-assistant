@@ -3,7 +3,14 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
@@ -309,6 +316,102 @@ function buildProofNotePrefillFromUserMessage(text: string): { title: string; de
     title: truncateProofNoteTitle(collapsed),
     description: collapsed,
   };
+}
+
+function isoToDateInputValue(iso?: string): string {
+  if (!iso?.trim()) return "";
+  const d = iso.trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
+}
+
+function ApprovedNextActionOutcomeTrackingForm({
+  action,
+  onSave,
+}: {
+  action: JusticeApprovedNextAction;
+  onSave: (draft: {
+    outcome_note: string;
+    follow_up_needed: boolean;
+    follow_up_at: string;
+  }) => Promise<void>;
+}) {
+  const [outcomeNote, setOutcomeNote] = useState(action.outcome_note ?? "");
+  const [followUpNeeded, setFollowUpNeeded] = useState(action.follow_up_needed === true);
+  const [followUpAt, setFollowUpAt] = useState(() => isoToDateInputValue(action.follow_up_at));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setOutcomeNote(action.outcome_note ?? "");
+    setFollowUpNeeded(action.follow_up_needed === true);
+    setFollowUpAt(isoToDateInputValue(action.follow_up_at));
+  }, [action.outcome_note, action.follow_up_needed, action.follow_up_at, action.completed_at]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave({
+        outcome_note: outcomeNote,
+        follow_up_needed: followUpNeeded,
+        follow_up_at: followUpAt,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(e) => void handleSubmit(e)}
+      className="mt-3 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+      aria-label="Outcome and follow-up tracking"
+    >
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Record outcome / follow-up</p>
+      <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+        Outcome / note
+        <textarea
+          value={outcomeNote}
+          onChange={(e) => setOutcomeNote(e.target.value)}
+          rows={3}
+          placeholder="What happened, or what should Surrenderless track next?"
+          className="mt-1 w-full resize-y rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100"
+        />
+      </label>
+      <label className="flex cursor-pointer items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+        <input
+          type="checkbox"
+          checked={followUpNeeded}
+          onChange={(e) => setFollowUpNeeded(e.target.checked)}
+          className="mt-0.5"
+        />
+        Follow-up needed
+      </label>
+      {followUpNeeded ? (
+        <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+          Follow-up date (optional, your pace)
+          <input
+            type="date"
+            value={followUpAt}
+            onChange={(e) => setFollowUpAt(e.target.value)}
+            className="mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100"
+          />
+          <span className="mt-1 block font-normal text-emerald-800/80 dark:text-emerald-200/75">
+            Optional reminder for you — not a deadline.
+          </span>
+        </label>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {saving ? "Saving…" : "Save tracking note"}
+      </button>
+      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        Tracking only — not automatic filing or submission.
+      </p>
+    </form>
+  );
 }
 
 export default function JusticeChatAiPage() {
@@ -661,6 +764,61 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: clear follow-up error", e);
     } finally {
       setClearingFollowUp(false);
+    }
+  }
+
+  async function handleSaveApprovedNextActionTracking(draft: {
+    outcome_note: string;
+    follow_up_needed: boolean;
+    follow_up_at: string;
+  }) {
+    if (!approvedNextAction || approvedNextAction.status !== "completed") return;
+    const trimmedNote = draft.outcome_note.trim();
+    const next: JusticeApprovedNextAction = { ...approvedNextAction };
+    if (trimmedNote) next.outcome_note = trimmedNote;
+    else delete next.outcome_note;
+    if (draft.follow_up_needed) {
+      next.follow_up_needed = true;
+      if (draft.follow_up_at.trim()) {
+        next.follow_up_at = new Date(`${draft.follow_up_at}T12:00:00`).toISOString();
+      } else {
+        delete next.follow_up_at;
+      }
+    } else {
+      delete next.follow_up_needed;
+      delete next.follow_up_at;
+    }
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    setApprovedNextAction(local);
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, local);
+    }
+
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before save outcome tracking failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH save outcome tracking failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: save outcome tracking error", e);
     }
   }
 
@@ -1671,6 +1829,10 @@ export default function JusticeChatAiPage() {
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
+                    <ApprovedNextActionOutcomeTrackingForm
+                      action={approvedNextAction}
+                      onSave={handleSaveApprovedNextActionTracking}
+                    />
                   </>
                 ) : null}
                 {isApprovedPacketActionWithoutHandlingRequest({
