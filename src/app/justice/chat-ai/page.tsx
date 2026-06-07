@@ -1945,20 +1945,24 @@ export default function JusticeChatAiPage() {
                     ) : null}
                   </>
                 ) : null}
-                {approvedNextAction.outcome_note?.trim() ? (
-                  <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
-                    {approvedNextAction.outcome_note.trim()}
-                  </p>
+                {approvedNextAction.status !== "completed" ? (
+                  <>
+                    {approvedNextAction.outcome_note?.trim() ? (
+                      <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                        {approvedNextAction.outcome_note.trim()}
+                      </p>
+                    ) : null}
+                    {approvedNextAction.follow_up_needed === true ? (
+                      <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                        Follow-up needed
+                      </p>
+                    ) : null}
+                    <ApprovedNextActionFollowUpTimingLine
+                      followUpAt={approvedNextAction.follow_up_at}
+                      className="mt-1 text-emerald-800 dark:text-emerald-200"
+                    />
+                  </>
                 ) : null}
-                {approvedNextAction.follow_up_needed === true ? (
-                  <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
-                    Follow-up needed
-                  </p>
-                ) : null}
-                <ApprovedNextActionFollowUpTimingLine
-                  followUpAt={approvedNextAction.follow_up_at}
-                  className="mt-1 text-emerald-800 dark:text-emerald-200"
-                />
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </p>
