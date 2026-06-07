@@ -61,10 +61,17 @@ type CaseRow = {
   client_state?: unknown;
 };
 
+function truncateAttentionNote(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trimEnd()}…`;
+}
+
 function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
   const next = parseApprovedNextActionFromClientState(clientState);
   const stepLabel = next?.label?.trim();
   const statusLabel = approvedNextActionStatusLabel(next?.status);
+  const outcomeNote = next?.outcome_note?.trim();
   const handlingAt = next?.handling_requested_at?.trim();
   const showHandledOpenHandlingTriageNote = Boolean(
     handlingAt &&
@@ -74,7 +81,7 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
   const showApprovedPacketActionWorkbench = Boolean(
     parseApprovedPacketActionWithoutHandlingRequest(clientState)
   );
-  if (!statusLabel && !handlingAt && !showApprovedPacketActionWorkbench) return null;
+  if (!statusLabel && !handlingAt && !showApprovedPacketActionWorkbench && !outcomeNote) return null;
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
       {stepLabel ? (
@@ -91,6 +98,11 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
       {next?.status === "completed" && next.completed_at?.trim() ? (
         <p>
           Handled for now {formatApprovedNextActionHandlingTimestamp(next.completed_at.trim())}
+        </p>
+      ) : null}
+      {outcomeNote ? (
+        <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+          {truncateAttentionNote(outcomeNote, 200)}
         </p>
       ) : null}
       {handlingAt ? (
@@ -374,12 +386,6 @@ function buildApprovedPacketActionAttentionItems(
 function caseDisplayTitle(row: CaseRow, labelDraft: string): string {
   const custom = row.case_label?.trim() || labelDraft.trim();
   return custom || row.intake.company_name;
-}
-
-function truncateAttentionNote(text: string, maxLen: number): string {
-  const t = text.trim();
-  if (t.length <= maxLen) return t;
-  return `${t.slice(0, maxLen).trimEnd()}…`;
 }
 
 function buildAttentionItems(
