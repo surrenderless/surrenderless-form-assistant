@@ -19,6 +19,7 @@ import {
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestedReadOnly,
+  formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   hydrateApprovedNextActionForDisplay,
@@ -963,6 +964,14 @@ export default function JusticePacketPage() {
                     </>
                   )}
                 </p>
+                {approvedNextActionCompleted && approvedNextAction?.completed_at?.trim() ? (
+                  <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                    Handled for now{" "}
+                    {formatApprovedNextActionHandlingTimestamp(
+                      approvedNextAction.completed_at.trim()
+                    )}
+                  </p>
+                ) : null}
                 {approvedNextActionStarted ? (
                   <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                     Opened for next step.
