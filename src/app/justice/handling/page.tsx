@@ -30,6 +30,7 @@ import {
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
   parseApprovedPacketActionWithoutHandlingRequest,
+  parseJusticeCaseClientState,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
@@ -194,6 +195,8 @@ function HandlingWorkbenchCaseCard({
       !next.handling_acknowledged_at?.trim() &&
       next.status === "completed"
   );
+  const packetApproved =
+    parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
 
   return (
@@ -220,6 +223,22 @@ function HandlingWorkbenchCaseCard({
             </>
           ) : null}
         </p>
+      ) : null}
+      {next.status === "completed" && next.completed_at?.trim() ? (
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          Handled for now{" "}
+          {formatApprovedNextActionHandlingTimestamp(next.completed_at.trim())}
+        </p>
+      ) : null}
+      {packetApproved ? (
+        <>
+          <p className="mt-1 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            Packet approved for next action
+          </p>
+          <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
+            In-app tracking only — not filed or submitted.
+          </p>
+        </>
       ) : null}
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
@@ -828,14 +847,15 @@ export default function JusticeHandlingWorkbenchPage() {
               </h2>
               <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                 Same active-case rule as Saved cases Needs attention. If the approved action is already
-                marked handled, acknowledge the handling request from your action plan or chat intake —
-                not in this inbox.
+                marked handled, use <strong>Handled — open handling request</strong> below and{" "}
+                <strong>Mark acknowledged</strong> on each card — or acknowledge from your action plan
+                or chat intake.
               </p>
               {completedUnacknowledgedCount > 0 ? (
                 <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                   {completedUnacknowledgedCount} handled approved action
                   {completedUnacknowledgedCount === 1 ? "" : "s"} still have an open handling request —
-                  acknowledge from your action plan or chat intake.
+                  see <strong>Handled — open handling request</strong> below.
                 </p>
               ) : null}
               {awaitingItems.length === 0 ? (
