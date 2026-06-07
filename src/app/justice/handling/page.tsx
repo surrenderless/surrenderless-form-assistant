@@ -41,7 +41,7 @@ import type {
   TimelineEntry,
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
-import { replaceTimelineForCase } from "@/lib/justice/timeline";
+import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 
 /** Must stay within `GET /api/justice/cases` `MAX_LIST_LIMIT`. */
 const CASES_FETCH_LIMIT = 50;
@@ -71,6 +71,13 @@ function truncateAttentionNote(text: string, maxLen: number): string {
   const t = text.trim();
   if (t.length <= maxLen) return t;
   return `${t.slice(0, maxLen).trimEnd()}…`;
+}
+
+function caseDraftReviewed(row: CaseRow): boolean {
+  const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
+  return tl.some(
+    (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
+  );
 }
 
 function buildHandlingWorkbenchItems(caseList: CaseRow[]): HandlingWorkbenchItem[] {
@@ -197,6 +204,7 @@ function HandlingWorkbenchCaseCard({
   );
   const packetApproved =
     parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
+  const draftReviewed = caseDraftReviewed(caseRow);
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
 
   return (
@@ -240,6 +248,15 @@ function HandlingWorkbenchCaseCard({
           </p>
         </>
       ) : null}
+      {draftReviewed ? (
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          Submission draft reviewed
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-500">
+          Submission draft not reviewed yet
+        </p>
+      )}
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
           {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
