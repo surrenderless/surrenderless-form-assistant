@@ -46,6 +46,7 @@ import {
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
+  formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 
 /** Page-local; mirrors packet approval session keys. */
@@ -1337,6 +1338,14 @@ export default function JusticePlanPage() {
                     </>
                   )}
                 </p>
+                {approvedNextActionCompleted && approvedNextAction?.completed_at?.trim() ? (
+                  <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                    Handled for now{" "}
+                    {formatApprovedNextActionHandlingTimestamp(
+                      approvedNextAction.completed_at.trim()
+                    )}
+                  </p>
+                ) : null}
                 {approvedNextActionStarted ? (
                   <>
                     <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
@@ -1638,6 +1647,14 @@ export default function JusticePlanPage() {
                 </>
               )}
             </p>
+            {approvedNextActionCompleted && approvedNextAction?.completed_at?.trim() ? (
+              <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                Handled for now{" "}
+                {formatApprovedNextActionHandlingTimestamp(
+                  approvedNextAction.completed_at.trim()
+                )}
+              </p>
+            ) : null}
             {approvedNextActionStarted ? (
               <>
                 <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
