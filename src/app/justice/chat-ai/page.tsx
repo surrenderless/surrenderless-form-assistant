@@ -15,6 +15,7 @@ import {
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
+  formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -1659,6 +1660,14 @@ export default function JusticeChatAiPage() {
                       ) : null}
                       .
                     </p>
+                    {approvedNextAction.completed_at?.trim() ? (
+                      <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                        Handled for now{" "}
+                        {formatApprovedNextActionHandlingTimestamp(
+                          approvedNextAction.completed_at.trim()
+                        )}
+                      </p>
+                    ) : null}
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
