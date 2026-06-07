@@ -21,11 +21,13 @@ import {
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
   approvedNextActionStatusLabel,
+  clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   isHandlingAwaitingTriageApprovedNextAction,
   mergeApprovedNextActionTrackingFields,
   mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithApprovedNextAction,
+  mergeClientStateWithClearedFollowUp,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
@@ -291,6 +293,7 @@ function HandlingWorkbenchCaseCard({
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
+  const [clearingFollowUp, setClearingFollowUp] = useState(false);
   const { caseRow, next } = item;
   const title = caseDisplayTitle(caseRow);
   const product = caseRow.intake.purchase_or_signup.trim();
@@ -363,6 +366,43 @@ function HandlingWorkbenchCaseCard({
       } catch (e) {
         console.warn("justice handling: outcome tracking persist error", e);
       }
+    }
+  }
+
+  async function handleClearFollowUp() {
+    if (next.follow_up_needed !== true) return;
+    const cleared = clearFollowUpFromApprovedNextAction(next);
+    const mergedLocal = mergeClientStateWithClearedFollowUp(caseRow.client_state, cleared);
+    setClearingFollowUp(true);
+    onCaseClientStateUpdate(caseRow.id, mergedLocal);
+
+    try {
+      if (isLoaded && isSignedIn && isUuid(caseRow.id)) {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+        if (!getRes.ok) {
+          console.warn("justice handling: GET before clear follow-up failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithClearedFollowUp(existing.client_state, cleared);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (patchRes.ok) {
+          const data = (await patchRes.json()) as { client_state?: unknown };
+          if (data.client_state !== undefined) {
+            onCaseClientStateUpdate(caseRow.id, data.client_state as JusticeCaseClientState);
+          }
+        } else {
+          console.warn("justice handling: PATCH clear follow-up failed", patchRes.status);
+        }
+      }
+    } catch (e) {
+      console.warn("justice handling: clear follow-up error", e);
+    } finally {
+      setClearingFollowUp(false);
     }
   }
 
@@ -482,6 +522,22 @@ function HandlingWorkbenchCaseCard({
           ) : null}
         </>
       )}
+      {next.follow_up_needed === true ? (
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <button
+            type="button"
+            disabled={clearingFollowUp}
+            onClick={() => void handleClearFollowUp()}
+            className={`${navButtonSecondaryCls} disabled:opacity-60`}
+          >
+            {clearingFollowUp ? "Saving…" : "Mark follow-up handled"}
+          </button>
+          <p className="text-[11px] text-neutral-600 dark:text-neutral-400 sm:max-w-[18rem]">
+            Clears this from Saved cases Needs attention. Outcome notes and dates stay saved.
+            Tracking only — not automatic filing or submission.
+          </p>
+        </div>
+      ) : null}
       <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
         {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
       </p>
