@@ -22,7 +22,10 @@ import {
   approvedNextActionStatusLabel,
   hydrateApprovedNextActionForDisplay,
   isHandlingAwaitingTriageApprovedNextAction,
+  mergeApprovedNextActionTrackingFields,
   mergeClientStateWithAcknowledgedHandling,
+  mergeClientStateWithApprovedNextAction,
+  omitClearedHandlingRequestNoteFromApprovedNextAction,
   parseApprovedNextAction,
   parseApprovedNextActionFromClientState,
   parseApprovedPacketActionWithoutHandlingRequest,
@@ -277,17 +280,23 @@ function HandlingWorkbenchCaseCard({
 function ApprovedPacketActionCaseCard({
   item,
   isActiveSessionCase,
+  persistingOpen,
+  markingHandled,
   onOpenActionPlan,
   onOpenPacket,
   onOpenChat,
   onOpenApprovedStep,
+  onRecordActionHandled,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
+  persistingOpen: boolean;
+  markingHandled: boolean;
   onOpenActionPlan: () => void;
   onOpenPacket: () => void;
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
+  onRecordActionHandled?: () => void;
 }) {
   const { caseRow, next } = item;
   const title = caseDisplayTitle(caseRow);
@@ -295,6 +304,7 @@ function ApprovedPacketActionCaseCard({
   const statusLabel = approvedNextActionStatusLabel(next.status);
   const actionLabel = next.label?.trim();
   const approvedAt = next.approved_at?.trim();
+  const showRecordHandled = next.status === "started";
 
   return (
     <li
@@ -330,6 +340,24 @@ function ApprovedPacketActionCaseCard({
         Approved case packet and next in-app step — not a Surrenderless handling request. Request
         handling from your action plan when you want internal triage tracking.
       </p>
+      {showRecordHandled ? (
+        <>
+          <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            Opened for next step.
+          </p>
+          <button
+            type="button"
+            disabled={markingHandled}
+            onClick={() => onRecordActionHandled?.()}
+            className={`${navButtonSecondaryCls} mt-2 disabled:opacity-60`}
+          >
+            {markingHandled ? "Saving…" : "Record action handled for now"}
+          </button>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Tracking only — not automatic filing or submission.
+          </p>
+        </>
+      ) : null}
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <button type="button" onClick={onOpenActionPlan} className={navButtonPrimaryCls}>
           Open action plan
@@ -341,8 +369,13 @@ function ApprovedPacketActionCaseCard({
           Update in chat
         </button>
         {onOpenApprovedStep ? (
-          <button type="button" onClick={onOpenApprovedStep} className={navButtonSecondaryCls}>
-            Open approved step
+          <button
+            type="button"
+            disabled={persistingOpen}
+            onClick={onOpenApprovedStep}
+            className={`${navButtonSecondaryCls} disabled:opacity-60`}
+          >
+            {persistingOpen ? "Saving…" : "Open approved step"}
           </button>
         ) : null}
       </div>
@@ -359,6 +392,12 @@ export default function JusticeHandlingWorkbenchPage() {
   const [cases, setCases] = useState<CaseRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [acknowledgingHandlingCaseId, setAcknowledgingHandlingCaseId] = useState<string | null>(null);
+  const [persistingApprovedPacketOpenCaseId, setPersistingApprovedPacketOpenCaseId] = useState<
+    string | null
+  >(null);
+  const [markingApprovedPacketHandledCaseId, setMarkingApprovedPacketHandledCaseId] = useState<
+    string | null
+  >(null);
   const [sessionCaseId, setSessionCaseId] = useState<string | null>(null);
   const refetchAbortRef = useRef<AbortController | null>(null);
 
@@ -494,13 +533,127 @@ export default function JusticeHandlingWorkbenchPage() {
     navigateWithCase(row, href);
   }
 
-  function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
-    const acknowledged = parseApprovedNextAction(mergedClientState.approved_next_action);
+  function applyApprovedNextActionToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
+    const parsed = parseApprovedNextAction(mergedClientState.approved_next_action);
     setCases(
       (prev) =>
         prev?.map((c) => (c.id === caseId ? { ...c, client_state: mergedClientState } : c)) ?? prev
     );
-    if (acknowledged) writeSessionApprovedNextAction(caseId, acknowledged);
+    if (parsed) writeSessionApprovedNextAction(caseId, parsed);
+  }
+
+  function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
+    applyApprovedNextActionToCaseRow(caseId, mergedClientState);
+  }
+
+  async function persistApprovedPacketNextActionToServer(
+    caseRow: CaseRow,
+    withTracking: JusticeApprovedNextAction
+  ): Promise<JusticeCaseClientState | undefined> {
+    if (!isLoaded || !isSignedIn || !isUuid(caseRow.id)) return undefined;
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+      if (!getRes.ok) {
+        console.warn(
+          "justice handling: GET before approved packet action persist failed",
+          getRes.status
+        );
+        return undefined;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (patchRes.ok) {
+        const data = (await patchRes.json()) as { client_state?: unknown };
+        if (data.client_state !== undefined) {
+          return data.client_state as JusticeCaseClientState;
+        }
+      } else {
+        console.warn(
+          "justice handling: PATCH approved packet action persist failed",
+          patchRes.status
+        );
+      }
+    } catch (e) {
+      console.warn("justice handling: approved packet action persist error", e);
+    }
+    return undefined;
+  }
+
+  async function persistApprovedPacketNextAction(
+    caseRow: CaseRow,
+    incoming: JusticeApprovedNextAction
+  ): Promise<JusticeCaseClientState> {
+    const base = parseApprovedNextActionFromClientState(caseRow.client_state);
+    const withTracking = omitClearedHandlingRequestNoteFromApprovedNextAction(
+      mergeApprovedNextActionTrackingFields(base, incoming)
+    );
+    const mergedLocal = mergeClientStateWithApprovedNextAction(caseRow.client_state, withTracking);
+    applyApprovedNextActionToCaseRow(caseRow.id, mergedLocal);
+
+    const serverMerged = await persistApprovedPacketNextActionToServer(caseRow, withTracking);
+    if (serverMerged) {
+      applyApprovedNextActionToCaseRow(caseRow.id, serverMerged);
+      return serverMerged;
+    }
+    return mergedLocal;
+  }
+
+  async function openApprovedPacketStep(caseRow: CaseRow, next: JusticeApprovedNextAction) {
+    const href = resolveWorkbenchApprovedStepHref(next);
+    if (!href) return;
+
+    let clientStateForNav = caseRow.client_state;
+
+    if (next.status === "approved") {
+      setPersistingApprovedPacketOpenCaseId(caseRow.id);
+      try {
+        const label = next.label?.trim();
+        const updated: JusticeApprovedNextAction = {
+          ...next,
+          ...(label ? { label } : {}),
+          href: next.href ?? href,
+          status: "started",
+          started_at: next.started_at ?? new Date().toISOString(),
+          ...(next.approved_at ? { approved_at: next.approved_at } : {}),
+        };
+        const merged = await persistApprovedPacketNextAction(caseRow, updated);
+        clientStateForNav = merged;
+      } finally {
+        setPersistingApprovedPacketOpenCaseId(null);
+      }
+    }
+
+    sessionStorage.setItem(STORAGE_CASE_ID, caseRow.id);
+    setSessionCaseId(caseRow.id);
+    sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(caseRow.intake));
+    const tl = Array.isArray(caseRow.timeline) ? (caseRow.timeline as TimelineEntry[]) : [];
+    replaceTimelineForCase(caseRow.id, tl);
+    const hydrated = hydrateApprovedNextActionForDisplay(caseRow.id, clientStateForNav);
+    if (hydrated) writeSessionApprovedNextAction(caseRow.id, hydrated);
+    router.push(href);
+  }
+
+  async function markApprovedPacketActionHandled(
+    caseRow: CaseRow,
+    next: JusticeApprovedNextAction
+  ) {
+    if (next.status !== "started") return;
+    setMarkingApprovedPacketHandledCaseId(caseRow.id);
+    try {
+      const updated: JusticeApprovedNextAction = {
+        ...next,
+        status: "completed",
+        completed_at: new Date().toISOString(),
+      };
+      await persistApprovedPacketNextAction(caseRow, updated);
+    } finally {
+      setMarkingApprovedPacketHandledCaseId(null);
+    }
   }
 
   async function acknowledgeHandlingRequest(caseRow: CaseRow, next: JusticeApprovedNextAction) {
@@ -610,13 +763,22 @@ export default function JusticeHandlingWorkbenchPage() {
                         isActiveSessionCase={
                           Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
                         }
+                        persistingOpen={
+                          persistingApprovedPacketOpenCaseId === item.caseRow.id
+                        }
+                        markingHandled={
+                          markingApprovedPacketHandledCaseId === item.caseRow.id
+                        }
                         onOpenActionPlan={() => openActionPlan(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
                         onOpenChat={() => openChat(item.caseRow)}
                         onOpenApprovedStep={
                           approvedStepHref
-                            ? () => openApprovedStep(item.caseRow, item.next)
+                            ? () => void openApprovedPacketStep(item.caseRow, item.next)
                             : undefined
+                        }
+                        onRecordActionHandled={() =>
+                          void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
                       />
                     );
