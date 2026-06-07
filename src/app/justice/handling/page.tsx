@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
@@ -78,6 +78,102 @@ function caseDraftReviewed(row: CaseRow): boolean {
   const tl = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
   return tl.some(
     (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
+  );
+}
+
+function isoToDateInputValue(iso?: string): string {
+  if (!iso?.trim()) return "";
+  const d = iso.trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
+}
+
+function HandlingWorkbenchOutcomeTrackingForm({
+  action,
+  onSave,
+}: {
+  action: JusticeApprovedNextAction;
+  onSave: (draft: {
+    outcome_note: string;
+    follow_up_needed: boolean;
+    follow_up_at: string;
+  }) => Promise<void>;
+}) {
+  const [outcomeNote, setOutcomeNote] = useState(action.outcome_note ?? "");
+  const [followUpNeeded, setFollowUpNeeded] = useState(action.follow_up_needed === true);
+  const [followUpAt, setFollowUpAt] = useState(() => isoToDateInputValue(action.follow_up_at));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setOutcomeNote(action.outcome_note ?? "");
+    setFollowUpNeeded(action.follow_up_needed === true);
+    setFollowUpAt(isoToDateInputValue(action.follow_up_at));
+  }, [action.outcome_note, action.follow_up_needed, action.follow_up_at, action.completed_at]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave({
+        outcome_note: outcomeNote,
+        follow_up_needed: followUpNeeded,
+        follow_up_at: followUpAt,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(e) => void handleSubmit(e)}
+      className="mt-2 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+      aria-label="Outcome and follow-up tracking"
+    >
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Record outcome / follow-up</p>
+      <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+        Outcome / note
+        <textarea
+          value={outcomeNote}
+          onChange={(e) => setOutcomeNote(e.target.value)}
+          rows={3}
+          placeholder="What happened, or what should Surrenderless track next?"
+          className="mt-1 w-full resize-y rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100"
+        />
+      </label>
+      <label className="flex cursor-pointer items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+        <input
+          type="checkbox"
+          checked={followUpNeeded}
+          onChange={(e) => setFollowUpNeeded(e.target.checked)}
+          className="mt-0.5"
+        />
+        Follow-up needed
+      </label>
+      {followUpNeeded ? (
+        <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+          Follow-up date (optional, your pace)
+          <input
+            type="date"
+            value={followUpAt}
+            onChange={(e) => setFollowUpAt(e.target.value)}
+            className="mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100"
+          />
+          <span className="mt-1 block font-normal text-emerald-800/80 dark:text-emerald-200/75">
+            Optional reminder for you — not a deadline.
+          </span>
+        </label>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {saving ? "Saving…" : "Save tracking note"}
+      </button>
+      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        Tracking only — not automatic filing or submission.
+      </p>
+    </form>
   );
 }
 
@@ -178,6 +274,7 @@ function HandlingWorkbenchCaseCard({
   onOpenChat,
   onOpenApprovedStep,
   onAcknowledge,
+  onCaseClientStateUpdate,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
@@ -191,7 +288,9 @@ function HandlingWorkbenchCaseCard({
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
   onAcknowledge?: () => void;
+  onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
 }) {
+  const { isLoaded, isSignedIn } = useAuth();
   const { caseRow, next } = item;
   const title = caseDisplayTitle(caseRow);
   const product = caseRow.intake.purchase_or_signup.trim();
@@ -209,6 +308,63 @@ function HandlingWorkbenchCaseCard({
   const basicsReady = isBasicCaseInfoReadyForEscalation(caseRow.intake);
   const readyForManualReview = basicsReady && draftReviewed && packetApproved;
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
+  const showOutcomeTrackingForm = next.status === "completed";
+
+  async function handleSaveOutcomeTracking(draft: {
+    outcome_note: string;
+    follow_up_needed: boolean;
+    follow_up_at: string;
+  }) {
+    if (next.status !== "completed") return;
+    const trimmedNote = draft.outcome_note.trim();
+    const updated: JusticeApprovedNextAction = { ...next };
+    if (trimmedNote) updated.outcome_note = trimmedNote;
+    else delete updated.outcome_note;
+    if (draft.follow_up_needed) {
+      updated.follow_up_needed = true;
+      if (draft.follow_up_at.trim()) {
+        updated.follow_up_at = new Date(`${draft.follow_up_at}T12:00:00`).toISOString();
+      } else {
+        delete updated.follow_up_at;
+      }
+    } else {
+      delete updated.follow_up_needed;
+      delete updated.follow_up_at;
+    }
+    const base = parseApprovedNextActionFromClientState(caseRow.client_state);
+    const withTracking = omitClearedHandlingRequestNoteFromApprovedNextAction(
+      mergeApprovedNextActionTrackingFields(base, updated)
+    );
+    const mergedLocal = mergeClientStateWithApprovedNextAction(caseRow.client_state, withTracking);
+    onCaseClientStateUpdate(caseRow.id, mergedLocal);
+
+    if (isLoaded && isSignedIn && isUuid(caseRow.id)) {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+        if (!getRes.ok) {
+          console.warn("justice handling: GET before outcome tracking persist failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (patchRes.ok) {
+          const data = (await patchRes.json()) as { client_state?: unknown };
+          if (data.client_state !== undefined) {
+            onCaseClientStateUpdate(caseRow.id, data.client_state as JusticeCaseClientState);
+          }
+        } else {
+          console.warn("justice handling: PATCH outcome tracking persist failed", patchRes.status);
+        }
+      } catch (e) {
+        console.warn("justice handling: outcome tracking persist error", e);
+      }
+    }
+  }
 
   return (
     <li
@@ -304,22 +460,28 @@ function HandlingWorkbenchCaseCard({
         acknowledgedAt={next.handling_acknowledged_at}
         tone="neutral"
       />
-      {next.outcome_note?.trim() ? (
-        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
-          {truncateAttentionNote(next.outcome_note.trim(), 200)}
-        </p>
-      ) : null}
-      {next.follow_up_needed === true ? (
-        <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
-          Follow-up needed
-        </p>
-      ) : null}
-      {next.follow_up_at?.trim() ? (
-        <ApprovedNextActionFollowUpTimingLine
-          followUpAt={next.follow_up_at}
-          className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
-        />
-      ) : null}
+      {showOutcomeTrackingForm ? (
+        <HandlingWorkbenchOutcomeTrackingForm action={next} onSave={handleSaveOutcomeTracking} />
+      ) : (
+        <>
+          {next.outcome_note?.trim() ? (
+            <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+              {truncateAttentionNote(next.outcome_note.trim(), 200)}
+            </p>
+          ) : null}
+          {next.follow_up_needed === true ? (
+            <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+              Follow-up needed
+            </p>
+          ) : null}
+          {next.follow_up_at?.trim() ? (
+            <ApprovedNextActionFollowUpTimingLine
+              followUpAt={next.follow_up_at}
+              className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+            />
+          ) : null}
+        </>
+      )}
       <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
         {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
       </p>
@@ -928,6 +1090,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         onAcknowledge={() =>
                           void acknowledgeHandlingRequest(item.caseRow, item.next)
                         }
+                        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                       />
                     );
                   })}
@@ -961,6 +1124,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         onAcknowledge={() =>
                           void acknowledgeHandlingRequest(item.caseRow, item.next)
                         }
+                        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                       />
                     ))}
                   </ul>
@@ -1005,6 +1169,7 @@ export default function JusticeHandlingWorkbenchPage() {
                             ? () => openApprovedStep(item.caseRow, item.next)
                             : undefined
                         }
+                        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                       />
                     );
                   })}
