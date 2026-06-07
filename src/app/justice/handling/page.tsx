@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
+import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
@@ -63,6 +64,12 @@ const cardCls =
 
 function caseDisplayTitle(row: CaseRow): string {
   return row.case_label?.trim() || row.intake.company_name;
+}
+
+function truncateAttentionNote(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trimEnd()}…`;
 }
 
 function buildHandlingWorkbenchItems(caseList: CaseRow[]): HandlingWorkbenchItem[] {
@@ -234,6 +241,22 @@ function HandlingWorkbenchCaseCard({
         acknowledgedAt={next.handling_acknowledged_at}
         tone="neutral"
       />
+      {next.outcome_note?.trim() ? (
+        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+          {truncateAttentionNote(next.outcome_note.trim(), 200)}
+        </p>
+      ) : null}
+      {next.follow_up_needed === true ? (
+        <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+          Follow-up needed
+        </p>
+      ) : null}
+      {next.follow_up_at?.trim() ? (
+        <ApprovedNextActionFollowUpTimingLine
+          followUpAt={next.follow_up_at}
+          className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+        />
+      ) : null}
       <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
         {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
       </p>
