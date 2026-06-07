@@ -6,8 +6,10 @@ import { useEffect, useState } from "react";
 import { validate as isUuid } from "uuid";
 import {
   approvedNextActionStatusLabel,
+  hydrateApprovedNextActionForDisplay,
   isApprovedPacketActionWithoutHandlingRequest,
   readSessionApprovedNextAction,
+  writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
@@ -80,12 +82,11 @@ type CurrentCaseSnapshot = {
   showHandledOpenHandlingTriageNote: boolean;
 };
 
-/** Client-only snapshot of active case card state from session/timeline helpers. */
-function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
-  const intake = readValidLocalJusticeIntake();
-  if (!intake) return null;
-  const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
-  const approvedNext = caseId ? readSessionApprovedNextAction(caseId) : undefined;
+function buildCurrentCaseSnapshot(
+  caseId: string,
+  intake: JusticeIntake,
+  approvedNext: JusticeApprovedNextAction | undefined
+): CurrentCaseSnapshot {
   const handlingAt = approvedNext?.handling_requested_at?.trim();
   const handlingNote = approvedNext?.handling_request_note?.trim();
   const handlingAck = approvedNext?.handling_acknowledged_at?.trim();
@@ -111,6 +112,15 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
   };
 }
 
+/** Client-only snapshot of active case card state from session/timeline helpers. */
+function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
+  const intake = readValidLocalJusticeIntake();
+  if (!intake) return null;
+  const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+  const approvedNext = caseId ? readSessionApprovedNextAction(caseId) : undefined;
+  return buildCurrentCaseSnapshot(caseId, intake, approvedNext);
+}
+
 export default function JusticeHubWorkspaceBody() {
   const { isLoaded, isSignedIn } = useAuth();
   const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
@@ -131,6 +141,26 @@ export default function JusticeHubWorkspaceBody() {
         setEvidenceCount(null);
         setEvidenceLoading(false);
         return;
+      }
+
+      const sessionFallback =
+        nextSnapshot?.approvedNextAction ?? hydrateApprovedNextActionForDisplay(caseId);
+
+      if (nextSnapshot) {
+        try {
+          const caseRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+            signal: ac.signal,
+          });
+          if (!ac.signal.aborted && caseRes.ok) {
+            const data = (await caseRes.json()) as { client_state?: unknown };
+            const hydrated =
+              hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
+            if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
+            setSnapshot(buildCurrentCaseSnapshot(caseId, nextSnapshot.intake, hydrated));
+          }
+        } catch {
+          // keep session snapshot
+        }
       }
 
       setEvidenceLoading(true);
