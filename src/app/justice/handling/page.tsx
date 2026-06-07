@@ -276,6 +276,8 @@ function HandlingWorkbenchCaseCard({
   onOpenChat,
   onOpenApprovedStep,
   onAcknowledge,
+  markingHandled,
+  onRecordActionHandled,
   onCaseClientStateUpdate,
 }: {
   item: HandlingWorkbenchItem;
@@ -290,6 +292,8 @@ function HandlingWorkbenchCaseCard({
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
   onAcknowledge?: () => void;
+  markingHandled?: boolean;
+  onRecordActionHandled?: () => void;
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
@@ -311,6 +315,7 @@ function HandlingWorkbenchCaseCard({
   const basicsReady = isBasicCaseInfoReadyForEscalation(caseRow.intake);
   const readyForManualReview = basicsReady && draftReviewed && packetApproved;
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
+  const showRecordHandled = next.status === "started";
   const showOutcomeTrackingForm = next.status === "completed";
 
   async function handleSaveOutcomeTracking(draft: {
@@ -500,6 +505,24 @@ function HandlingWorkbenchCaseCard({
         acknowledgedAt={next.handling_acknowledged_at}
         tone="neutral"
       />
+      {showRecordHandled ? (
+        <>
+          <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            Opened for next step.
+          </p>
+          <button
+            type="button"
+            disabled={markingHandled}
+            onClick={() => onRecordActionHandled?.()}
+            className={`${navButtonSecondaryCls} mt-2 disabled:opacity-60`}
+          >
+            {markingHandled ? "Saving…" : "Record action handled for now"}
+          </button>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Tracking only — not automatic filing or submission.
+          </p>
+        </>
+      ) : null}
       {showOutcomeTrackingForm ? (
         <HandlingWorkbenchOutcomeTrackingForm action={next} onSave={handleSaveOutcomeTracking} />
       ) : (
@@ -1146,6 +1169,12 @@ export default function JusticeHandlingWorkbenchPage() {
                         onAcknowledge={() =>
                           void acknowledgeHandlingRequest(item.caseRow, item.next)
                         }
+                        markingHandled={
+                          markingApprovedPacketHandledCaseId === item.caseRow.id
+                        }
+                        onRecordActionHandled={() =>
+                          void markApprovedPacketActionHandled(item.caseRow, item.next)
+                        }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                       />
                     );
@@ -1179,6 +1208,12 @@ export default function JusticeHandlingWorkbenchPage() {
                         onOpenChat={() => openChat(item.caseRow)}
                         onAcknowledge={() =>
                           void acknowledgeHandlingRequest(item.caseRow, item.next)
+                        }
+                        markingHandled={
+                          markingApprovedPacketHandledCaseId === item.caseRow.id
+                        }
+                        onRecordActionHandled={() =>
+                          void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                       />
@@ -1224,6 +1259,12 @@ export default function JusticeHandlingWorkbenchPage() {
                           approvedStepHref
                             ? () => openApprovedStep(item.caseRow, item.next)
                             : undefined
+                        }
+                        markingHandled={
+                          markingApprovedPacketHandledCaseId === item.caseRow.id
+                        }
+                        onRecordActionHandled={() =>
+                          void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                       />
