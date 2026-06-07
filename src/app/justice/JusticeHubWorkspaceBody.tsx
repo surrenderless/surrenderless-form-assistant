@@ -17,6 +17,7 @@ import {
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
+  formatApprovedNextActionHandlingTimestamp,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
@@ -253,6 +254,15 @@ export default function JusticeHubWorkspaceBody() {
               <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
                 <span className="font-medium text-neutral-700 dark:text-neutral-300">Approved next action:</span>{" "}
                 {snapshot.statusLabel}
+              </span>
+            ) : null}
+            {snapshot.approvedNextAction?.status === "completed" &&
+            snapshot.approvedNextAction.completed_at?.trim() ? (
+              <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
+                Handled for now{" "}
+                {formatApprovedNextActionHandlingTimestamp(
+                  snapshot.approvedNextAction.completed_at.trim()
+                )}
               </span>
             ) : null}
             {snapshot.handlingRequestedAt ? (
