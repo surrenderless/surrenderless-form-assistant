@@ -162,6 +162,7 @@ function HandlingWorkbenchCaseCard({
   isActiveSessionCase,
   showMarkAcknowledged,
   compactNavigation,
+  handledOpenTriageNoteVariant = "redirect",
   acknowledging,
   onOpenActionPlan,
   onOpenPacket,
@@ -172,8 +173,9 @@ function HandlingWorkbenchCaseCard({
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
   showMarkAcknowledged: boolean;
-  /** Plan + chat only (handled approved action with open handling request). */
+  /** Nested Handled — open handling request rows (compact nav). */
   compactNavigation?: boolean;
+  handledOpenTriageNoteVariant?: "redirect" | "inlineAck";
   acknowledging: boolean;
   onOpenActionPlan: () => void;
   onOpenPacket: () => void;
@@ -235,7 +237,7 @@ function HandlingWorkbenchCaseCard({
         handlingAcknowledgedAt={next.handling_acknowledged_at}
       />
       {showHandledOpenHandlingTriageNote ? (
-        <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
+        <ApprovedNextActionHandlingHandledOpenTriageNote variant={handledOpenTriageNoteVariant} />
       ) : null}
       <ApprovedNextActionHandlingAcknowledgedReadOnly
         acknowledgedAt={next.handling_acknowledged_at}
@@ -875,9 +877,9 @@ export default function JusticeHandlingWorkbenchPage() {
                     Handled — open handling request
                   </h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                    These cases are not in Awaiting or Saved cases Needs attention. Mark acknowledged
-                    from the action plan or chat intake. Surrenderless has not filed, submitted, or
-                    queued anything externally.
+                    These cases are not in Awaiting or Saved cases Needs attention. Use Mark
+                    acknowledged on each card for internal tracking triage only. Surrenderless has
+                    not filed, submitted, or queued anything externally.
                   </p>
                   <ul className="mt-3 space-y-3">
                     {completedUnacknowledgedItems.map((item) => (
@@ -887,12 +889,16 @@ export default function JusticeHandlingWorkbenchPage() {
                         isActiveSessionCase={
                           Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
                         }
-                        showMarkAcknowledged={false}
+                        showMarkAcknowledged
                         compactNavigation
-                        acknowledging={false}
+                        handledOpenTriageNoteVariant="inlineAck"
+                        acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
                         onOpenActionPlan={() => openActionPlan(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
                         onOpenChat={() => openChat(item.caseRow)}
+                        onAcknowledge={() =>
+                          void acknowledgeHandlingRequest(item.caseRow, item.next)
+                        }
                       />
                     ))}
                   </ul>
