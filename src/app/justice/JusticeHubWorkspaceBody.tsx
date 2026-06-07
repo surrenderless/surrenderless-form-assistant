@@ -20,6 +20,7 @@ import {
   formatApprovedNextActionHandlingTimestamp,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
@@ -66,6 +67,12 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   return entries.some(
     (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
   );
+}
+
+function truncateAttentionNote(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trimEnd()}…`;
 }
 
 type CurrentCaseSnapshot = {
@@ -265,6 +272,11 @@ export default function JusticeHubWorkspaceBody() {
                 )}
               </span>
             ) : null}
+            {snapshot.approvedNextAction?.outcome_note?.trim() ? (
+              <span className="mt-1 block whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+                {truncateAttentionNote(snapshot.approvedNextAction.outcome_note.trim(), 200)}
+              </span>
+            ) : null}
             {snapshot.handlingRequestedAt ? (
               <>
                 <span className="mt-2 block text-xs font-medium text-emerald-800 dark:text-emerald-200">
@@ -283,6 +295,17 @@ export default function JusticeHubWorkspaceBody() {
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </span>
               </>
+            ) : null}
+            {snapshot.approvedNextAction?.follow_up_needed === true ? (
+              <span className="mt-1 block text-xs font-medium text-amber-800 dark:text-amber-200">
+                Follow-up needed
+              </span>
+            ) : null}
+            {snapshot.approvedNextAction?.follow_up_at?.trim() ? (
+              <ApprovedNextActionFollowUpTimingLine
+                followUpAt={snapshot.approvedNextAction.follow_up_at}
+                className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+              />
             ) : null}
             <span className="mt-3 inline-flex text-sm font-semibold text-blue-600 dark:text-blue-400">
               {primaryLabel}
