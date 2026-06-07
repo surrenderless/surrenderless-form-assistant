@@ -71,7 +71,10 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
       !next?.handling_acknowledged_at?.trim() &&
       next?.status === "completed"
   );
-  if (!statusLabel && !handlingAt) return null;
+  const showApprovedPacketActionWorkbench = Boolean(
+    parseApprovedPacketActionWithoutHandlingRequest(clientState)
+  );
+  if (!statusLabel && !handlingAt && !showApprovedPacketActionWorkbench) return null;
   return (
     <div className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
       {stepLabel ? (
@@ -120,6 +123,22 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
             View in handling workbench
           </Link>
         </p>
+      ) : null}
+      {showApprovedPacketActionWorkbench ? (
+        <>
+          <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Approved case packet and next in-app step — not a Surrenderless handling request.
+            Request handling from your action plan when you want internal triage tracking.
+          </p>
+          <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+            <Link
+              href="/justice/handling"
+              className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              View on handling workbench
+            </Link>
+          </p>
+        </>
       ) : null}
       {next?.follow_up_needed === true ? (
         <p className="font-medium text-amber-800 dark:text-amber-200">Follow-up needed</p>
