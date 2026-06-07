@@ -251,6 +251,12 @@ function categoryLabel(cat: JusticeIntake["problem_category"]): string {
   return CATEGORIES.find((c) => c.value === cat)?.label ?? cat.replace(/_/g, " ");
 }
 
+function truncateAttentionNote(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trimEnd()}…`;
+}
+
 function truncateActiveCaseProduct(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -1641,6 +1647,22 @@ export default function JusticeChatAiPage() {
                     </span>{" "}
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
+                ) : null}
+                {approvedNextAction.outcome_note?.trim() ? (
+                  <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+                    {truncateAttentionNote(approvedNextAction.outcome_note.trim(), 200)}
+                  </p>
+                ) : null}
+                {approvedNextAction.follow_up_needed === true ? (
+                  <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                    Follow-up needed
+                  </p>
+                ) : null}
+                {approvedNextAction.follow_up_at?.trim() ? (
+                  <ApprovedNextActionFollowUpTimingLine
+                    followUpAt={approvedNextAction.follow_up_at}
+                    className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+                  />
                 ) : null}
               </>
             ) : null}
