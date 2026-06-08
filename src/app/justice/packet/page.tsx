@@ -1108,9 +1108,19 @@ export default function JusticePacketPage() {
                   </p>
                 ) : null}
                 {approvedNextActionStarted ? (
-                  <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
-                    Opened for next step.
-                  </p>
+                  <>
+                    <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+                      Opened for next step.
+                    </p>
+                    {approvedNextAction?.started_at?.trim() ? (
+                      <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                        Opened{" "}
+                        {formatApprovedNextActionHandlingTimestamp(
+                          approvedNextAction.started_at.trim()
+                        )}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
                 {packetApproved && approvedNextActionCompleted && approvedNextAction ? (
                   <>
