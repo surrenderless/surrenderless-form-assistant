@@ -95,6 +95,11 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
           {statusLabel}
         </p>
       ) : null}
+      {next?.status === "started" && next.started_at?.trim() ? (
+        <p>
+          Opened {formatApprovedNextActionHandlingTimestamp(next.started_at.trim())}
+        </p>
+      ) : null}
       {next?.status === "completed" && next.completed_at?.trim() ? (
         <p>
           Handled for now {formatApprovedNextActionHandlingTimestamp(next.completed_at.trim())}
