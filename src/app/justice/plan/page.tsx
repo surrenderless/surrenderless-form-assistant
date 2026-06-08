@@ -1366,6 +1366,14 @@ export default function JusticePlanPage() {
                     <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                       Opened for next step.
                     </p>
+                    {approvedNextAction?.started_at?.trim() ? (
+                      <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                        Opened{" "}
+                        {formatApprovedNextActionHandlingTimestamp(
+                          approvedNextAction.started_at.trim()
+                        )}
+                      </p>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => void handleMarkApprovedNextActionHandled()}
@@ -1690,6 +1698,14 @@ export default function JusticePlanPage() {
                 <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                   Opened for next step.
                 </p>
+                {approvedNextAction?.started_at?.trim() ? (
+                  <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                    Opened{" "}
+                    {formatApprovedNextActionHandlingTimestamp(
+                      approvedNextAction.started_at.trim()
+                    )}
+                  </p>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => void handleMarkApprovedNextActionHandled()}
