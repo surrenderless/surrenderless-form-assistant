@@ -16,17 +16,22 @@ import {
 } from "@/lib/justice/evidence";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
+  APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
+  ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
   formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
+  acknowledgeHandlingRequestInApprovedNextAction,
+  applyHandlingRequestNoteToApprovedNextAction,
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   isApprovedPacketActionWithoutHandlingRequest,
   mergeApprovedNextActionTrackingFields,
   mergeClientStateWithApprovedNextAction,
+  omitClearedHandlingRequestNoteFromApprovedNextAction,
   parseJusticeCaseClientState,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
@@ -472,6 +477,9 @@ export default function JusticePacketPage() {
   );
   const [approveChecked, setApproveChecked] = useState(false);
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
+  const [requestingHandling, setRequestingHandling] = useState(false);
+  const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
+  const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -792,6 +800,51 @@ export default function JusticePacketPage() {
     await persistApprovedNextAction(next);
   }
 
+  async function handleRequestSurrenderlessHandling(note?: string) {
+    if (!approvedNextAction || approvedNextAction.status === "completed") return;
+    if (approvedNextAction.handling_requested_at?.trim()) return;
+    setRequestingHandling(true);
+    try {
+      const next: JusticeApprovedNextAction = {
+        ...approvedNextAction,
+        handling_requested_at: new Date().toISOString(),
+        ...(note ? { handling_request_note: note } : {}),
+      };
+      await persistApprovedNextAction(next);
+    } finally {
+      setRequestingHandling(false);
+    }
+  }
+
+  async function handleUpdateHandlingRequestNote(note?: string) {
+    if (!approvedNextAction?.handling_requested_at?.trim()) return;
+    setUpdatingHandlingNote(true);
+    try {
+      const withNoteUpdate = applyHandlingRequestNoteToApprovedNextAction(
+        approvedNextAction,
+        note ?? ""
+      );
+      await persistApprovedNextAction(
+        omitClearedHandlingRequestNoteFromApprovedNextAction(withNoteUpdate),
+        withNoteUpdate
+      );
+    } finally {
+      setUpdatingHandlingNote(false);
+    }
+  }
+
+  async function handleAcknowledgeHandlingRequest() {
+    if (!approvedNextAction?.handling_requested_at?.trim()) return;
+    if (approvedNextAction.handling_acknowledged_at?.trim()) return;
+    setAcknowledgingHandling(true);
+    try {
+      const acknowledged = acknowledgeHandlingRequestInApprovedNextAction(approvedNextAction);
+      await persistApprovedNextAction(acknowledged, acknowledged);
+    } finally {
+      setAcknowledgingHandling(false);
+    }
+  }
+
   async function handleApprovedNextActionOpen(href: string) {
     if (approvedNextActionCompleted) {
       router.push(href || approvedNextAction?.href || "/justice/packet");
@@ -1033,7 +1086,74 @@ export default function JusticePacketPage() {
               Back to action plan
             </Link>
           </div>
-          {approvedNextAction?.handling_requested_at?.trim() ? (
+          {packetApproved && approvedNextAction ? (
+            <>
+              {approvedNextAction.handling_requested_at?.trim() ? (
+                approvedNextAction.status === "completed" ? (
+                  <ApprovedNextActionHandlingRequestedReadOnly
+                    requestedAt={approvedNextAction.handling_requested_at.trim()}
+                    requestNote={approvedNextAction.handling_request_note}
+                    acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                  />
+                ) : (
+                  <ApprovedNextActionHandlingRequestBlock
+                    action={approvedNextAction}
+                    acknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                    onRequest={handleRequestSurrenderlessHandling}
+                    onUpdateNote={handleUpdateHandlingRequestNote}
+                    allowEditNote
+                    requesting={requestingHandling}
+                    updatingNote={updatingHandlingNote}
+                  />
+                )
+              ) : approvedNextAction.status !== "completed" ? (
+                <ApprovedNextActionHandlingRequestBlock
+                  action={approvedNextAction}
+                  onRequest={handleRequestSurrenderlessHandling}
+                  onUpdateNote={handleUpdateHandlingRequestNote}
+                  allowEditNote
+                  requesting={requestingHandling}
+                  updatingNote={updatingHandlingNote}
+                />
+              ) : null}
+              {approvedNextAction.handling_requested_at?.trim() ? (
+                <>
+                  <ApprovedNextActionHandlingQueueStatusReadOnly
+                    handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
+                    handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                    className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                  />
+                  {approvedNextAction.status === "completed" &&
+                  !approvedNextAction.handling_acknowledged_at?.trim() ? (
+                    <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
+                  ) : null}
+                  <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                    <Link
+                      href="/justice/handling"
+                      className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      View in handling workbench
+                    </Link>
+                  </p>
+                  {!approvedNextAction.handling_acknowledged_at?.trim() ? (
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                      <button
+                        type="button"
+                        disabled={acknowledgingHandling}
+                        onClick={() => void handleAcknowledgeHandlingRequest()}
+                        className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                      >
+                        {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
+                      </button>
+                      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+                        {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
+                      </p>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          ) : approvedNextAction?.handling_requested_at?.trim() ? (
             <>
               <ApprovedNextActionHandlingRequestedReadOnly
                 requestedAt={approvedNextAction.handling_requested_at.trim()}
