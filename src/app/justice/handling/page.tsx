@@ -446,25 +446,6 @@ function HandlingWorkbenchCaseCard({
           {formatApprovedNextActionHandlingTimestamp(next.completed_at.trim())}
         </p>
       ) : null}
-      {packetApproved ? (
-        <>
-          <p className="mt-1 text-xs font-medium text-neutral-700 dark:text-neutral-300">
-            Packet approved for next action
-          </p>
-          <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
-            In-app tracking only — not filed or submitted.
-          </p>
-        </>
-      ) : null}
-      {draftReviewed ? (
-        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-          Submission draft reviewed
-        </p>
-      ) : (
-        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-500">
-          Submission draft not reviewed yet
-        </p>
-      )}
       <div className="mt-2">
         <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
           Manual review readiness (approval funnel)
