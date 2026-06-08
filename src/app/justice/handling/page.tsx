@@ -495,6 +495,11 @@ function HandlingWorkbenchCaseCard({
           <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
             Opened for next step.
           </p>
+          {next.started_at?.trim() ? (
+            <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+              Opened {formatApprovedNextActionHandlingTimestamp(next.started_at.trim())}
+            </p>
+          ) : null}
           <button
             type="button"
             disabled={markingHandled}
