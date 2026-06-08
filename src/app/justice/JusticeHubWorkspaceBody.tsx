@@ -263,6 +263,15 @@ export default function JusticeHubWorkspaceBody() {
                 {snapshot.statusLabel}
               </span>
             ) : null}
+            {snapshot.approvedNextAction?.status === "started" &&
+            snapshot.approvedNextAction.started_at?.trim() ? (
+              <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
+                Opened{" "}
+                {formatApprovedNextActionHandlingTimestamp(
+                  snapshot.approvedNextAction.started_at.trim()
+                )}
+              </span>
+            ) : null}
             {snapshot.approvedNextAction?.status === "completed" &&
             snapshot.approvedNextAction.completed_at?.trim() ? (
               <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
