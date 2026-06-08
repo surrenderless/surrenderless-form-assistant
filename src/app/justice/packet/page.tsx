@@ -22,6 +22,7 @@ import {
   formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
+  clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   isApprovedPacketActionWithoutHandlingRequest,
   mergeApprovedNextActionTrackingFields,
@@ -470,6 +471,7 @@ export default function JusticePacketPage() {
     undefined
   );
   const [approveChecked, setApproveChecked] = useState(false);
+  const [clearingFollowUp, setClearingFollowUp] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -740,6 +742,19 @@ export default function JusticePacketPage() {
     setApprovedNextAction(withTracking);
     if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
       await persistApprovedNextActionClientState(caseId, mergeApprovedNext ?? withTracking);
+    }
+  }
+
+  async function handleClearApprovedNextActionFollowUp() {
+    if (!approvedNextAction || approvedNextAction.status !== "completed") return;
+    if (approvedNextAction.follow_up_needed !== true) return;
+
+    setClearingFollowUp(true);
+    try {
+      const cleared = clearFollowUpFromApprovedNextAction(approvedNextAction);
+      await persistApprovedNextAction(cleared);
+    } finally {
+      setClearingFollowUp(false);
     }
   }
 
@@ -1104,6 +1119,21 @@ export default function JusticePacketPage() {
                       action={approvedNextAction}
                       onSave={handleSaveApprovedNextActionTracking}
                     />
+                    {approvedNextAction.follow_up_needed === true ? (
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                        <button
+                          type="button"
+                          disabled={clearingFollowUp}
+                          onClick={() => void handleClearApprovedNextActionFollowUp()}
+                          className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        >
+                          {clearingFollowUp ? "Saving…" : "Mark follow-up handled"}
+                        </button>
+                        <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+                          Clears this from Needs attention on Saved cases. Your outcome note and dates stay saved. Not automatic filing or submission.
+                        </p>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
                 {!approvedNextActionStarted &&
