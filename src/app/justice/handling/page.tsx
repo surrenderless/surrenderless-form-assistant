@@ -275,6 +275,7 @@ function HandlingWorkbenchCaseCard({
   onOpenPacket,
   onOpenChat,
   onOpenApprovedStep,
+  persistingOpen,
   onAcknowledge,
   markingHandled,
   onRecordActionHandled,
@@ -291,6 +292,7 @@ function HandlingWorkbenchCaseCard({
   onOpenPacket: () => void;
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
+  persistingOpen?: boolean;
   onAcknowledge?: () => void;
   markingHandled?: boolean;
   onRecordActionHandled?: () => void;
@@ -315,6 +317,7 @@ function HandlingWorkbenchCaseCard({
   const basicsReady = isBasicCaseInfoReadyForEscalation(caseRow.intake);
   const readyForManualReview = basicsReady && draftReviewed && packetApproved;
   const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
+  const showApprovedOpenTrackingCopy = showApprovedStep && next.status === "approved";
   const showRecordHandled = next.status === "started";
   const showOutcomeTrackingForm = next.status === "completed";
 
@@ -577,8 +580,13 @@ function HandlingWorkbenchCaseCard({
           Update in chat
         </button>
         {showApprovedStep ? (
-          <button type="button" onClick={onOpenApprovedStep} className={navButtonSecondaryCls}>
-            Open approved step
+          <button
+            type="button"
+            disabled={persistingOpen}
+            onClick={() => onOpenApprovedStep?.()}
+            className={`${navButtonSecondaryCls} disabled:opacity-60`}
+          >
+            {persistingOpen ? "Saving…" : "Open approved step"}
           </button>
         ) : null}
         {showMarkAcknowledged ? (
@@ -592,6 +600,11 @@ function HandlingWorkbenchCaseCard({
           </button>
         ) : null}
       </div>
+      {showApprovedOpenTrackingCopy ? (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+          Tracking only — not automatic filing or submission.
+        </p>
+      ) : null}
       <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
         Opens this case in your browser session first.
       </p>
@@ -852,12 +865,6 @@ export default function JusticeHandlingWorkbenchPage() {
 
   function openChat(row: CaseRow) {
     navigateWithCase(row, "/justice/chat-ai");
-  }
-
-  function openApprovedStep(row: CaseRow, next: JusticeApprovedNextAction) {
-    const href = resolveWorkbenchApprovedStepHref(next);
-    if (!href) return;
-    navigateWithCase(row, href);
   }
 
   function applyApprovedNextActionToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
@@ -1163,8 +1170,11 @@ export default function JusticeHandlingWorkbenchPage() {
                         onOpenChat={() => openChat(item.caseRow)}
                         onOpenApprovedStep={
                           approvedStepHref
-                            ? () => openApprovedStep(item.caseRow, item.next)
+                            ? () => void openApprovedPacketStep(item.caseRow, item.next)
                             : undefined
+                        }
+                        persistingOpen={
+                          persistingApprovedPacketOpenCaseId === item.caseRow.id
                         }
                         onAcknowledge={() =>
                           void acknowledgeHandlingRequest(item.caseRow, item.next)
@@ -1257,8 +1267,11 @@ export default function JusticeHandlingWorkbenchPage() {
                         onOpenChat={() => openChat(item.caseRow)}
                         onOpenApprovedStep={
                           approvedStepHref
-                            ? () => openApprovedStep(item.caseRow, item.next)
+                            ? () => void openApprovedPacketStep(item.caseRow, item.next)
                             : undefined
+                        }
+                        persistingOpen={
+                          persistingApprovedPacketOpenCaseId === item.caseRow.id
                         }
                         markingHandled={
                           markingApprovedPacketHandledCaseId === item.caseRow.id
