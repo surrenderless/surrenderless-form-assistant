@@ -316,8 +316,9 @@ function HandlingWorkbenchCaseCard({
   const draftReviewed = caseDraftReviewed(caseRow);
   const basicsReady = isBasicCaseInfoReadyForEscalation(caseRow.intake);
   const readyForManualReview = basicsReady && draftReviewed && packetApproved;
-  const showApprovedStep = !compactNavigation && Boolean(onOpenApprovedStep);
-  const showApprovedOpenTrackingCopy = showApprovedStep && next.status === "approved";
+  const showApprovedStep =
+    !compactNavigation && Boolean(onOpenApprovedStep) && next.status === "approved";
+  const showApprovedOpenTrackingCopy = showApprovedStep;
   const showRecordHandled = next.status === "started";
   const showOutcomeTrackingForm = next.status === "completed";
 
