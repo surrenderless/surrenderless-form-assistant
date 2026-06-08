@@ -32,6 +32,8 @@ import {
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
   isHandlingAwaitingTriageApprovedNextAction,
+  mergeApprovedNextActionTrackingFields,
+  mergeClientStateWithApprovedNextAction,
   mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithClearedFollowUp,
   parseApprovedNextAction,
@@ -440,6 +442,9 @@ export default function JusticeCasesPage() {
   const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
   const [clearingFollowUpCaseId, setClearingFollowUpCaseId] = useState<string | null>(null);
   const [acknowledgingHandlingCaseId, setAcknowledgingHandlingCaseId] = useState<string | null>(null);
+  const [markingApprovedPacketHandledCaseId, setMarkingApprovedPacketHandledCaseId] = useState<
+    string | null
+  >(null);
   const [progressById, setProgressById] = useState<Record<string, CaseProgressSummary>>({});
   const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [progressLoading, setProgressLoading] = useState(false);
@@ -844,6 +849,71 @@ export default function JusticeCasesPage() {
     if (acknowledged) writeSessionApprovedNextAction(caseId, acknowledged);
   }
 
+  function applyRecordedApprovedPacketHandledToCaseRow(
+    caseId: string,
+    mergedClientState: JusticeCaseClientState,
+    recorded: JusticeApprovedNextAction
+  ) {
+    setCases(
+      (prev) =>
+        prev?.map((c) => (c.id === caseId ? { ...c, client_state: mergedClientState } : c)) ?? prev
+    );
+    if (sessionCaseId === caseId) {
+      writeSessionApprovedNextAction(caseId, recorded);
+    }
+  }
+
+  async function markApprovedPacketActionHandled(caseRow: CaseRow, next: JusticeApprovedNextAction) {
+    if (next.status !== "started") return;
+
+    const updated: JusticeApprovedNextAction = {
+      ...next,
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    };
+    const base = parseApprovedNextActionFromClientState(caseRow.client_state);
+    const withTracking = mergeApprovedNextActionTrackingFields(base, updated);
+    const mergedLocal = mergeClientStateWithApprovedNextAction(caseRow.client_state, withTracking);
+    setMarkingApprovedPacketHandledCaseId(caseRow.id);
+    applyRecordedApprovedPacketHandledToCaseRow(caseRow.id, mergedLocal, withTracking);
+
+    if (isLoaded && isSignedIn && isUuid(caseRow.id)) {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+        if (!getRes.ok) {
+          console.warn("justice cases: GET before record action handled failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (patchRes.ok) {
+          const data = (await patchRes.json()) as { client_state?: unknown };
+          if (data.client_state !== undefined) {
+            const serverRecorded = parseApprovedNextAction(
+              (data.client_state as JusticeCaseClientState).approved_next_action
+            );
+            applyRecordedApprovedPacketHandledToCaseRow(
+              caseRow.id,
+              data.client_state as JusticeCaseClientState,
+              serverRecorded ?? withTracking
+            );
+          }
+        } else {
+          console.warn("justice cases: PATCH record action handled failed", patchRes.status);
+        }
+      } catch (e) {
+        console.warn("justice cases: record action handled error", e);
+      }
+    }
+
+    setMarkingApprovedPacketHandledCaseId(null);
+  }
+
   async function acknowledgeHandlingRequest(caseRow: CaseRow, next: JusticeApprovedNextAction) {
     const acknowledged = acknowledgeHandlingRequestInApprovedNextAction(next);
     const mergedLocal = mergeClientStateWithAcknowledgedHandling(caseRow.client_state, acknowledged);
@@ -988,6 +1058,29 @@ export default function JusticeCasesPage() {
                           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                             Approved {formatApprovedNextActionHandlingTimestamp(approvedAt)}
                           </p>
+                        ) : null}
+                        {next.status === "started" && next.started_at?.trim() ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            Opened{" "}
+                            {formatApprovedNextActionHandlingTimestamp(next.started_at.trim())}
+                          </p>
+                        ) : null}
+                        {next.status === "started" ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={markingApprovedPacketHandledCaseId === caseRow.id}
+                              onClick={() => void markApprovedPacketActionHandled(caseRow, next)}
+                              className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+                            >
+                              {markingApprovedPacketHandledCaseId === caseRow.id
+                                ? "Saving…"
+                                : "Record action handled for now"}
+                            </button>
+                            <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+                              Tracking only — not automatic filing or submission.
+                            </p>
+                          </>
                         ) : null}
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                           Approved case packet and next in-app step — not a Surrenderless handling request.
