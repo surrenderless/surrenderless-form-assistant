@@ -312,6 +312,7 @@ function HandlingWorkbenchCaseCard({
   onCaseClientStateUpdate,
   savedFilings,
   filingsReady,
+  evidenceCount,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
@@ -331,6 +332,7 @@ function HandlingWorkbenchCaseCard({
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
   savedFilings?: JusticeCaseFilingRow[];
   filingsReady?: boolean;
+  evidenceCount?: number;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
@@ -488,6 +490,14 @@ function HandlingWorkbenchCaseCard({
           <li>Basic case info: {basicsReady ? "yes" : "not yet"}</li>
           <li>Submission draft reviewed: {draftReviewed ? "yes" : "not yet"}</li>
           <li>Prepared case packet approved: {packetApproved ? "yes" : "not yet"}</li>
+          {filingsReady ? (
+            <li>
+              Evidence on case:{" "}
+              {(evidenceCount ?? 0) > 0
+                ? `yes (${evidenceCount} saved proof note${evidenceCount === 1 ? "" : "s"})`
+                : "not yet"}
+            </li>
+          ) : null}
         </ul>
         <p
           className={`mt-1 text-xs font-medium ${
@@ -499,9 +509,16 @@ function HandlingWorkbenchCaseCard({
           {readyForManualReview ? "Ready for manual review" : "Needs more before manual review"}
         </p>
         <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
-          Read-only — not filed or submitted. Evidence is not shown here.
+          Read-only metadata only — not filed or submitted. Proof note titles and details are not
+          shown here.
         </p>
       </div>
+      {filingsReady && readyForManualReview && (evidenceCount ?? 0) === 0 ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+          No saved proof on case yet. Review evidence on the case packet before external manual
+          action.
+        </p>
+      ) : null}
       {filingsReady && savedFilings && savedFilings.length > 0 ? (
         <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
           <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
@@ -832,6 +849,9 @@ export default function JusticeHandlingWorkbenchPage() {
   const [filingsByCaseId, setFilingsByCaseId] = useState<
     Record<string, JusticeCaseFilingRow[]>
   >({});
+  const [evidenceCountByCaseId, setEvidenceCountByCaseId] = useState<Record<string, number>>(
+    {}
+  );
   const [filingsLoading, setFilingsLoading] = useState(false);
   const refetchAbortRef = useRef<AbortController | null>(null);
   const filingsAbortRef = useRef<AbortController | null>(null);
@@ -943,11 +963,13 @@ export default function JusticeHandlingWorkbenchPage() {
   useEffect(() => {
     if (!isLoaded || !isSignedIn || cases === null) {
       setFilingsByCaseId({});
+      setEvidenceCountByCaseId({});
       setFilingsLoading(false);
       return;
     }
     if (!handlingCaseIdsKey) {
       setFilingsByCaseId({});
+      setEvidenceCountByCaseId({});
       setFilingsLoading(false);
       return;
     }
@@ -963,26 +985,39 @@ export default function JusticeHandlingWorkbenchPage() {
         const entries = await Promise.all(
           ids.map(async (id) => {
             try {
-              const res = await fetch(
-                `/api/justice/filings?case_id=${encodeURIComponent(id)}`,
-                { signal: ac.signal }
-              );
-              if (ac.signal.aborted) return [id, [] as JusticeCaseFilingRow[]] as const;
-              const json: unknown = res.ok ? await res.json() : [];
-              const rows = Array.isArray(json) ? (json as JusticeCaseFilingRow[]) : [];
-              return [id, rows] as const;
+              const [filRes, evRes] = await Promise.all([
+                fetch(`/api/justice/filings?case_id=${encodeURIComponent(id)}`, {
+                  signal: ac.signal,
+                }),
+                fetch(`/api/justice/evidence?case_id=${encodeURIComponent(id)}`, {
+                  signal: ac.signal,
+                }),
+              ]);
+              if (ac.signal.aborted) {
+                return [id, [] as JusticeCaseFilingRow[], 0] as const;
+              }
+              const filJson: unknown = filRes.ok ? await filRes.json() : [];
+              const evJson: unknown = evRes.ok ? await evRes.json() : [];
+              const rows = Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : [];
+              const evidenceCount = Array.isArray(evJson) ? evJson.length : 0;
+              return [id, rows, evidenceCount] as const;
             } catch {
-              if (ac.signal.aborted) return [id, [] as JusticeCaseFilingRow[]] as const;
-              return [id, [] as JusticeCaseFilingRow[]] as const;
+              if (ac.signal.aborted) {
+                return [id, [] as JusticeCaseFilingRow[], 0] as const;
+              }
+              return [id, [] as JusticeCaseFilingRow[], 0] as const;
             }
           })
         );
         if (ac.signal.aborted) return;
-        const next: Record<string, JusticeCaseFilingRow[]> = {};
-        for (const [id, rows] of entries) {
-          next[id] = rows;
+        const nextFilings: Record<string, JusticeCaseFilingRow[]> = {};
+        const nextEvidenceCounts: Record<string, number> = {};
+        for (const [id, rows, evidenceCount] of entries) {
+          nextFilings[id] = rows;
+          nextEvidenceCounts[id] = evidenceCount;
         }
-        setFilingsByCaseId(next);
+        setFilingsByCaseId(nextFilings);
+        setEvidenceCountByCaseId(nextEvidenceCounts);
       } finally {
         if (!ac.signal.aborted) setFilingsLoading(false);
       }
@@ -1341,6 +1376,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         savedFilings={filingsByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
+                        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
                       />
                     );
                   })}
@@ -1383,6 +1419,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         savedFilings={filingsByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
+                        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
                       />
                     ))}
                   </ul>
@@ -1439,6 +1476,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         savedFilings={filingsByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
+                        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
                       />
                     );
                   })}
