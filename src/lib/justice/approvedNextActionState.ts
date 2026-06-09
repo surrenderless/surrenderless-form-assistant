@@ -45,6 +45,9 @@ export function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction
     ...(typeof o.handling_acknowledged_at === "string" && o.handling_acknowledged_at.trim()
       ? { handling_acknowledged_at: o.handling_acknowledged_at.trim() }
       : {}),
+    ...(typeof o.handling_operator_note === "string" && o.handling_operator_note.trim()
+      ? { handling_operator_note: o.handling_operator_note.trim() }
+      : {}),
   };
 }
 
@@ -78,6 +81,7 @@ export function approvedNextActionStatusLabel(
 }
 
 const HANDLING_REQUEST_NOTE_MAX_LENGTH = 500;
+const HANDLING_OPERATOR_NOTE_MAX_LENGTH = 500;
 
 /** Same rule as Saved cases Needs attention and workbench Awaiting internal triage. */
 export function isHandlingAwaitingTriageApprovedNextAction(
@@ -144,6 +148,21 @@ export function applyHandlingRequestNoteToApprovedNextAction(
   return next;
 }
 
+/** Sets or clears handling_operator_note; preserves other approved_next_action fields. */
+export function applyHandlingOperatorNoteToApprovedNextAction(
+  action: JusticeApprovedNextAction,
+  rawNote: string
+): JusticeApprovedNextAction {
+  const trimmed = rawNote.trim();
+  const next = { ...action };
+  if (trimmed) {
+    next.handling_operator_note = trimmed.slice(0, HANDLING_OPERATOR_NOTE_MAX_LENGTH);
+  } else {
+    delete next.handling_operator_note;
+  }
+  return next;
+}
+
 function pickTrimmedIsoField(...values: (string | undefined)[]): string | undefined {
   for (const value of values) {
     const trimmed = value?.trim();
@@ -190,6 +209,13 @@ export function mergeApprovedNextActionTrackingFields(
   else delete merged.handling_requested_at;
   if (acknowledged) merged.handling_acknowledged_at = acknowledged;
   else delete merged.handling_acknowledged_at;
+  if ("handling_operator_note" in incoming) {
+    const operatorNote = incoming.handling_operator_note?.trim();
+    if (operatorNote) merged.handling_operator_note = operatorNote;
+    else delete merged.handling_operator_note;
+  } else if (base?.handling_operator_note?.trim()) {
+    merged.handling_operator_note = base.handling_operator_note.trim();
+  }
   return merged;
 }
 
@@ -327,6 +353,12 @@ export function mergeApprovedNextActionForHydrate(
             fromServer?.handling_acknowledged_at ?? fromSession?.handling_acknowledged_at,
         }
       : {}),
+    ...(() => {
+      const note = (
+        fromServer?.handling_operator_note ?? fromSession?.handling_operator_note
+      )?.trim();
+      return note ? { handling_operator_note: note } : {};
+    })(),
   };
 }
 
@@ -388,6 +420,11 @@ export function resolveApprovedNextAction(
     fromServer.handling_acknowledged_at,
     fromSession.handling_acknowledged_at
   );
+  const handling_operator_noteRaw =
+    fromServer.handling_operator_note ?? fromSession.handling_operator_note;
+  const handling_operator_note = handling_operator_noteRaw?.trim()
+    ? handling_operator_noteRaw.trim()
+    : undefined;
   const completed =
     fromServer.status === "completed" || fromSession.status === "completed";
   const started =
@@ -399,6 +436,7 @@ export function resolveApprovedNextAction(
     ...(handling_requested_at ? { handling_requested_at } : {}),
     ...(handling_request_note ? { handling_request_note } : {}),
     ...(handling_acknowledged_at ? { handling_acknowledged_at } : {}),
+    ...(handling_operator_note ? { handling_operator_note } : {}),
   };
 
   if (completed) {
@@ -480,6 +518,9 @@ export function mergeClientStateWithApprovedNextAction(
         ...(prev.handling_acknowledged_at?.trim() &&
         !approvedNext.handling_acknowledged_at?.trim()
           ? { handling_acknowledged_at: prev.handling_acknowledged_at.trim() }
+          : {}),
+        ...(prev.handling_operator_note?.trim() && !("handling_operator_note" in approvedNext)
+          ? { handling_operator_note: prev.handling_operator_note.trim() }
           : {}),
       };
     }
