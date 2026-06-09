@@ -2,20 +2,29 @@
 
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { validate as isUuid } from "uuid";
 import {
+  acknowledgeHandlingRequestInApprovedNextAction,
+  applyHandlingRequestNoteToApprovedNextAction,
   approvedNextActionStatusLabel,
   hydrateApprovedNextActionForDisplay,
   isApprovedPacketActionWithoutHandlingRequest,
+  mergeApprovedNextActionTrackingFields,
+  mergeClientStateWithAcknowledgedHandling,
+  mergeClientStateWithApprovedNextAction,
+  omitClearedHandlingRequestNoteFromApprovedNextAction,
   readSessionApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
+  ApprovedNextActionHandlingRequestBlock,
+  ApprovedNextActionHandlingRequestedReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatApprovedNextActionHandlingTimestamp,
   formatHubHandlingRequestedLine,
@@ -134,11 +143,12 @@ export default function JusticeHubWorkspaceBody() {
   const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
   const [evidenceCount, setEvidenceCount] = useState<number | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [requestingHandling, setRequestingHandling] = useState(false);
+  const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
+  const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
 
-  useEffect(() => {
-    const ac = new AbortController();
-
-    async function refreshHubState() {
+  const refreshHubState = useCallback(
+    async (signal?: AbortSignal) => {
       const nextSnapshot = readSnapshotFromLocalSession();
       setSnapshot(nextSnapshot);
 
@@ -157,9 +167,9 @@ export default function JusticeHubWorkspaceBody() {
       if (nextSnapshot) {
         try {
           const caseRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-            signal: ac.signal,
+            signal,
           });
-          if (!ac.signal.aborted && caseRes.ok) {
+          if (!signal?.aborted && caseRes.ok) {
             const data = (await caseRes.json()) as { client_state?: unknown };
             const hydrated =
               hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
@@ -174,19 +184,24 @@ export default function JusticeHubWorkspaceBody() {
       setEvidenceLoading(true);
       try {
         const res = await fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, {
-          signal: ac.signal,
+          signal,
         });
-        if (ac.signal.aborted) return;
+        if (signal?.aborted) return;
         const json: unknown = res.ok ? await res.json() : [];
         setEvidenceCount(Array.isArray(json) ? json.length : 0);
       } catch {
-        if (!ac.signal.aborted) setEvidenceCount(0);
+        if (!signal?.aborted) setEvidenceCount(0);
       } finally {
-        if (!ac.signal.aborted) setEvidenceLoading(false);
+        if (!signal?.aborted) setEvidenceLoading(false);
       }
-    }
+    },
+    [isLoaded, isSignedIn]
+  );
 
-    void refreshHubState();
+  useEffect(() => {
+    const ac = new AbortController();
+
+    void refreshHubState(ac.signal);
 
     function onHubRefresh() {
       void refreshHubState();
@@ -208,7 +223,157 @@ export default function JusticeHubWorkspaceBody() {
       window.removeEventListener("storage", onHubRefresh);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isLoaded, isSignedIn]);
+  }, [refreshHubState]);
+
+  function canWriteHubHandling(
+    current: CurrentCaseSnapshot | null
+  ): current is CurrentCaseSnapshot & { approvedNextAction: JusticeApprovedNextAction } {
+    if (!current?.packetApproved || !current.approvedNextAction) return false;
+    const sessionCaseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    return Boolean(sessionCaseId && sessionCaseId === current.caseId);
+  }
+
+  function applyHydratedApprovedNext(
+    caseId: string,
+    intake: JusticeIntake,
+    action: JusticeApprovedNextAction
+  ) {
+    writeSessionApprovedNextAction(caseId, action);
+    setSnapshot(buildCurrentCaseSnapshot(caseId, intake, action));
+  }
+
+  async function handleRequestSurrenderlessHandling(note?: string) {
+    if (!canWriteHubHandling(snapshot)) return;
+    const approvedNextAction = snapshot.approvedNextAction;
+    if (approvedNextAction.status === "completed") return;
+    if (approvedNextAction.handling_requested_at?.trim()) return;
+
+    const next: JusticeApprovedNextAction = {
+      ...approvedNextAction,
+      handling_requested_at: new Date().toISOString(),
+      ...(note ? { handling_request_note: note } : {}),
+    };
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, local);
+
+    if (!isLoaded || !isSignedIn || !isUuid(snapshot.caseId)) return;
+
+    setRequestingHandling(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(snapshot.caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice hub: GET before handling request failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(snapshot.caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (patchRes.ok) {
+        const data = (await patchRes.json()) as { client_state?: unknown };
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(snapshot.caseId, data.client_state) ?? local;
+        applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, hydrated);
+      } else {
+        console.warn("justice hub: PATCH handling request failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice hub: handling request error", e);
+    } finally {
+      setRequestingHandling(false);
+    }
+  }
+
+  async function handleUpdateHandlingRequestNote(note?: string) {
+    if (!canWriteHubHandling(snapshot)) return;
+    const approvedNextAction = snapshot.approvedNextAction;
+    if (!approvedNextAction.handling_requested_at?.trim()) return;
+
+    const withNoteUpdate = applyHandlingRequestNoteToApprovedNextAction(
+      approvedNextAction,
+      note ?? ""
+    );
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, withNoteUpdate);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, local);
+
+    if (!isLoaded || !isSignedIn || !isUuid(snapshot.caseId)) return;
+
+    setUpdatingHandlingNote(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(snapshot.caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice hub: GET before handling note update failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(snapshot.caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (patchRes.ok) {
+        const data = (await patchRes.json()) as { client_state?: unknown };
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(snapshot.caseId, data.client_state) ?? local;
+        applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, hydrated);
+      } else {
+        console.warn("justice hub: PATCH handling note update failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice hub: handling note update error", e);
+    } finally {
+      setUpdatingHandlingNote(false);
+    }
+  }
+
+  async function handleAcknowledgeHandlingRequest() {
+    if (!canWriteHubHandling(snapshot)) return;
+    const approvedNextAction = snapshot.approvedNextAction;
+    if (!approvedNextAction.handling_requested_at?.trim()) return;
+    if (approvedNextAction.handling_acknowledged_at?.trim()) return;
+
+    const acknowledged = acknowledgeHandlingRequestInApprovedNextAction(approvedNextAction);
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, acknowledged);
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, local);
+
+    if (!isLoaded || !isSignedIn || !isUuid(snapshot.caseId)) return;
+
+    setAcknowledgingHandling(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(snapshot.caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice hub: GET before acknowledge handling failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithAcknowledgedHandling(existing.client_state, acknowledged);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(snapshot.caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (patchRes.ok) {
+        const data = (await patchRes.json()) as { client_state?: unknown };
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(snapshot.caseId, data.client_state) ?? local;
+        applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, hydrated);
+      } else {
+        console.warn("justice hub: PATCH acknowledge handling failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice hub: acknowledge handling error", e);
+    } finally {
+      setAcknowledgingHandling(false);
+    }
+  }
 
   const basicsReady = snapshot ? isBasicCaseInfoReadyForEscalation(snapshot.intake) : false;
   const showUpdateInChat = snapshot !== null && !basicsReady;
@@ -286,7 +451,8 @@ export default function JusticeHubWorkspaceBody() {
                 {truncateAttentionNote(snapshot.approvedNextAction.outcome_note.trim(), 200)}
               </span>
             ) : null}
-            {snapshot.handlingRequestedAt ? (
+            {snapshot.handlingRequestedAt &&
+            !(snapshot.packetApproved && snapshot.approvedNextAction) ? (
               <>
                 <span className="mt-2 block text-xs font-medium text-emerald-800 dark:text-emerald-200">
                   {formatHubHandlingRequestedLine(snapshot.handlingRequestedAt)}
@@ -383,45 +549,123 @@ export default function JusticeHubWorkspaceBody() {
               Add proof in chat
             </Link>
           ) : null}
-          {snapshot.handlingRequestedAt ? (
+          {snapshot.packetApproved && snapshot.approvedNextAction ? (
             <>
-              <ApprovedNextActionHandlingQueueStatusReadOnly
-                handlingRequestedAt={snapshot.handlingRequestedAt}
-                handlingAcknowledgedAt={snapshot.handlingAcknowledgedAt ?? undefined}
-                className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
-              />
-              {snapshot.showHandledOpenHandlingTriageNote ? (
-                <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
+              {snapshot.approvedNextAction.handling_requested_at?.trim() ? (
+                snapshot.approvedNextAction.status === "completed" ? (
+                  <ApprovedNextActionHandlingRequestedReadOnly
+                    requestedAt={snapshot.approvedNextAction.handling_requested_at.trim()}
+                    requestNote={snapshot.approvedNextAction.handling_request_note}
+                    acknowledgedAt={snapshot.approvedNextAction.handling_acknowledged_at}
+                    wrapperClassName="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+                    recordedClassName="mt-0.5"
+                  />
+                ) : (
+                  <ApprovedNextActionHandlingRequestBlock
+                    action={snapshot.approvedNextAction}
+                    acknowledgedAt={snapshot.approvedNextAction.handling_acknowledged_at}
+                    onRequest={handleRequestSurrenderlessHandling}
+                    onUpdateNote={handleUpdateHandlingRequestNote}
+                    allowEditNote
+                    requesting={requestingHandling}
+                    updatingNote={updatingHandlingNote}
+                    wrapperClassName="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+                    recordedClassName="mt-0.5"
+                  />
+                )
+              ) : snapshot.approvedNextAction.status !== "completed" ? (
+                <ApprovedNextActionHandlingRequestBlock
+                  action={snapshot.approvedNextAction}
+                  onRequest={handleRequestSurrenderlessHandling}
+                  onUpdateNote={handleUpdateHandlingRequestNote}
+                  allowEditNote
+                  requesting={requestingHandling}
+                  updatingNote={updatingHandlingNote}
+                  wrapperClassName="mt-2 rounded-lg border border-emerald-400/50 bg-white/60 px-2.5 py-2 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+                  recordedClassName="mt-0.5"
+                />
               ) : null}
-              <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                <Link
-                  href="/justice/handling"
-                  className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                >
-                  View in handling workbench
-                </Link>
-              </p>
+              {snapshot.approvedNextAction.handling_requested_at?.trim() ? (
+                <>
+                  <ApprovedNextActionHandlingQueueStatusReadOnly
+                    handlingRequestedAt={snapshot.approvedNextAction.handling_requested_at.trim()}
+                    handlingAcknowledgedAt={snapshot.approvedNextAction.handling_acknowledged_at}
+                    className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                  />
+                  {snapshot.approvedNextAction.status === "completed" &&
+                  !snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (
+                    <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
+                  ) : null}
+                  <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                    <Link
+                      href="/justice/handling"
+                      className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      View in handling workbench
+                    </Link>
+                  </p>
+                  {!snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                      <button
+                        type="button"
+                        disabled={acknowledgingHandling}
+                        onClick={() => void handleAcknowledgeHandlingRequest()}
+                        className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                      >
+                        {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
+                      </button>
+                      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+                        {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
+                      </p>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
             </>
-          ) : null}
-          {isApprovedPacketActionWithoutHandlingRequest({
-            prepared_packet_approved: snapshot.packetApproved,
-            approved_next_action: snapshot.approvedNextAction,
-          }) ? (
+          ) : (
             <>
-              <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                Approved case packet and next in-app step — not a Surrenderless handling request.
-                Request Surrenderless handling from your action plan when you want internal triage tracking.
-              </p>
-              <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                <Link
-                  href="/justice/handling"
-                  className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                >
-                  View on handling workbench
-                </Link>
-              </p>
+              {snapshot.handlingRequestedAt ? (
+                <>
+                  <ApprovedNextActionHandlingQueueStatusReadOnly
+                    handlingRequestedAt={snapshot.handlingRequestedAt}
+                    handlingAcknowledgedAt={snapshot.handlingAcknowledgedAt ?? undefined}
+                    className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                  />
+                  {snapshot.showHandledOpenHandlingTriageNote ? (
+                    <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
+                  ) : null}
+                  <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                    <Link
+                      href="/justice/handling"
+                      className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      View in handling workbench
+                    </Link>
+                  </p>
+                </>
+              ) : null}
+              {isApprovedPacketActionWithoutHandlingRequest({
+                prepared_packet_approved: snapshot.packetApproved,
+                approved_next_action: snapshot.approvedNextAction,
+              }) ? (
+                <>
+                  <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                    Approved case packet and next in-app step — not a Surrenderless handling request.
+                    Request Surrenderless handling from your action plan, case packet, or here on the hub when
+                    you want internal triage tracking.
+                  </p>
+                  <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                    <Link
+                      href="/justice/handling"
+                      className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      View on handling workbench
+                    </Link>
+                  </p>
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
         </div>
       ) : null}
 
