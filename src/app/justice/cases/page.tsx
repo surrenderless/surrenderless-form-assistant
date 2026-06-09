@@ -69,7 +69,17 @@ function truncateAttentionNote(text: string, maxLen: number): string {
   return `${t.slice(0, maxLen).trimEnd()}…`;
 }
 
-function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown }) {
+function CaseApprovedNextActionTracking({
+  clientState,
+  caseRow,
+  acknowledgingHandlingCaseId,
+  onAcknowledgeHandling,
+}: {
+  clientState: unknown;
+  caseRow?: CaseRow;
+  acknowledgingHandlingCaseId?: string | null;
+  onAcknowledgeHandling?: (caseRow: CaseRow, next: JusticeApprovedNextAction) => void;
+}) {
   const next = parseApprovedNextActionFromClientState(clientState);
   const stepLabel = next?.label?.trim();
   const statusLabel = approvedNextActionStatusLabel(next?.status);
@@ -80,6 +90,9 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
       !next?.handling_acknowledged_at?.trim() &&
       next?.status === "completed"
   );
+  const showAllCasesInlineAck =
+    showHandledOpenHandlingTriageNote &&
+    Boolean(caseRow && next && onAcknowledgeHandling);
   const showApprovedPacketActionWorkbench = Boolean(
     parseApprovedPacketActionWithoutHandlingRequest(clientState)
   );
@@ -130,7 +143,9 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
             handlingAcknowledgedAt={next?.handling_acknowledged_at}
           />
           {showHandledOpenHandlingTriageNote ? (
-            <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
+            <ApprovedNextActionHandlingHandledOpenTriageNote
+              variant={showAllCasesInlineAck ? "inlineAck" : "redirect"}
+            />
           ) : null}
         </>
       ) : null}
@@ -147,6 +162,21 @@ function CaseApprovedNextActionTracking({ clientState }: { clientState: unknown 
             View in handling workbench
           </Link>
         </p>
+      ) : null}
+      {showAllCasesInlineAck && caseRow && next && onAcknowledgeHandling ? (
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <button
+            type="button"
+            disabled={acknowledgingHandlingCaseId === caseRow.id}
+            onClick={() => void onAcknowledgeHandling(caseRow, next)}
+            className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            {acknowledgingHandlingCaseId === caseRow.id ? "Saving…" : "Mark acknowledged"}
+          </button>
+          <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
+            {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
+          </p>
+        </div>
       ) : null}
       {showApprovedPacketActionWorkbench ? (
         <>
@@ -1405,7 +1435,12 @@ export default function JusticeCasesPage() {
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                   Updated {formatUpdatedAt(row.updated_at)}
                 </p>
-                <CaseApprovedNextActionTracking clientState={row.client_state} />
+                <CaseApprovedNextActionTracking
+                  clientState={row.client_state}
+                  caseRow={row}
+                  acknowledgingHandlingCaseId={acknowledgingHandlingCaseId}
+                  onAcknowledgeHandling={acknowledgeHandlingRequest}
+                />
                 {progressLoading && progressById[row.id] === undefined ? (
                   <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Loading progress…</p>
                 ) : (
