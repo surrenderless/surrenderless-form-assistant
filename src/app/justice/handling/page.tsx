@@ -79,6 +79,7 @@ function truncateAttentionNote(text: string, maxLen: number): string {
 
 const HANDLING_FILING_NOTES_PREVIEW_MAX = 120;
 const HANDLING_FILING_CONFIRM_PREVIEW_MAX = 48;
+const HANDLING_HANDOFF_STORY_PREVIEW_MAX = 200;
 
 function truncateHandlingFilingSnippet(text: string | null | undefined, max: number): string {
   if (!text?.trim()) return "";
@@ -357,6 +358,14 @@ function HandlingWorkbenchCaseCard({
   const showApprovedOpenTrackingCopy = showApprovedStep;
   const showRecordHandled = next.status === "started";
   const showOutcomeTrackingForm = next.status === "completed";
+  const companyName = caseRow.intake.company_name.trim();
+  const showHandoffCompany = Boolean(companyName && companyName !== title);
+  const categoryRaw = caseRow.intake.problem_category?.trim() ?? "";
+  const handoffCategoryLine = categoryRaw ? categoryRaw.replace(/_/g, " ") : "";
+  const storyTrimmed = caseRow.intake.story?.trim() ?? "";
+  const handoffStorySnip = storyTrimmed
+    ? truncateAttentionNote(storyTrimmed, HANDLING_HANDOFF_STORY_PREVIEW_MAX)
+    : "";
 
   async function handleSaveOutcomeTracking(draft: {
     outcome_note: string;
@@ -577,6 +586,54 @@ function HandlingWorkbenchCaseCard({
           external submission.
         </p>
       ) : null}
+      <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+        <details>
+          <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+            Case handoff summary
+          </summary>
+          <div className="mt-2 space-y-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+            {showHandoffCompany ? (
+              <p>
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">Company:</span>{" "}
+                {companyName}
+              </p>
+            ) : null}
+            {handoffCategoryLine ? (
+              <p>
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  Issue category:
+                </span>{" "}
+                {handoffCategoryLine}
+              </p>
+            ) : null}
+            {!product && caseRow.intake.purchase_or_signup.trim() ? (
+              <p>
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  Product / service:
+                </span>{" "}
+                {caseRow.intake.purchase_or_signup.trim()}
+              </p>
+            ) : null}
+            {actionLabel ? (
+              <p>
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                  Next step:
+                </span>{" "}
+                {actionLabel}
+              </p>
+            ) : null}
+            {handoffStorySnip ? (
+              <p className="whitespace-pre-wrap">
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">Story:</span>{" "}
+                {handoffStorySnip}
+              </p>
+            ) : null}
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Read-only summary — not filed or submitted. Open case packet for the full bundle.
+          </p>
+        </details>
+      </div>
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
           {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
