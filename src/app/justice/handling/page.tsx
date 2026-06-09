@@ -37,6 +37,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
@@ -74,6 +75,35 @@ function truncateAttentionNote(text: string, maxLen: number): string {
   const t = text.trim();
   if (t.length <= maxLen) return t;
   return `${t.slice(0, maxLen).trimEnd()}…`;
+}
+
+const HANDLING_FILING_NOTES_PREVIEW_MAX = 120;
+const HANDLING_FILING_CONFIRM_PREVIEW_MAX = 48;
+
+function truncateHandlingFilingSnippet(text: string | null | undefined, max: number): string {
+  if (!text?.trim()) return "";
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
+}
+
+function handlingFilingFiledAtLine(filedAt: string): string {
+  const t = filedAt.trim();
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) {
+    try {
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return t;
+    }
+  }
+  return t;
 }
 
 function caseDraftReviewed(row: CaseRow): boolean {
@@ -280,6 +310,8 @@ function HandlingWorkbenchCaseCard({
   markingHandled,
   onRecordActionHandled,
   onCaseClientStateUpdate,
+  savedFilings,
+  filingsReady,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
@@ -297,6 +329,8 @@ function HandlingWorkbenchCaseCard({
   markingHandled?: boolean;
   onRecordActionHandled?: () => void;
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
+  savedFilings?: JusticeCaseFilingRow[];
+  filingsReady?: boolean;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
@@ -468,6 +502,64 @@ function HandlingWorkbenchCaseCard({
           Read-only — not filed or submitted. Evidence is not shown here.
         </p>
       </div>
+      {filingsReady && savedFilings && savedFilings.length > 0 ? (
+        <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+          <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+            Saved manual filings
+          </p>
+          <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400">
+            Preview only (no filing URLs here). Add or edit full records on the case packet.
+          </p>
+          <details className="mt-1.5">
+            <summary className="cursor-pointer text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+              Show saved filings ({savedFilings.length})
+            </summary>
+            <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-lg border border-neutral-200/80 bg-white px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-900">
+              {savedFilings.map((row) => {
+                const confirmSnip = truncateHandlingFilingSnippet(
+                  row.confirmation_number,
+                  HANDLING_FILING_CONFIRM_PREVIEW_MAX
+                );
+                const notesSnip = truncateHandlingFilingSnippet(
+                  row.notes,
+                  HANDLING_FILING_NOTES_PREVIEW_MAX
+                );
+                return (
+                  <li
+                    key={row.id}
+                    className="border-t border-neutral-100 pt-2 first:border-t-0 first:pt-0 dark:border-neutral-700/80"
+                  >
+                    <p className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
+                      {row.destination}
+                    </p>
+                    {row.filed_at?.trim() ? (
+                      <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                        Filed: {handlingFilingFiledAtLine(row.filed_at)}
+                      </p>
+                    ) : null}
+                    {confirmSnip ? (
+                      <p className="mt-0.5 font-mono text-[11px] text-neutral-700 dark:text-neutral-300">
+                        Confirmation: {confirmSnip}
+                      </p>
+                    ) : null}
+                    {notesSnip ? (
+                      <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-neutral-700 dark:text-neutral-300">
+                        Notes: {notesSnip}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        </div>
+      ) : null}
+      {filingsReady && readyForManualReview && (!savedFilings || savedFilings.length === 0) ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+          Manual filing not recorded yet. Add or edit filing records from the case packet after
+          external submission.
+        </p>
+      ) : null}
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
           {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
@@ -562,6 +654,12 @@ function HandlingWorkbenchCaseCard({
           <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
             Open case packet
           </button>
+        ) : null}
+        {!compactNavigation ? (
+          <p className="w-full text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500 sm:w-auto sm:basis-full">
+            Manual filing records are added on the packet. Surrenderless does not file or submit
+            automatically.
+          </p>
         ) : null}
         <button type="button" onClick={onOpenChat} className={navButtonSecondaryCls}>
           Update in chat
@@ -731,7 +829,12 @@ export default function JusticeHandlingWorkbenchPage() {
     string | null
   >(null);
   const [sessionCaseId, setSessionCaseId] = useState<string | null>(null);
+  const [filingsByCaseId, setFilingsByCaseId] = useState<
+    Record<string, JusticeCaseFilingRow[]>
+  >({});
+  const [filingsLoading, setFilingsLoading] = useState(false);
   const refetchAbortRef = useRef<AbortController | null>(null);
+  const filingsAbortRef = useRef<AbortController | null>(null);
 
   function refreshSessionCaseIdFromStorage() {
     if (typeof window === "undefined") return;
@@ -831,6 +934,64 @@ export default function JusticeHandlingWorkbenchPage() {
       completedUnacknowledgedCount: completedUnacknowledged.length,
     };
   }, [cases]);
+
+  const handlingCaseIdsKey = useMemo(() => {
+    const ids = [...new Set(allHandlingItems.map((item) => item.caseRow.id))];
+    return ids.sort().join(",");
+  }, [allHandlingItems]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || cases === null) {
+      setFilingsByCaseId({});
+      setFilingsLoading(false);
+      return;
+    }
+    if (!handlingCaseIdsKey) {
+      setFilingsByCaseId({});
+      setFilingsLoading(false);
+      return;
+    }
+
+    const ids = handlingCaseIdsKey.split(",").filter(Boolean);
+    filingsAbortRef.current?.abort();
+    const ac = new AbortController();
+    filingsAbortRef.current = ac;
+    setFilingsLoading(true);
+
+    void (async () => {
+      try {
+        const entries = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const res = await fetch(
+                `/api/justice/filings?case_id=${encodeURIComponent(id)}`,
+                { signal: ac.signal }
+              );
+              if (ac.signal.aborted) return [id, [] as JusticeCaseFilingRow[]] as const;
+              const json: unknown = res.ok ? await res.json() : [];
+              const rows = Array.isArray(json) ? (json as JusticeCaseFilingRow[]) : [];
+              return [id, rows] as const;
+            } catch {
+              if (ac.signal.aborted) return [id, [] as JusticeCaseFilingRow[]] as const;
+              return [id, [] as JusticeCaseFilingRow[]] as const;
+            }
+          })
+        );
+        if (ac.signal.aborted) return;
+        const next: Record<string, JusticeCaseFilingRow[]> = {};
+        for (const [id, rows] of entries) {
+          next[id] = rows;
+        }
+        setFilingsByCaseId(next);
+      } finally {
+        if (!ac.signal.aborted) setFilingsLoading(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [isLoaded, isSignedIn, handlingCaseIdsKey, cases]);
+
+  const filingsReady = !filingsLoading && cases !== null;
 
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
@@ -1178,6 +1339,8 @@ export default function JusticeHandlingWorkbenchPage() {
                           void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+                        savedFilings={filingsByCaseId[item.caseRow.id]}
+                        filingsReady={filingsReady}
                       />
                     );
                   })}
@@ -1218,6 +1381,8 @@ export default function JusticeHandlingWorkbenchPage() {
                           void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+                        savedFilings={filingsByCaseId[item.caseRow.id]}
+                        filingsReady={filingsReady}
                       />
                     ))}
                   </ul>
@@ -1272,6 +1437,8 @@ export default function JusticeHandlingWorkbenchPage() {
                           void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+                        savedFilings={filingsByCaseId[item.caseRow.id]}
+                        filingsReady={filingsReady}
                       />
                     );
                   })}
