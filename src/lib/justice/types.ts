@@ -117,6 +117,8 @@ export type JusticeApprovedNextAction = {
   handling_request_note?: string;
   /** In-app triage ack (not handled/submitted/queued externally; not a filing record). */
   handling_acknowledged_at?: string;
+  /** Internal operator triage note (workbench only; not sent to consumer; not a filing record). */
+  handling_operator_note?: string;
 };
 
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */

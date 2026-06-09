@@ -20,6 +20,7 @@ import {
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
+  applyHandlingOperatorNoteToApprovedNextAction,
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
@@ -295,6 +296,103 @@ const navButtonPrimaryCls =
 const navButtonSecondaryCls =
   "w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto";
 
+function HandlingWorkbenchOperatorNoteSection({
+  caseId,
+  action,
+  onSave,
+}: {
+  caseId: string;
+  action: JusticeApprovedNextAction;
+  onSave: (note: string) => Promise<void>;
+}) {
+  const savedNote = action.handling_operator_note?.trim() ?? "";
+  const [editing, setEditing] = useState(!savedNote);
+  const [draft, setDraft] = useState(savedNote);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(savedNote);
+    if (savedNote) setEditing(false);
+  }, [savedNote]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave(draft);
+      if (draft.trim()) setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+      <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+        Internal operator note
+      </p>
+      <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Internal triage only — not filed, submitted, or sent to the consumer. This is separate from
+        the user&apos;s handling request note above.
+      </p>
+      {!editing && savedNote ? (
+        <>
+          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+            {savedNote}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(savedNote);
+              setEditing(true);
+            }}
+            className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Edit internal note
+          </button>
+        </>
+      ) : (
+        <form onSubmit={(e) => void handleSubmit(e)} className="mt-2 space-y-2">
+          <label className="sr-only" htmlFor={`handling-operator-note-${caseId}`}>
+            Internal operator note
+          </label>
+          <textarea
+            id={`handling-operator-note-${caseId}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={3}
+            maxLength={500}
+            placeholder="Internal triage context for operators (not visible to the consumer)."
+            className="w-full resize-y rounded-md border border-neutral-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className={`${navButtonSecondaryCls} disabled:opacity-60`}
+            >
+              {saving ? "Saving…" : "Save internal note"}
+            </button>
+            {savedNote ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  setDraft(savedNote);
+                  setEditing(false);
+                }}
+                className="text-xs font-medium text-neutral-600 hover:underline dark:text-neutral-400"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function HandlingWorkbenchCaseCard({
   item,
   isActiveSessionCase,
@@ -366,6 +464,43 @@ function HandlingWorkbenchCaseCard({
   const handoffStorySnip = storyTrimmed
     ? truncateAttentionNote(storyTrimmed, HANDLING_HANDOFF_STORY_PREVIEW_MAX)
     : "";
+
+  async function handleSaveOperatorNote(rawNote: string) {
+    const updated = applyHandlingOperatorNoteToApprovedNextAction(next, rawNote);
+    const base = parseApprovedNextActionFromClientState(caseRow.client_state);
+    const withTracking = omitClearedHandlingRequestNoteFromApprovedNextAction(
+      mergeApprovedNextActionTrackingFields(base, updated)
+    );
+    const mergedLocal = mergeClientStateWithApprovedNextAction(caseRow.client_state, withTracking);
+    onCaseClientStateUpdate(caseRow.id, mergedLocal);
+
+    if (isLoaded && isSignedIn && isUuid(caseRow.id)) {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`);
+        if (!getRes.ok) {
+          console.warn("justice handling: GET before operator note persist failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseRow.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (patchRes.ok) {
+          const data = (await patchRes.json()) as { client_state?: unknown };
+          if (data.client_state !== undefined) {
+            onCaseClientStateUpdate(caseRow.id, data.client_state as JusticeCaseClientState);
+          }
+        } else {
+          console.warn("justice handling: PATCH operator note persist failed", patchRes.status);
+        }
+      } catch (e) {
+        console.warn("justice handling: operator note persist error", e);
+      }
+    }
+  }
 
   async function handleSaveOutcomeTracking(draft: {
     outcome_note: string;
@@ -645,6 +780,11 @@ function HandlingWorkbenchCaseCard({
         </p>
       ) : null}
       <ApprovedNextActionHandlingRequestNoteReadOnly note={next.handling_request_note} tone="neutral" />
+      <HandlingWorkbenchOperatorNoteSection
+        caseId={caseRow.id}
+        action={next}
+        onSave={handleSaveOperatorNote}
+      />
       <ApprovedNextActionHandlingQueueStatusReadOnly
         handlingRequestedAt={handlingAt}
         handlingAcknowledgedAt={next.handling_acknowledged_at}
