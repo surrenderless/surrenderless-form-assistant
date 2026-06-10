@@ -297,6 +297,42 @@ const navButtonPrimaryCls =
 const navButtonSecondaryCls =
   "w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto";
 
+function deriveManualActionNextStep(input: {
+  readyForExternalManualAction: boolean;
+  actionOpened: boolean;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
+  status: JusticeApprovedNextAction["status"];
+  outcomeNote?: string;
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+}): string {
+  if (!input.readyForExternalManualAction) {
+    return "Review packet and saved proof before external manual action.";
+  }
+  if (!input.actionOpened) {
+    return "Open the approved step and prepare the manual action.";
+  }
+  if (!input.hasFilingRecord) {
+    return "Add filing records from the case packet after external submission.";
+  }
+  if (!input.hasConfirmationOnFile) {
+    return "Add or edit the filing confirmation from the case packet after external submission.";
+  }
+  if (input.status === "completed" && !input.outcomeNote?.trim()) {
+    return "Record the handling outcome.";
+  }
+  if (
+    input.status === "completed" &&
+    input.outcomeNote?.trim() &&
+    input.handlingRequestedAt?.trim() &&
+    !input.handlingAcknowledgedAt?.trim()
+  ) {
+    return "Mark the handling request acknowledged.";
+  }
+  return "Tracking complete for now.";
+}
+
 function HandlingWorkbenchOperatorNoteSection({
   caseId,
   action,
@@ -469,6 +505,21 @@ function HandlingWorkbenchCaseCard({
   );
   const showPostExternalFilingNudge =
     next.status === "started" || next.status === "completed";
+  const actionOpened = next.status === "started" || next.status === "completed";
+  const outcomeRecorded = Boolean(next.outcome_note?.trim());
+  const handlingAcknowledged = Boolean(next.handling_acknowledged_at?.trim());
+  const manualActionNextStep = filingsReady
+    ? deriveManualActionNextStep({
+        readyForExternalManualAction,
+        actionOpened,
+        hasFilingRecord,
+        hasConfirmationOnFile,
+        status: next.status,
+        outcomeNote: next.outcome_note,
+        handlingRequestedAt: handlingAt,
+        handlingAcknowledgedAt: next.handling_acknowledged_at,
+      })
+    : null;
   const showApprovedStep =
     !compactNavigation && Boolean(onOpenApprovedStep) && next.status === "approved";
   const showApprovedOpenTrackingCopy = showApprovedStep;
@@ -839,6 +890,46 @@ function HandlingWorkbenchCaseCard({
           </p>
         </div>
       ) : null}
+      <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+        <details>
+          <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+            Manual action progress
+          </summary>
+          <ul className="mt-2 space-y-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+            <li>
+              Ready for manual review: {readyForManualReview ? "yes" : "not yet"}
+            </li>
+            {filingsReady ? (
+              <li>
+                Ready for external manual action:{" "}
+                {readyForExternalManualAction ? "yes" : "not yet"}
+              </li>
+            ) : null}
+            <li>Action opened: {actionOpened ? "yes" : "not yet"}</li>
+            {filingsReady ? (
+              <>
+                <li>Manual filing recorded: {hasFilingRecord ? "yes" : "not yet"}</li>
+                <li>Confirmation on file: {hasConfirmationOnFile ? "yes" : "not yet"}</li>
+              </>
+            ) : null}
+            {next.status === "completed" ? (
+              <li>Outcome recorded: {outcomeRecorded ? "yes" : "not yet"}</li>
+            ) : null}
+            {handlingAt ? (
+              <li>Handling acknowledged: {handlingAcknowledged ? "yes" : "not yet"}</li>
+            ) : null}
+          </ul>
+          {manualActionNextStep ? (
+            <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">
+              <span className="font-medium">Next step:</span> {manualActionNextStep}
+            </p>
+          ) : null}
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Read-only progress — not filed or submitted. Writes stay on the case packet, approved
+            step, and existing workbench actions.
+          </p>
+        </details>
+      </div>
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
           {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
