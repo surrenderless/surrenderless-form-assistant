@@ -39,6 +39,7 @@ import {
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import { computeJusticeDestinations, ftcUnlockedFromIntake } from "@/lib/justice/rules";
 import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
@@ -451,6 +452,17 @@ function HandlingWorkbenchCaseCard({
   const draftReviewed = caseDraftReviewed(caseRow);
   const basicsReady = isBasicCaseInfoReadyForEscalation(caseRow.intake);
   const readyForManualReview = basicsReady && draftReviewed && packetApproved;
+  const readyForExternalManualAction =
+    readyForManualReview && (evidenceCount ?? 0) > 0;
+  const recommendedDestinationLabels = useMemo(() => {
+    return computeJusticeDestinations(caseRow.intake, {
+      manualFtc: ftcUnlockedFromIntake(caseRow.intake),
+      useCompanyContactLabels: true,
+    })
+      .filter((d) => d.status === "recommended")
+      .slice(0, 3)
+      .map((d) => d.label);
+  }, [caseRow.intake]);
   const showApprovedStep =
     !compactNavigation && Boolean(onOpenApprovedStep) && next.status === "approved";
   const showApprovedOpenTrackingCopy = showApprovedStep;
@@ -769,6 +781,32 @@ function HandlingWorkbenchCaseCard({
           </p>
         </details>
       </div>
+      {filingsReady ? (
+        <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+              Ready for external manual action:
+            </span>{" "}
+            {readyForExternalManualAction ? "yes" : "not yet"}
+          </p>
+          {readyForExternalManualAction && recommendedDestinationLabels.length > 0 ? (
+            <details className="mt-1.5">
+              <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+                Suggested manual channels
+              </summary>
+              <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-neutral-600 dark:text-neutral-400">
+                {recommendedDestinationLabels.map((label) => (
+                  <li key={label}>{label}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Read-only — Surrenderless does not file or submit automatically. Use Open case packet or
+            Open approved step for prep surfaces.
+          </p>
+        </div>
+      ) : null}
       {handlingAt ? (
         <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-200">
           {APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL}
