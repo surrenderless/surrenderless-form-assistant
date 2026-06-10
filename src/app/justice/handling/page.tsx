@@ -463,6 +463,12 @@ function HandlingWorkbenchCaseCard({
       .slice(0, 3)
       .map((d) => d.label);
   }, [caseRow.intake]);
+  const hasFilingRecord = (savedFilings?.length ?? 0) > 0;
+  const hasConfirmationOnFile = Boolean(
+    savedFilings?.some((row) => row.confirmation_number?.trim())
+  );
+  const showPostExternalFilingNudge =
+    next.status === "started" || next.status === "completed";
   const showApprovedStep =
     !compactNavigation && Boolean(onOpenApprovedStep) && next.status === "approved";
   const showApprovedOpenTrackingCopy = showApprovedStep;
@@ -727,12 +733,6 @@ function HandlingWorkbenchCaseCard({
           </details>
         </div>
       ) : null}
-      {filingsReady && readyForManualReview && (!savedFilings || savedFilings.length === 0) ? (
-        <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
-          Manual filing not recorded yet. Add or edit filing records from the case packet after
-          external submission.
-        </p>
-      ) : null}
       <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
         <details>
           <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">
@@ -804,6 +804,38 @@ function HandlingWorkbenchCaseCard({
           <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
             Read-only — Surrenderless does not file or submit automatically. Use Open case packet or
             Open approved step for prep surfaces.
+          </p>
+        </div>
+      ) : null}
+      {filingsReady ? (
+        <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+              Manual filing recorded:
+            </span>{" "}
+            {hasFilingRecord ? "yes" : "not yet"}
+          </p>
+          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+              Confirmation on file:
+            </span>{" "}
+            {hasConfirmationOnFile ? "yes" : "not yet"}
+          </p>
+          {showPostExternalFilingNudge && !hasFilingRecord ? (
+            <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Manual filing not recorded yet. Add filing records from the case packet after external
+              submission.
+            </p>
+          ) : null}
+          {showPostExternalFilingNudge && hasFilingRecord && !hasConfirmationOnFile ? (
+            <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+              No confirmation number on file yet. Add or edit filing records from the case packet
+              after external submission.
+            </p>
+          ) : null}
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+            Read-only tracking — not filed or submitted. Filing and confirmation writes stay on the
+            case packet.
           </p>
         </div>
       ) : null}
