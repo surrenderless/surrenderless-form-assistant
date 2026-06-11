@@ -141,6 +141,27 @@ function deriveAwaitingHandoffTier(
   return "other";
 }
 
+function handlingCaseHasFilingRecord(savedFilings: JusticeCaseFilingRow[] | undefined): boolean {
+  return (savedFilings?.length ?? 0) > 0;
+}
+
+function handlingCaseHasConfirmationOnFile(savedFilings: JusticeCaseFilingRow[] | undefined): boolean {
+  return Boolean(savedFilings?.some((row) => row.confirmation_number?.trim()));
+}
+
+function isPostExternalConfirmationFollowUpItem(
+  item: HandlingWorkbenchItem,
+  savedFilings: JusticeCaseFilingRow[] | undefined,
+  filingsReady: boolean
+): boolean {
+  if (!filingsReady) return false;
+  const status = item.next.status;
+  if (status !== "started" && status !== "completed") return false;
+  const hasFilingRecord = handlingCaseHasFilingRecord(savedFilings);
+  const hasConfirmationOnFile = handlingCaseHasConfirmationOnFile(savedFilings);
+  return !hasFilingRecord || !hasConfirmationOnFile;
+}
+
 function isoToDateInputValue(iso?: string): string {
   if (!iso?.trim()) return "";
   const d = iso.trim().slice(0, 10);
@@ -1477,6 +1498,35 @@ export default function JusticeHandlingWorkbenchPage() {
     };
   }, [awaitingItems, filingsReady, evidenceCountByCaseId]);
 
+  const postExternalConfirmationTiers = useMemo(() => {
+    if (!filingsReady) return null;
+    const noFilingRecorded: HandlingWorkbenchItem[] = [];
+    const noConfirmationOnFile: HandlingWorkbenchItem[] = [];
+    for (const item of allHandlingItems) {
+      const savedFilings = filingsByCaseId[item.caseRow.id];
+      if (!isPostExternalConfirmationFollowUpItem(item, savedFilings, filingsReady)) {
+        continue;
+      }
+      if (!handlingCaseHasFilingRecord(savedFilings)) {
+        noFilingRecorded.push(item);
+      } else {
+        noConfirmationOnFile.push(item);
+      }
+    }
+    return {
+      noFilingRecorded: sortByHandlingRequestedAtDesc(noFilingRecorded),
+      noConfirmationOnFile: sortByHandlingRequestedAtDesc(noConfirmationOnFile),
+    };
+  }, [allHandlingItems, filingsReady, filingsByCaseId]);
+
+  const postExternalConfirmationCount = useMemo(() => {
+    if (!postExternalConfirmationTiers) return 0;
+    return (
+      postExternalConfirmationTiers.noFilingRecorded.length +
+      postExternalConfirmationTiers.noConfirmationOnFile.length
+    );
+  }, [postExternalConfirmationTiers]);
+
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
     setSessionCaseId(row.id);
@@ -1682,6 +1732,42 @@ export default function JusticeHandlingWorkbenchPage() {
         }
         persistingOpen={persistingApprovedPacketOpenCaseId === item.caseRow.id}
         onAcknowledge={() => void acknowledgeHandlingRequest(item.caseRow, item.next)}
+        markingHandled={markingApprovedPacketHandledCaseId === item.caseRow.id}
+        onRecordActionHandled={() =>
+          void markApprovedPacketActionHandled(item.caseRow, item.next)
+        }
+        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+        savedFilings={filingsByCaseId[item.caseRow.id]}
+        filingsReady={filingsReady}
+        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+      />
+    );
+  }
+
+  function renderHandlingWorkbenchCaseCard(item: HandlingWorkbenchItem, keyPrefix: string) {
+    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
+    const showMarkAcknowledged = !item.next.handling_acknowledged_at?.trim();
+    return (
+      <HandlingWorkbenchCaseCard
+        key={`${keyPrefix}-${item.caseRow.id}`}
+        item={item}
+        isActiveSessionCase={Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id}
+        showMarkAcknowledged={showMarkAcknowledged}
+        acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
+        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+        onOpenPacket={() => openPacket(item.caseRow)}
+        onOpenChat={() => openChat(item.caseRow)}
+        onOpenApprovedStep={
+          approvedStepHref
+            ? () => void openApprovedPacketStep(item.caseRow, item.next)
+            : undefined
+        }
+        persistingOpen={persistingApprovedPacketOpenCaseId === item.caseRow.id}
+        onAcknowledge={
+          showMarkAcknowledged
+            ? () => void acknowledgeHandlingRequest(item.caseRow, item.next)
+            : undefined
+        }
         markingHandled={markingApprovedPacketHandledCaseId === item.caseRow.id}
         onRecordActionHandled={() =>
           void markApprovedPacketActionHandled(item.caseRow, item.next)
@@ -2000,6 +2086,66 @@ export default function JusticeHandlingWorkbenchPage() {
                     );
                   })}
                 </ul>
+              )}
+            </section>
+
+            <section aria-labelledby="handling-confirmation-follow-up-heading">
+              <h2
+                id="handling-confirmation-follow-up-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Confirmation follow-up
+                {postExternalConfirmationCount > 0 ? (
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({postExternalConfirmationCount})
+                  </span>
+                ) : null}
+              </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                Read-only tracking after external manual action — not filed or submitted. Filing and
+                confirmation writes stay on the case packet.
+              </p>
+              {!filingsReady ? (
+                <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                  Loading filing context for confirmation follow-up…
+                </p>
+              ) : postExternalConfirmationCount === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  No handling requests missing manual filing or confirmation after external action yet.
+                </p>
+              ) : (
+                <div className="mt-3 space-y-5">
+                  {postExternalConfirmationTiers!.noFilingRecorded.length > 0 ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                        Manual filing not recorded yet
+                        <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                          ({postExternalConfirmationTiers!.noFilingRecorded.length})
+                        </span>
+                      </h3>
+                      <ul className="mt-2 space-y-3">
+                        {postExternalConfirmationTiers!.noFilingRecorded.map((item) =>
+                          renderHandlingWorkbenchCaseCard(item, "confirmation-no-filing")
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {postExternalConfirmationTiers!.noConfirmationOnFile.length > 0 ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                        Confirmation not on file yet
+                        <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                          ({postExternalConfirmationTiers!.noConfirmationOnFile.length})
+                        </span>
+                      </h3>
+                      <ul className="mt-2 space-y-3">
+                        {postExternalConfirmationTiers!.noConfirmationOnFile.map((item) =>
+                          renderHandlingWorkbenchCaseCard(item, "confirmation-no-confirm")
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
               )}
             </section>
 
