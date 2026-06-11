@@ -258,6 +258,19 @@ function sortByHandlingRequestedAtDesc(items: HandlingWorkbenchItem[]): Handling
   });
 }
 
+function sortByFollowUpAtAsc(items: HandlingWorkbenchItem[]): HandlingWorkbenchItem[] {
+  return [...items].sort((a, b) => {
+    const da = a.next.follow_up_at?.trim() ?? "";
+    const db = b.next.follow_up_at?.trim() ?? "";
+    if (!da && !db) return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+    if (!da) return 1;
+    if (!db) return -1;
+    const cmp = da.localeCompare(db);
+    if (cmp !== 0) return cmp;
+    return b.caseRow.updated_at.localeCompare(a.caseRow.updated_at);
+  });
+}
+
 async function fetchAllActiveCases(signal: AbortSignal): Promise<CaseRow[]> {
   const all: CaseRow[] = [];
   let offset = 0;
@@ -306,6 +319,7 @@ function deriveManualActionNextStep(input: {
   outcomeNote?: string;
   handlingRequestedAt?: string;
   handlingAcknowledgedAt?: string;
+  followUpNeeded?: boolean;
 }): string {
   if (!input.readyForExternalManualAction) {
     return "Review packet and saved proof before external manual action.";
@@ -329,6 +343,9 @@ function deriveManualActionNextStep(input: {
     !input.handlingAcknowledgedAt?.trim()
   ) {
     return "Mark the handling request acknowledged.";
+  }
+  if (input.followUpNeeded === true) {
+    return "Review follow-up timing and mark follow-up handled when complete.";
   }
   return "Tracking complete for now.";
 }
@@ -518,6 +535,7 @@ function HandlingWorkbenchCaseCard({
         outcomeNote: next.outcome_note,
         handlingRequestedAt: handlingAt,
         handlingAcknowledgedAt: next.handling_acknowledged_at,
+        followUpNeeded: next.follow_up_needed === true,
       })
     : null;
   const showApprovedStep =
@@ -918,7 +936,16 @@ function HandlingWorkbenchCaseCard({
             {handlingAt ? (
               <li>Handling acknowledged: {handlingAcknowledged ? "yes" : "not yet"}</li>
             ) : null}
+            {next.follow_up_needed === true || next.status === "completed" ? (
+              <li>Follow-up open: {next.follow_up_needed === true ? "yes" : "not yet"}</li>
+            ) : null}
           </ul>
+          {next.follow_up_needed === true ? (
+            <ApprovedNextActionFollowUpTimingLine
+              followUpAt={next.follow_up_at}
+              className="mt-1 text-xs text-neutral-600 dark:text-neutral-400"
+            />
+          ) : null}
           {manualActionNextStep ? (
             <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">
               <span className="font-medium">Next step:</span> {manualActionNextStep}
@@ -1312,6 +1339,11 @@ export default function JusticeHandlingWorkbenchPage() {
       completedUnacknowledgedCount: completedUnacknowledged.length,
     };
   }, [cases]);
+
+  const followUpHandlingItems = useMemo(() => {
+    const items = allHandlingItems.filter((item) => item.next.follow_up_needed === true);
+    return sortByFollowUpAtAsc(items);
+  }, [allHandlingItems]);
 
   const handlingCaseIdsKey = useMemo(() => {
     const ids = [...new Set(allHandlingItems.map((item) => item.caseRow.id))];
@@ -1824,6 +1856,73 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         persistingOpen={
                           persistingApprovedPacketOpenCaseId === item.caseRow.id
+                        }
+                        markingHandled={
+                          markingApprovedPacketHandledCaseId === item.caseRow.id
+                        }
+                        onRecordActionHandled={() =>
+                          void markApprovedPacketActionHandled(item.caseRow, item.next)
+                        }
+                        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+                        savedFilings={filingsByCaseId[item.caseRow.id]}
+                        filingsReady={filingsReady}
+                        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                      />
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+
+            <section aria-labelledby="handling-follow-up-heading">
+              <h2
+                id="handling-follow-up-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Follow-up tracking
+                {followUpHandlingItems.length > 0 ? (
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({followUpHandlingItems.length})
+                  </span>
+                ) : null}
+              </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                User-paced follow-up tracking only — not automatic contact.
+              </p>
+              {followUpHandlingItems.length === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  No open follow-ups on handling requests yet.
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-3">
+                  {followUpHandlingItems.map((item) => {
+                    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
+                    const showMarkAcknowledgedOnFollowUp =
+                      !item.next.handling_acknowledged_at?.trim();
+                    return (
+                      <HandlingWorkbenchCaseCard
+                        key={`follow-up-${item.caseRow.id}`}
+                        item={item}
+                        isActiveSessionCase={
+                          Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
+                        }
+                        showMarkAcknowledged={showMarkAcknowledgedOnFollowUp}
+                        acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
+                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenPacket={() => openPacket(item.caseRow)}
+                        onOpenChat={() => openChat(item.caseRow)}
+                        onOpenApprovedStep={
+                          approvedStepHref
+                            ? () => void openApprovedPacketStep(item.caseRow, item.next)
+                            : undefined
+                        }
+                        persistingOpen={
+                          persistingApprovedPacketOpenCaseId === item.caseRow.id
+                        }
+                        onAcknowledge={
+                          showMarkAcknowledgedOnFollowUp
+                            ? () => void acknowledgeHandlingRequest(item.caseRow, item.next)
+                            : undefined
                         }
                         markingHandled={
                           markingApprovedPacketHandledCaseId === item.caseRow.id
