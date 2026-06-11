@@ -116,6 +116,31 @@ function caseDraftReviewed(row: CaseRow): boolean {
   );
 }
 
+function caseReadyForManualReview(caseRow: CaseRow): boolean {
+  const packetApproved =
+    parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
+  return (
+    isBasicCaseInfoReadyForEscalation(caseRow.intake) &&
+    caseDraftReviewed(caseRow) &&
+    packetApproved
+  );
+}
+
+type AwaitingHandoffTier = "external" | "needs_proof" | "needs_prep" | "other";
+
+function deriveAwaitingHandoffTier(
+  item: HandlingWorkbenchItem,
+  evidenceCount: number | undefined
+): AwaitingHandoffTier {
+  const readyForManualReview = caseReadyForManualReview(item.caseRow);
+  const count = evidenceCount ?? 0;
+  const readyForExternalManualAction = readyForManualReview && count > 0;
+  if (readyForExternalManualAction) return "external";
+  if (readyForManualReview && count === 0) return "needs_proof";
+  if (!readyForManualReview) return "needs_prep";
+  return "other";
+}
+
 function isoToDateInputValue(iso?: string): string {
   if (!iso?.trim()) return "";
   const d = iso.trim().slice(0, 10);
@@ -1418,6 +1443,40 @@ export default function JusticeHandlingWorkbenchPage() {
 
   const filingsReady = !filingsLoading && cases !== null;
 
+  const awaitingHandoffTiers = useMemo(() => {
+    if (!filingsReady) return null;
+    const external: HandlingWorkbenchItem[] = [];
+    const needsProof: HandlingWorkbenchItem[] = [];
+    const needsPrep: HandlingWorkbenchItem[] = [];
+    const other: HandlingWorkbenchItem[] = [];
+    for (const item of awaitingItems) {
+      const tier = deriveAwaitingHandoffTier(
+        item,
+        evidenceCountByCaseId[item.caseRow.id]
+      );
+      switch (tier) {
+        case "external":
+          external.push(item);
+          break;
+        case "needs_proof":
+          needsProof.push(item);
+          break;
+        case "needs_prep":
+          needsPrep.push(item);
+          break;
+        default:
+          other.push(item);
+          break;
+      }
+    }
+    return {
+      externalReady: sortByHandlingRequestedAtDesc(external),
+      needsProof: sortByHandlingRequestedAtDesc(needsProof),
+      needsPrep: sortByHandlingRequestedAtDesc(needsPrep),
+      other: sortByHandlingRequestedAtDesc(other),
+    };
+  }, [awaitingItems, filingsReady, evidenceCountByCaseId]);
+
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
     setSessionCaseId(row.id);
@@ -1604,6 +1663,37 @@ export default function JusticeHandlingWorkbenchPage() {
     setAcknowledgingHandlingCaseId(null);
   }
 
+  function renderAwaitingHandlingCaseCard(item: HandlingWorkbenchItem) {
+    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
+    return (
+      <HandlingWorkbenchCaseCard
+        key={item.caseRow.id}
+        item={item}
+        isActiveSessionCase={Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id}
+        showMarkAcknowledged
+        acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
+        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+        onOpenPacket={() => openPacket(item.caseRow)}
+        onOpenChat={() => openChat(item.caseRow)}
+        onOpenApprovedStep={
+          approvedStepHref
+            ? () => void openApprovedPacketStep(item.caseRow, item.next)
+            : undefined
+        }
+        persistingOpen={persistingApprovedPacketOpenCaseId === item.caseRow.id}
+        onAcknowledge={() => void acknowledgeHandlingRequest(item.caseRow, item.next)}
+        markingHandled={markingApprovedPacketHandledCaseId === item.caseRow.id}
+        onRecordActionHandled={() =>
+          void markApprovedPacketActionHandled(item.caseRow, item.next)
+        }
+        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+        savedFilings={filingsByCaseId[item.caseRow.id]}
+        filingsReady={filingsReady}
+        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+      />
+    );
+  }
+
   const hasAnyHandling = allHandlingItems.length > 0;
   const hasApprovedPacketActions = approvedPacketActionItems.length > 0;
   const hasAnyWorkbenchContent = hasApprovedPacketActions || hasAnyHandling;
@@ -1730,47 +1820,86 @@ export default function JusticeHandlingWorkbenchPage() {
                 <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
                   No cases awaiting internal triage.
                 </p>
+              ) : !filingsReady ? (
+                <>
+                  <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                    Loading proof and filing context for handoff prioritization…
+                  </p>
+                  <ul className="mt-3 space-y-3">
+                    {sortByHandlingRequestedAtDesc(awaitingItems).map((item) =>
+                      renderAwaitingHandlingCaseCard(item)
+                    )}
+                  </ul>
+                </>
               ) : (
-                <ul className="mt-3 space-y-3">
-                  {awaitingItems.map((item) => {
-                    const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
-                    return (
-                      <HandlingWorkbenchCaseCard
-                        key={item.caseRow.id}
-                        item={item}
-                        isActiveSessionCase={
-                          Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
-                        }
-                        showMarkAcknowledged
-                        acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
-                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
-                        onOpenPacket={() => openPacket(item.caseRow)}
-                        onOpenChat={() => openChat(item.caseRow)}
-                        onOpenApprovedStep={
-                          approvedStepHref
-                            ? () => void openApprovedPacketStep(item.caseRow, item.next)
-                            : undefined
-                        }
-                        persistingOpen={
-                          persistingApprovedPacketOpenCaseId === item.caseRow.id
-                        }
-                        onAcknowledge={() =>
-                          void acknowledgeHandlingRequest(item.caseRow, item.next)
-                        }
-                        markingHandled={
-                          markingApprovedPacketHandledCaseId === item.caseRow.id
-                        }
-                        onRecordActionHandled={() =>
-                          void markApprovedPacketActionHandled(item.caseRow, item.next)
-                        }
-                        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
-                        savedFilings={filingsByCaseId[item.caseRow.id]}
-                        filingsReady={filingsReady}
-                        evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
-                      />
-                    );
-                  })}
-                </ul>
+                <>
+                  <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                    Read-only prioritization for operator handoff — not automatic filing,
+                    submission, or contact.
+                  </p>
+                  <div className="mt-3 space-y-5">
+                    {awaitingHandoffTiers!.externalReady.length > 0 ? (
+                      <div>
+                        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                          Ready for external manual action
+                          <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                            ({awaitingHandoffTiers!.externalReady.length})
+                          </span>
+                        </h3>
+                        <ul className="mt-2 space-y-3">
+                          {awaitingHandoffTiers!.externalReady.map((item) =>
+                            renderAwaitingHandlingCaseCard(item)
+                          )}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {awaitingHandoffTiers!.needsProof.length > 0 ? (
+                      <div>
+                        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                          Needs saved proof before external action
+                          <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                            ({awaitingHandoffTiers!.needsProof.length})
+                          </span>
+                        </h3>
+                        <ul className="mt-2 space-y-3">
+                          {awaitingHandoffTiers!.needsProof.map((item) =>
+                            renderAwaitingHandlingCaseCard(item)
+                          )}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {awaitingHandoffTiers!.needsPrep.length > 0 ? (
+                      <div>
+                        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                          Needs prep before manual review
+                          <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                            ({awaitingHandoffTiers!.needsPrep.length})
+                          </span>
+                        </h3>
+                        <ul className="mt-2 space-y-3">
+                          {awaitingHandoffTiers!.needsPrep.map((item) =>
+                            renderAwaitingHandlingCaseCard(item)
+                          )}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {awaitingHandoffTiers!.other.length > 0 ? (
+                      <div>
+                        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                          Other awaiting handling requests
+                          <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                            ({awaitingHandoffTiers!.other.length})
+                          </span>
+                        </h3>
+                        <ul className="mt-2 space-y-3">
+                          {awaitingHandoffTiers!.other.map((item) =>
+                            renderAwaitingHandlingCaseCard(item)
+                          )}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
               )}
               {completedUnacknowledgedItems.length > 0 ? (
                 <div className="mt-6 border-t border-neutral-200/90 pt-5 dark:border-neutral-700">
