@@ -47,6 +47,7 @@ import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
   getJusticeTaskDueKind,
@@ -74,11 +75,15 @@ function CaseApprovedNextActionTracking({
   caseRow,
   acknowledgingHandlingCaseId,
   onAcknowledgeHandling,
+  progressLoading,
+  progress,
 }: {
   clientState: unknown;
   caseRow?: CaseRow;
   acknowledgingHandlingCaseId?: string | null;
   onAcknowledgeHandling?: (caseRow: CaseRow, next: JusticeApprovedNextAction) => void;
+  progressLoading?: boolean;
+  progress?: CaseProgressSummary;
 }) {
   const next = parseApprovedNextActionFromClientState(clientState);
   const stepLabel = next?.label?.trim();
@@ -142,6 +147,22 @@ function CaseApprovedNextActionTracking({
             handlingRequestedAt={handlingAt}
             handlingAcknowledgedAt={next?.handling_acknowledged_at}
           />
+          {progressLoading || progress === undefined ? (
+            <p>
+              <span className="font-medium text-neutral-700 dark:text-neutral-300">Handling tracking:</span>{" "}
+              Loading handling tracking context...
+            </p>
+          ) : caseRow && next ? (
+            <>
+              <p>
+                <span className="font-medium text-neutral-700 dark:text-neutral-300">Handling tracking:</span>{" "}
+                {deriveCasesHandlingTrackingLine(caseRow, next, progress)}
+              </p>
+              <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
+                In-app tracking only — not filed or submitted.
+              </p>
+            </>
+          ) : null}
           {showHandledOpenHandlingTriageNote ? (
             <ApprovedNextActionHandlingHandledOpenTriageNote
               variant={showAllCasesInlineAck ? "inlineAck" : "redirect"}
@@ -208,9 +229,83 @@ function CaseApprovedNextActionTracking({
 type CaseProgressSummary = {
   evidenceCount: number;
   filingsCount: number;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
   openTasksCount: number;
   nextDue: string | null;
 };
+
+const CASES_HANDLING_TRACKING_COMPLETE = "Tracking complete for now.";
+
+function caseReadyForManualReviewCases(row: CaseRow): boolean {
+  return (
+    isBasicCaseInfoReadyForEscalation(row.intake) &&
+    caseDraftReviewed(row) &&
+    casePreparedPacketApproved(row)
+  );
+}
+
+function deriveCasesManualActionNextStep(input: {
+  readyForExternalManualAction: boolean;
+  actionOpened: boolean;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
+  status: JusticeApprovedNextAction["status"];
+  outcomeNote?: string;
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+  followUpNeeded?: boolean;
+}): string {
+  if (!input.readyForExternalManualAction) {
+    return "Review packet and saved proof before external manual action.";
+  }
+  if (!input.actionOpened) {
+    return "Open the approved step and prepare the manual action.";
+  }
+  if (!input.hasFilingRecord) {
+    return "Add filing records from the case packet after external submission.";
+  }
+  if (!input.hasConfirmationOnFile) {
+    return "Add or edit the filing confirmation from the case packet after external submission.";
+  }
+  if (input.status === "completed" && !input.outcomeNote?.trim()) {
+    return "Record the handling outcome.";
+  }
+  if (
+    input.status === "completed" &&
+    input.outcomeNote?.trim() &&
+    input.handlingRequestedAt?.trim() &&
+    !input.handlingAcknowledgedAt?.trim()
+  ) {
+    return "Mark the handling request acknowledged.";
+  }
+  if (input.followUpNeeded === true) {
+    return "Review follow-up timing and mark follow-up handled when complete.";
+  }
+  return CASES_HANDLING_TRACKING_COMPLETE;
+}
+
+function deriveCasesHandlingTrackingLine(
+  caseRow: CaseRow,
+  next: JusticeApprovedNextAction,
+  progress: CaseProgressSummary
+): string {
+  const readyForManualReview = caseReadyForManualReviewCases(caseRow);
+  const readyForExternalManualAction =
+    readyForManualReview && progress.evidenceCount > 0;
+  const actionOpened = next.status === "started" || next.status === "completed";
+  return deriveCasesManualActionNextStep({
+    readyForExternalManualAction,
+    actionOpened,
+    hasFilingRecord: progress.hasFilingRecord,
+    hasConfirmationOnFile: progress.hasConfirmationOnFile,
+    status: next.status,
+    outcomeNote: next.outcome_note,
+    handlingRequestedAt: next.handling_requested_at,
+    handlingAcknowledgedAt: next.handling_acknowledged_at,
+    followUpNeeded: next.follow_up_needed === true,
+  });
+}
 
 function formatUpdatedAt(iso: string): string {
   try {
@@ -637,7 +732,12 @@ export default function JusticeCasesPage() {
               const filJson: unknown = filRes.ok ? await filRes.json() : [];
               const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
               const evidenceCount = Array.isArray(evJson) ? evJson.length : 0;
-              const filingsCount = Array.isArray(filJson) ? filJson.length : 0;
+              const filingRows = Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : [];
+              const filingsCount = filingRows.length;
+              const hasFilingRecord = filingsCount > 0;
+              const hasConfirmationOnFile = Boolean(
+                filingRows.some((f) => f.confirmation_number?.trim())
+              );
               const tasks = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
               const openTasksCount = tasks.filter((t) => !t.completed_at).length;
               const nextDue = soonestOpenTaskDueDate(tasks);
@@ -645,6 +745,8 @@ export default function JusticeCasesPage() {
                 id,
                 evidenceCount,
                 filingsCount,
+                hasFilingRecord,
+                hasConfirmationOnFile,
                 openTasksCount,
                 nextDue,
                 tasks,
@@ -656,6 +758,8 @@ export default function JusticeCasesPage() {
                 id,
                 evidenceCount: 0,
                 filingsCount: 0,
+                hasFilingRecord: false,
+                hasConfirmationOnFile: false,
                 openTasksCount: 0,
                 nextDue: null,
                 tasks: [],
@@ -1440,6 +1544,8 @@ export default function JusticeCasesPage() {
                   caseRow={row}
                   acknowledgingHandlingCaseId={acknowledgingHandlingCaseId}
                   onAcknowledgeHandling={acknowledgeHandlingRequest}
+                  progressLoading={progressLoading && progressById[row.id] === undefined}
+                  progress={progressById[row.id]}
                 />
                 {progressLoading && progressById[row.id] === undefined ? (
                   <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Loading progress…</p>
