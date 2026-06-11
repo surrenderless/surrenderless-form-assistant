@@ -1527,6 +1527,33 @@ export default function JusticeHandlingWorkbenchPage() {
     );
   }, [postExternalConfirmationTiers]);
 
+  const outcomeClosureTiers = useMemo(() => {
+    const outcomeNotRecorded: HandlingWorkbenchItem[] = [];
+    const handlingNotAcknowledged: HandlingWorkbenchItem[] = [];
+    for (const item of allHandlingItems) {
+      if (item.next.status !== "completed") continue;
+      const outcomeNote = item.next.outcome_note?.trim() ?? "";
+      const handlingRequestedAt = item.next.handling_requested_at?.trim() ?? "";
+      const handlingAcknowledgedAt = item.next.handling_acknowledged_at?.trim() ?? "";
+      if (!outcomeNote) {
+        outcomeNotRecorded.push(item);
+      } else if (handlingRequestedAt && !handlingAcknowledgedAt) {
+        handlingNotAcknowledged.push(item);
+      }
+    }
+    return {
+      outcomeNotRecorded: sortByHandlingRequestedAtDesc(outcomeNotRecorded),
+      handlingNotAcknowledged: sortByHandlingRequestedAtDesc(handlingNotAcknowledged),
+    };
+  }, [allHandlingItems]);
+
+  const outcomeClosureCount = useMemo(() => {
+    return (
+      outcomeClosureTiers.outcomeNotRecorded.length +
+      outcomeClosureTiers.handlingNotAcknowledged.length
+    );
+  }, [outcomeClosureTiers]);
+
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
     setSessionCaseId(row.id);
@@ -2141,6 +2168,62 @@ export default function JusticeHandlingWorkbenchPage() {
                       <ul className="mt-2 space-y-3">
                         {postExternalConfirmationTiers!.noConfirmationOnFile.map((item) =>
                           renderHandlingWorkbenchCaseCard(item, "confirmation-no-confirm")
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </section>
+
+            <section aria-labelledby="handling-outcome-closure-heading">
+              <h2
+                id="handling-outcome-closure-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Outcome closure
+                {outcomeClosureCount > 0 ? (
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({outcomeClosureCount})
+                  </span>
+                ) : null}
+              </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                Read-only closure tracking — not filed or submitted. Outcome and acknowledgement
+                writes stay on existing workbench actions.
+              </p>
+              {outcomeClosureCount === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  No handling requests missing outcome recording or acknowledgement yet.
+                </p>
+              ) : (
+                <div className="mt-3 space-y-5">
+                  {outcomeClosureTiers.outcomeNotRecorded.length > 0 ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                        Outcome not recorded yet
+                        <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                          ({outcomeClosureTiers.outcomeNotRecorded.length})
+                        </span>
+                      </h3>
+                      <ul className="mt-2 space-y-3">
+                        {outcomeClosureTiers.outcomeNotRecorded.map((item) =>
+                          renderHandlingWorkbenchCaseCard(item, "closure-no-outcome")
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {outcomeClosureTiers.handlingNotAcknowledged.length > 0 ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                        Handling request not acknowledged yet
+                        <span className="ml-2 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                          ({outcomeClosureTiers.handlingNotAcknowledged.length})
+                        </span>
+                      </h3>
+                      <ul className="mt-2 space-y-3">
+                        {outcomeClosureTiers.handlingNotAcknowledged.map((item) =>
+                          renderHandlingWorkbenchCaseCard(item, "closure-no-ack")
                         )}
                       </ul>
                     </div>
