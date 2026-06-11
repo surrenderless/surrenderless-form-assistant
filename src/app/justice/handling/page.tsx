@@ -396,6 +396,31 @@ function deriveManualActionNextStep(input: {
   return "Tracking complete for now.";
 }
 
+const HANDLING_TRACKING_COMPLETE_NEXT_STEP = "Tracking complete for now.";
+
+function deriveHandlingManualActionNextStepForItem(
+  item: HandlingWorkbenchItem,
+  savedFilings: JusticeCaseFilingRow[] | undefined,
+  evidenceCount: number | undefined
+): string {
+  const { caseRow, next } = item;
+  const readyForManualReview = caseReadyForManualReview(caseRow);
+  const readyForExternalManualAction =
+    readyForManualReview && (evidenceCount ?? 0) > 0;
+  const actionOpened = next.status === "started" || next.status === "completed";
+  return deriveManualActionNextStep({
+    readyForExternalManualAction,
+    actionOpened,
+    hasFilingRecord: handlingCaseHasFilingRecord(savedFilings),
+    hasConfirmationOnFile: handlingCaseHasConfirmationOnFile(savedFilings),
+    status: next.status,
+    outcomeNote: next.outcome_note,
+    handlingRequestedAt: next.handling_requested_at,
+    handlingAcknowledgedAt: next.handling_acknowledged_at,
+    followUpNeeded: next.follow_up_needed === true,
+  });
+}
+
 function HandlingWorkbenchOperatorNoteSection({
   caseId,
   action,
@@ -1554,6 +1579,22 @@ export default function JusticeHandlingWorkbenchPage() {
     );
   }, [outcomeClosureTiers]);
 
+  const trackingCompleteHandlingItems = useMemo(() => {
+    if (!filingsReady) return null;
+    const complete: HandlingWorkbenchItem[] = [];
+    for (const item of allHandlingItems) {
+      const nextStep = deriveHandlingManualActionNextStepForItem(
+        item,
+        filingsByCaseId[item.caseRow.id],
+        evidenceCountByCaseId[item.caseRow.id]
+      );
+      if (nextStep === HANDLING_TRACKING_COMPLETE_NEXT_STEP) {
+        complete.push(item);
+      }
+    }
+    return sortByHandlingRequestedAtDesc(complete);
+  }, [allHandlingItems, filingsReady, filingsByCaseId, evidenceCountByCaseId]);
+
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
     setSessionCaseId(row.id);
@@ -2295,6 +2336,39 @@ export default function JusticeHandlingWorkbenchPage() {
                       />
                     );
                   })}
+                </ul>
+              )}
+            </section>
+
+            <section aria-labelledby="handling-tracking-complete-heading">
+              <h2
+                id="handling-tracking-complete-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Tracking complete
+                {trackingCompleteHandlingItems && trackingCompleteHandlingItems.length > 0 ? (
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({trackingCompleteHandlingItems.length})
+                  </span>
+                ) : null}
+              </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                Read-only — in-app handling tracking caught up for now; not filed or submitted.
+                Reopen a case if external follow-up or new action is needed.
+              </p>
+              {!filingsReady ? (
+                <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                  Loading proof and filing context for tracking-complete list…
+                </p>
+              ) : trackingCompleteHandlingItems!.length === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  No handling requests with all in-app lifecycle gates satisfied yet.
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-3">
+                  {trackingCompleteHandlingItems!.map((item) =>
+                    renderHandlingWorkbenchCaseCard(item, "tracking-complete")
+                  )}
                 </ul>
               )}
             </section>
