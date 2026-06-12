@@ -76,6 +76,7 @@ function CaseApprovedNextActionTracking({
   caseRow,
   acknowledgingHandlingCaseId,
   onAcknowledgeHandling,
+  onHandlingTrackingNavigate,
   progressLoading,
   progress,
 }: {
@@ -83,6 +84,7 @@ function CaseApprovedNextActionTracking({
   caseRow?: CaseRow;
   acknowledgingHandlingCaseId?: string | null;
   onAcknowledgeHandling?: (caseRow: CaseRow, next: JusticeApprovedNextAction) => void;
+  onHandlingTrackingNavigate?: (href: string) => void;
   progressLoading?: boolean;
   progress?: CaseProgressSummary;
 }) {
@@ -169,6 +171,7 @@ function CaseApprovedNextActionTracking({
                 basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
                 evidenceCount={progress.evidenceCount}
                 markAcknowledgedOnScreen={showAllCasesInlineAck}
+                onNavigate={onHandlingTrackingNavigate}
                 tone="neutral"
               />
             </>
@@ -939,6 +942,11 @@ export default function JusticeCasesPage() {
     router.push(resolveApprovedNextActionFollowUpHref(next));
   }
 
+  function openHandlingTrackingContextualLink(caseRow: CaseRow, href: string) {
+    activateCaseInSession(caseRow);
+    router.push(href);
+  }
+
   function applyClearedFollowUpToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
     const cleared = parseApprovedNextAction(mergedClientState.approved_next_action);
     setCases(
@@ -1554,6 +1562,7 @@ export default function JusticeCasesPage() {
                   caseRow={row}
                   acknowledgingHandlingCaseId={acknowledgingHandlingCaseId}
                   onAcknowledgeHandling={acknowledgeHandlingRequest}
+                  onHandlingTrackingNavigate={(href) => openHandlingTrackingContextualLink(row, href)}
                   progressLoading={progressLoading && progressById[row.id] === undefined}
                   progress={progressById[row.id]}
                 />
