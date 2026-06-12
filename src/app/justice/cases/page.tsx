@@ -1265,6 +1265,7 @@ export default function JusticeCasesPage() {
                     const stepLabel = next.label?.trim();
                     const statusLabel = approvedNextActionStatusLabel(next.status);
                     const handlingAt = next.handling_requested_at?.trim();
+                    const attentionProgress = progressById[caseRow.id];
                     return (
                       <li
                         key={`handling-requested-${caseRow.id}`}
@@ -1303,6 +1304,40 @@ export default function JusticeCasesPage() {
                           handlingRequestedAt={handlingAt}
                           handlingAcknowledgedAt={next.handling_acknowledged_at}
                         />
+                        {progressLoading && attentionProgress === undefined ? (
+                          <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                              Handling tracking:
+                            </span>{" "}
+                            Loading handling tracking context...
+                          </p>
+                        ) : attentionProgress ? (
+                          <>
+                            <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                              <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                                Handling tracking:
+                              </span>{" "}
+                              {deriveCasesHandlingTrackingLine(caseRow, next, attentionProgress)}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
+                              In-app tracking only — not filed or submitted.
+                            </p>
+                            <ApprovedNextActionHandlingTrackingContextualLink
+                              derivedStep={deriveCasesHandlingTrackingLine(
+                                caseRow,
+                                next,
+                                attentionProgress
+                              )}
+                              approvedNextAction={next}
+                              surface="cases"
+                              basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
+                              evidenceCount={attentionProgress.evidenceCount}
+                              markAcknowledgedOnScreen={true}
+                              onNavigate={(href) => openHandlingTrackingContextualLink(caseRow, href)}
+                              tone="neutral"
+                            />
+                          </>
+                        ) : null}
                         {next.status === "started" && next.started_at?.trim() ? (
                           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                             Opened{" "}
