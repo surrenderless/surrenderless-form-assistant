@@ -31,6 +31,7 @@ import {
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
@@ -82,6 +83,133 @@ function truncateAttentionNote(text: string, maxLen: number): string {
   const t = text.trim();
   if (t.length <= maxLen) return t;
   return `${t.slice(0, maxLen).trimEnd()}…`;
+}
+
+const HUB_HANDLING_TRACKING_COMPLETE = "Tracking complete for now.";
+
+function hubReadyForManualReview(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+}): boolean {
+  return input.basicsReady && input.draftReviewed && input.preparedPacketApproved;
+}
+
+function deriveHubManualActionNextStep(input: {
+  readyForExternalManualAction: boolean;
+  actionOpened: boolean;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
+  status: JusticeApprovedNextAction["status"];
+  outcomeNote?: string;
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+  followUpNeeded?: boolean;
+}): string {
+  if (!input.readyForExternalManualAction) {
+    return "Review packet and saved proof before external manual action.";
+  }
+  if (!input.actionOpened) {
+    return "Open the approved step and prepare the manual action.";
+  }
+  if (!input.hasFilingRecord) {
+    return "Add filing records from the case packet after external submission.";
+  }
+  if (!input.hasConfirmationOnFile) {
+    return "Add or edit the filing confirmation from the case packet after external submission.";
+  }
+  if (input.status === "completed" && !input.outcomeNote?.trim()) {
+    return "Record the handling outcome.";
+  }
+  if (
+    input.status === "completed" &&
+    input.outcomeNote?.trim() &&
+    input.handlingRequestedAt?.trim() &&
+    !input.handlingAcknowledgedAt?.trim()
+  ) {
+    return "Mark the handling request acknowledged.";
+  }
+  if (input.followUpNeeded === true) {
+    return "Review follow-up timing and mark follow-up handled when complete.";
+  }
+  return HUB_HANDLING_TRACKING_COMPLETE;
+}
+
+function deriveHubHandlingTrackingLine(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+  next: JusticeApprovedNextAction;
+}): string {
+  const readyForManualReview = hubReadyForManualReview({
+    basicsReady: input.basicsReady,
+    draftReviewed: input.draftReviewed,
+    preparedPacketApproved: input.preparedPacketApproved,
+  });
+  const readyForExternalManualAction =
+    readyForManualReview && input.evidenceCount > 0;
+  const actionOpened = input.next.status === "started" || input.next.status === "completed";
+  const hasFilingRecord = input.filings.length > 0;
+  const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
+  return deriveHubManualActionNextStep({
+    readyForExternalManualAction,
+    actionOpened,
+    hasFilingRecord,
+    hasConfirmationOnFile,
+    status: input.next.status,
+    outcomeNote: input.next.outcome_note,
+    handlingRequestedAt: input.next.handling_requested_at,
+    handlingAcknowledgedAt: input.next.handling_acknowledged_at,
+    followUpNeeded: input.next.follow_up_needed === true,
+  });
+}
+
+function HubHandlingTrackingStatusReadOnly({
+  readinessLoading,
+  approvedNextAction,
+  basicsReady,
+  draftReviewed,
+  preparedPacketApproved,
+  evidenceCount,
+  filings,
+}: {
+  readinessLoading: boolean;
+  approvedNextAction: JusticeApprovedNextAction;
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+}) {
+  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  if (readinessLoading) {
+    return (
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
+        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
+        Loading handling tracking context...
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
+        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
+        {deriveHubHandlingTrackingLine({
+          basicsReady,
+          draftReviewed,
+          preparedPacketApproved,
+          evidenceCount,
+          filings,
+          next: approvedNextAction,
+        })}
+      </p>
+      <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        In-app tracking only — not filed or submitted.
+      </p>
+    </>
+  );
 }
 
 type CurrentCaseSnapshot = {
@@ -142,7 +270,8 @@ export default function JusticeHubWorkspaceBody() {
   const { isLoaded, isSignedIn } = useAuth();
   const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
   const [evidenceCount, setEvidenceCount] = useState<number | null>(null);
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
+  const [hubReadinessLoading, setHubReadinessLoading] = useState(false);
   const [requestingHandling, setRequestingHandling] = useState(false);
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
   const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
@@ -157,7 +286,8 @@ export default function JusticeHubWorkspaceBody() {
       const caseId = nextSnapshot?.caseId ?? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
       if (!isSignedIn || !caseId || !isUuid(caseId)) {
         setEvidenceCount(null);
-        setEvidenceLoading(false);
+        setFilings([]);
+        setHubReadinessLoading(false);
         return;
       }
 
@@ -181,18 +311,24 @@ export default function JusticeHubWorkspaceBody() {
         }
       }
 
-      setEvidenceLoading(true);
+      setHubReadinessLoading(true);
       try {
-        const res = await fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, {
-          signal,
-        });
+        const [evRes, filRes] = await Promise.all([
+          fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, { signal }),
+          fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`, { signal }),
+        ]);
         if (signal?.aborted) return;
-        const json: unknown = res.ok ? await res.json() : [];
-        setEvidenceCount(Array.isArray(json) ? json.length : 0);
+        const evJson: unknown = evRes.ok ? await evRes.json() : [];
+        const filJson: unknown = filRes.ok ? await filRes.json() : [];
+        setEvidenceCount(Array.isArray(evJson) ? evJson.length : 0);
+        setFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
       } catch {
-        if (!signal?.aborted) setEvidenceCount(0);
+        if (!signal?.aborted) {
+          setEvidenceCount(0);
+          setFilings([]);
+        }
       } finally {
-        if (!signal?.aborted) setEvidenceLoading(false);
+        if (!signal?.aborted) setHubReadinessLoading(false);
       }
     },
     [isLoaded, isSignedIn]
@@ -380,7 +516,7 @@ export default function JusticeHubWorkspaceBody() {
   const showAddProofInChat =
     snapshot !== null &&
     basicsReady &&
-    !evidenceLoading &&
+    !hubReadinessLoading &&
     evidenceCount !== null &&
     evidenceCount < 1;
 
@@ -499,7 +635,7 @@ export default function JusticeHubWorkspaceBody() {
               ) : null}
             </li>
             <li>
-              {evidenceLoading ? (
+              {hubReadinessLoading ? (
                 "Evidence: loading..."
               ) : (
                 <>
@@ -592,6 +728,15 @@ export default function JusticeHubWorkspaceBody() {
                     handlingAcknowledgedAt={snapshot.approvedNextAction.handling_acknowledged_at}
                     className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
                   />
+                  <HubHandlingTrackingStatusReadOnly
+                    readinessLoading={hubReadinessLoading}
+                    approvedNextAction={snapshot.approvedNextAction}
+                    basicsReady={basicsReady}
+                    draftReviewed={snapshot.reviewed}
+                    preparedPacketApproved={snapshot.packetApproved}
+                    evidenceCount={evidenceCount ?? 0}
+                    filings={filings}
+                  />
                   {snapshot.approvedNextAction.status === "completed" &&
                   !snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
@@ -631,6 +776,17 @@ export default function JusticeHubWorkspaceBody() {
                     handlingAcknowledgedAt={snapshot.handlingAcknowledgedAt ?? undefined}
                     className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
                   />
+                  {snapshot.approvedNextAction ? (
+                    <HubHandlingTrackingStatusReadOnly
+                      readinessLoading={hubReadinessLoading}
+                      approvedNextAction={snapshot.approvedNextAction}
+                      basicsReady={basicsReady}
+                      draftReviewed={snapshot.reviewed}
+                      preparedPacketApproved={snapshot.packetApproved}
+                      evidenceCount={evidenceCount ?? 0}
+                      filings={filings}
+                    />
+                  ) : null}
                   {snapshot.showHandledOpenHandlingTriageNote ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
                   ) : null}
