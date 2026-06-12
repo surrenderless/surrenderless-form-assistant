@@ -127,6 +127,133 @@ async function persistApprovedNextActionClientState(
   }
 }
 
+const PACKET_HANDLING_TRACKING_COMPLETE = "Tracking complete for now.";
+
+function packetReadyForManualReview(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+}): boolean {
+  return input.basicsReady && input.draftReviewed && input.preparedPacketApproved;
+}
+
+function derivePacketManualActionNextStep(input: {
+  readyForExternalManualAction: boolean;
+  actionOpened: boolean;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
+  status: JusticeApprovedNextAction["status"];
+  outcomeNote?: string;
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+  followUpNeeded?: boolean;
+}): string {
+  if (!input.readyForExternalManualAction) {
+    return "Review packet and saved proof before external manual action.";
+  }
+  if (!input.actionOpened) {
+    return "Open the approved step and prepare the manual action.";
+  }
+  if (!input.hasFilingRecord) {
+    return "Add filing records from the case packet after external submission.";
+  }
+  if (!input.hasConfirmationOnFile) {
+    return "Add or edit the filing confirmation from the case packet after external submission.";
+  }
+  if (input.status === "completed" && !input.outcomeNote?.trim()) {
+    return "Record the handling outcome.";
+  }
+  if (
+    input.status === "completed" &&
+    input.outcomeNote?.trim() &&
+    input.handlingRequestedAt?.trim() &&
+    !input.handlingAcknowledgedAt?.trim()
+  ) {
+    return "Mark the handling request acknowledged.";
+  }
+  if (input.followUpNeeded === true) {
+    return "Review follow-up timing and mark follow-up handled when complete.";
+  }
+  return PACKET_HANDLING_TRACKING_COMPLETE;
+}
+
+function derivePacketHandlingTrackingLine(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+  next: JusticeApprovedNextAction;
+}): string {
+  const readyForManualReview = packetReadyForManualReview({
+    basicsReady: input.basicsReady,
+    draftReviewed: input.draftReviewed,
+    preparedPacketApproved: input.preparedPacketApproved,
+  });
+  const readyForExternalManualAction =
+    readyForManualReview && input.evidenceCount > 0;
+  const actionOpened = input.next.status === "started" || input.next.status === "completed";
+  const hasFilingRecord = input.filings.length > 0;
+  const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
+  return derivePacketManualActionNextStep({
+    readyForExternalManualAction,
+    actionOpened,
+    hasFilingRecord,
+    hasConfirmationOnFile,
+    status: input.next.status,
+    outcomeNote: input.next.outcome_note,
+    handlingRequestedAt: input.next.handling_requested_at,
+    handlingAcknowledgedAt: input.next.handling_acknowledged_at,
+    followUpNeeded: input.next.follow_up_needed === true,
+  });
+}
+
+function PacketHandlingTrackingStatusReadOnly({
+  readinessLoading,
+  approvedNextAction,
+  basicsReady,
+  draftReviewed,
+  preparedPacketApproved,
+  evidenceCount,
+  filings,
+}: {
+  readinessLoading: boolean;
+  approvedNextAction: JusticeApprovedNextAction;
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+}) {
+  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  if (readinessLoading) {
+    return (
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
+        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
+        Loading handling tracking context...
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
+        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
+        {derivePacketHandlingTrackingLine({
+          basicsReady,
+          draftReviewed,
+          preparedPacketApproved,
+          evidenceCount,
+          filings,
+          next: approvedNextAction,
+        })}
+      </p>
+      <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        In-app tracking only — not filed or submitted.
+      </p>
+    </>
+  );
+}
+
 function hasApprovedNextActionTrackingSummary(action: JusticeApprovedNextAction): boolean {
   return Boolean(action.outcome_note?.trim()) || action.follow_up_needed === true;
 }
@@ -469,6 +596,7 @@ export default function JusticePacketPage() {
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState(false);
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
+  const [filingsLoading, setFilingsLoading] = useState(false);
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [timelineTick, setTimelineTick] = useState(0);
   const [packetApproved, setPacketApproved] = useState(false);
@@ -527,8 +655,10 @@ export default function JusticePacketPage() {
     const cid = typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "" : "";
     if (!cid || !isLoaded || !isSignedIn) {
       setFilings([]);
+      setFilingsLoading(false);
       return;
     }
+    setFilingsLoading(true);
     try {
       const res = await fetch(`/api/justice/filings?case_id=${encodeURIComponent(cid)}`);
       if (!res.ok) {
@@ -539,6 +669,8 @@ export default function JusticePacketPage() {
       setFilings(Array.isArray(data) ? data : []);
     } catch {
       setFilings([]);
+    } finally {
+      setFilingsLoading(false);
     }
   }, [isLoaded, isSignedIn]);
 
@@ -740,6 +872,10 @@ export default function JusticePacketPage() {
     draftReviewed = timeline.some((e) => e.type === "submission_draft_reviewed");
     readyToEscalate = basicsReady && evidenceReady;
   }
+
+  const handlingTrackingBasicsReady = isBasicCaseInfoReadyForEscalation(intake);
+  const handlingTrackingDraftReviewed = timeline.some((e) => e.type === "submission_draft_reviewed");
+  const packetHandlingReadinessLoading = isSignedIn && (evidenceLoading || filingsLoading);
 
   async function persistApprovedNextAction(
     next: JusticeApprovedNextAction,
@@ -1123,6 +1259,15 @@ export default function JusticePacketPage() {
                     handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
                     className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
                   />
+                  <PacketHandlingTrackingStatusReadOnly
+                    readinessLoading={packetHandlingReadinessLoading}
+                    approvedNextAction={approvedNextAction}
+                    basicsReady={handlingTrackingBasicsReady}
+                    draftReviewed={handlingTrackingDraftReviewed}
+                    preparedPacketApproved={packetApproved}
+                    evidenceCount={evidence.length}
+                    filings={filings}
+                  />
                   {approvedNextAction.status === "completed" &&
                   !approvedNextAction.handling_acknowledged_at?.trim() ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
@@ -1164,6 +1309,15 @@ export default function JusticePacketPage() {
                 handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
                 handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
                 className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+              />
+              <PacketHandlingTrackingStatusReadOnly
+                readinessLoading={packetHandlingReadinessLoading}
+                approvedNextAction={approvedNextAction}
+                basicsReady={handlingTrackingBasicsReady}
+                draftReviewed={handlingTrackingDraftReviewed}
+                preparedPacketApproved={packetApproved}
+                evidenceCount={evidence.length}
+                filings={filings}
               />
               {approvedNextActionCompleted &&
               !approvedNextAction.handling_acknowledged_at?.trim() ? (
