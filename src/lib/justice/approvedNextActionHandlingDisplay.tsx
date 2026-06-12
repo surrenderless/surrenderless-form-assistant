@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
@@ -47,6 +48,146 @@ export const APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER =
 
 export const APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER =
   "Acknowledged means internal tracking triage only. Surrenderless has not filed, submitted, sent, queued externally, or contacted anyone.";
+
+/** Shared manual-action gate copy — parity with workbench `deriveManualActionNextStep`. */
+export const HANDLING_TRACKING_STEP_REVIEW_PACKET =
+  "Review packet and saved proof before external manual action.";
+
+export const HANDLING_TRACKING_STEP_OPEN_APPROVED =
+  "Open the approved step and prepare the manual action.";
+
+export const HANDLING_TRACKING_STEP_ADD_FILING =
+  "Add filing records from the case packet after external submission.";
+
+export const HANDLING_TRACKING_STEP_ADD_CONFIRMATION =
+  "Add or edit the filing confirmation from the case packet after external submission.";
+
+export const HANDLING_TRACKING_STEP_RECORD_OUTCOME = "Record the handling outcome.";
+
+export const HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED =
+  "Mark the handling request acknowledged.";
+
+export const HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP =
+  "Review follow-up timing and mark follow-up handled when complete.";
+
+export const HANDLING_TRACKING_STEP_COMPLETE = "Tracking complete for now.";
+
+export const PACKET_FILINGS_ANCHOR_ID = "packet-filings";
+
+export const PACKET_FILINGS_HASH = `#${PACKET_FILINGS_ANCHOR_ID}`;
+
+export type HandlingTrackingSurface = "packet" | "plan" | "hub" | "cases" | "chat-ai";
+
+export type HandlingTrackingContextualLink = {
+  href: string;
+  label: string;
+};
+
+export function resolveHandlingTrackingContextualLink(input: {
+  derivedStep: string;
+  approvedNextAction?: Pick<JusticeApprovedNextAction, "href">;
+  surface?: HandlingTrackingSurface;
+  basicsReady?: boolean;
+  evidenceCount?: number;
+  markAcknowledgedOnScreen?: boolean;
+}): HandlingTrackingContextualLink | null {
+  const { derivedStep } = input;
+
+  if (derivedStep === HANDLING_TRACKING_STEP_COMPLETE) return null;
+
+  if (derivedStep === HANDLING_TRACKING_STEP_REVIEW_PACKET) {
+    if (input.basicsReady === false || (input.evidenceCount ?? 0) < 1) {
+      if (input.surface === "chat-ai") return null;
+      return { href: "/justice/chat-ai", label: "Update case in chat" };
+    }
+    if (input.surface === "packet") return null;
+    return { href: "/justice/packet", label: "Review case packet" };
+  }
+
+  if (derivedStep === HANDLING_TRACKING_STEP_OPEN_APPROVED) {
+    const href = input.approvedNextAction?.href?.trim() || "/justice/packet";
+    if (input.surface === "packet" && href.startsWith("/justice/packet")) return null;
+    return { href, label: "Open approved step" };
+  }
+
+  if (
+    derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ||
+    derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION
+  ) {
+    if (input.surface === "packet") {
+      return { href: PACKET_FILINGS_HASH, label: "Open filing records" };
+    }
+    return { href: `/justice/packet${PACKET_FILINGS_HASH}`, label: "Open filing records" };
+  }
+
+  if (derivedStep === HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
+    if (input.surface === "plan") return null;
+    return { href: "/justice/plan", label: "Record outcome on action plan" };
+  }
+
+  if (derivedStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
+    if (input.markAcknowledgedOnScreen) return null;
+    if (input.surface === "plan") return null;
+    return { href: "/justice/plan", label: "Mark acknowledged on action plan" };
+  }
+
+  if (derivedStep === HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP) {
+    if (input.surface === "plan") return null;
+    return { href: "/justice/plan", label: "Review follow-up on action plan" };
+  }
+
+  return null;
+}
+
+const HANDLING_TRACKING_CONTEXTUAL_LINK_EMERALD_CLS =
+  "font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100";
+
+const HANDLING_TRACKING_CONTEXTUAL_LINK_NEUTRAL_CLS =
+  "font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100";
+
+export function ApprovedNextActionHandlingTrackingContextualLink({
+  derivedStep,
+  approvedNextAction,
+  surface,
+  basicsReady,
+  evidenceCount,
+  markAcknowledgedOnScreen = false,
+  tone = "emerald",
+  className = "mt-1 text-xs",
+}: {
+  derivedStep: string;
+  approvedNextAction?: Pick<JusticeApprovedNextAction, "href">;
+  surface?: HandlingTrackingSurface;
+  basicsReady?: boolean;
+  evidenceCount?: number;
+  markAcknowledgedOnScreen?: boolean;
+  tone?: "emerald" | "neutral";
+  className?: string;
+}) {
+  const link = resolveHandlingTrackingContextualLink({
+    derivedStep,
+    approvedNextAction,
+    surface,
+    basicsReady,
+    evidenceCount,
+    markAcknowledgedOnScreen,
+  });
+  if (!link) return null;
+  return (
+    <p className={className}>
+      <Link
+        href={link.href}
+        className={
+          tone === "neutral"
+            ? HANDLING_TRACKING_CONTEXTUAL_LINK_NEUTRAL_CLS
+            : HANDLING_TRACKING_CONTEXTUAL_LINK_EMERALD_CLS
+        }
+      >
+        {link.label}
+      </Link>
+    </p>
+  );
+}
 
 const HANDLING_REQUESTED_EMERALD_BOX_CLS =
   "rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40";

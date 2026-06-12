@@ -21,6 +21,7 @@ import {
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
+  ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
@@ -216,6 +217,7 @@ function PacketHandlingTrackingStatusReadOnly({
   preparedPacketApproved,
   evidenceCount,
   filings,
+  markAcknowledgedOnScreen = false,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -224,6 +226,7 @@ function PacketHandlingTrackingStatusReadOnly({
   preparedPacketApproved: boolean;
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
+  markAcknowledgedOnScreen?: boolean;
 }) {
   if (!approvedNextAction.handling_requested_at?.trim()) return null;
   if (readinessLoading) {
@@ -234,22 +237,31 @@ function PacketHandlingTrackingStatusReadOnly({
       </p>
     );
   }
+  const derivedStep = derivePacketHandlingTrackingLine({
+    basicsReady,
+    draftReviewed,
+    preparedPacketApproved,
+    evidenceCount,
+    filings,
+    next: approvedNextAction,
+  });
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
         <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
-        {derivePacketHandlingTrackingLine({
-          basicsReady,
-          draftReviewed,
-          preparedPacketApproved,
-          evidenceCount,
-          filings,
-          next: approvedNextAction,
-        })}
+        {derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         In-app tracking only — not filed or submitted.
       </p>
+      <ApprovedNextActionHandlingTrackingContextualLink
+        derivedStep={derivedStep}
+        approvedNextAction={approvedNextAction}
+        surface="packet"
+        basicsReady={basicsReady}
+        evidenceCount={evidenceCount}
+        markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+      />
     </>
   );
 }
@@ -1267,6 +1279,7 @@ export default function JusticePacketPage() {
                     preparedPacketApproved={packetApproved}
                     evidenceCount={evidence.length}
                     filings={filings}
+                    markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
                   />
                   {approvedNextAction.status === "completed" &&
                   !approvedNextAction.handling_acknowledged_at?.trim() ? (
@@ -1639,7 +1652,9 @@ export default function JusticePacketPage() {
           )}
         </section>
 
-        <JusticeFilingRecords onFilingsChange={() => void loadFilings()} />
+        <div id="packet-filings">
+          <JusticeFilingRecords onFilingsChange={() => void loadFilings()} />
+        </div>
 
         <JusticeCaseTasks onCaseTimelineSynced={() => setTimelineTick((n) => n + 1)} />
 

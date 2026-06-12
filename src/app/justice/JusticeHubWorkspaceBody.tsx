@@ -26,6 +26,7 @@ import {
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
+  ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
   formatHubHandlingRequestedLine,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -174,6 +175,7 @@ function HubHandlingTrackingStatusReadOnly({
   preparedPacketApproved,
   evidenceCount,
   filings,
+  markAcknowledgedOnScreen = false,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -182,6 +184,7 @@ function HubHandlingTrackingStatusReadOnly({
   preparedPacketApproved: boolean;
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
+  markAcknowledgedOnScreen?: boolean;
 }) {
   if (!approvedNextAction.handling_requested_at?.trim()) return null;
   if (readinessLoading) {
@@ -192,22 +195,31 @@ function HubHandlingTrackingStatusReadOnly({
       </p>
     );
   }
+  const derivedStep = deriveHubHandlingTrackingLine({
+    basicsReady,
+    draftReviewed,
+    preparedPacketApproved,
+    evidenceCount,
+    filings,
+    next: approvedNextAction,
+  });
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
         <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
-        {deriveHubHandlingTrackingLine({
-          basicsReady,
-          draftReviewed,
-          preparedPacketApproved,
-          evidenceCount,
-          filings,
-          next: approvedNextAction,
-        })}
+        {derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         In-app tracking only — not filed or submitted.
       </p>
+      <ApprovedNextActionHandlingTrackingContextualLink
+        derivedStep={derivedStep}
+        approvedNextAction={approvedNextAction}
+        surface="hub"
+        basicsReady={basicsReady}
+        evidenceCount={evidenceCount}
+        markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+      />
     </>
   );
 }
@@ -736,6 +748,7 @@ export default function JusticeHubWorkspaceBody() {
                     preparedPacketApproved={snapshot.packetApproved}
                     evidenceCount={evidenceCount ?? 0}
                     filings={filings}
+                    markAcknowledgedOnScreen={!snapshot.approvedNextAction.handling_acknowledged_at?.trim()}
                   />
                   {snapshot.approvedNextAction.status === "completed" &&
                   !snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (

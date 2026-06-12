@@ -47,6 +47,7 @@ import {
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
+  ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 
@@ -166,6 +167,7 @@ function PlanHandlingTrackingStatusReadOnly({
   preparedPacketApproved,
   evidenceCount,
   filings,
+  markAcknowledgedOnScreen = false,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -174,6 +176,7 @@ function PlanHandlingTrackingStatusReadOnly({
   preparedPacketApproved: boolean;
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
+  markAcknowledgedOnScreen?: boolean;
 }) {
   if (!approvedNextAction.handling_requested_at?.trim()) return null;
   if (readinessLoading) {
@@ -184,22 +187,31 @@ function PlanHandlingTrackingStatusReadOnly({
       </p>
     );
   }
+  const derivedStep = derivePlanHandlingTrackingLine({
+    basicsReady,
+    draftReviewed,
+    preparedPacketApproved,
+    evidenceCount,
+    filings,
+    next: approvedNextAction,
+  });
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
         <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
-        {derivePlanHandlingTrackingLine({
-          basicsReady,
-          draftReviewed,
-          preparedPacketApproved,
-          evidenceCount,
-          filings,
-          next: approvedNextAction,
-        })}
+        {derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         In-app tracking only — not filed or submitted.
       </p>
+      <ApprovedNextActionHandlingTrackingContextualLink
+        derivedStep={derivedStep}
+        approvedNextAction={approvedNextAction}
+        surface="plan"
+        basicsReady={basicsReady}
+        evidenceCount={evidenceCount}
+        markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+      />
     </>
   );
 }
@@ -1564,6 +1576,7 @@ export default function JusticePlanPage() {
                       preparedPacketApproved={preparedPacketApproved}
                       evidenceCount={evidenceCount}
                       filings={filings}
+                      markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
                     />
                     {approvedNextActionCompleted &&
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
@@ -1905,6 +1918,7 @@ export default function JusticePlanPage() {
                   preparedPacketApproved={preparedPacketApproved}
                   evidenceCount={evidenceCount}
                   filings={filings}
+                  markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
                 />
                 {approvedNextActionCompleted &&
                 !approvedNextAction.handling_acknowledged_at?.trim() ? (
