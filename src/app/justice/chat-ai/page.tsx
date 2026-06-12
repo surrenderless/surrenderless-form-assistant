@@ -15,6 +15,7 @@ import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
+import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
   APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
@@ -26,6 +27,7 @@ import {
   formatApprovedNextActionHandlingTimestamp,
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION,
   HANDLING_TRACKING_STEP_ADD_FILING,
+  HANDLING_TRACKING_STEP_COMPLETE,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -592,6 +594,9 @@ function ChatHandlingTrackingStatusReadOnly({
   canCaptureFiling = false,
   caseId = "",
   onFilingsSaved,
+  canArchiveCase = false,
+  onArchiveCase,
+  archiving = false,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -604,6 +609,9 @@ function ChatHandlingTrackingStatusReadOnly({
   canCaptureFiling?: boolean;
   caseId?: string;
   onFilingsSaved?: () => void;
+  canArchiveCase?: boolean;
+  onArchiveCase?: () => void;
+  archiving?: boolean;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
   const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
@@ -631,6 +639,11 @@ function ChatHandlingTrackingStatusReadOnly({
       derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION);
   const inlineFilingMode =
     derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ? "add_filing" : "add_confirmation";
+  const showArchiveWhenComplete =
+    canArchiveCase &&
+    Boolean(caseId) &&
+    derivedStep === HANDLING_TRACKING_STEP_COMPLETE &&
+    Boolean(onArchiveCase);
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -658,6 +671,22 @@ function ChatHandlingTrackingStatusReadOnly({
           filings={filings}
           onSaved={onFilingsSaved}
         />
+      ) : null}
+      {showArchiveWhenComplete ? (
+        <div className="mt-2 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40">
+          <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Close this case</p>
+          <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+            This archives the case in Surrenderless. It does not submit, file, or contact anyone.
+          </p>
+          <button
+            type="button"
+            disabled={archiving}
+            onClick={() => void onArchiveCase!()}
+            className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+          >
+            {archiving ? "Archiving…" : "Archive case"}
+          </button>
+        </div>
       ) : null}
     </>
   );
@@ -867,8 +896,35 @@ export default function JusticeChatAiPage() {
   const [proofNoteDetailsOpen, setProofNoteDetailsOpen] = useState(false);
   const [stagedProofNotes, setStagedProofNotes] = useState<StagedProofNote[]>([]);
   const [stagedProofFlushError, setStagedProofFlushError] = useState<string | null>(null);
+  const [archivingCase, setArchivingCase] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
+
+  async function handleArchiveActiveCase() {
+    if (!isLoaded || !isSignedIn) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) return;
+
+    setArchivingCase(true);
+    try {
+      const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived_at: new Date().toISOString() }),
+      });
+      if (!res.ok) {
+        console.warn("justice chat-ai: archive failed", res.status);
+        return;
+      }
+      clearLocalJusticeSession();
+      router.push("/justice");
+    } catch (e) {
+      console.warn("justice chat-ai: archive error", e);
+    } finally {
+      setArchivingCase(false);
+    }
+  }
 
   async function handleRequestSurrenderlessHandling(note?: string) {
     if (!approvedNextAction || approvedNextAction.status === "completed") return;
@@ -2302,6 +2358,9 @@ export default function JusticeChatAiPage() {
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
+                      canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
+                      onArchiveCase={() => void handleArchiveActiveCase()}
+                      archiving={archivingCase}
                     />
                   </>
                 ) : null}
@@ -2357,6 +2416,9 @@ export default function JusticeChatAiPage() {
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
+                      canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
+                      onArchiveCase={() => void handleArchiveActiveCase()}
+                      archiving={archivingCase}
                     />
                     {approvedNextAction.status === "completed" &&
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
