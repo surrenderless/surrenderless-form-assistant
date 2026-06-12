@@ -228,7 +228,9 @@ function PacketHandlingTrackingStatusReadOnly({
   filings: JusticeCaseFilingRow[];
   markAcknowledgedOnScreen?: boolean;
 }) {
-  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
+  const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
+  if (!handlingRequested && !showApprovedPacketActionPath) return null;
   if (readinessLoading) {
     return (
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -1309,7 +1311,18 @@ export default function JusticePacketPage() {
                     </div>
                   ) : null}
                 </>
-              ) : null}
+              ) : (
+                <PacketHandlingTrackingStatusReadOnly
+                  readinessLoading={packetHandlingReadinessLoading}
+                  approvedNextAction={approvedNextAction}
+                  basicsReady={handlingTrackingBasicsReady}
+                  draftReviewed={handlingTrackingDraftReviewed}
+                  preparedPacketApproved={packetApproved}
+                  evidenceCount={evidence.length}
+                  filings={filings}
+                  markAcknowledgedOnScreen={false}
+                />
+              )}
             </>
           ) : approvedNextAction?.handling_requested_at?.trim() ? (
             <>
