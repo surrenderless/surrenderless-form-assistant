@@ -57,8 +57,18 @@ import {
   readTimeline,
   SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID,
 } from "@/lib/justice/timeline";
-import type { JusticeApprovedNextAction } from "@/lib/justice/types";
-import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import {
+  buildApprovedNextActionTarget,
+  pickPreparedNextAction,
+} from "@/lib/justice/preparedNextAction";
+import {
+  cfpbLikelyRelevant,
+  computeJusticeDestinations,
+  dotLikelyRelevant,
+  fccLikelyRelevant,
+} from "@/lib/justice/rules";
+import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import {
   buildJusticeIntakeFromParts,
   justiceIntakeToBuildJusticeIntakeParts,
@@ -144,6 +154,18 @@ function readSessionPreparedPacketApproved(caseId: string): boolean {
     return map[caseId] === true;
   } catch {
     return false;
+  }
+}
+
+function writePreparedPacketApproved(caseId: string): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
+    const map: Record<string, boolean> = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+    map[caseId] = true;
+    sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
   }
 }
 
@@ -897,6 +919,8 @@ export default function JusticeChatAiPage() {
   const [stagedProofNotes, setStagedProofNotes] = useState<StagedProofNote[]>([]);
   const [stagedProofFlushError, setStagedProofFlushError] = useState<string | null>(null);
   const [archivingCase, setArchivingCase] = useState(false);
+  const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
+  const [approvingPreparedPacket, setApprovingPreparedPacket] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -923,6 +947,62 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: archive error", e);
     } finally {
       setArchivingCase(false);
+    }
+  }
+
+  async function handleApprovePreparedPacketFromChat() {
+    if (!approvePreparedPacketChecked || !isLoaded || !isSignedIn) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) return;
+
+    const intake = buildJusticeIntakeFromParts(parts);
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const contacted = intake.already_contacted === "yes";
+    const cfpbRel = cfpbLikelyRelevant(intake);
+    const fccRel = fccLikelyRelevant(intake);
+    const dotRel = dotLikelyRelevant(intake);
+    const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
+    const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+    const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
+    const nextActionTarget = buildApprovedNextActionTarget(prepared);
+    const withTracking = mergeApprovedNextActionTrackingFields(
+      approvedNextAction,
+      nextActionTarget
+    );
+
+    writePreparedPacketApproved(caseId);
+    writeSessionApprovedNextAction(caseId, withTracking);
+    setPreparedPacketApproved(true);
+    setApprovedNextAction(withTracking);
+    setApprovePreparedPacketChecked(false);
+
+    setApprovingPreparedPacket(true);
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before prepared packet approve failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged: JusticeCaseClientState = {
+        ...parseJusticeCaseClientState(existing.client_state),
+        prepared_packet_approved: true,
+        approved_next_action: withTracking,
+      };
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH prepared packet approve failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: prepared packet approve error", e);
+    } finally {
+      setApprovingPreparedPacket(false);
     }
   }
 
@@ -2094,6 +2174,39 @@ export default function JusticeChatAiPage() {
                 </li>
               ) : null}
             </ul>
+            {isUpdatingExistingCase &&
+            isLoaded &&
+            isSignedIn &&
+            activeUuidCaseId &&
+            activeCaseDraftReviewed &&
+            !preparedPacketApproved ? (
+              <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+                <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+                  Approve prepared packet
+                </p>
+                <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                  This approves the packet inside Surrenderless. It does not submit, file, or contact
+                  anyone.
+                </p>
+                <label className="flex cursor-pointer items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+                  <input
+                    type="checkbox"
+                    checked={approvePreparedPacketChecked}
+                    onChange={(e) => setApprovePreparedPacketChecked(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  I reviewed this prepared packet
+                </label>
+                <button
+                  type="button"
+                  disabled={!approvePreparedPacketChecked || approvingPreparedPacket}
+                  onClick={() => void handleApprovePreparedPacketFromChat()}
+                  className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                >
+                  {approvingPreparedPacket ? "Saving…" : "Approve prepared packet"}
+                </button>
+              </div>
+            ) : null}
             {approvedNextAction ? (
               <>
                 {approvedNextAction.label?.trim() ? (
