@@ -186,7 +186,9 @@ function HubHandlingTrackingStatusReadOnly({
   filings: JusticeCaseFilingRow[];
   markAcknowledgedOnScreen?: boolean;
 }) {
-  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
+  const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
+  if (!handlingRequested && !showApprovedPacketActionPath) return null;
   if (readinessLoading) {
     return (
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -699,6 +701,36 @@ export default function JusticeHubWorkspaceBody() {
           ) : null}
           {snapshot.packetApproved && snapshot.approvedNextAction ? (
             <>
+              {isApprovedPacketActionWithoutHandlingRequest({
+                prepared_packet_approved: snapshot.packetApproved,
+                approved_next_action: snapshot.approvedNextAction,
+              }) ? (
+                <>
+                  <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                    Approved case packet and next in-app step — not a Surrenderless handling request.
+                    Request Surrenderless handling from your action plan, case packet, or here on the hub when
+                    you want internal triage tracking.
+                  </p>
+                  <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
+                    <Link
+                      href="/justice/handling"
+                      className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      View on handling workbench
+                    </Link>
+                  </p>
+                  <HubHandlingTrackingStatusReadOnly
+                    readinessLoading={hubReadinessLoading}
+                    approvedNextAction={snapshot.approvedNextAction}
+                    basicsReady={basicsReady}
+                    draftReviewed={snapshot.reviewed}
+                    preparedPacketApproved={snapshot.packetApproved}
+                    evidenceCount={evidenceCount ?? 0}
+                    filings={filings}
+                    markAcknowledgedOnScreen={false}
+                  />
+                </>
+              ) : null}
               {snapshot.approvedNextAction.handling_requested_at?.trim() ? (
                 snapshot.approvedNextAction.status === "completed" ? (
                   <ApprovedNextActionHandlingRequestedReadOnly
