@@ -1231,8 +1231,14 @@ export default function JusticeChatAiPage() {
     }
 
     const navigateHref = local.href?.trim() || targetHref;
+    const shouldStayInChat =
+      isUpdatingExistingCase &&
+      isLoaded &&
+      isSignedIn &&
+      Boolean(caseId) &&
+      isUuid(caseId);
 
-    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) {
+    if (!shouldStayInChat) {
       router.push(navigateHref);
       return;
     }
@@ -1258,7 +1264,6 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: open approved step error", e);
     } finally {
       setMarkingActionStarted(false);
-      router.push(navigateHref);
     }
   }
 
@@ -2372,7 +2377,8 @@ export default function JusticeChatAiPage() {
                 approvedNextAction.label?.trim() ? (
                   <>
                     <p className="mt-1.5 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                      Opens your in-app step for tracking — nothing is filed or sent automatically.
+                      Records this step as opened in Surrenderless. It does not submit, file, or
+                      contact anyone.
                     </p>
                     <button
                       type="button"
@@ -2380,10 +2386,18 @@ export default function JusticeChatAiPage() {
                       onClick={() => void handleApprovedNextActionOpen()}
                       className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
                     >
-                      {markingActionStarted ? "Saving…" : `Open ${approvedNextAction.label}`}
+                      {markingActionStarted ? "Saving…" : "Mark step opened"}
                     </button>
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
+                    </p>
+                    <p className="mt-1.5 text-xs text-emerald-800 dark:text-emerald-200">
+                      <Link
+                        href={approvedNextAction.href.trim()}
+                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        Open {approvedNextAction.label.trim()} (optional)
+                      </Link>
                     </p>
                   </>
                 ) : null}
