@@ -152,6 +152,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   basicsReady,
   evidenceCount,
   markAcknowledgedOnScreen = false,
+  onNavigate,
   tone = "emerald",
   className = "mt-1 text-xs",
 }: {
@@ -161,6 +162,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   basicsReady?: boolean;
   evidenceCount?: number;
   markAcknowledgedOnScreen?: boolean;
+  onNavigate?: (href: string) => void;
   tone?: "emerald" | "neutral";
   className?: string;
 }) {
@@ -173,18 +175,25 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
     markAcknowledgedOnScreen,
   });
   if (!link) return null;
+  const linkCls =
+    tone === "neutral"
+      ? HANDLING_TRACKING_CONTEXTUAL_LINK_NEUTRAL_CLS
+      : HANDLING_TRACKING_CONTEXTUAL_LINK_EMERALD_CLS;
   return (
     <p className={className}>
-      <Link
-        href={link.href}
-        className={
-          tone === "neutral"
-            ? HANDLING_TRACKING_CONTEXTUAL_LINK_NEUTRAL_CLS
-            : HANDLING_TRACKING_CONTEXTUAL_LINK_EMERALD_CLS
-        }
-      >
-        {link.label}
-      </Link>
+      {onNavigate ? (
+        <button
+          type="button"
+          onClick={() => onNavigate(link.href)}
+          className={`${linkCls} cursor-pointer bg-transparent p-0`}
+        >
+          {link.label}
+        </button>
+      ) : (
+        <Link href={link.href} className={linkCls}>
+          {link.label}
+        </Link>
+      )}
     </p>
   );
 }
