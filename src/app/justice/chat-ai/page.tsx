@@ -46,6 +46,7 @@ import {
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
   readTimeline,
@@ -271,6 +272,133 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   );
 }
 
+const CHAT_HANDLING_TRACKING_COMPLETE = "Tracking complete for now.";
+
+function chatReadyForManualReview(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+}): boolean {
+  return input.basicsReady && input.draftReviewed && input.preparedPacketApproved;
+}
+
+function deriveChatManualActionNextStep(input: {
+  readyForExternalManualAction: boolean;
+  actionOpened: boolean;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
+  status: JusticeApprovedNextAction["status"];
+  outcomeNote?: string;
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+  followUpNeeded?: boolean;
+}): string {
+  if (!input.readyForExternalManualAction) {
+    return "Review packet and saved proof before external manual action.";
+  }
+  if (!input.actionOpened) {
+    return "Open the approved step and prepare the manual action.";
+  }
+  if (!input.hasFilingRecord) {
+    return "Add filing records from the case packet after external submission.";
+  }
+  if (!input.hasConfirmationOnFile) {
+    return "Add or edit the filing confirmation from the case packet after external submission.";
+  }
+  if (input.status === "completed" && !input.outcomeNote?.trim()) {
+    return "Record the handling outcome.";
+  }
+  if (
+    input.status === "completed" &&
+    input.outcomeNote?.trim() &&
+    input.handlingRequestedAt?.trim() &&
+    !input.handlingAcknowledgedAt?.trim()
+  ) {
+    return "Mark the handling request acknowledged.";
+  }
+  if (input.followUpNeeded === true) {
+    return "Review follow-up timing and mark follow-up handled when complete.";
+  }
+  return CHAT_HANDLING_TRACKING_COMPLETE;
+}
+
+function deriveChatHandlingTrackingLine(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+  next: JusticeApprovedNextAction;
+}): string {
+  const readyForManualReview = chatReadyForManualReview({
+    basicsReady: input.basicsReady,
+    draftReviewed: input.draftReviewed,
+    preparedPacketApproved: input.preparedPacketApproved,
+  });
+  const readyForExternalManualAction =
+    readyForManualReview && input.evidenceCount > 0;
+  const actionOpened = input.next.status === "started" || input.next.status === "completed";
+  const hasFilingRecord = input.filings.length > 0;
+  const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
+  return deriveChatManualActionNextStep({
+    readyForExternalManualAction,
+    actionOpened,
+    hasFilingRecord,
+    hasConfirmationOnFile,
+    status: input.next.status,
+    outcomeNote: input.next.outcome_note,
+    handlingRequestedAt: input.next.handling_requested_at,
+    handlingAcknowledgedAt: input.next.handling_acknowledged_at,
+    followUpNeeded: input.next.follow_up_needed === true,
+  });
+}
+
+function ChatHandlingTrackingStatusReadOnly({
+  readinessLoading,
+  approvedNextAction,
+  basicsReady,
+  draftReviewed,
+  preparedPacketApproved,
+  evidenceCount,
+  filings,
+}: {
+  readinessLoading: boolean;
+  approvedNextAction: JusticeApprovedNextAction;
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+}) {
+  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  if (readinessLoading) {
+    return (
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
+        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
+        Loading handling tracking context...
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
+        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
+        {deriveChatHandlingTrackingLine({
+          basicsReady,
+          draftReviewed,
+          preparedPacketApproved,
+          evidenceCount,
+          filings,
+          next: approvedNextAction,
+        })}
+      </p>
+      <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        In-app tracking only — not filed or submitted.
+      </p>
+    </>
+  );
+}
+
 const CHAT_RECENT_EVIDENCE_MAX = 3;
 const CHAT_EVIDENCE_DESC_PREVIEW_MAX = 120;
 
@@ -450,6 +578,8 @@ export default function JusticeChatAiPage() {
   );
   const [preparedPacketApproved, setPreparedPacketApproved] = useState(false);
   const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
+  const [savedFilings, setSavedFilings] = useState<JusticeCaseFilingRow[]>([]);
+  const [chatHandlingReadinessLoading, setChatHandlingReadinessLoading] = useState(false);
   const [recentEvidenceRows, setRecentEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [proofNoteTitle, setProofNoteTitle] = useState("");
   const [proofNoteType, setProofNoteType] = useState<JusticeEvidenceType>("other");
@@ -845,6 +975,8 @@ export default function JusticeChatAiPage() {
   const loadSavedEvidencePreview = useCallback(async (signal: AbortSignal) => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
+      setSavedFilings([]);
+      setChatHandlingReadinessLoading(false);
       setRecentEvidenceRows([]);
       return;
     }
@@ -852,41 +984,44 @@ export default function JusticeChatAiPage() {
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
+      setSavedFilings([]);
+      setChatHandlingReadinessLoading(false);
       setRecentEvidenceRows([]);
       return;
     }
+    setChatHandlingReadinessLoading(true);
     try {
-      const res = await fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, {
-        signal,
-      });
-      if (!res.ok) {
-        if (!signal.aborted) {
-          setSavedEvidenceCount(null);
-          setRecentEvidenceRows([]);
-        }
-        return;
+      const [evRes, filRes] = await Promise.all([
+        fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, { signal }),
+        fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`, { signal }),
+      ]);
+      if (signal.aborted) return;
+      const evJson: unknown = evRes.ok ? await evRes.json() : [];
+      const filJson: unknown = filRes.ok ? await filRes.json() : [];
+      const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
+      const count = rows.length;
+      if (sessionBaselineEvidenceCountRef.current === null) {
+        sessionBaselineEvidenceCountRef.current = count;
       }
-      const evJson: unknown = await res.json();
-      if (!signal.aborted) {
-        const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
-        const count = rows.length;
-        if (sessionBaselineEvidenceCountRef.current === null) {
-          sessionBaselineEvidenceCountRef.current = count;
-        }
-        setSavedEvidenceCount(count);
-        setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
-      }
+      setSavedEvidenceCount(count);
+      setSavedFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
+      setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
     } catch {
       if (!signal.aborted) {
         setSavedEvidenceCount(null);
+        setSavedFilings([]);
         setRecentEvidenceRows([]);
       }
+    } finally {
+      if (!signal.aborted) setChatHandlingReadinessLoading(false);
     }
   }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
+      setSavedFilings([]);
+      setChatHandlingReadinessLoading(false);
       setRecentEvidenceRows([]);
       return;
     }
@@ -894,6 +1029,8 @@ export default function JusticeChatAiPage() {
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
+      setSavedFilings([]);
+      setChatHandlingReadinessLoading(false);
       setRecentEvidenceRows([]);
       return;
     }
@@ -1220,6 +1357,8 @@ export default function JusticeChatAiPage() {
       setApprovedNextAction(undefined);
       setPreparedPacketApproved(false);
       setSavedEvidenceCount(null);
+      setSavedFilings([]);
+      setChatHandlingReadinessLoading(false);
       setRecentEvidenceRows([]);
       setEditingRecentEvidenceId(null);
       setRecentEvidenceEditError(null);
@@ -1923,6 +2062,15 @@ export default function JusticeChatAiPage() {
                       handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
                       handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
                       className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                    />
+                    <ChatHandlingTrackingStatusReadOnly
+                      readinessLoading={chatHandlingReadinessLoading}
+                      approvedNextAction={approvedNextAction}
+                      basicsReady={activeCaseBasicsReady}
+                      draftReviewed={activeCaseDraftReviewed}
+                      preparedPacketApproved={preparedPacketApproved}
+                      evidenceCount={savedEvidenceCount ?? 0}
+                      filings={savedFilings}
                     />
                     {approvedNextAction.status === "completed" &&
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
