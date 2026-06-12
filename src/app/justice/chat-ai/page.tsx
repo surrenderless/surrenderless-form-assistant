@@ -24,6 +24,8 @@ import {
   ApprovedNextActionHandlingRequestedReadOnly,
   ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
+  HANDLING_TRACKING_STEP_ADD_CONFIRMATION,
+  HANDLING_TRACKING_STEP_ADD_FILING,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -354,6 +356,230 @@ function deriveChatHandlingTrackingLine(input: {
   });
 }
 
+const CHAT_FILING_INPUT_CLS =
+  "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
+
+function findChatFilingMissingConfirmation(
+  filings: JusticeCaseFilingRow[]
+): JusticeCaseFilingRow | undefined {
+  return filings.find((row) => !row.confirmation_number?.trim());
+}
+
+function ChatManualFilingCaptureForm({
+  mode,
+  caseId,
+  approvedNextAction,
+  filings,
+  onSaved,
+}: {
+  mode: "add_filing" | "add_confirmation";
+  caseId: string;
+  approvedNextAction: JusticeApprovedNextAction;
+  filings: JusticeCaseFilingRow[];
+  onSaved: () => void;
+}) {
+  const confirmationTarget = findChatFilingMissingConfirmation(filings);
+  const [destination, setDestination] = useState(() => approvedNextAction.label?.trim() ?? "");
+  const [filedAt, setFiledAt] = useState("");
+  const [confirmationNumber, setConfirmationNumber] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mode !== "add_filing") return;
+    const label = approvedNextAction.label?.trim();
+    if (label) setDestination(label);
+  }, [mode, approvedNextAction.label]);
+
+  async function handleAddFiling(e: FormEvent) {
+    e.preventDefault();
+    const dest = destination.trim();
+    if (!dest) {
+      setError("Destination is required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        case_id: caseId,
+        destination: dest,
+      };
+      const fa = filedAt.trim();
+      if (fa) body.filed_at = fa;
+      const cn = confirmationNumber.trim();
+      if (cn) body.confirmation_number = cn;
+      const n = notes.trim();
+      if (n) body.notes = n;
+
+      const res = await fetch("/api/justice/filings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        setError(err.error ?? "Could not save filing record.");
+        return;
+      }
+      applyServerTimelineFromResponse(caseId, payload);
+      setFiledAt("");
+      setConfirmationNumber("");
+      setNotes("");
+      onSaved();
+    } catch {
+      setError("Could not save filing record.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAddConfirmation(e: FormEvent) {
+    e.preventDefault();
+    if (!confirmationTarget) {
+      setError("No filing record found to update.");
+      return;
+    }
+    const cn = confirmationNumber.trim();
+    const n = notes.trim();
+    if (!cn && !n) {
+      setError("Enter a confirmation number or notes.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        destination: confirmationTarget.destination,
+        filed_at: confirmationTarget.filed_at?.trim() ? confirmationTarget.filed_at.trim() : null,
+        filing_url: confirmationTarget.filing_url?.trim() ? confirmationTarget.filing_url.trim() : null,
+        confirmation_number: cn ? cn : confirmationTarget.confirmation_number?.trim() || null,
+        notes: n ? n : confirmationTarget.notes?.trim() || null,
+      };
+      const res = await fetch(`/api/justice/filings/${encodeURIComponent(confirmationTarget.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        setError(err.error ?? "Could not update filing record.");
+        return;
+      }
+      setConfirmationNumber("");
+      setNotes("");
+      onSaved();
+    } catch {
+      setError("Could not update filing record.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (mode === "add_confirmation" && !confirmationTarget) {
+    return null;
+  }
+
+  return (
+    <form
+      onSubmit={(e) =>
+        void (mode === "add_filing" ? handleAddFiling(e) : handleAddConfirmation(e))
+      }
+      className="mt-2 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
+      aria-label="Record manual filing"
+    >
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Record a manual action</p>
+      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+        This records what was done outside Surrenderless. It does not submit or file anything for you.
+      </p>
+      {mode === "add_filing" ? (
+        <>
+          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+            Where you filed or acted (required)
+            <input
+              type="text"
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              required
+              placeholder="e.g. BBB complaint, bank dispute"
+              className={CHAT_FILING_INPUT_CLS}
+            />
+          </label>
+          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+            Date filed or acted (optional)
+            <input
+              type="text"
+              value={filedAt}
+              onChange={(e) => setFiledAt(e.target.value)}
+              placeholder="e.g. 2026-03-01"
+              className={CHAT_FILING_INPUT_CLS}
+            />
+          </label>
+          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+            Confirmation number (optional)
+            <input
+              type="text"
+              value={confirmationNumber}
+              onChange={(e) => setConfirmationNumber(e.target.value)}
+              className={CHAT_FILING_INPUT_CLS}
+            />
+          </label>
+          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+            Notes (optional)
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className={`${CHAT_FILING_INPUT_CLS} resize-y`}
+            />
+          </label>
+        </>
+      ) : (
+        <>
+          <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
+            Filing: <strong>{confirmationTarget!.destination}</strong>
+          </p>
+          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+            Confirmation number
+            <input
+              type="text"
+              value={confirmationNumber}
+              onChange={(e) => setConfirmationNumber(e.target.value)}
+              className={CHAT_FILING_INPUT_CLS}
+            />
+          </label>
+          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
+            Notes (optional)
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className={`${CHAT_FILING_INPUT_CLS} resize-y`}
+            />
+          </label>
+        </>
+      )}
+      {error ? (
+        <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {saving ? "Saving…" : mode === "add_filing" ? "Save filing record" : "Save confirmation"}
+      </button>
+    </form>
+  );
+}
+
 function ChatHandlingTrackingStatusReadOnly({
   readinessLoading,
   approvedNextAction,
@@ -363,6 +589,9 @@ function ChatHandlingTrackingStatusReadOnly({
   evidenceCount,
   filings,
   markAcknowledgedOnScreen = false,
+  canCaptureFiling = false,
+  caseId = "",
+  onFilingsSaved,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -372,6 +601,9 @@ function ChatHandlingTrackingStatusReadOnly({
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
   markAcknowledgedOnScreen?: boolean;
+  canCaptureFiling?: boolean;
+  caseId?: string;
+  onFilingsSaved?: () => void;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
   const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
@@ -392,6 +624,13 @@ function ChatHandlingTrackingStatusReadOnly({
     filings,
     next: approvedNextAction,
   });
+  const showInlineFilingCapture =
+    canCaptureFiling &&
+    Boolean(caseId) &&
+    (derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ||
+      derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION);
+  const inlineFilingMode =
+    derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ? "add_filing" : "add_confirmation";
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -401,14 +640,25 @@ function ChatHandlingTrackingStatusReadOnly({
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         In-app tracking only — not filed or submitted.
       </p>
-      <ApprovedNextActionHandlingTrackingContextualLink
-        derivedStep={derivedStep}
-        approvedNextAction={approvedNextAction}
-        surface="chat-ai"
-        basicsReady={basicsReady}
-        evidenceCount={evidenceCount}
-        markAcknowledgedOnScreen={markAcknowledgedOnScreen}
-      />
+      {!showInlineFilingCapture ? (
+        <ApprovedNextActionHandlingTrackingContextualLink
+          derivedStep={derivedStep}
+          approvedNextAction={approvedNextAction}
+          surface="chat-ai"
+          basicsReady={basicsReady}
+          evidenceCount={evidenceCount}
+          markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+        />
+      ) : null}
+      {showInlineFilingCapture && onFilingsSaved ? (
+        <ChatManualFilingCaptureForm
+          mode={inlineFilingMode}
+          caseId={caseId}
+          approvedNextAction={approvedNextAction}
+          filings={filings}
+          onSaved={onFilingsSaved}
+        />
+      ) : null}
     </>
   );
 }
@@ -1053,6 +1303,11 @@ export default function JusticeChatAiPage() {
     void loadSavedEvidencePreview(ac.signal);
     return () => ac.abort();
   }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidencePreview]);
+
+  const refreshChatFilings = useCallback(() => {
+    const ac = new AbortController();
+    void loadSavedEvidencePreview(ac.signal);
+  }, [loadSavedEvidencePreview]);
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
@@ -2044,6 +2299,9 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       markAcknowledgedOnScreen={false}
+                      canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
+                      caseId={activeUuidCaseId}
+                      onFilingsSaved={refreshChatFilings}
                     />
                   </>
                 ) : null}
@@ -2096,6 +2354,9 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
+                      canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
+                      caseId={activeUuidCaseId}
+                      onFilingsSaved={refreshChatFilings}
                     />
                     {approvedNextAction.status === "completed" &&
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
