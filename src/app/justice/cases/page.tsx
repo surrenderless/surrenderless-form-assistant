@@ -22,6 +22,7 @@ import {
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestNoteReadOnly,
+  ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
   formatHandlingRecordedInline,
   formatHandlingRecordedLine,
@@ -161,6 +162,15 @@ function CaseApprovedNextActionTracking({
               <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
                 In-app tracking only — not filed or submitted.
               </p>
+              <ApprovedNextActionHandlingTrackingContextualLink
+                derivedStep={deriveCasesHandlingTrackingLine(caseRow, next, progress)}
+                approvedNextAction={next}
+                surface="cases"
+                basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
+                evidenceCount={progress.evidenceCount}
+                markAcknowledgedOnScreen={showAllCasesInlineAck}
+                tone="neutral"
+              />
             </>
           ) : null}
           {showHandledOpenHandlingTriageNote ? (
