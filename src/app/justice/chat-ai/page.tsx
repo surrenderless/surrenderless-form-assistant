@@ -373,7 +373,9 @@ function ChatHandlingTrackingStatusReadOnly({
   filings: JusticeCaseFilingRow[];
   markAcknowledgedOnScreen?: boolean;
 }) {
-  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
+  const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
+  if (!handlingRequested && !showApprovedPacketActionPath) return null;
   if (readinessLoading) {
     return (
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -2033,6 +2035,16 @@ export default function JusticeChatAiPage() {
                         View on handling workbench
                       </Link>
                     </p>
+                    <ChatHandlingTrackingStatusReadOnly
+                      readinessLoading={chatHandlingReadinessLoading}
+                      approvedNextAction={approvedNextAction}
+                      basicsReady={activeCaseBasicsReady}
+                      draftReviewed={activeCaseDraftReviewed}
+                      preparedPacketApproved={preparedPacketApproved}
+                      evidenceCount={savedEvidenceCount ?? 0}
+                      filings={savedFilings}
+                      markAcknowledgedOnScreen={false}
+                    />
                   </>
                 ) : null}
                 {approvedNextAction.handling_requested_at?.trim() ? (

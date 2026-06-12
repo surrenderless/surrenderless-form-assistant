@@ -178,7 +178,9 @@ function PlanHandlingTrackingStatusReadOnly({
   filings: JusticeCaseFilingRow[];
   markAcknowledgedOnScreen?: boolean;
 }) {
-  if (!approvedNextAction.handling_requested_at?.trim()) return null;
+  const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
+  const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
+  if (!handlingRequested && !showApprovedPacketActionPath) return null;
   if (readinessLoading) {
     return (
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -1542,6 +1544,18 @@ export default function JusticePlanPage() {
                         View on handling workbench
                       </Link>
                     </p>
+                    {approvedNextAction ? (
+                      <PlanHandlingTrackingStatusReadOnly
+                        readinessLoading={readinessLoading}
+                        approvedNextAction={approvedNextAction}
+                        basicsReady={basicsReady}
+                        draftReviewed={draftReviewed}
+                        preparedPacketApproved={preparedPacketApproved}
+                        evidenceCount={evidenceCount}
+                        filings={filings}
+                        markAcknowledgedOnScreen={false}
+                      />
+                    ) : null}
                   </>
                 ) : null}
                 {approvedNextAction?.handling_requested_at?.trim() ? (
@@ -1884,6 +1898,18 @@ export default function JusticePlanPage() {
                     View on handling workbench
                   </Link>
                 </p>
+                {approvedNextAction ? (
+                  <PlanHandlingTrackingStatusReadOnly
+                    readinessLoading={readinessLoading}
+                    approvedNextAction={approvedNextAction}
+                    basicsReady={basicsReady}
+                    draftReviewed={draftReviewed}
+                    preparedPacketApproved={preparedPacketApproved}
+                    evidenceCount={evidenceCount}
+                    filings={filings}
+                    markAcknowledgedOnScreen={false}
+                  />
+                ) : null}
               </>
             ) : null}
             {approvedNextAction?.handling_requested_at?.trim() ? (
