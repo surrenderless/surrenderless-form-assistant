@@ -534,16 +534,8 @@ export default function JusticeHubWorkspaceBody() {
     evidenceCount !== null &&
     evidenceCount < 1;
 
-  const primaryHref = !snapshot?.reviewed
-    ? "/justice/preview"
-    : snapshot.packetApproved
-      ? "/justice/plan"
-      : "/justice/packet";
-  const primaryLabel = !snapshot?.reviewed
-    ? "Continue to submission preview"
-    : snapshot.packetApproved
-      ? "Continue to action plan"
-      : "Review prepared case packet";
+  const primaryHref = "/justice/chat-ai";
+  const primaryLabel = "Continue in chat";
 
   return (
     <>
