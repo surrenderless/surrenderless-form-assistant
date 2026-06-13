@@ -1695,6 +1695,21 @@ export default function JusticeChatAiPage() {
     });
   }, [isUpdatingExistingCase, parts, showSavedEvidenceCount, savedEvidenceCount]);
 
+  const chatPreviewIntake = useMemo(() => buildJusticeIntakeFromParts(parts), [parts]);
+  const chatPreviewDestination = useMemo(
+    () => resolveChatPreviewDestination(chatPreviewIntake),
+    [chatPreviewIntake]
+  );
+  const chatSubmissionDraftText = useMemo(() => {
+    if (!chatPreviewDestination) return "";
+    return buildSubmissionDraftPreview({
+      intake: chatPreviewIntake,
+      destinationId: chatPreviewDestination.id,
+      destinationLabel: chatPreviewDestination.label,
+      evidenceLines: recentEvidenceRows.map((row) => ({ title: row.title })),
+    });
+  }, [chatPreviewIntake, chatPreviewDestination, recentEvidenceRows]);
+
   const activeUuidCaseId =
     typeof window !== "undefined"
       ? (() => {
@@ -2253,20 +2268,6 @@ export default function JusticeChatAiPage() {
     ? submissionDraftReviewOverride ||
       submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
     : false;
-  const chatPreviewIntake = useMemo(() => buildJusticeIntakeFromParts(parts), [parts]);
-  const chatPreviewDestination = useMemo(
-    () => resolveChatPreviewDestination(chatPreviewIntake),
-    [chatPreviewIntake]
-  );
-  const chatSubmissionDraftText = useMemo(() => {
-    if (!chatPreviewDestination) return "";
-    return buildSubmissionDraftPreview({
-      intake: chatPreviewIntake,
-      destinationId: chatPreviewDestination.id,
-      destinationLabel: chatPreviewDestination.label,
-      evidenceLines: recentEvidenceRows.map((row) => ({ title: row.title })),
-    });
-  }, [chatPreviewIntake, chatPreviewDestination, recentEvidenceRows]);
   const showInlineSubmissionDraftReview =
     isUpdatingExistingCase &&
     isLoaded &&
