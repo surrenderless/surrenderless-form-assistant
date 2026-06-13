@@ -122,10 +122,10 @@ const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] 
 ];
 
 const OPENING_GREETING =
-  "Hi â€” tell me whatâ€™s going on with your consumer issue. Iâ€™ll ask follow-up questions and keep track of your case details. When weâ€™re done, you can review everything and continue to your submission preview.";
+  "Hi â€” tell me whatâ€™s going on with your consumer issue. Iâ€™ll ask follow-up questions and keep track of your case details. When weâ€™re done, you can review everything and save and continue in chat.";
 
 const UPDATE_GREETING =
-  "Your current case is loaded in the recap below. Tell me what youâ€™d like to add or change â€” Iâ€™ll update the details as we go. When youâ€™re ready, continue to your submission preview.";
+  "Your current case is loaded in the recap below. Tell me what youâ€™d like to add or change â€” Iâ€™ll update the details as we go. When youâ€™re ready, save and continue in chat.";
 
 const RECAP_STORY_MAX_LEN = 120;
 const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
@@ -242,6 +242,7 @@ type ContinueHandoffStepsInput = {
   isStagedFlushRetry: boolean;
   savedEvidenceCount: number;
   sessionChangeLines?: string[];
+  chatFirstContinuity?: boolean;
 };
 
 function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
@@ -249,14 +250,18 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
     "Open submission draft preview to review your case text (nothing is filed automatically).";
   const postPreviewFunnelStep =
     "After preview, review your prepared case packet, then continue to your action plan when ready. Nothing is filed automatically.";
+  const chatFirstDraftStep =
+    "Review your submission draft in the Active case checklist below (nothing is filed automatically).";
+  const chatFirstPacketStep = "Approve your prepared packet in chat when ready.";
+  const chatFirstTrackingStep =
+    "Continue next steps in Current action tracking below. Nothing is filed automatically.";
+  const funnelSteps = input.chatFirstContinuity
+    ? [chatFirstDraftStep, chatFirstPacketStep, chatFirstTrackingStep]
+    : [previewStep, postPreviewFunnelStep];
 
   if (input.isStagedFlushRetry) {
     const noteWord = input.stagedCount === 1 ? "note" : "notes";
-    return [
-      `Save ${input.stagedCount} pending proof ${noteWord} to your case.`,
-      previewStep,
-      postPreviewFunnelStep,
-    ];
+    return [`Save ${input.stagedCount} pending proof ${noteWord} to your case.`, ...funnelSteps];
   }
 
   const steps: string[] = [];
@@ -282,7 +287,7 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
     }
   }
 
-  steps.push(previewStep, postPreviewFunnelStep);
+  steps.push(...funnelSteps);
   return steps;
 }
 
@@ -2341,6 +2346,7 @@ export default function JusticeChatAiPage() {
         isStagedFlushRetry,
         savedEvidenceCount: savedEvidenceCount ?? 0,
         sessionChangeLines: isUpdatingExistingCase ? sessionChangeLines : [],
+        chatFirstContinuity: Boolean(isSignedIn),
       })
     : [];
 
@@ -2356,6 +2362,13 @@ export default function JusticeChatAiPage() {
     Boolean(isSignedIn) &&
     Boolean(activeUuidCaseId) &&
     !activeCaseDraftReviewed;
+  const showInlinePreparedPacketApproval =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    activeCaseDraftReviewed &&
+    !preparedPacketApproved;
   const activeCaseProductLine = truncateActiveCaseProduct(parts.purchase_or_signup);
   const activeCaseSubline = [categoryLabel(parts.problem_category), activeCaseProductLine]
     .filter(Boolean)
@@ -2367,7 +2380,7 @@ export default function JusticeChatAiPage() {
       ? stillNeededBeforePreviewMessage(basicsMissing)
       : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
         ? "Review your submission draft before continuing."
-        : "Describe what to add or change, then continue to preview.";
+        : "Describe what to add or change, then save in chat.";
   const activeCaseWorkHref = resolveActiveCaseWorkHref(
     activeCaseDraftReviewed,
     preparedPacketApproved
@@ -2413,7 +2426,7 @@ export default function JusticeChatAiPage() {
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           {isUpdatingExistingCase
-            ? "Update your loaded case in a conversation â€” describe what to add or change, then continue to preview."
+            ? "Update your loaded case in a conversation — describe what to add or change, then save in chat."
             : "Tell us what happened in a conversation; we'll ask follow-up questions and track your case details."}{" "}
           Prefer one question at a time?{" "}
           <Link href="/justice/chat" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
@@ -2492,7 +2505,7 @@ export default function JusticeChatAiPage() {
               {activeCaseDraftReviewed ? (
                 <li>
                   Prepared case packet reviewed: {preparedPacketApproved ? "yes" : "not yet"}
-                  {!preparedPacketApproved ? (
+                  {!preparedPacketApproved && !showInlinePreparedPacketApproval ? (
                     <>
                       {" · "}
                       <Link href="/justice/packet" className={activeCaseChecklistLinkCls}>
@@ -2516,12 +2529,7 @@ export default function JusticeChatAiPage() {
                 onSubmit={() => void handleMarkSubmissionDraftReviewedFromChat()}
               />
             ) : null}
-            {isUpdatingExistingCase &&
-            isLoaded &&
-            isSignedIn &&
-            activeUuidCaseId &&
-            activeCaseDraftReviewed &&
-            !preparedPacketApproved ? (
+            {showInlinePreparedPacketApproval ? (
               <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
                 <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
                   Approve prepared packet
@@ -3408,7 +3416,7 @@ export default function JusticeChatAiPage() {
                   ))}
                 </ul>
                 <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-                  Review these updates, then continue to your submission draft preview when ready.
+                  Review these updates, then save in chat when ready.
                 </p>
               </div>
             ) : null}
@@ -3430,7 +3438,7 @@ export default function JusticeChatAiPage() {
               onClick={() => void handleContinueToPreview()}
               className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? "Saving…" : "Continue to submission preview"}
+              {submitting ? "Saving…" : "Save and continue in chat"}
             </button>
           </div>
         </div>
