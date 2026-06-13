@@ -146,6 +146,50 @@ function stillNeededBeforePreviewMessage(missing: string[]): string {
   return `Still needed before preview: ${missing.join(", ")}.`;
 }
 
+/** When the model sets contacted=yes but omits proof text, reuse the user's answer for Continue validation. */
+function synthesizeContactProofTextFromChat(
+  parts: BuildJusticeIntakeParts,
+  latestUserMessage: string
+): string {
+  const userText = latestUserMessage.trim();
+  if (userText) return userText;
+
+  const segments: string[] = [];
+  if (parts.contact_date.trim()) {
+    segments.push(`Contact date: ${parts.contact_date.trim()}`);
+  }
+  if (parts.contact_method) {
+    segments.push(`Contact method: ${parts.contact_method.replace(/_/g, " ")}`);
+  }
+  if (parts.merchant_response_type) {
+    segments.push(`Merchant response: ${parts.merchant_response_type.replace(/_/g, " ")}`);
+  }
+  return segments.join(". ");
+}
+
+function enrichContactProofPartsAfterChatTurn(
+  parts: BuildJusticeIntakeParts,
+  latestUserMessage: string
+): BuildJusticeIntakeParts {
+  if (parts.already_contacted !== "yes" || parts.contact_proof_text.trim()) {
+    return parts;
+  }
+
+  const synthesized = synthesizeContactProofTextFromChat(parts, latestUserMessage).trim();
+  if (!synthesized) return parts;
+
+  const candidate: BuildJusticeIntakeParts = {
+    ...parts,
+    contact_proof_text: synthesized,
+  };
+  const proofCheck = validateContactProofForIntake({
+    already_contacted: candidate.already_contacted,
+    contact_proof_type: candidate.contact_proof_type,
+    contact_proof_text: candidate.contact_proof_text,
+  });
+  return proofCheck.ok ? candidate : parts;
+}
+
 const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
 
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
@@ -304,15 +348,17 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   );
 }
 
-function shouldStayInChatAfterLoadedCaseSave(input: {
+function shouldStayInChatAfterSignedInUuidCaseSave(input: {
   isUpdatingExistingCase: boolean;
   isLoaded: boolean;
   isSignedIn: boolean;
   caseId: string;
+  serverPersisted?: boolean;
 }): boolean {
-  if (!input.isUpdatingExistingCase || !input.isLoaded || !input.isSignedIn) return false;
+  if (!input.isLoaded || !input.isSignedIn) return false;
   if (!input.caseId || !isUuid(input.caseId)) return false;
-  return true;
+  if (input.isUpdatingExistingCase) return true;
+  return Boolean(input.serverPersisted);
 }
 
 const CHAT_DRAFT_PREVIEW_TRUNCATE = 720;
@@ -2053,6 +2099,17 @@ export default function JusticeChatAiPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
+  useEffect(() => {
+    const proofCheck = validateContactProofForIntake({
+      already_contacted: parts.already_contacted,
+      contact_proof_type: parts.contact_proof_type,
+      contact_proof_text: parts.contact_proof_text,
+    });
+    if (proofCheck.ok) {
+      setContactProofError(null);
+    }
+  }, [parts.already_contacted, parts.contact_proof_type, parts.contact_proof_text]);
+
   async function handleSend() {
     if (sendInFlightRef.current || loading) return;
 
@@ -2103,7 +2160,7 @@ export default function JusticeChatAiPage() {
         { id: msgId(), role: "user", text: trimmed },
         { id: msgId(), role: "assistant", text: data.assistantMessage!.trim() },
       ]);
-      setParts(data.parts);
+      setParts(enrichContactProofPartsAfterChatTurn(data.parts, trimmed));
       setInputValue("");
       tryShowProofKeywordNudge(trimmed);
     } catch {
@@ -2159,11 +2216,12 @@ export default function JusticeChatAiPage() {
         }
 
         if (
-          shouldStayInChatAfterLoadedCaseSave({
+          shouldStayInChatAfterSignedInUuidCaseSave({
             isUpdatingExistingCase,
             isLoaded,
             isSignedIn: Boolean(isSignedIn),
             caseId: existingCaseId,
+            serverPersisted: true,
           })
         ) {
           return;
@@ -2217,13 +2275,18 @@ export default function JusticeChatAiPage() {
         (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "");
 
       if (
-        shouldStayInChatAfterLoadedCaseSave({
+        shouldStayInChatAfterSignedInUuidCaseSave({
           isUpdatingExistingCase,
           isLoaded,
           isSignedIn: Boolean(isSignedIn),
           caseId: caseIdAfterCommit,
+          serverPersisted: commitResult.serverPersisted,
         })
       ) {
+        if (!isUpdatingExistingCase) {
+          sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(parts);
+          setIsUpdatingExistingCase(true);
+        }
         return;
       }
 
@@ -2934,7 +2997,7 @@ export default function JusticeChatAiPage() {
                     Pending proof notes: {stagedProofNotes.length} item
                     {stagedProofNotes.length === 1 ? "" : "s"}
                     {canStageProofNoteInChat
-                      ? " (on this device until you continue to preview)."
+                      ? " (on this device until you save your case in chat)."
                       : " (pending upload — Continue to save to your case)."}
                   </p>
                   <ul className="mt-2 space-y-2">
@@ -3209,7 +3272,7 @@ export default function JusticeChatAiPage() {
                   <form className="mt-2 space-y-2" onSubmit={(e) => void handleAddProofNote(e)}>
                     <p className="text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
                       {canStageProofNoteInChat
-                        ? "Stage metadata about what you have on file (not a file upload). Staged on this device until you continue to preview."
+                        ? "Stage metadata about what you have on file (not a file upload). Staged on this device until you save your case in chat."
                         : "Save metadata about what you have on file (not a file upload)."}
                     </p>
                     <div>
