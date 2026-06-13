@@ -403,12 +403,6 @@ function casePreparedPacketApproved(row: CaseRow): boolean {
   return parseJusticeCaseClientState(row.client_state).prepared_packet_approved === true;
 }
 
-function resolveOpenCaseHref(row: CaseRow): string {
-  if (!caseDraftReviewed(row)) return "/justice/preview";
-  if (!casePreparedPacketApproved(row)) return "/justice/packet";
-  return "/justice/plan";
-}
-
 const casesChecklistLinkCls =
   "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
 
@@ -927,8 +921,7 @@ export default function JusticeCasesPage() {
   }
 
   function openCase(row: CaseRow) {
-    activateCaseInSession(row);
-    router.push(resolveOpenCaseHref(row));
+    openUpdateInChat(row);
   }
 
   function openUpdateInChat(row: CaseRow) {
