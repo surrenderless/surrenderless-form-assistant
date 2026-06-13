@@ -2395,6 +2395,17 @@ export default function JusticeChatAiPage() {
       : activeCaseDraftReviewed && !preparedPacketApproved
         ? { href: "/justice/plan", label: "Action plan" }
         : null;
+  const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
+  const breadcrumbWorkHref = chatFirstWorkLinkContinuity
+    ? "/justice"
+    : isUpdatingExistingCase
+      ? activeCaseWorkHref
+      : "/justice/plan";
+  const breadcrumbWorkLabel = chatFirstWorkLinkContinuity
+    ? "Justice workspace"
+    : isUpdatingExistingCase
+      ? activeCaseWorkLabel
+      : "Action plan";
 
   return (
     <>
@@ -2406,10 +2417,10 @@ export default function JusticeChatAiPage() {
           </Link>
           {" · "}
           <Link
-            href={isUpdatingExistingCase ? activeCaseWorkHref : "/justice/plan"}
+            href={breadcrumbWorkHref}
             className="text-blue-600 hover:underline"
           >
-            {isUpdatingExistingCase ? activeCaseWorkLabel : "Action plan"}
+            {breadcrumbWorkLabel}
           </Link>
           {" · "}
           <Link href="/justice/chat" className="text-blue-600 hover:underline">
@@ -2594,25 +2605,27 @@ export default function JusticeChatAiPage() {
               </>
             ) : null}
             <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
-            <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-              <Link
-                href={activeCaseWorkHref}
-                className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-              >
-                {activeCaseWorkLabel}
-              </Link>
-              {activeCaseSecondaryWorkLink ? (
-                <>
-                  <span className="text-neutral-400 dark:text-neutral-500">·</span>
-                  <Link
-                    href={activeCaseSecondaryWorkLink.href}
-                    className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                  >
-                    {activeCaseSecondaryWorkLink.label}
-                  </Link>
-                </>
-              ) : null}
-            </p>
+            {!chatFirstWorkLinkContinuity ? (
+              <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                <Link
+                  href={activeCaseWorkHref}
+                  className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  {activeCaseWorkLabel}
+                </Link>
+                {activeCaseSecondaryWorkLink ? (
+                  <>
+                    <span className="text-neutral-400 dark:text-neutral-500">·</span>
+                    <Link
+                      href={activeCaseSecondaryWorkLink.href}
+                      className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                    >
+                      {activeCaseSecondaryWorkLink.label}
+                    </Link>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -2963,25 +2976,27 @@ export default function JusticeChatAiPage() {
                     </p>
                   </div>
                 ) : null}
-                <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                  <Link
-                    href={activeCaseWorkHref}
-                    className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                  >
-                    {activeCaseWorkLabel}
-                  </Link>
-                  {activeCaseSecondaryWorkLink ? (
-                    <>
-                      <span className="text-emerald-700/60 dark:text-emerald-400/60">·</span>
-                      <Link
-                        href={activeCaseSecondaryWorkLink.href}
-                        className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                      >
-                        {activeCaseSecondaryWorkLink.label}
-                      </Link>
-                    </>
-                  ) : null}
-                </p>
+                {!chatFirstWorkLinkContinuity ? (
+                  <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                    <Link
+                      href={activeCaseWorkHref}
+                      className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                    >
+                      {activeCaseWorkLabel}
+                    </Link>
+                    {activeCaseSecondaryWorkLink ? (
+                      <>
+                        <span className="text-emerald-700/60 dark:text-emerald-400/60">·</span>
+                        <Link
+                          href={activeCaseSecondaryWorkLink.href}
+                          className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                        >
+                          {activeCaseSecondaryWorkLink.label}
+                        </Link>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
