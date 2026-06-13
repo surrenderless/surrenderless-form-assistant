@@ -847,6 +847,12 @@ function chatEvidenceTypeLabel(t: string): string {
   return isJusticeEvidenceType(t) ? JUSTICE_EVIDENCE_TYPE_LABELS[t] : t.replace(/_/g, " ");
 }
 
+function isCreatedEvidenceRow(payload: unknown): payload is JusticeCaseEvidenceRow {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const row = payload as JusticeCaseEvidenceRow;
+  return typeof row.id === "string" && typeof row.title === "string";
+}
+
 function truncateChatEvidenceDescription(text: string | null, max: number): string {
   if (!text?.trim()) return "";
   const trimmed = text.trim();
@@ -1608,6 +1614,13 @@ export default function JusticeChatAiPage() {
     }
   }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
 
+  const requestSavedEvidencePreviewRefresh = useCallback(() => {
+    evidenceRefetchAbortRef.current?.abort();
+    const ac = new AbortController();
+    evidenceRefetchAbortRef.current = ac;
+    void loadSavedEvidencePreview(ac.signal);
+  }, [loadSavedEvidencePreview]);
+
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
@@ -1626,15 +1639,10 @@ export default function JusticeChatAiPage() {
       return;
     }
 
-    const ac = new AbortController();
-    void loadSavedEvidencePreview(ac.signal);
-    return () => ac.abort();
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidencePreview]);
+    requestSavedEvidencePreviewRefresh();
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, requestSavedEvidencePreviewRefresh]);
 
-  const refreshChatFilings = useCallback(() => {
-    const ac = new AbortController();
-    void loadSavedEvidencePreview(ac.signal);
-  }, [loadSavedEvidencePreview]);
+  const refreshChatFilings = requestSavedEvidencePreviewRefresh;
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
@@ -1643,10 +1651,7 @@ export default function JusticeChatAiPage() {
       const caseId =
         typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
       if (!caseId || !isUuid(caseId)) return;
-      evidenceRefetchAbortRef.current?.abort();
-      const ac = new AbortController();
-      evidenceRefetchAbortRef.current = ac;
-      void loadSavedEvidencePreview(ac.signal);
+      requestSavedEvidencePreviewRefresh();
     }
 
     function onFocus() {
@@ -1666,7 +1671,7 @@ export default function JusticeChatAiPage() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       evidenceRefetchAbortRef.current?.abort();
     };
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn, loadSavedEvidencePreview]);
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, requestSavedEvidencePreviewRefresh]);
 
   const showSavedEvidenceCount =
     isUpdatingExistingCase &&
@@ -1809,13 +1814,18 @@ export default function JusticeChatAiPage() {
         return;
       }
       applyServerTimelineFromResponse(caseId, payload);
+      if (isCreatedEvidenceRow(payload)) {
+        setSavedEvidenceCount((prev) => (prev ?? 0) + 1);
+        setRecentEvidenceRows((prev) =>
+          [payload, ...prev.filter((row) => row.id !== payload.id)].slice(0, CHAT_RECENT_EVIDENCE_MAX)
+        );
+      }
       setProofNoteTitle("");
       setProofNoteEvidenceDate("");
       setProofNoteDescription("");
       setProofNoteSuccess("Proof note saved.");
       setShowProofKeywordNudge(false);
-      const ac = new AbortController();
-      void loadSavedEvidencePreview(ac.signal);
+      requestSavedEvidencePreviewRefresh();
     } catch {
       setProofNoteError("Could not save proof note.");
     } finally {
@@ -1922,8 +1932,7 @@ export default function JusticeChatAiPage() {
       }
       setEditingRecentEvidenceId(null);
       setRecentEvidenceEditSuccess("Proof note updated.");
-      const ac = new AbortController();
-      void loadSavedEvidencePreview(ac.signal);
+      requestSavedEvidencePreviewRefresh();
     } catch {
       setRecentEvidenceEditError("Could not update proof note.");
     } finally {
@@ -1954,8 +1963,7 @@ export default function JusticeChatAiPage() {
         cancelEditRecentEvidence();
       }
       setRecentEvidenceDeleteSuccess("Proof note deleted.");
-      const ac = new AbortController();
-      void loadSavedEvidencePreview(ac.signal);
+      requestSavedEvidencePreviewRefresh();
     } catch {
       setRecentEvidenceDeleteError("Could not delete proof note.");
     } finally {
