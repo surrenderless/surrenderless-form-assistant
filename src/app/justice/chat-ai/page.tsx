@@ -36,7 +36,6 @@ import {
   approvedNextActionStatusLabel,
   clearFollowUpFromApprovedNextAction,
   hydrateApprovedNextActionForDisplay,
-  isApprovedPacketActionWithoutHandlingRequest,
   mergeApprovedNextActionTrackingFields,
   parseJusticeCaseClientState,
   mergeClientStateWithAcknowledgedHandling,
@@ -425,7 +424,23 @@ function ChatInlineSubmissionDraftReviewBlock({
   );
 }
 
-const CHAT_HANDLING_TRACKING_COMPLETE = "Tracking complete for now.";
+const CHAT_FILING_INPUT_CLS =
+  "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
+
+function showChatApprovedPacketActionHandlingTracking(input: {
+  preparedPacketApproved: boolean;
+  approvedNextAction: JusticeApprovedNextAction;
+}): boolean {
+  if (!input.preparedPacketApproved) return false;
+  if (input.approvedNextAction.handling_requested_at?.trim()) return false;
+  const status = input.approvedNextAction.status;
+  return status === "approved" || status === "started" || status === "completed";
+}
+
+function chatOutcomeTrackingFormOpen(action: JusticeApprovedNextAction): boolean {
+  if (!action.outcome_note?.trim()) return true;
+  return action.follow_up_needed === true;
+}
 
 function chatReadyForManualReview(input: {
   basicsReady: boolean;
@@ -472,7 +487,7 @@ function deriveChatManualActionNextStep(input: {
   if (input.followUpNeeded === true) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
-  return CHAT_HANDLING_TRACKING_COMPLETE;
+  return HANDLING_TRACKING_STEP_COMPLETE;
 }
 
 function deriveChatHandlingTrackingLine(input: {
@@ -505,9 +520,6 @@ function deriveChatHandlingTrackingLine(input: {
     followUpNeeded: input.next.follow_up_needed === true,
   });
 }
-
-const CHAT_FILING_INPUT_CLS =
-  "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
 
 function findChatFilingMissingConfirmation(
   filings: JusticeCaseFilingRow[]
@@ -758,7 +770,7 @@ function ChatHandlingTrackingStatusReadOnly({
   caseId?: string;
   onFilingsSaved?: () => void;
   canArchiveCase?: boolean;
-  onArchiveCase?: () => void;
+  onArchiveCase?: (caseId: string) => void;
   archiving?: boolean;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
@@ -829,7 +841,7 @@ function ChatHandlingTrackingStatusReadOnly({
           <button
             type="button"
             disabled={archiving}
-            onClick={() => void onArchiveCase!()}
+            onClick={() => onArchiveCase?.(caseId)}
             className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
           >
             {archiving ? "Archiving…" : "Archive case"}
@@ -1116,10 +1128,9 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleArchiveActiveCase() {
-    if (!isLoaded || !isSignedIn) return;
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+  async function handleArchiveActiveCase(archiveCaseId: string) {
+    if (!isLoaded) return;
+    const caseId = archiveCaseId.trim();
     if (!caseId || !isUuid(caseId)) return;
 
     setArchivingCase(true);
@@ -2713,15 +2724,21 @@ export default function JusticeChatAiPage() {
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
-                    <ApprovedNextActionOutcomeTrackingForm
-                      action={approvedNextAction}
-                      onSave={handleSaveApprovedNextActionTracking}
-                    />
+                    {chatOutcomeTrackingFormOpen(approvedNextAction) ? (
+                      <ApprovedNextActionOutcomeTrackingForm
+                        action={approvedNextAction}
+                        onSave={handleSaveApprovedNextActionTracking}
+                      />
+                    ) : approvedNextAction.outcome_note?.trim() ? (
+                      <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                        {approvedNextAction.outcome_note.trim()}
+                      </p>
+                    ) : null}
                   </>
                 ) : null}
-                {isApprovedPacketActionWithoutHandlingRequest({
-                  prepared_packet_approved: preparedPacketApproved,
-                  approved_next_action: approvedNextAction,
+                {showChatApprovedPacketActionHandlingTracking({
+                  preparedPacketApproved,
+                  approvedNextAction,
                 }) ? (
                   <>
                     <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
@@ -2749,7 +2766,7 @@ export default function JusticeChatAiPage() {
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
                       canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
-                      onArchiveCase={() => void handleArchiveActiveCase()}
+                      onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
                     />
                   </>
@@ -2807,7 +2824,7 @@ export default function JusticeChatAiPage() {
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
                       canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
-                      onArchiveCase={() => void handleArchiveActiveCase()}
+                      onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
                     />
                     {approvedNextAction.status === "completed" &&
