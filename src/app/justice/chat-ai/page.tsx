@@ -51,9 +51,11 @@ import {
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
+  appendSubmissionDraftReviewedOnce,
   readTimeline,
   SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID,
 } from "@/lib/justice/timeline";
@@ -67,7 +69,11 @@ import {
   dotLikelyRelevant,
   fccLikelyRelevant,
 } from "@/lib/justice/rules";
-import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
+import type {
+  JusticeApprovedNextAction,
+  JusticeCaseClientState,
+  JusticeDestination,
+} from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import {
   buildJusticeIntakeFromParts,
@@ -296,6 +302,126 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   const entries = caseId ? readTimeline(caseId) : [];
   return entries.some(
     (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
+  );
+}
+
+function shouldStayInChatForInlineDraftReview(input: {
+  isUpdatingExistingCase: boolean;
+  isLoaded: boolean;
+  isSignedIn: boolean;
+  caseId: string;
+}): boolean {
+  if (!input.isUpdatingExistingCase || !input.isLoaded || !input.isSignedIn) return false;
+  if (!input.caseId || !isUuid(input.caseId)) return false;
+  return !submissionDraftReviewedInTimeline(input.caseId);
+}
+
+const CHAT_DRAFT_PREVIEW_TRUNCATE = 720;
+
+function isChatPreviewSelectableDestination(d: JusticeDestination): boolean {
+  return d.status === "recommended" || d.status === "available";
+}
+
+function resolveChatPreviewDestination(intake: JusticeIntake): JusticeDestination | null {
+  const manualFtc =
+    typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+  const useCompanyContactLabels = cfpbLikelyRelevant(intake) || fccLikelyRelevant(intake);
+  const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+  const selectable = destinations.filter(isChatPreviewSelectableDestination);
+  const options = selectable.length > 0 ? selectable : destinations;
+  return options[0] ?? null;
+}
+
+function ChatInlineSubmissionDraftReviewBlock({
+  draftText,
+  destinationLabel,
+  checked,
+  onCheckedChange,
+  expanded,
+  onExpandedChange,
+  saving,
+  error,
+  onSubmit,
+}: {
+  draftText: string;
+  destinationLabel?: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  saving: boolean;
+  error: string | null;
+  onSubmit: () => void;
+}) {
+  const canTruncate = draftText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
+  const displayText =
+    expanded || !canTruncate ? draftText : `${draftText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-blue-300/80 bg-blue-50/60 px-3 py-2.5 dark:border-blue-800/60 dark:bg-blue-950/30">
+      <p className="text-xs font-medium text-blue-950 dark:text-blue-100">Review submission draft</p>
+      <p className="text-[11px] leading-relaxed text-blue-900/90 dark:text-blue-100/90">
+        Deterministic draft for your review — not filed or sent automatically.
+        {destinationLabel ? (
+          <>
+            {" "}
+            Related action: <strong>{destinationLabel}</strong>.
+          </>
+        ) : null}
+      </p>
+      {draftText ? (
+        <>
+          <pre className="max-h-[min(280px,40vh)] overflow-auto whitespace-pre-wrap rounded-md border border-blue-200/80 bg-white/80 p-2 text-[11px] leading-relaxed text-neutral-900 dark:border-blue-900/40 dark:bg-neutral-950/80 dark:text-neutral-100">
+            {displayText}
+          </pre>
+          {canTruncate ? (
+            <button
+              type="button"
+              onClick={() => onExpandedChange(!expanded)}
+              className="text-[11px] font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-[11px] text-blue-900/90 dark:text-blue-100/90">
+          Draft preview is not available yet. Use the full submission preview to review your case
+          text.
+        </p>
+      )}
+      <label className="flex cursor-pointer items-start gap-2 text-[11px] text-blue-900 dark:text-blue-100">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onCheckedChange(e.target.checked)}
+          disabled={!draftText}
+          className="mt-0.5"
+        />
+        I reviewed the submission draft shown above.
+      </label>
+      {error ? <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p> : null}
+      <button
+        type="button"
+        disabled={!checked || !draftText || saving}
+        onClick={() => void onSubmit()}
+        className="inline-flex rounded-lg border border-blue-500/80 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-600 dark:hover:bg-blue-500"
+      >
+        {saving ? "Saving…" : "Mark draft reviewed"}
+      </button>
+      <p className="text-xs text-blue-800 dark:text-blue-200">
+        <Link
+          href="/justice/preview"
+          className="font-medium underline underline-offset-2 hover:text-blue-950 dark:text-blue-300 dark:hover:text-blue-100"
+        >
+          Open full submission preview
+        </Link>
+        <span className="text-[11px] text-blue-900/80 dark:text-blue-100/80">
+          {" "}
+          (optional — includes AI-assisted draft)
+        </span>
+      </p>
+    </div>
   );
 }
 
@@ -921,8 +1047,68 @@ export default function JusticeChatAiPage() {
   const [archivingCase, setArchivingCase] = useState(false);
   const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
   const [approvingPreparedPacket, setApprovingPreparedPacket] = useState(false);
+  const [submissionDraftReviewChecked, setSubmissionDraftReviewChecked] = useState(false);
+  const [markingSubmissionDraftReviewed, setMarkingSubmissionDraftReviewed] = useState(false);
+  const [submissionDraftReviewError, setSubmissionDraftReviewError] = useState<string | null>(null);
+  const [submissionDraftReviewOverride, setSubmissionDraftReviewOverride] = useState(false);
+  const [draftPreviewExpanded, setDraftPreviewExpanded] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
+
+  async function handleMarkSubmissionDraftReviewedFromChat() {
+    if (!submissionDraftReviewChecked || !isLoaded) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId) return;
+
+    setMarkingSubmissionDraftReviewed(true);
+    setSubmissionDraftReviewError(null);
+    try {
+      const intake = buildJusticeIntakeFromParts(parts);
+      const destination = resolveChatPreviewDestination(intake);
+      const destinationLabel = destination?.label;
+
+      if (isSignedIn && isUuid(caseId)) {
+        const res = await fetch("/api/justice/submission-draft-reviewed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            case_id: caseId,
+            ...(destinationLabel ? { destination_label: destinationLabel } : {}),
+            used_ai: false,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { timeline?: unknown; error?: string };
+        if (!res.ok) {
+          setSubmissionDraftReviewError(
+            data.error ??
+              "The submission draft review was not saved to your case timeline. Please try again."
+          );
+          return;
+        }
+        if (!Array.isArray(data.timeline)) {
+          setSubmissionDraftReviewError(
+            "The submission draft review was not saved (invalid server response). Please try again."
+          );
+          return;
+        }
+        applyServerTimelineFromResponse(caseId, { timeline: data.timeline });
+      } else {
+        appendSubmissionDraftReviewedOnce(caseId, {
+          destinationLabel,
+          usedAi: false,
+        });
+      }
+
+      setSubmissionDraftReviewOverride(true);
+      setSubmissionDraftReviewChecked(false);
+      setDraftPreviewExpanded(false);
+    } catch {
+      setSubmissionDraftReviewError("Could not save draft review. Please try again.");
+    } finally {
+      setMarkingSubmissionDraftReviewed(false);
+    }
+  }
 
   async function handleArchiveActiveCase() {
     if (!isLoaded || !isSignedIn) return;
@@ -1778,6 +1964,10 @@ export default function JusticeChatAiPage() {
       setRecentEvidenceDeleteSuccess(null);
       setShowProofKeywordNudge(false);
       setProofNoteDetailsOpen(false);
+      setSubmissionDraftReviewOverride(false);
+      setSubmissionDraftReviewChecked(false);
+      setSubmissionDraftReviewError(null);
+      setDraftPreviewExpanded(false);
       return;
     }
 
@@ -1793,6 +1983,10 @@ export default function JusticeChatAiPage() {
     const sessionFallback = hydrateApprovedNextActionForDisplay(caseId);
     setApprovedNextAction(sessionFallback);
     setPreparedPacketApproved(readSessionPreparedPacketApproved(caseId));
+    setSubmissionDraftReviewOverride(false);
+    setSubmissionDraftReviewChecked(false);
+    setSubmissionDraftReviewError(null);
+    setDraftPreviewExpanded(false);
 
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
@@ -1930,6 +2124,17 @@ export default function JusticeChatAiPage() {
           return;
         }
 
+        if (
+          shouldStayInChatForInlineDraftReview({
+            isUpdatingExistingCase,
+            isLoaded,
+            isSignedIn: Boolean(isSignedIn),
+            caseId: existingCaseId,
+          })
+        ) {
+          return;
+        }
+
         router.push("/justice/preview");
         return;
       }
@@ -1971,6 +2176,21 @@ export default function JusticeChatAiPage() {
         writePreviewChatUpdateSummary(sessionChangeLines);
       } else {
         clearPreviewChatUpdateSummary();
+      }
+
+      const caseIdAfterCommit =
+        commitResult.caseId?.trim() ||
+        (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "");
+
+      if (
+        shouldStayInChatForInlineDraftReview({
+          isUpdatingExistingCase,
+          isLoaded,
+          isSignedIn: Boolean(isSignedIn),
+          caseId: caseIdAfterCommit,
+        })
+      ) {
+        return;
       }
 
       router.push("/justice/preview");
@@ -2030,8 +2250,29 @@ export default function JusticeChatAiPage() {
   const activeCaseSessionCaseId =
     typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
   const activeCaseDraftReviewed = activeCaseSessionCaseId
-    ? submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
+    ? submissionDraftReviewOverride ||
+      submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
     : false;
+  const chatPreviewIntake = useMemo(() => buildJusticeIntakeFromParts(parts), [parts]);
+  const chatPreviewDestination = useMemo(
+    () => resolveChatPreviewDestination(chatPreviewIntake),
+    [chatPreviewIntake]
+  );
+  const chatSubmissionDraftText = useMemo(() => {
+    if (!chatPreviewDestination) return "";
+    return buildSubmissionDraftPreview({
+      intake: chatPreviewIntake,
+      destinationId: chatPreviewDestination.id,
+      destinationLabel: chatPreviewDestination.label,
+      evidenceLines: recentEvidenceRows.map((row) => ({ title: row.title })),
+    });
+  }, [chatPreviewIntake, chatPreviewDestination, recentEvidenceRows]);
+  const showInlineSubmissionDraftReview =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    !activeCaseDraftReviewed;
   const activeCaseProductLine = truncateActiveCaseProduct(parts.purchase_or_signup);
   const activeCaseSubline = [categoryLabel(parts.problem_category), activeCaseProductLine]
     .filter(Boolean)
@@ -2156,7 +2397,7 @@ export default function JusticeChatAiPage() {
               </li>
               <li>
                 Submission draft reviewed: {activeCaseDraftReviewed ? "yes" : "not yet"}
-                {!activeCaseDraftReviewed ? (
+                {!activeCaseDraftReviewed && !showInlineSubmissionDraftReview ? (
                   <>
                     {" · "}
                     <Link href="/justice/preview" className={activeCaseChecklistLinkCls}>
@@ -2179,6 +2420,19 @@ export default function JusticeChatAiPage() {
                 </li>
               ) : null}
             </ul>
+            {showInlineSubmissionDraftReview ? (
+              <ChatInlineSubmissionDraftReviewBlock
+                draftText={chatSubmissionDraftText}
+                destinationLabel={chatPreviewDestination?.label}
+                checked={submissionDraftReviewChecked}
+                onCheckedChange={setSubmissionDraftReviewChecked}
+                expanded={draftPreviewExpanded}
+                onExpandedChange={setDraftPreviewExpanded}
+                saving={markingSubmissionDraftReviewed}
+                error={submissionDraftReviewError}
+                onSubmit={() => void handleMarkSubmissionDraftReviewedFromChat()}
+              />
+            ) : null}
             {isUpdatingExistingCase &&
             isLoaded &&
             isSignedIn &&
