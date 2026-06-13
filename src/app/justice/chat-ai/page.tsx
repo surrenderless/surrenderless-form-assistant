@@ -304,7 +304,7 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   );
 }
 
-function shouldStayInChatForInlineDraftReview(input: {
+function shouldStayInChatAfterLoadedCaseSave(input: {
   isUpdatingExistingCase: boolean;
   isLoaded: boolean;
   isSignedIn: boolean;
@@ -312,7 +312,7 @@ function shouldStayInChatForInlineDraftReview(input: {
 }): boolean {
   if (!input.isUpdatingExistingCase || !input.isLoaded || !input.isSignedIn) return false;
   if (!input.caseId || !isUuid(input.caseId)) return false;
-  return !submissionDraftReviewedInTimeline(input.caseId);
+  return true;
 }
 
 const CHAT_DRAFT_PREVIEW_TRUNCATE = 720;
@@ -2159,7 +2159,7 @@ export default function JusticeChatAiPage() {
         }
 
         if (
-          shouldStayInChatForInlineDraftReview({
+          shouldStayInChatAfterLoadedCaseSave({
             isUpdatingExistingCase,
             isLoaded,
             isSignedIn: Boolean(isSignedIn),
@@ -2217,7 +2217,7 @@ export default function JusticeChatAiPage() {
         (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "");
 
       if (
-        shouldStayInChatForInlineDraftReview({
+        shouldStayInChatAfterLoadedCaseSave({
           isUpdatingExistingCase,
           isLoaded,
           isSignedIn: Boolean(isSignedIn),
