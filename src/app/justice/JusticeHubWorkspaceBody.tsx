@@ -700,8 +700,7 @@ export default function JusticeHubWorkspaceBody() {
                 <>
                   <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
                     Approved case packet and next in-app step — not a Surrenderless handling request.
-                    Request Surrenderless handling from your action plan, case packet, or here on the hub when
-                    you want internal triage tracking.
+                    Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking.
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
@@ -844,8 +843,7 @@ export default function JusticeHubWorkspaceBody() {
                 <>
                   <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
                     Approved case packet and next in-app step — not a Surrenderless handling request.
-                    Request Surrenderless handling from your action plan, case packet, or here on the hub when
-                    you want internal triage tracking.
+                    Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking.
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
