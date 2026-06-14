@@ -127,8 +127,8 @@ export function resolveHandlingTrackingContextualLink(input: {
 
   if (derivedStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
     if (input.markAcknowledgedOnScreen) return null;
-    if (input.surface === "plan") return null;
-    return { href: "/justice/plan", label: "Mark acknowledged on action plan" };
+    if (input.surface === "chat-ai") return null;
+    return { href: "/justice/chat-ai", label: "Mark acknowledged in chat" };
   }
 
   if (derivedStep === HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP) {
