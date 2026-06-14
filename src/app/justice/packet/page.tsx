@@ -1503,7 +1503,7 @@ export default function JusticePacketPage() {
                   <>
                     <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
                       Approved case packet and next in-app step — not a Surrenderless handling request.
-                      Request handling from your action plan when you want internal triage tracking.
+                      Request Surrenderless handling from chat intake when you want internal triage tracking.
                     </p>
                     <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                       <Link
