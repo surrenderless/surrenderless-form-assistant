@@ -1120,7 +1120,10 @@ function HandlingWorkbenchCaseCard({
         {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <button type="button" onClick={onOpenActionPlan} className={navButtonPrimaryCls}>
+        <button type="button" onClick={onOpenChat} className={navButtonPrimaryCls}>
+          Update in chat
+        </button>
+        <button type="button" onClick={onOpenActionPlan} className={navButtonSecondaryCls}>
           Open action plan
         </button>
         {!compactNavigation ? (
@@ -1134,9 +1137,6 @@ function HandlingWorkbenchCaseCard({
             automatically.
           </p>
         ) : null}
-        <button type="button" onClick={onOpenChat} className={navButtonSecondaryCls}>
-          Update in chat
-        </button>
         {showApprovedStep ? (
           <button
             type="button"
