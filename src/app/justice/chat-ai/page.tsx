@@ -3265,8 +3265,9 @@ export default function JusticeChatAiPage() {
                 available yet.
               </p>
               <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
-                You can continue to your submission preview without proof for now. Before you escalate or submit
-                complaints, saving at least one proof note helps â€” nothing is filed automatically from this app yet.
+                You can continue in chat without proof for now. Review your submission draft in the Active case
+                checklist when ready. Before you escalate or submit complaints, saving at least one proof note helps —
+                nothing is filed automatically from this app yet.
               </p>
               {canAddProofNoteInChat && showProofKeywordNudge ? (
                 <div className="mt-3 rounded-lg border border-amber-200/90 bg-amber-50/80 px-3 py-2 dark:border-amber-800/60 dark:bg-amber-950/30">
