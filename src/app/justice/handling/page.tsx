@@ -1236,7 +1236,7 @@ function ApprovedPacketActionCaseCard({
       ) : null}
       <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
         Approved case packet and next in-app step — not a Surrenderless handling request. Request
-        handling from your action plan when you want internal triage tracking.
+        Surrenderless handling from chat intake when you want internal triage tracking.
       </p>
       {showRecordHandled ? (
         <>
@@ -1906,7 +1906,7 @@ export default function JusticeHandlingWorkbenchPage() {
                 </h2>
                 <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                   Cases where you approved your prepared case packet and next in-app step. This is not
-                  a Surrenderless handling request — request handling from your action plan when you
+                  a Surrenderless handling request — request Surrenderless handling from chat intake when you
                   want internal triage tracking.
                 </p>
                 <ul className="mt-3 space-y-3">
