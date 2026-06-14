@@ -363,6 +363,8 @@ export default function JusticePreviewPage() {
     );
   }
 
+  const signedInContinueToChat = isSignedIn && Boolean(caseId) && isUuid(caseId);
+
   return (
     <>
       <Header />
@@ -612,9 +614,11 @@ export default function JusticePreviewPage() {
           >
             {continueLoading
               ? "Saving…"
-              : preparedPacketApproved
-                ? "Continue to action plan"
-                : "Review prepared case packet"}
+              : signedInContinueToChat
+                ? "Continue in chat"
+                : preparedPacketApproved
+                  ? "Continue to action plan"
+                  : "Review prepared case packet"}
           </button>
         </div>
       </main>
