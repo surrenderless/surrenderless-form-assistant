@@ -1888,8 +1888,9 @@ export default function JusticeHandlingWorkbenchPage() {
           <p className="mt-8 text-sm text-red-600 dark:text-red-400">{loadError}</p>
         ) : !hasAnyWorkbenchContent ? (
           <p className="mt-8 text-sm text-neutral-600 dark:text-neutral-400">
-            No approved packet actions or handling requests yet. Approve your prepared case packet on
-            the action plan, or request Surrenderless handling when an approved next action is active.
+            No approved packet actions or handling requests yet. Approve your prepared case packet from
+            chat intake or on the case packet, or request Surrenderless handling when an approved next
+            action is active.
           </p>
         ) : (
           <div className="mt-8 space-y-10">
