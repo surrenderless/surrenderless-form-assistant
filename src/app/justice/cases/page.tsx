@@ -1143,7 +1143,7 @@ export default function JusticeCasesPage() {
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Saved cases</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Open a case you saved while signed in to continue your action plan.
+          Open a case you saved while signed in to continue in chat.
         </p>
         <p className="mt-3 text-sm">
           <Link
