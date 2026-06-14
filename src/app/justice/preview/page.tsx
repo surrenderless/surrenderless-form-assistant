@@ -305,7 +305,11 @@ export default function JusticePreviewPage() {
           usedAi,
         });
       }
-      router.push(preparedPacketApproved ? "/justice/plan" : "/justice/packet");
+      if (isSignedIn && cid && isUuid(cid)) {
+        router.push("/justice/chat-ai");
+      } else {
+        router.push(preparedPacketApproved ? "/justice/plan" : "/justice/packet");
+      }
     } finally {
       setContinueLoading(false);
     }
