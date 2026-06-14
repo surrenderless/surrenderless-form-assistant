@@ -244,7 +244,7 @@ function CaseApprovedNextActionTracking({
         <>
           <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
             Approved case packet and next in-app step — not a Surrenderless handling request.
-            Request handling from your action plan when you want internal triage tracking.
+            Request Surrenderless handling from chat intake when you want internal triage tracking.
           </p>
           <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
             <Link
@@ -1292,7 +1292,7 @@ export default function JusticeCasesPage() {
                         ) : null}
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                           Approved case packet and next in-app step — not a Surrenderless handling request.
-                          Request handling from your action plan when you want internal triage tracking.
+                          Request Surrenderless handling from chat intake when you want internal triage tracking.
                         </p>
                         <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                           {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
