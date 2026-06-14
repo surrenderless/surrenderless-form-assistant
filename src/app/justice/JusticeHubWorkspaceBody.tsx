@@ -881,19 +881,6 @@ export default function JusticeHubWorkspaceBody() {
             </span>
           </Link>
         </li>
-        {!snapshot ? (
-          <li>
-            <Link href="/justice/plan" className={`${cardCls} text-left`}>
-              <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                Continue current action plan
-              </span>
-              <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-                Open your plan when you already have a case in this browser — or follow prompts there to start or
-                resume.
-              </span>
-            </Link>
-          </li>
-        ) : null}
         <li>
           <Link href="/justice/intake" className={`${cardCls} text-left`}>
             <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Start with form intake</span>
