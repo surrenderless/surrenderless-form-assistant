@@ -122,7 +122,8 @@ export function resolveHandlingTrackingContextualLink(input: {
 
   if (derivedStep === HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
     if (input.surface === "plan") return null;
-    return { href: "/justice/plan", label: "Record outcome on action plan" };
+    if (input.surface === "chat-ai") return null;
+    return { href: "/justice/chat-ai", label: "Record outcome in chat" };
   }
 
   if (derivedStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
