@@ -159,7 +159,7 @@ export default function JusticeMerchantPage() {
         case_id: sessionStorage.getItem(STORAGE_CASE_ID),
         merchant_response_type: merchantResponseType,
       });
-      router.push("/justice/plan");
+      router.push("/justice/chat-ai");
     } finally {
       setSaving(false);
     }
@@ -404,7 +404,7 @@ export default function JusticeMerchantPage() {
             disabled={saving}
             className="w-full rounded-xl bg-blue-600 px-4 py-3.5 font-semibold text-white shadow-lg shadow-blue-900/25 transition hover:bg-blue-700 hover:shadow-xl disabled:opacity-60"
           >
-            {saving ? "Saving…" : "Save and return to action plan"}
+            {saving ? "Saving…" : "Save and continue in chat"}
           </button>
         </form>
 
