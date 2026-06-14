@@ -1516,10 +1516,10 @@ export default function JusticePacketPage() {
                   </>
                 ) : null}
                 <Link
-                  href="/justice/plan"
+                  href="/justice/chat-ai"
                   className={`${approvedNextAction?.href ? "mt-2 ml-4" : "mt-2"} inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100`}
                 >
-                  Continue from action plan
+                  Continue in chat
                 </Link>
               </div>
             ) : (
