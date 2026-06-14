@@ -2396,12 +2396,13 @@ export default function JusticeChatAiPage() {
         ? { href: "/justice/plan", label: "Action plan" }
         : null;
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
-  const breadcrumbWorkHref = chatFirstWorkLinkContinuity
+  const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
+  const breadcrumbWorkHref = chatFirstBreadcrumbContinuity
     ? "/justice"
     : isUpdatingExistingCase
       ? activeCaseWorkHref
       : "/justice/plan";
-  const breadcrumbWorkLabel = chatFirstWorkLinkContinuity
+  const breadcrumbWorkLabel = chatFirstBreadcrumbContinuity
     ? "Justice workspace"
     : isUpdatingExistingCase
       ? activeCaseWorkLabel
