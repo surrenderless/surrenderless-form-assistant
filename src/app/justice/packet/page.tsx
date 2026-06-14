@@ -1232,10 +1232,10 @@ export default function JusticePacketPage() {
               </>
             )}
             <Link
-              href="/justice/plan"
+              href="/justice/chat-ai"
               className="mt-3 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
             >
-              Back to action plan
+              Continue in chat
             </Link>
           </div>
           {packetApproved && approvedNextAction ? (
