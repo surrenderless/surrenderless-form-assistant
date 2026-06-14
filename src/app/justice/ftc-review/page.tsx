@@ -234,10 +234,10 @@ export default function JusticeFtcReviewPage() {
               </p>
             )}
             <Link
-              href="/justice/plan"
+              href="/justice/chat-ai"
               className="mt-4 inline-flex rounded-xl border border-emerald-700 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-900 shadow-md transition hover:bg-emerald-100 dark:border-emerald-600 dark:bg-emerald-900/50 dark:text-emerald-100 dark:hover:bg-emerald-900"
             >
-              Back to action plan
+              Continue in chat
             </Link>
             {technicalDetails && (
               <details className="mt-4 rounded-xl border border-emerald-200/80 bg-white/70 p-3 text-sm shadow-inner dark:border-emerald-800 dark:bg-emerald-950/40">
