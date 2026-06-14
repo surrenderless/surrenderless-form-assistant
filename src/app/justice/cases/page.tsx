@@ -947,7 +947,7 @@ export default function JusticeCasesPage() {
   function resolveApprovedNextActionFollowUpHref(next: JusticeApprovedNextAction): string {
     const href = next.href?.trim();
     if (href && isInternalJusticeHref(href)) return href;
-    return "/justice/plan";
+    return "/justice/chat-ai";
   }
 
   function approvedNextActionFollowUpOpenLabel(next: JusticeApprovedNextAction): string {
