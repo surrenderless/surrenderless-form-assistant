@@ -1407,8 +1407,8 @@ export default function JusticePacketPage() {
                           for <strong>{approvedNextAction.label}</strong>
                         </>
                       ) : null}
-                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Continue from
-                      your action plan when you are ready for the next in-app step.
+                      . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Continue in
+                      chat when you are ready for the next in-app step.
                     </>
                   )}
                 </p>
