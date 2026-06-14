@@ -1072,7 +1072,9 @@ export default function JusticePacketPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) failed", patchRes.status);
+        return;
       }
+      router.push("/justice/chat-ai");
     } catch (e) {
       console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) error", e);
     }
