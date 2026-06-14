@@ -1262,14 +1262,14 @@ function ApprovedPacketActionCaseCard({
         </>
       ) : null}
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <button type="button" onClick={onOpenActionPlan} className={navButtonPrimaryCls}>
+        <button type="button" onClick={onOpenChat} className={navButtonPrimaryCls}>
+          Update in chat
+        </button>
+        <button type="button" onClick={onOpenActionPlan} className={navButtonSecondaryCls}>
           Open action plan
         </button>
         <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
           Open case packet
-        </button>
-        <button type="button" onClick={onOpenChat} className={navButtonSecondaryCls}>
-          Update in chat
         </button>
         {onOpenApprovedStep ? (
           <button
