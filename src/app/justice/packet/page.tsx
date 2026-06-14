@@ -824,12 +824,12 @@ export default function JusticePacketPage() {
         <Header />
         <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-lg bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
-              Back to action plan
-            </Link>
-            {" · "}
             <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
               Update in chat
+            </Link>
+            {" · "}
+            <Link href="/justice" className="text-blue-600 hover:underline dark:text-blue-400">
+              Justice workspace
             </Link>
             {" · "}
             <Link href="/justice/evidence" className="text-blue-600 hover:underline dark:text-blue-400">
@@ -1087,12 +1087,12 @@ export default function JusticePacketPage() {
         <Header />
         <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-2xl bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
-              Back to action plan
-            </Link>
-            {" · "}
             <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
               Update in chat
+            </Link>
+            {" · "}
+            <Link href="/justice" className="text-blue-600 hover:underline dark:text-blue-400">
+              Justice workspace
             </Link>
             {" · "}
             <Link href="/justice/evidence" className="text-blue-600 hover:underline dark:text-blue-400">
