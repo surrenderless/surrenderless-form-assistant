@@ -1124,7 +1124,7 @@ function HandlingWorkbenchCaseCard({
           Update in chat
         </button>
         <button type="button" onClick={onOpenActionPlan} className={navButtonSecondaryCls}>
-          Open action plan
+          Justice workspace
         </button>
         {!compactNavigation ? (
           <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
@@ -1266,7 +1266,7 @@ function ApprovedPacketActionCaseCard({
           Update in chat
         </button>
         <button type="button" onClick={onOpenActionPlan} className={navButtonSecondaryCls}>
-          Open action plan
+          Justice workspace
         </button>
         <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
           Open case packet
@@ -1611,7 +1611,7 @@ export default function JusticeHandlingWorkbenchPage() {
   }
 
   function openActionPlan(row: CaseRow) {
-    navigateWithCase(row, "/justice/plan");
+    navigateWithCase(row, "/justice");
   }
 
   function openPacket(row: CaseRow) {
