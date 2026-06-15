@@ -167,8 +167,8 @@ export default function JusticeFtcReviewPage() {
             Update in chat
           </Link>
           {" · "}
-          <Link href="/justice/plan" className="text-blue-600 hover:underline dark:text-blue-400">
-            Back to action plan
+          <Link href="/justice" className="text-blue-600 hover:underline dark:text-blue-400">
+            Justice workspace
           </Link>
         </p>
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Review your practice FTC form</h1>
