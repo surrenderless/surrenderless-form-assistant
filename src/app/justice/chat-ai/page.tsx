@@ -2397,16 +2397,14 @@ export default function JusticeChatAiPage() {
         : null;
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
-  const breadcrumbWorkHref = chatFirstBreadcrumbContinuity
-    ? "/justice"
-    : isUpdatingExistingCase
-      ? activeCaseWorkHref
-      : "/justice/plan";
-  const breadcrumbWorkLabel = chatFirstBreadcrumbContinuity
-    ? "Justice workspace"
-    : isUpdatingExistingCase
-      ? activeCaseWorkLabel
-      : "Action plan";
+  const breadcrumbWorkHref =
+    chatFirstBreadcrumbContinuity || !isUpdatingExistingCase
+      ? "/justice"
+      : activeCaseWorkHref;
+  const breadcrumbWorkLabel =
+    chatFirstBreadcrumbContinuity || !isUpdatingExistingCase
+      ? "Justice workspace"
+      : activeCaseWorkLabel;
 
   return (
     <>
