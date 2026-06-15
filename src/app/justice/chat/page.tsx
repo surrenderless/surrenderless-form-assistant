@@ -101,7 +101,7 @@ function assistantPrompt(step: Step): string {
     case "desired_resolution":
       return "What outcome do you want? (e.g. full refund, replacement, cancellation, written explanation.)";
     case "review":
-      return "Here’s a quick recap. When you’re ready, continue to review your submission draft, then your action plan.";
+      return "Here’s a quick recap. When you’re ready, continue to review your submission draft.";
     default:
       return "";
   }
