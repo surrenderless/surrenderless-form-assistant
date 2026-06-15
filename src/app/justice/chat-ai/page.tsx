@@ -249,7 +249,7 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
   const previewStep =
     "Open submission draft preview to review your case text (nothing is filed automatically).";
   const postPreviewFunnelStep =
-    "After preview, review your prepared case packet, then continue to your action plan when ready. Nothing is filed automatically.";
+    "After preview, review your prepared case packet, then continue in chat when ready. Nothing is filed automatically.";
   const chatFirstDraftStep =
     "Review your submission draft in the Active case checklist below (nothing is filed automatically).";
   const chatFirstPacketStep = "Approve your prepared packet in chat when ready.";
