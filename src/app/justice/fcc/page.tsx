@@ -184,7 +184,7 @@ export default function JusticeFccPrepPage() {
 
   const fitNote = likelyFit
     ? "Your description includes wording that often lines up with FCC topics (for example phone, internet, cable, or unwanted calls). This is only a rough guide — use the official FCC complaint site to confirm categories and required details."
-    : "Your intake does not automatically read like a telecom or communications issue. Add specifics about phone, internet, cable, broadcast, or unwanted calls or texts in your story, then revisit the action plan. You can still review the FCC site to see whether your issue belongs there.";
+    : "Your intake does not automatically read like a telecom or communications issue. Add specifics about phone, internet, cable, broadcast, or unwanted calls or texts in your story, then update your story in chat intake. You can still review the FCC site to see whether your issue belongs there.";
 
   const evidenceItems: string[] = [
     "Phone number(s), dates, and times involved (from your story or notes).",
