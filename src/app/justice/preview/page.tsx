@@ -305,7 +305,7 @@ export default function JusticePreviewPage() {
           usedAi,
         });
       }
-      if (isSignedIn && cid && isUuid(cid)) {
+      if (isSignedIn && cid) {
         router.push("/justice/chat-ai");
       } else {
         router.push(preparedPacketApproved ? "/justice/plan" : "/justice/packet");
@@ -363,7 +363,7 @@ export default function JusticePreviewPage() {
     );
   }
 
-  const signedInContinueToChat = isSignedIn && Boolean(caseId) && isUuid(caseId);
+  const signedInContinueToChat = isSignedIn && Boolean(caseId);
 
   return (
     <>
