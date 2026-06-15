@@ -15,7 +15,7 @@ export default function JusticeWorkspacePage() {
         </p>
         <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-500">
           Recommended: start with chat intake. Use the form intake if you prefer the full structured form. You can
-          also open your plan or browse cases you saved while signed in.
+          also browse saved cases while signed in.
         </p>
 
         <JusticeHubWorkspaceBody />
