@@ -2392,9 +2392,7 @@ export default function JusticeChatAiPage() {
   const activeCaseSecondaryWorkLink =
     activeCaseDraftReviewed && preparedPacketApproved
       ? { href: "/justice/preview", label: "Submission preview" }
-      : activeCaseDraftReviewed && !preparedPacketApproved
-        ? { href: "/justice/plan", label: "Action plan" }
-        : null;
+      : null;
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
   const breadcrumbWorkHref =
