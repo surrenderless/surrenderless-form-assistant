@@ -290,8 +290,8 @@ export default function JusticeMerchantPage() {
         <form onSubmit={(e) => void handleSave(e)} className={`mt-6 space-y-4 ${cardCls}`}>
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">After you contact them</p>
           <p className="text-xs text-neutral-500 dark:text-neutral-400">
-            Record how you reached out, when, and what they did — this updates your plan and unlocks escalation when
-            appropriate.
+            Record how you reached out, when, and what they did — this keeps your case accurate in chat intake and
+            unlocks escalation when appropriate.
           </p>
 
           <div>
