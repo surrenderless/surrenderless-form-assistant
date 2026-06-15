@@ -43,7 +43,7 @@ export default function JusticeFtcReviewPage() {
     if (hydrationStatus !== "ready" || !hydratedIntake) return;
     const manual = sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
     if (!computeFtcUnlocked(hydratedIntake, manual)) {
-      router.replace("/justice/plan");
+      router.replace("/justice/chat-ai");
       return;
     }
     setIntake(hydratedIntake);
