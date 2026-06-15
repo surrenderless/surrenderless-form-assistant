@@ -218,7 +218,7 @@ export default function JusticeMerchantPage() {
           {useCompanyContactLabels ? "Company contact & proof" : "Merchant contact & proof"}
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Use the message below with the company, then save what happened so your action plan stays accurate.
+          Use the message below with the company, then save what happened so your case stays accurate in chat intake.
         </p>
 
         <div className={`mt-6 ${cardCls}`}>
