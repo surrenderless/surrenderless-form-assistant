@@ -308,12 +308,12 @@ export default function JusticePreviewPage() {
       if (cid) {
         router.push("/justice/chat-ai");
       } else {
-        router.push(preparedPacketApproved ? "/justice/plan" : "/justice/packet");
+        router.push("/justice/packet");
       }
     } finally {
       setContinueLoading(false);
     }
-  }, [reviewed, isSignedIn, aiDraft, selectedDestination, preparedPacketApproved, router]);
+  }, [reviewed, isSignedIn, aiDraft, selectedDestination, router]);
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
@@ -616,9 +616,7 @@ export default function JusticePreviewPage() {
               ? "Saving…"
               : continueToChat
                 ? "Continue in chat"
-                : preparedPacketApproved
-                  ? "Continue to action plan"
-                  : "Review prepared case packet"}
+                : "Review prepared case packet"}
           </button>
         </div>
       </main>
