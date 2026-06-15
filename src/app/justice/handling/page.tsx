@@ -1961,7 +1961,7 @@ export default function JusticeHandlingWorkbenchPage() {
               <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                 Same active-case rule as Saved cases Needs attention. If the approved action is already
                 marked handled, use <strong>Handled — open handling request</strong> below and{" "}
-                <strong>Mark acknowledged</strong> on each card — or acknowledge from chat intake or your action plan.
+                <strong>Mark acknowledged</strong> on each card — or acknowledge from chat intake.
               </p>
               {completedUnacknowledgedCount > 0 ? (
                 <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
