@@ -224,7 +224,7 @@ function resolveActiveCaseWorkHref(
 ): string {
   if (!draftReviewed) return "/justice/preview";
   if (!packetApproved) return "/justice/packet";
-  return "/justice/plan";
+  return "/justice/chat-ai";
 }
 
 function resolveActiveCaseWorkLabel(
@@ -233,7 +233,7 @@ function resolveActiveCaseWorkLabel(
 ): string {
   if (!draftReviewed) return "Submission preview";
   if (!packetApproved) return "Review prepared case packet";
-  return "Action plan";
+  return "Continue in chat";
 }
 
 type ContinueHandoffStepsInput = {
