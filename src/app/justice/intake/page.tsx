@@ -211,7 +211,7 @@ export default function JusticeIntakePage() {
         </p>
         <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your consumer case</h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Answer once. Next you’ll review a submission draft, then your action plan.
+          Answer once. Next you’ll review a submission draft.
         </p>
 
         <form
