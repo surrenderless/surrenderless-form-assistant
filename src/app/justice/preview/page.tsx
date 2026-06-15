@@ -305,7 +305,7 @@ export default function JusticePreviewPage() {
           usedAi,
         });
       }
-      if (isSignedIn && cid) {
+      if (cid) {
         router.push("/justice/chat-ai");
       } else {
         router.push(preparedPacketApproved ? "/justice/plan" : "/justice/packet");
@@ -363,7 +363,7 @@ export default function JusticePreviewPage() {
     );
   }
 
-  const signedInContinueToChat = isSignedIn && Boolean(caseId);
+  const continueToChat = Boolean(caseId);
 
   return (
     <>
@@ -614,7 +614,7 @@ export default function JusticePreviewPage() {
           >
             {continueLoading
               ? "Saving…"
-              : signedInContinueToChat
+              : continueToChat
                 ? "Continue in chat"
                 : preparedPacketApproved
                   ? "Continue to action plan"
