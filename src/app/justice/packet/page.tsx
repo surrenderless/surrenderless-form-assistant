@@ -98,7 +98,7 @@ function getApprovedPacketNextStepExplainer(input: ApprovedPacketNextStepExplain
     return `You recorded that your approved next step was handled for now (${input.stepLabel}). This is in-app tracking only — Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf.`;
   }
   if (input.started) {
-    return `You opened your approved next in-app step (${input.stepLabel}). Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled status with Record action handled for now on the approved next action card below, from chat intake, or from your action plan when ready.`;
+    return `You opened your approved next in-app step (${input.stepLabel}). Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled status with Record action handled for now on the approved next action card below, from chat intake when ready.`;
   }
   return `Your approved in-app step is ${input.stepLabel} — open it below or continue in chat. Nothing is sent automatically.`;
 }
@@ -1157,8 +1157,7 @@ export default function JusticePacketPage() {
                       You opened your approved next in-app step (
                       <strong>{approvedNextAction.label}</strong>
                       ). Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Record handled
-                      status with Record action handled for now on the approved next action card below, from chat intake, or from your action
-                      plan when ready.
+                      status with Record action handled for now on the approved next action card below, from chat intake when ready.
                     </>
                   ) : (
                     <>
