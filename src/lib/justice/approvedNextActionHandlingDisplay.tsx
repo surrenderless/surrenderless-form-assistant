@@ -291,7 +291,7 @@ export function ApprovedNextActionHandlingQueueStatusReadOnly({
 
 /** Hub + packet: handled approved action with open, unacknowledged handling request. */
 export const HANDLING_HANDLED_OPEN_TRIAGE_NOTE_REDIRECT =
-  "This handling request is not listed in workbench Awaiting or Saved cases Needs attention. Acknowledge it from chat intake or the action plan for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
+  "This handling request is not listed in workbench Awaiting or Saved cases Needs attention. Acknowledge it from chat intake for internal triage only. Surrenderless has not filed, submitted, or queued anything externally.";
 
 /** Plan + chat: same case; acknowledge via Mark acknowledged on that surface. */
 export const HANDLING_HANDLED_OPEN_TRIAGE_NOTE_INLINE_ACK =
