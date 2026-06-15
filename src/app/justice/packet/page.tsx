@@ -1051,6 +1051,11 @@ export default function JusticePacketPage() {
     setPacketApproved(true);
     setApprovedNextAction(withTracking);
 
+    if (isLoaded && isSignedIn && caseId && !isUuid(caseId)) {
+      router.push("/justice/chat-ai");
+      return;
+    }
+
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
     try {
