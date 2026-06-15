@@ -490,8 +490,8 @@ export default function JusticeChatPage() {
             Chat intake
           </Link>
           {" · "}
-          <Link href="/justice/plan" className="text-blue-600 hover:underline">
-            Action plan
+          <Link href="/justice" className="text-blue-600 hover:underline">
+            Justice workspace
           </Link>
           {" · "}
           <Link href="/justice/intake" className="text-blue-600 hover:underline">
