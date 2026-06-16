@@ -1795,7 +1795,7 @@ export default function JusticePlanPage() {
               )
             ) : null}
             <p className="mt-3 text-xs text-emerald-800/85 dark:text-emerald-200/85">
-              Your full action plan, prep pages, and filing records remain below if you need them.
+              Your full case checklist, prep pages, and filing records remain below if you need them.
             </p>
           </div>
         ) : preparedPacketApproved ? (
