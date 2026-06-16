@@ -2688,7 +2688,7 @@ export default function JusticePlanPage() {
                 <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-400">Case resolved</p>
                 <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Escalation not needed</h2>
                 <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                  You marked this case as resolved with the merchant. FTC escalation is not recommended on this plan.
+                  You marked this case as resolved with the merchant. FTC escalation is not recommended for this case.
                 </p>
               </>
             ) : cfpbRel ? (
