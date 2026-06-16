@@ -3,12 +3,18 @@ import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/ju
 /** Session JSON: `Record<caseId, JusticeApprovedNextAction>` */
 export const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
 
+function normalizeApprovedNextActionHref(href: string): string {
+  const trimmed = href.trim();
+  if (trimmed === "/justice/plan") return "/justice/chat-ai";
+  return trimmed;
+}
+
 export function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction | undefined {
   if (raw === null || raw === undefined) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
   const label = typeof o.label === "string" ? o.label.trim() : "";
-  const href = typeof o.href === "string" ? o.href.trim() : "";
+  const href = typeof o.href === "string" ? normalizeApprovedNextActionHref(o.href) : "";
   if (!label && !href) return undefined;
   return {
     ...(label ? { label } : {}),
