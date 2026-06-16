@@ -1738,7 +1738,7 @@ export default function JusticePlanPage() {
                 Update in chat
               </Link>
               {" "}
-              — Surrenderless keeps your case aligned with your draft and plan.
+              — Surrenderless keeps your case aligned with your draft and chat intake.
             </p>
             <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
               Updated your case in chat?{" "}
