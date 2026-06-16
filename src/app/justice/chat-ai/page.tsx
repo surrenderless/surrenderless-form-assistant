@@ -51,6 +51,7 @@ import {
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
+import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
@@ -459,6 +460,92 @@ function ChatInlineSubmissionDraftReviewBlock({
         <span className="text-[11px] text-blue-900/80 dark:text-blue-100/80">
           {" "}
           (optional — includes AI-assisted draft)
+        </span>
+      </p>
+    </div>
+  );
+}
+
+function ChatInlinePreparedPacketApprovalBlock({
+  packetText,
+  loading,
+  checked,
+  onCheckedChange,
+  expanded,
+  onExpandedChange,
+  approving,
+  onSubmit,
+}: {
+  packetText: string;
+  loading: boolean;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  approving: boolean;
+  onSubmit: () => void;
+}) {
+  const canTruncate = packetText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
+  const displayText =
+    expanded || !canTruncate ? packetText : `${packetText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Approve prepared packet</p>
+      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+        Review your prepared case packet below. Approving records review inside Surrenderless — it does
+        not submit, file, or contact anyone.
+      </p>
+      {loading ? (
+        <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">Loading packet preview…</p>
+      ) : packetText ? (
+        <>
+          <pre className="max-h-[min(280px,40vh)] overflow-auto whitespace-pre-wrap rounded-md border border-emerald-200/80 bg-white/80 p-2 text-[11px] leading-relaxed text-neutral-900 dark:border-emerald-900/40 dark:bg-neutral-950/80 dark:text-neutral-100">
+            {displayText}
+          </pre>
+          {canTruncate ? (
+            <button
+              type="button"
+              onClick={() => onExpandedChange(!expanded)}
+              className="text-[11px] font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
+          Packet preview is not available yet. Use the full packet page to review your case packet.
+        </p>
+      )}
+      <label className="flex cursor-pointer items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onCheckedChange(e.target.checked)}
+          disabled={!packetText}
+          className="mt-0.5"
+        />
+        I reviewed this prepared packet
+      </label>
+      <button
+        type="button"
+        disabled={!checked || !packetText || approving}
+        onClick={() => void onSubmit()}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {approving ? "Saving…" : "Approve prepared packet"}
+      </button>
+      <p className="text-xs text-emerald-800 dark:text-emerald-200">
+        <Link
+          href="/justice/packet"
+          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+        >
+          Open full packet page
+        </Link>
+        <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
+          {" "}
+          (optional — print and copy tools)
         </span>
       </p>
     </div>
@@ -1080,6 +1167,7 @@ export default function JusticeChatAiPage() {
   const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
   const [savedFilings, setSavedFilings] = useState<JusticeCaseFilingRow[]>([]);
   const [chatHandlingReadinessLoading, setChatHandlingReadinessLoading] = useState(false);
+  const [savedEvidenceRows, setSavedEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [recentEvidenceRows, setRecentEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [proofNoteTitle, setProofNoteTitle] = useState("");
   const [proofNoteType, setProofNoteType] = useState<JusticeEvidenceType>("other");
@@ -1111,6 +1199,7 @@ export default function JusticeChatAiPage() {
   const [submissionDraftReviewError, setSubmissionDraftReviewError] = useState<string | null>(null);
   const [submissionDraftReviewOverride, setSubmissionDraftReviewOverride] = useState(false);
   const [draftPreviewExpanded, setDraftPreviewExpanded] = useState(false);
+  const [packetPreviewExpanded, setPacketPreviewExpanded] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -1626,6 +1715,7 @@ export default function JusticeChatAiPage() {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setChatHandlingReadinessLoading(false);
+      setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
       return;
     }
@@ -1635,6 +1725,7 @@ export default function JusticeChatAiPage() {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setChatHandlingReadinessLoading(false);
+      setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
       return;
     }
@@ -1654,11 +1745,13 @@ export default function JusticeChatAiPage() {
       }
       setSavedEvidenceCount(count);
       setSavedFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
+      setSavedEvidenceRows(rows);
       setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
     } catch {
       if (!signal.aborted) {
         setSavedEvidenceCount(null);
         setSavedFilings([]);
+        setSavedEvidenceRows([]);
         setRecentEvidenceRows([]);
       }
     } finally {
@@ -1678,6 +1771,7 @@ export default function JusticeChatAiPage() {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setChatHandlingReadinessLoading(false);
+      setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
       return;
     }
@@ -1687,6 +1781,7 @@ export default function JusticeChatAiPage() {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setChatHandlingReadinessLoading(false);
+      setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
       return;
     }
@@ -1774,6 +1869,19 @@ export default function JusticeChatAiPage() {
           return id && isUuid(id) ? id : "";
         })()
       : "";
+
+  const chatPacketPlainText = useMemo(() => {
+    if (!activeUuidCaseId) return "";
+    const intake = buildJusticeIntakeFromParts(parts);
+    const timeline = readTimeline(activeUuidCaseId);
+    return buildPacketPlainText(
+      intake,
+      timeline,
+      savedEvidenceRows,
+      savedFilings,
+      activeUuidCaseId
+    );
+  }, [activeUuidCaseId, parts, savedEvidenceRows, savedFilings]);
 
   const canAddProofNoteInChat =
     isUpdatingExistingCase && isLoaded && isSignedIn && Boolean(activeUuidCaseId);
@@ -1868,6 +1976,9 @@ export default function JusticeChatAiPage() {
       applyServerTimelineFromResponse(caseId, payload);
       if (isCreatedEvidenceRow(payload)) {
         setSavedEvidenceCount((prev) => (prev ?? 0) + 1);
+        setSavedEvidenceRows((prev) =>
+          [payload, ...prev.filter((row) => row.id !== payload.id)]
+        );
         setRecentEvidenceRows((prev) =>
           [payload, ...prev.filter((row) => row.id !== payload.id)].slice(0, CHAT_RECENT_EVIDENCE_MAX)
         );
@@ -2030,6 +2141,7 @@ export default function JusticeChatAiPage() {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setChatHandlingReadinessLoading(false);
+      setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
       setEditingRecentEvidenceId(null);
       setRecentEvidenceEditError(null);
@@ -2043,6 +2155,7 @@ export default function JusticeChatAiPage() {
       setSubmissionDraftReviewChecked(false);
       setSubmissionDraftReviewError(null);
       setDraftPreviewExpanded(false);
+      setPacketPreviewExpanded(false);
       return;
     }
 
@@ -2526,32 +2639,16 @@ export default function JusticeChatAiPage() {
               />
             ) : null}
             {showInlinePreparedPacketApproval ? (
-              <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
-                <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
-                  Approve prepared packet
-                </p>
-                <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                  This approves the packet inside Surrenderless. It does not submit, file, or contact
-                  anyone.
-                </p>
-                <label className="flex cursor-pointer items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
-                  <input
-                    type="checkbox"
-                    checked={approvePreparedPacketChecked}
-                    onChange={(e) => setApprovePreparedPacketChecked(e.target.checked)}
-                    className="mt-0.5"
-                  />
-                  I reviewed this prepared packet
-                </label>
-                <button
-                  type="button"
-                  disabled={!approvePreparedPacketChecked || approvingPreparedPacket}
-                  onClick={() => void handleApprovePreparedPacketFromChat()}
-                  className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-                >
-                  {approvingPreparedPacket ? "Saving…" : "Approve prepared packet"}
-                </button>
-              </div>
+              <ChatInlinePreparedPacketApprovalBlock
+                packetText={chatPacketPlainText}
+                loading={chatHandlingReadinessLoading}
+                checked={approvePreparedPacketChecked}
+                onCheckedChange={setApprovePreparedPacketChecked}
+                expanded={packetPreviewExpanded}
+                onExpandedChange={setPacketPreviewExpanded}
+                approving={approvingPreparedPacket}
+                onSubmit={() => void handleApprovePreparedPacketFromChat()}
+              />
             ) : null}
             {approvedNextAction ? (
               <>
