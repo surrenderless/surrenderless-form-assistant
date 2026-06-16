@@ -61,7 +61,7 @@ import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readTimeline } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
-/** Mirrors post-review callout gates on `/justice/plan` (page-local; does not change rules). */
+/** Post-review prepared-packet framing gates (page-local; does not change rules). */
 const PREP_OPENED_TYPES: TimelineEntryType[] = [
   "state_ag_prep_opened",
   "bbb_prep_opened",
