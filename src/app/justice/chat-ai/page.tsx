@@ -52,6 +52,7 @@ import {
 } from "@/lib/justice/evidence";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
+import { getChatInlineApprovedPrepContent } from "@/lib/justice/chatInlineApprovedPrep";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
@@ -552,6 +553,85 @@ function ChatInlinePreparedPacketApprovalBlock({
   );
 }
 
+function ChatInlineApprovedPrepActionBlock({
+  title,
+  messageText,
+  optionalPageHref,
+  optionalPageLabel,
+  expanded,
+  onExpandedChange,
+  copyHint,
+  onCopy,
+}: {
+  title: string;
+  messageText: string;
+  optionalPageHref: string;
+  optionalPageLabel: string;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  copyHint: string | null;
+  onCopy: () => void;
+}) {
+  const canTruncate = messageText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
+  const displayText =
+    expanded || !canTruncate ? messageText : `${messageText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">{title}</p>
+      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+        Copy the message below and send it yourself. Surrenderless does not contact anyone on your
+        behalf.
+      </p>
+      {messageText ? (
+        <>
+          <pre className="max-h-[min(280px,40vh)] overflow-auto whitespace-pre-wrap rounded-md border border-emerald-200/80 bg-white/80 p-2 text-[11px] leading-relaxed text-neutral-900 dark:border-emerald-900/40 dark:bg-neutral-950/80 dark:text-neutral-100">
+            {displayText}
+          </pre>
+          {canTruncate ? (
+            <button
+              type="button"
+              onClick={() => onExpandedChange(!expanded)}
+              className="text-[11px] font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
+          Contact message is not available yet.
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={!messageText}
+          onClick={() => onCopy()}
+          className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+        >
+          Copy message
+        </button>
+        {copyHint ? (
+          <span className="text-[11px] text-emerald-800 dark:text-emerald-200">{copyHint}</span>
+        ) : null}
+      </div>
+      <p className="text-xs text-emerald-800 dark:text-emerald-200">
+        <Link
+          href={optionalPageHref}
+          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+        >
+          {optionalPageLabel}
+        </Link>
+        <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
+          {" "}
+          (optional — document contact after outreach)
+        </span>
+      </p>
+    </div>
+  );
+}
+
 const CHAT_FILING_INPUT_CLS =
   "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
 
@@ -879,6 +959,7 @@ function ChatHandlingTrackingStatusReadOnly({
   evidenceCount,
   filings,
   markAcknowledgedOnScreen = false,
+  merchantPrepInlineInChat = false,
   canCaptureFiling = false,
   caseId = "",
   onFilingsSaved,
@@ -894,6 +975,7 @@ function ChatHandlingTrackingStatusReadOnly({
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
   markAcknowledgedOnScreen?: boolean;
+  merchantPrepInlineInChat?: boolean;
   canCaptureFiling?: boolean;
   caseId?: string;
   onFilingsSaved?: () => void;
@@ -949,6 +1031,7 @@ function ChatHandlingTrackingStatusReadOnly({
           basicsReady={basicsReady}
           evidenceCount={evidenceCount}
           markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+          merchantPrepInlineInChat={merchantPrepInlineInChat}
         />
       ) : null}
       {showInlineFilingCapture && onFilingsSaved ? (
@@ -1200,6 +1283,8 @@ export default function JusticeChatAiPage() {
   const [submissionDraftReviewOverride, setSubmissionDraftReviewOverride] = useState(false);
   const [draftPreviewExpanded, setDraftPreviewExpanded] = useState(false);
   const [packetPreviewExpanded, setPacketPreviewExpanded] = useState(false);
+  const [prepMessageExpanded, setPrepMessageExpanded] = useState(false);
+  const [prepCopyHint, setPrepCopyHint] = useState<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -2156,6 +2241,8 @@ export default function JusticeChatAiPage() {
       setSubmissionDraftReviewError(null);
       setDraftPreviewExpanded(false);
       setPacketPreviewExpanded(false);
+      setPrepMessageExpanded(false);
+      setPrepCopyHint(null);
       return;
     }
 
@@ -2470,6 +2557,24 @@ export default function JusticeChatAiPage() {
     Boolean(activeUuidCaseId) &&
     activeCaseDraftReviewed &&
     !preparedPacketApproved;
+  const chatInlineApprovedPrepContent = useMemo(() => {
+    if (!preparedPacketApproved || !approvedNextAction) return null;
+    return getChatInlineApprovedPrepContent(
+      approvedNextAction.href,
+      buildJusticeIntakeFromParts(parts),
+      approvedNextAction.label
+    );
+  }, [preparedPacketApproved, approvedNextAction, parts]);
+  const showInlineMerchantApprovedPrep =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    preparedPacketApproved &&
+    Boolean(approvedNextAction) &&
+    !approvedNextAction?.handling_requested_at?.trim() &&
+    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started") &&
+    Boolean(chatInlineApprovedPrepContent);
   const activeCaseProductLine = truncateActiveCaseProduct(parts.purchase_or_signup);
   const activeCaseSubline = [categoryLabel(parts.problem_category), activeCaseProductLine]
     .filter(Boolean)
@@ -2648,6 +2753,30 @@ export default function JusticeChatAiPage() {
                 onExpandedChange={setPacketPreviewExpanded}
                 approving={approvingPreparedPacket}
                 onSubmit={() => void handleApprovePreparedPacketFromChat()}
+              />
+            ) : null}
+            {showInlineMerchantApprovedPrep && chatInlineApprovedPrepContent ? (
+              <ChatInlineApprovedPrepActionBlock
+                title={chatInlineApprovedPrepContent.title}
+                messageText={chatInlineApprovedPrepContent.messageText}
+                optionalPageHref={chatInlineApprovedPrepContent.optionalPageHref}
+                optionalPageLabel={chatInlineApprovedPrepContent.optionalPageLabel}
+                expanded={prepMessageExpanded}
+                onExpandedChange={setPrepMessageExpanded}
+                copyHint={prepCopyHint}
+                onCopy={() => {
+                  void (async () => {
+                    const text = chatInlineApprovedPrepContent.messageText;
+                    if (!text) return;
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setPrepCopyHint("Copied to clipboard.");
+                      window.setTimeout(() => setPrepCopyHint(null), 2500);
+                    } catch {
+                      setPrepCopyHint("Copy failed — select the text and copy manually.");
+                    }
+                  })();
+                }}
               />
             ) : null}
             {approvedNextAction ? (
@@ -2831,14 +2960,16 @@ export default function JusticeChatAiPage() {
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
-                    <p className="mt-1.5 text-xs text-emerald-800 dark:text-emerald-200">
-                      <Link
-                        href={approvedNextAction.href.trim()}
-                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                      >
-                        Open {approvedNextAction.label.trim()} (optional)
-                      </Link>
-                    </p>
+                    {!showInlineMerchantApprovedPrep ? (
+                      <p className="mt-1.5 text-xs text-emerald-800 dark:text-emerald-200">
+                        <Link
+                          href={approvedNextAction.href.trim()}
+                          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                        >
+                          Open {approvedNextAction.label.trim()} (optional)
+                        </Link>
+                      </p>
+                    ) : null}
                   </>
                 ) : null}
                 {approvedNextAction.status === "started" ? (
@@ -2928,6 +3059,7 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       markAcknowledgedOnScreen={false}
+                      merchantPrepInlineInChat={showInlineMerchantApprovedPrep}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
@@ -2986,6 +3118,7 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
+                      merchantPrepInlineInChat={showInlineMerchantApprovedPrep}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
