@@ -40,7 +40,7 @@ function sortTasks(rows: JusticeCaseTaskRow[]): JusticeCaseTaskRow[] {
 
 export type JusticeCaseTasksProps = {
   onTasksChange?: () => void;
-  /** After task APIs update the server timeline and session storage, refresh parent UI (e.g. action plan `readTimeline`). */
+  /** After task APIs update the server timeline and session storage, refresh parent UI (e.g. parent page `readTimeline`). */
   onCaseTimelineSynced?: () => void;
 };
 
