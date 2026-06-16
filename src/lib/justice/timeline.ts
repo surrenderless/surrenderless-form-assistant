@@ -183,7 +183,7 @@ export function appendFccComplaintFiledOnce(caseId: string): boolean {
 export function labelForAnalyticsEventName(eventName: string): string | undefined {
   const m: Record<string, string> = {
     intake_completed: "Case started",
-    action_plan_generated: "Action plan viewed",
+    action_plan_generated: "Case checklist opened",
     merchant_contact_saved: "Merchant contact saved",
     escalation_unlocked: "Escalation path unlocked",
     payment_dispute_checklist_viewed: "Payment checklist viewed",
@@ -211,7 +211,7 @@ export function appendActionPlanViewedOnce(caseId: string): void {
   if (entries.some((e) => e.type === "action_plan_viewed")) return;
   appendTimelineEvent(caseId, {
     type: "action_plan_viewed",
-    label: "Action plan viewed",
+    label: "Case checklist viewed",
   });
 }
 
