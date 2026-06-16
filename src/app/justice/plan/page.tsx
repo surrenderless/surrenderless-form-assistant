@@ -1843,8 +1843,8 @@ export default function JusticePlanPage() {
                       for <strong>{approvedNextAction.label}</strong>
                     </>
                   ) : null}
-                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Use the action
-                  plan below for your next steps.
+                  . Surrenderless has not filed, submitted, sent, or contacted anyone on your behalf. Use the checklist
+                  below for your next steps.
                 </>
               )}
             </p>
