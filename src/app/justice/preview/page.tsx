@@ -265,7 +265,7 @@ export default function JusticePreviewPage() {
     }
   }, [intake, selectedDestination, evidence, isSignedIn]);
 
-  const handleContinueToPlan = useCallback(async () => {
+  const handleContinueAfterReview = useCallback(async () => {
     if (!reviewed) return;
     setContinueError(null);
     setContinueLoading(true);
@@ -609,7 +609,7 @@ export default function JusticePreviewPage() {
           <button
             type="button"
             disabled={!reviewed || continueLoading}
-            onClick={() => void handleContinueToPlan()}
+            onClick={() => void handleContinueAfterReview()}
             className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {continueLoading
