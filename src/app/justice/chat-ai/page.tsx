@@ -81,7 +81,10 @@ import {
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
-import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
+import {
+  commitIntakeToSessionAndServer,
+  shouldRouteToChatAiAfterIntakeCommit,
+} from "@/lib/justice/commitIntakeToSessionAndServer";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
   clearPreviewChatUpdateSummary,
@@ -351,19 +354,6 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
   return entries.some(
     (e) => e.id === SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID || e.type === "submission_draft_reviewed"
   );
-}
-
-function shouldStayInChatAfterSignedInUuidCaseSave(input: {
-  isUpdatingExistingCase: boolean;
-  isLoaded: boolean;
-  isSignedIn: boolean;
-  caseId: string;
-  serverPersisted?: boolean;
-}): boolean {
-  if (!input.isLoaded || !input.isSignedIn) return false;
-  if (!input.caseId || !isUuid(input.caseId)) return false;
-  if (input.isUpdatingExistingCase) return true;
-  return Boolean(input.serverPersisted);
 }
 
 const CHAT_DRAFT_PREVIEW_TRUNCATE = 720;
@@ -2221,12 +2211,11 @@ export default function JusticeChatAiPage() {
         }
 
         if (
-          shouldStayInChatAfterSignedInUuidCaseSave({
-            isUpdatingExistingCase,
+          shouldRouteToChatAiAfterIntakeCommit({
+            commitResult: { caseId: existingCaseId, serverPersisted: true },
             isLoaded,
             isSignedIn: Boolean(isSignedIn),
-            caseId: existingCaseId,
-            serverPersisted: true,
+            isUpdatingExistingCase,
           })
         ) {
           return;
@@ -2280,12 +2269,11 @@ export default function JusticeChatAiPage() {
         (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "");
 
       if (
-        shouldStayInChatAfterSignedInUuidCaseSave({
-          isUpdatingExistingCase,
+        shouldRouteToChatAiAfterIntakeCommit({
+          commitResult: { caseId: caseIdAfterCommit, serverPersisted: commitResult.serverPersisted },
           isLoaded,
           isSignedIn: Boolean(isSignedIn),
-          caseId: caseIdAfterCommit,
-          serverPersisted: commitResult.serverPersisted,
+          isUpdatingExistingCase,
         })
       ) {
         if (!isUpdatingExistingCase) {

@@ -10,7 +10,10 @@ import {
   buildJusticeIntakeFromParts,
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
-import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
+import {
+  commitIntakeToSessionAndServer,
+  shouldRouteToChatAiAfterIntakeCommit,
+} from "@/lib/justice/commitIntakeToSessionAndServer";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 
 type ChatRole = "assistant" | "user";
@@ -269,14 +272,22 @@ export default function JusticeChatPage() {
     const intake = buildIntake();
     setSubmitting(true);
     try {
-      await commitIntakeToSessionAndServer({
+      const commitResult = await commitIntakeToSessionAndServer({
         intake,
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
         commitLogLabel: "justice chat",
       });
 
-      router.push("/justice/preview");
+      router.push(
+        shouldRouteToChatAiAfterIntakeCommit({
+          commitResult,
+          isLoaded,
+          isSignedIn: Boolean(isSignedIn),
+        })
+          ? "/justice/chat-ai"
+          : "/justice/preview"
+      );
     } finally {
       setSubmitting(false);
     }
