@@ -93,7 +93,8 @@ async function commitIntakeUpdateToSessionAndServer({
 
 /**
  * Persists a completed intake: new session case id, timeline `case_started`, optional POST
- * `/api/justice/cases`, then analytics. Caller runs validation and `router.push("/justice/plan")`.
+ * `/api/justice/cases`, then analytics. Caller runs validation and routes onward (e.g.
+ * `router.push("/justice/preview")` from intake/chat; chat-ai continuity from `/justice/chat-ai`).
  */
 export async function commitIntakeToSessionAndServer({
   intake,
