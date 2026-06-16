@@ -1083,7 +1083,7 @@ export default function JusticePlanPage() {
                 Home
               </Link>
             </p>
-            <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
+            <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your case checklist</h1>
             <p className="mt-4 text-sm text-neutral-700 dark:text-neutral-300">Sign in to resume saved cases.</p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <SignInButton mode="modal">
@@ -1437,7 +1437,7 @@ export default function JusticePlanPage() {
           </Link>
         </p>
 
-        <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your action plan</h1>
+        <h1 className="mt-2 text-2xl font-bold text-neutral-900 dark:text-neutral-100">Your case checklist</h1>
 
         {showPostDraftReviewCallout ? (
           <div
