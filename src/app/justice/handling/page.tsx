@@ -525,7 +525,7 @@ function HandlingWorkbenchCaseCard({
   compactNavigation,
   handledOpenTriageNoteVariant = "redirect",
   acknowledging,
-  onOpenActionPlan,
+  onOpenJusticeWorkspace,
   onOpenPacket,
   onOpenChat,
   onOpenApprovedStep,
@@ -545,7 +545,7 @@ function HandlingWorkbenchCaseCard({
   compactNavigation?: boolean;
   handledOpenTriageNoteVariant?: "redirect" | "inlineAck";
   acknowledging: boolean;
-  onOpenActionPlan: () => void;
+  onOpenJusticeWorkspace: () => void;
   onOpenPacket: () => void;
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
@@ -1123,7 +1123,7 @@ function HandlingWorkbenchCaseCard({
         <button type="button" onClick={onOpenChat} className={navButtonPrimaryCls}>
           Update in chat
         </button>
-        <button type="button" onClick={onOpenActionPlan} className={navButtonSecondaryCls}>
+        <button type="button" onClick={onOpenJusticeWorkspace} className={navButtonSecondaryCls}>
           Justice workspace
         </button>
         {!compactNavigation ? (
@@ -1180,7 +1180,7 @@ function ApprovedPacketActionCaseCard({
   isActiveSessionCase,
   persistingOpen,
   markingHandled,
-  onOpenActionPlan,
+  onOpenJusticeWorkspace,
   onOpenPacket,
   onOpenChat,
   onOpenApprovedStep,
@@ -1190,7 +1190,7 @@ function ApprovedPacketActionCaseCard({
   isActiveSessionCase: boolean;
   persistingOpen: boolean;
   markingHandled: boolean;
-  onOpenActionPlan: () => void;
+  onOpenJusticeWorkspace: () => void;
   onOpenPacket: () => void;
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
@@ -1265,7 +1265,7 @@ function ApprovedPacketActionCaseCard({
         <button type="button" onClick={onOpenChat} className={navButtonPrimaryCls}>
           Update in chat
         </button>
-        <button type="button" onClick={onOpenActionPlan} className={navButtonSecondaryCls}>
+        <button type="button" onClick={onOpenJusticeWorkspace} className={navButtonSecondaryCls}>
           Justice workspace
         </button>
         <button type="button" onClick={onOpenPacket} className={navButtonSecondaryCls}>
@@ -1610,7 +1610,7 @@ export default function JusticeHandlingWorkbenchPage() {
     router.push(path);
   }
 
-  function openActionPlan(row: CaseRow) {
+  function openJusticeWorkspace(row: CaseRow) {
     navigateWithCase(row, "/justice");
   }
 
@@ -1790,7 +1790,7 @@ export default function JusticeHandlingWorkbenchPage() {
         isActiveSessionCase={Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id}
         showMarkAcknowledged
         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
-        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+        onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
         onOpenPacket={() => openPacket(item.caseRow)}
         onOpenChat={() => openChat(item.caseRow)}
         onOpenApprovedStep={
@@ -1822,7 +1822,7 @@ export default function JusticeHandlingWorkbenchPage() {
         isActiveSessionCase={Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id}
         showMarkAcknowledged={showMarkAcknowledged}
         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
-        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+        onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
         onOpenPacket={() => openPacket(item.caseRow)}
         onOpenChat={() => openChat(item.caseRow)}
         onOpenApprovedStep={
@@ -1926,7 +1926,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         markingHandled={
                           markingApprovedPacketHandledCaseId === item.caseRow.id
                         }
-                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
                         onOpenChat={() => openChat(item.caseRow)}
                         onOpenApprovedStep={
@@ -2077,7 +2077,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         compactNavigation
                         handledOpenTriageNoteVariant="inlineAck"
                         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
-                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
                         onOpenChat={() => openChat(item.caseRow)}
                         onAcknowledge={() =>
@@ -2129,7 +2129,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         showMarkAcknowledged={false}
                         acknowledging={false}
-                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
                         onOpenChat={() => openChat(item.caseRow)}
                         onOpenApprovedStep={
@@ -2307,7 +2307,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         showMarkAcknowledged={showMarkAcknowledgedOnFollowUp}
                         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
-                        onOpenActionPlan={() => openActionPlan(item.caseRow)}
+                        onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
                         onOpenChat={() => openChat(item.caseRow)}
                         onOpenApprovedStep={
