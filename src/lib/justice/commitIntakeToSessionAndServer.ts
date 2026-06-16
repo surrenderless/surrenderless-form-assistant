@@ -15,6 +15,25 @@ export type CommitIntakeResult = {
   serverPersisted: boolean;
 };
 
+export type ShouldRouteToChatAiAfterIntakeCommitInput = {
+  commitResult: CommitIntakeResult;
+  isLoaded: boolean;
+  isSignedIn: boolean;
+  /** True when `/justice/chat-ai` is updating an existing hydrated case (not intake/chat create). */
+  isUpdatingExistingCase?: boolean;
+};
+
+/** Signed-in server-persisted create commits and chat-ai update commits continue in `/justice/chat-ai`. */
+export function shouldRouteToChatAiAfterIntakeCommit(
+  input: ShouldRouteToChatAiAfterIntakeCommitInput
+): boolean {
+  if (!input.isLoaded || !input.isSignedIn) return false;
+  const caseId = input.commitResult.caseId.trim();
+  if (!caseId || !isUuid(caseId)) return false;
+  if (input.isUpdatingExistingCase) return true;
+  return input.commitResult.serverPersisted;
+}
+
 const EMPTY_COMMIT_RESULT: CommitIntakeResult = { caseId: "", serverPersisted: false };
 
 const FTC_MOCK_COMPLETED_KEY = "justice_ftc_mock_completed";
@@ -94,7 +113,8 @@ async function commitIntakeUpdateToSessionAndServer({
 /**
  * Persists a completed intake: new session case id, timeline `case_started`, optional POST
  * `/api/justice/cases`, then analytics. Caller runs validation and routes onward (e.g.
- * `router.push("/justice/preview")` from intake/chat; chat-ai continuity from `/justice/chat-ai`).
+ * `router.push("/justice/chat-ai")` or `router.push("/justice/preview")` from intake/chat via
+ * `shouldRouteToChatAiAfterIntakeCommit`; chat-ai continuity from `/justice/chat-ai`).
  */
 export async function commitIntakeToSessionAndServer({
   intake,

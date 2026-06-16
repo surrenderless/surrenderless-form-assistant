@@ -7,7 +7,10 @@ import Link from "next/link";
 import Header from "@/app/components/Header";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_INTAKE } from "@/lib/justice/types";
-import { commitIntakeToSessionAndServer } from "@/lib/justice/commitIntakeToSessionAndServer";
+import {
+  commitIntakeToSessionAndServer,
+  shouldRouteToChatAiAfterIntakeCommit,
+} from "@/lib/justice/commitIntakeToSessionAndServer";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 import { cfpbLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
 
@@ -117,14 +120,22 @@ export default function JusticeIntakePage() {
           : {}),
       };
 
-      await commitIntakeToSessionAndServer({
+      const commitResult = await commitIntakeToSessionAndServer({
         intake,
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
         commitLogLabel: "justice intake",
       });
 
-      router.push("/justice/preview");
+      router.push(
+        shouldRouteToChatAiAfterIntakeCommit({
+          commitResult,
+          isLoaded,
+          isSignedIn: Boolean(isSignedIn),
+        })
+          ? "/justice/chat-ai"
+          : "/justice/preview"
+      );
     } finally {
       setSubmitting(false);
     }
