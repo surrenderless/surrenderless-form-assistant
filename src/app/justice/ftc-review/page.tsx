@@ -8,24 +8,11 @@ import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { computeFtcUnlocked } from "@/lib/justice/rules";
-import { intakeToMockFtcUserData } from "@/lib/justice/ftc-user-data";
-import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
+import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
+import type { JusticeIntake } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
-
-async function logEvent(event_name: string, payload: Record<string, unknown>) {
-  try {
-    await fetch("/api/justice/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_name, payload }),
-    });
-  } catch {
-    /* ignore */
-  }
-}
 
 export default function JusticeFtcReviewPage() {
   const router = useRouter();
@@ -64,38 +51,9 @@ export default function JusticeFtcReviewPage() {
     );
   }
 
-  async function syncTimelineToSupabase(caseId: string | null) {
-    if (!caseId || !isLoaded || !isSignedIn) return;
-    try {
-      const timeline = readTimeline(caseId);
-      const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timeline }),
-      });
-      if (res.ok) {
-        const payload = (await res.json()) as { timeline?: unknown };
-        if (Array.isArray(payload.timeline)) {
-          replaceTimelineForCase(caseId, payload.timeline as TimelineEntry[]);
-        }
-      } else {
-        console.warn("justice ftc-review: PATCH /api/justice/cases/[id] failed", res.status);
-      }
-    } catch (e) {
-      console.warn("justice ftc-review: PATCH /api/justice/cases/[id] error", e);
-    }
-  }
+  const summaryLines = buildFtcPracticeSummaryLines(intake);
 
-  const summaryLines = [
-    `Company: ${intake.company_name}`,
-    `Issue: ${intake.problem_category.replace(/_/g, " ")}`,
-    `Story: ${intake.story.slice(0, 200)}${intake.story.length > 200 ? "…" : ""}`,
-    `Money: ${intake.money_involved}`,
-    `Order/pay date: ${intake.pay_or_order_date}`,
-    `Your email: ${intake.reply_email}`,
-  ];
-
-  async function runPractice() {
+  async function handleRunPractice() {
     if (!confirmed || !isSignedIn || !intake) return;
     setRunning(true);
     setError(null);
@@ -103,59 +61,22 @@ export default function JusticeFtcReviewPage() {
     setStorageSkipped(false);
     setTechnicalDetails(null);
     const caseId = sessionStorage.getItem(STORAGE_CASE_ID);
-    const mockUrl = `${window.location.origin}/mock/ftc-complaint`;
-    const userData = intakeToMockFtcUserData(intake);
 
-    if (caseId) {
-      appendTimelineEvent(caseId, { type: "ftc_practice_started", label: "FTC practice started" });
-    }
-    await syncTimelineToSupabase(caseId);
+    const result = await runFtcPractice({
+      intake,
+      caseId,
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+    });
 
-    await logEvent("ftc_mock_lane_started", { case_id: caseId, mock_path: "/mock/ftc-complaint" });
-
-    try {
-      const res = await fetch("/api/submit-form", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ url: mockUrl, userData }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error((data as { error?: string }).error || "Request failed");
-      }
-      await logEvent("ftc_mock_lane_completed", { case_id: caseId, outcome: "success" });
-      sessionStorage.setItem("justice_ftc_mock_completed", "1");
-      const fillResult = (data as { fillResult?: { storageSkipped?: boolean } }).fillResult;
-      if (caseId) {
-        appendTimelineEvent(caseId, {
-          type: "ftc_practice_completed",
-          label: "FTC practice completed",
-          detail: fillResult?.storageSkipped ? "Screenshot storage skipped locally" : undefined,
-        });
-      }
-      await syncTimelineToSupabase(caseId);
-      setStorageSkipped(fillResult?.storageSkipped === true);
-      setTechnicalDetails(JSON.stringify(data, null, 2));
+    if (result.ok) {
+      setStorageSkipped(result.storageSkipped);
+      setTechnicalDetails(result.technicalDetails);
       setPracticeSuccess(true);
-    } catch (e: any) {
-      await logEvent("ftc_mock_lane_completed", {
-        case_id: caseId,
-        outcome: "failed",
-        error: (e?.message || "error").slice(0, 200),
-      });
-      if (caseId) {
-        appendTimelineEvent(caseId, {
-          type: "ftc_practice_completed",
-          label: "FTC practice completed",
-          detail: "Did not complete",
-        });
-      }
-      await syncTimelineToSupabase(caseId);
-      setError(e?.message || "Something went wrong.");
-    } finally {
-      setRunning(false);
+    } else {
+      setError(result.error);
     }
+    setRunning(false);
   }
 
   return (
@@ -210,7 +131,7 @@ export default function JusticeFtcReviewPage() {
           <button
             type="button"
             disabled={!confirmed || running}
-            onClick={() => void runPractice()}
+            onClick={() => void handleRunPractice()}
             className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3.5 font-semibold text-white shadow-lg shadow-blue-900/25 transition hover:bg-blue-700 hover:shadow-xl disabled:opacity-50"
           >
             {running ? "Running practice autofill…" : "Run practice autofill"}

@@ -59,6 +59,7 @@ import {
   type PaymentMethodOption,
 } from "@/lib/justice/buildPaymentDisputeBankLetter";
 import {
+  CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   getChatInlineApprovedPrepContent,
 } from "@/lib/justice/chatInlineApprovedPrep";
@@ -73,6 +74,7 @@ import {
   preparePaymentDisputeChecklist,
   resolvePaymentDisputeFormFields,
 } from "@/lib/justice/preparePaymentDisputeChecklist";
+import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
@@ -886,6 +888,77 @@ function ChatInlinePaymentDisputePrepBlock({
         <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
       </p>
     </form>
+  );
+}
+
+function ChatInlineFtcPracticeBlock({
+  summaryLines,
+  confirmed,
+  onConfirmedChange,
+  running,
+  practiceSuccess,
+  storageSkipped,
+  error,
+  onRunPractice,
+}: {
+  summaryLines: string[];
+  confirmed: boolean;
+  onConfirmedChange: (confirmed: boolean) => void;
+  running: boolean;
+  practiceSuccess: boolean;
+  storageSkipped: boolean;
+  error: string | null;
+  onRunPractice: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">FTC practice complaint</p>
+      <p className="rounded-md border border-amber-300/80 bg-amber-50/90 px-2 py-1.5 text-[11px] leading-relaxed text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100">
+        Runs the <strong>internal practice form</strong> only (<code className="text-[10px]">/mock/ftc-complaint</code>
+        ). It is <strong>not</strong> a real government submission.
+      </p>
+      <ul className="space-y-1 rounded-md border border-emerald-200/80 bg-white/70 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-800 dark:border-emerald-900/40 dark:bg-neutral-950/50 dark:text-neutral-100">
+        {summaryLines.map((line) => (
+          <li key={line.slice(0, 48)}>{line}</li>
+        ))}
+      </ul>
+      <label className="flex items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          onChange={(e) => onConfirmedChange(e.target.checked)}
+          className="mt-0.5"
+          disabled={running || practiceSuccess}
+        />
+        <span>I confirm this information is accurate to the best of my knowledge.</span>
+      </label>
+      <button
+        type="button"
+        disabled={!confirmed || running || practiceSuccess}
+        onClick={onRunPractice}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {running ? "Running practice autofill…" : practiceSuccess ? "Practice completed" : "Run practice autofill"}
+      </button>
+      {error ? (
+        <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
+      ) : null}
+      {practiceSuccess ? (
+        <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300">
+          Practice autofill completed.
+          {storageSkipped ? " Screenshot storage was skipped locally." : ""}
+        </p>
+      ) : null}
+      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        <Link
+          href={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
+          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+        >
+          Open full FTC practice page
+        </Link>
+        <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
+      </p>
+    </div>
   );
 }
 
@@ -1735,6 +1808,11 @@ export default function JusticeChatAiPage() {
   const [savingPaymentDisputeChecklist, setSavingPaymentDisputeChecklist] = useState(false);
   const [paymentDisputeSaveSuccess, setPaymentDisputeSaveSuccess] = useState<string | null>(null);
   const paymentDisputeFormHydratedForCaseRef = useRef<string | null>(null);
+  const [ftcPracticeConfirmed, setFtcPracticeConfirmed] = useState(false);
+  const [ftcPracticeRunning, setFtcPracticeRunning] = useState(false);
+  const [ftcPracticeSuccess, setFtcPracticeSuccess] = useState(false);
+  const [ftcPracticeStorageSkipped, setFtcPracticeStorageSkipped] = useState(false);
+  const [ftcPracticeError, setFtcPracticeError] = useState<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -1977,6 +2055,35 @@ export default function JusticeChatAiPage() {
       setPaymentDisputeSaveSuccess("Checklist saved on your case timeline.");
     } finally {
       setSavingPaymentDisputeChecklist(false);
+    }
+  }
+
+  async function handleRunFtcPracticeFromChat() {
+    if (!ftcPracticeConfirmed || !isLoaded || !isSignedIn) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    setFtcPracticeRunning(true);
+    setFtcPracticeError(null);
+    setFtcPracticeSuccess(false);
+    setFtcPracticeStorageSkipped(false);
+    try {
+      const intake = buildJusticeIntakeFromParts(parts);
+      const result = await runFtcPractice({
+        intake,
+        caseId: caseId || null,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        logLabel: "justice chat-ai",
+      });
+      if (result.ok) {
+        setFtcPracticeSuccess(true);
+        setFtcPracticeStorageSkipped(result.storageSkipped);
+      } else {
+        setFtcPracticeError(result.error);
+      }
+    } finally {
+      setFtcPracticeRunning(false);
     }
   }
 
@@ -2916,6 +3023,15 @@ export default function JusticeChatAiPage() {
     parts,
   ]);
 
+  useEffect(() => {
+    if (approvedNextAction?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF) return;
+    setFtcPracticeConfirmed(false);
+    setFtcPracticeRunning(false);
+    setFtcPracticeSuccess(false);
+    setFtcPracticeStorageSkipped(false);
+    setFtcPracticeError(null);
+  }, [approvedNextAction?.href]);
+
   async function handleSend() {
     if (sendInFlightRef.current || loading) return;
 
@@ -3200,7 +3316,22 @@ export default function JusticeChatAiPage() {
     approvedNextAction?.href?.trim() === CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF &&
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
-  const prepInlineInChat = showInlineApprovedPrep || showInlinePaymentDisputePrep;
+  const showInlineFtcPracticePrep =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    preparedPacketApproved &&
+    Boolean(approvedNextAction) &&
+    approvedNextAction?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF &&
+    !approvedNextAction?.handling_requested_at?.trim() &&
+    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
+  const prepInlineInChat =
+    showInlineApprovedPrep || showInlinePaymentDisputePrep || showInlineFtcPracticePrep;
+  const ftcPracticeSummaryLines = useMemo(() => {
+    if (!showInlineFtcPracticePrep) return [];
+    return buildFtcPracticeSummaryLines(buildJusticeIntakeFromParts(parts));
+  }, [showInlineFtcPracticePrep, parts]);
   const paymentDisputeLetterText = useMemo(() => {
     if (!showInlinePaymentDisputePrep || !activeUuidCaseId) return "";
     const intake = buildJusticeIntakeFromParts(parts);
@@ -3503,6 +3634,18 @@ export default function JusticeChatAiPage() {
                 saving={savingPaymentDisputeChecklist}
                 saveSuccess={paymentDisputeSaveSuccess}
                 onSubmit={(e) => void handleSavePaymentDisputeChecklistFromChat(e)}
+              />
+            ) : null}
+            {showInlineFtcPracticePrep ? (
+              <ChatInlineFtcPracticeBlock
+                summaryLines={ftcPracticeSummaryLines}
+                confirmed={ftcPracticeConfirmed}
+                onConfirmedChange={setFtcPracticeConfirmed}
+                running={ftcPracticeRunning}
+                practiceSuccess={ftcPracticeSuccess}
+                storageSkipped={ftcPracticeStorageSkipped}
+                error={ftcPracticeError}
+                onRunPractice={() => void handleRunFtcPracticeFromChat()}
               />
             ) : null}
             {approvedNextAction ? (
