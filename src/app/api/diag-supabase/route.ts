@@ -1,18 +1,30 @@
 // src/app/api/diag-supabase/route.ts
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { supabaseAdmin as supabase } from "@/utils/supabaseClient";
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
 
 export async function GET() {
   try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    if (!url) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+    const supabase = getSupabaseAdmin();
+    if (!url || !supabase) {
       return NextResponse.json(
-        { network_ok: false, db_ok: false, error: "SUPABASE_URL missing" },
-        { status: 500 }
+        { error: "Supabase is not configured on this server." },
+        { status: 503 }
       );
     }
 
-    // 1) Network ping (no keys required)
+    // 1) Network ping (no keys required beyond URL)
     let pingOk = false;
     try {
       const ping = await fetch(`${url}/auth/v1/health`, { cache: "no-store" });
@@ -34,9 +46,10 @@ export async function GET() {
       db_error: error?.message ?? null,
       sample_count: (data ?? []).length,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { network_ok: false, db_ok: false, error: e?.message || String(e) },
+      { network_ok: false, db_ok: false, error: message },
       { status: 500 }
     );
   }
