@@ -63,6 +63,31 @@ export const HANDLING_TRACKING_STEP_ADD_FILING =
 export const HANDLING_TRACKING_STEP_ADD_CONFIRMATION =
   "Add or edit the filing confirmation from the case packet after external submission.";
 
+/** Chat-ai when inline filing capture is available (signed-in UUID). */
+export const HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE =
+  "Add filing records in chat below after external submission.";
+
+export const HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE =
+  "Add or edit the filing confirmation in chat below after external submission.";
+
+export function isHandlingTrackingAddFilingStep(derivedStep: string): boolean {
+  return (
+    derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ||
+    derivedStep === HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE
+  );
+}
+
+export function isHandlingTrackingAddConfirmationStep(derivedStep: string): boolean {
+  return (
+    derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION ||
+    derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE
+  );
+}
+
+export function isHandlingTrackingFilingCaptureStep(derivedStep: string): boolean {
+  return isHandlingTrackingAddFilingStep(derivedStep) || isHandlingTrackingAddConfirmationStep(derivedStep);
+}
+
 export const HANDLING_TRACKING_STEP_RECORD_OUTCOME = "Record the handling outcome.";
 
 export const HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED =
@@ -93,6 +118,8 @@ export function resolveHandlingTrackingContextualLink(input: {
   markAcknowledgedOnScreen?: boolean;
   /** When approved prep is embedded in chat-ai, suppress redundant open-step link. */
   prepInlineInChat?: boolean;
+  /** When filing capture form is shown in chat-ai, suppress packet filing link. */
+  inlineFilingCaptureInChat?: boolean;
 }): HandlingTrackingContextualLink | null {
   const { derivedStep } = input;
 
@@ -117,9 +144,12 @@ export function resolveHandlingTrackingContextualLink(input: {
   }
 
   if (
-    derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ||
-    derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION
+    isHandlingTrackingAddFilingStep(derivedStep) ||
+    isHandlingTrackingAddConfirmationStep(derivedStep)
   ) {
+    if (input.surface === "chat-ai" && input.inlineFilingCaptureInChat) {
+      return null;
+    }
     if (input.surface === "packet") {
       return { href: PACKET_FILINGS_HASH, label: "Open filing records" };
     }
@@ -161,6 +191,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   evidenceCount,
   markAcknowledgedOnScreen = false,
   prepInlineInChat = false,
+  inlineFilingCaptureInChat = false,
   onNavigate,
   tone = "emerald",
   className = "mt-1 text-xs",
@@ -172,6 +203,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   evidenceCount?: number;
   markAcknowledgedOnScreen?: boolean;
   prepInlineInChat?: boolean;
+  inlineFilingCaptureInChat?: boolean;
   onNavigate?: (href: string) => void;
   tone?: "emerald" | "neutral";
   className?: string;
@@ -184,6 +216,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
     evidenceCount,
     markAcknowledgedOnScreen,
     prepInlineInChat,
+    inlineFilingCaptureInChat,
   });
   if (!link) return null;
   const linkCls =
