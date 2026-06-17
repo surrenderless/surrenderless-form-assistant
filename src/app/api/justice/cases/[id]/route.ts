@@ -1,8 +1,26 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { getUserOr401 } from "@/server/requireUser";
-import { supabaseAdmin } from "@/utils/supabaseClient";
 import { isJusticeIntakePayload, isTimelineArray } from "@/lib/justice/caseApiValidation";
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
+
+function supabaseUnavailableResponse() {
+  return NextResponse.json(
+    { error: "Supabase is not configured on this server." },
+    { status: 503 }
+  );
+}
 
 type CaseResponse = {
   id: string;
@@ -44,7 +62,10 @@ export async function GET(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Invalid case id" }, { status: 400 });
   }
 
-  const { data, error } = await supabaseAdmin
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return supabaseUnavailableResponse();
+
+  const { data, error } = await supabase
     .from("justice_cases")
     .select(SELECT)
     .eq("id", id)
@@ -130,7 +151,10 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
 
-  const { data, error } = await supabaseAdmin
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return supabaseUnavailableResponse();
+
+  const { data, error } = await supabase
     .from("justice_cases")
     .update(patch)
     .eq("id", id)
