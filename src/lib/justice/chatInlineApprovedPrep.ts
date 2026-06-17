@@ -1,14 +1,20 @@
 import { buildCfpbComplaintDraft } from "@/lib/justice/buildCfpbComplaintDraft";
+import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
 export const CHAT_INLINE_CFPB_PREP_HREF = "/justice/cfpb";
+export const CHAT_INLINE_FCC_PREP_HREF = "/justice/fcc";
 
-const CHAT_INLINE_PREP_HREFS = new Set([CHAT_INLINE_MERCHANT_PREP_HREF, CHAT_INLINE_CFPB_PREP_HREF]);
+const CHAT_INLINE_PREP_HREFS = new Set([
+  CHAT_INLINE_MERCHANT_PREP_HREF,
+  CHAT_INLINE_CFPB_PREP_HREF,
+  CHAT_INLINE_FCC_PREP_HREF,
+]);
 
 export type ChatInlineApprovedPrepContent = {
-  kind: "merchant_message" | "cfpb_complaint";
+  kind: "merchant_message" | "cfpb_complaint" | "fcc_complaint";
   title: string;
   messageText: string;
   helperText: string;
@@ -69,6 +75,23 @@ export function getChatInlineApprovedPrepContent(
       optionalPageLabel: label
         ? `Open full ${label.toLowerCase()} page`
         : "Open full CFPB prep page",
+      optionalPageNote: "optional — evidence checklist and mark filed",
+    };
+  }
+
+  if (trimmedHref === CHAT_INLINE_FCC_PREP_HREF) {
+    const title = label || "FCC complaint prep";
+    return {
+      kind: "fcc_complaint",
+      title,
+      messageText: buildFccComplaintDraft(intake),
+      helperText:
+        "Copy the draft below and paste it into the official FCC consumer complaint flow. Surrenderless does not file for you.",
+      copyButtonLabel: "Copy draft",
+      optionalPageHref: CHAT_INLINE_FCC_PREP_HREF,
+      optionalPageLabel: label
+        ? `Open full ${label.toLowerCase()} page`
+        : "Open full FCC prep page",
       optionalPageNote: "optional — evidence checklist and mark filed",
     };
   }
