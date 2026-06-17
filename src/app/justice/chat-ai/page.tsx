@@ -53,6 +53,8 @@ import {
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
 import { getChatInlineApprovedPrepContent } from "@/lib/justice/chatInlineApprovedPrep";
+import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
+import { recomputeApprovedNextActionAfterIntake } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
@@ -632,6 +634,172 @@ function ChatInlineApprovedPrepActionBlock({
         </span>
       </p>
     </div>
+  );
+}
+
+function ChatInlineMerchantContactDocumentationBlock({
+  useCompanyContactLabels,
+  contactMethod,
+  onContactMethodChange,
+  contactDate,
+  onContactDateChange,
+  merchantResponseType,
+  onMerchantResponseTypeChange,
+  contactProofType,
+  onContactProofTypeChange,
+  contactProofText,
+  onContactProofTextChange,
+  contactDateError,
+  contactProofError,
+  saving,
+  onSubmit,
+}: {
+  useCompanyContactLabels: boolean;
+  contactMethod: NonNullable<BuildJusticeIntakeParts["contact_method"]>;
+  onContactMethodChange: (value: NonNullable<BuildJusticeIntakeParts["contact_method"]>) => void;
+  contactDate: string;
+  onContactDateChange: (value: string) => void;
+  merchantResponseType: NonNullable<BuildJusticeIntakeParts["merchant_response_type"]>;
+  onMerchantResponseTypeChange: (value: NonNullable<BuildJusticeIntakeParts["merchant_response_type"]>) => void;
+  contactProofType: NonNullable<BuildJusticeIntakeParts["contact_proof_type"]>;
+  onContactProofTypeChange: (value: NonNullable<BuildJusticeIntakeParts["contact_proof_type"]>) => void;
+  contactProofText: string;
+  onContactProofTextChange: (value: string) => void;
+  contactDateError: string | null;
+  contactProofError: string | null;
+  saving: boolean;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  const proofDetailsLabel =
+    contactProofType === "none"
+      ? "Describe your contact attempt"
+      : contactProofType === "ticket"
+        ? "Ticket or case number"
+        : "Proof details (optional)";
+  const proofDetailsPlaceholder =
+    contactProofType === "none"
+      ? "Example: I emailed on 04/27 and they said they could not help."
+      : contactProofType === "ticket"
+        ? "e.g. Case #12345 or support ticket ID"
+        : "Ticket number, paste of email, case ID, etc.";
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30"
+    >
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">After you contact them</p>
+      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+        Record how you reached out, when, and what they did. This keeps your case accurate in chat and unlocks
+        escalation when appropriate.
+      </p>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Contact method</label>
+        <select
+          className={CHAT_FILING_INPUT_CLS}
+          value={contactMethod}
+          onChange={(e) =>
+            onContactMethodChange(e.target.value as NonNullable<BuildJusticeIntakeParts["contact_method"]>)
+          }
+          required
+        >
+          <option value="email">Email</option>
+          <option value="chat">Live chat</option>
+          <option value="phone">Phone</option>
+          <option value="form">Online contact form</option>
+          <option value="in_person">In person</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label
+          className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100"
+          htmlFor="chat-merchant-contact-date"
+        >
+          Contact date
+        </label>
+        <input
+          id="chat-merchant-contact-date"
+          type="date"
+          className={CHAT_FILING_INPUT_CLS}
+          value={contactDate}
+          onChange={(e) => onContactDateChange(e.target.value)}
+          aria-invalid={contactDateError ? true : undefined}
+        />
+        {contactDateError ? (
+          <p className="mt-1 text-[11px] text-red-700 dark:text-red-300">{contactDateError}</p>
+        ) : null}
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">
+          {useCompanyContactLabels ? "Company response" : "Merchant response"}
+        </label>
+        <select
+          className={CHAT_FILING_INPUT_CLS}
+          value={merchantResponseType}
+          onChange={(e) =>
+            onMerchantResponseTypeChange(
+              e.target.value as NonNullable<BuildJusticeIntakeParts["merchant_response_type"]>
+            )
+          }
+          required
+        >
+          <option value="no_response">No response yet</option>
+          <option value="refused_help">They refused a refund or real help</option>
+          <option value="promised_but_did_not_fix">They said they would fix it but did not</option>
+          <option value="resolved">
+            {useCompanyContactLabels ? "Resolved — company fixed the issue" : "Resolved — merchant fixed the issue"}
+          </option>
+          <option value="partial_help">They gave partial refund or partial help</option>
+          <option value="asked_more_info">They asked for more information</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Proof type</label>
+        <select
+          className={CHAT_FILING_INPUT_CLS}
+          value={contactProofType}
+          onChange={(e) =>
+            onContactProofTypeChange(e.target.value as NonNullable<BuildJusticeIntakeParts["contact_proof_type"]>)
+          }
+          required
+        >
+          <option value="upload">I can upload a file</option>
+          <option value="paste">I can paste text</option>
+          <option value="ticket">I have a ticket or case number</option>
+          <option value="screenshot">I have a screenshot</option>
+          <option value="none">No written proof — I can describe the attempt</option>
+        </select>
+      </div>
+      <div>
+        <label
+          className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100"
+          htmlFor="chat-merchant-contact-proof"
+        >
+          {proofDetailsLabel}
+        </label>
+        <textarea
+          id="chat-merchant-contact-proof"
+          className={`${CHAT_FILING_INPUT_CLS} min-h-[72px] resize-y`}
+          rows={3}
+          value={contactProofText}
+          onChange={(e) => onContactProofTextChange(e.target.value)}
+          placeholder={proofDetailsPlaceholder}
+          aria-invalid={contactProofError ? true : undefined}
+        />
+        {contactProofError ? (
+          <p className="mt-1 text-[11px] text-red-700 dark:text-red-300">{contactProofError}</p>
+        ) : null}
+      </div>
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {saving ? "Saving…" : "Save contact details"}
+      </button>
+    </form>
   );
 }
 
@@ -1288,6 +1456,17 @@ export default function JusticeChatAiPage() {
   const [packetPreviewExpanded, setPacketPreviewExpanded] = useState(false);
   const [prepMessageExpanded, setPrepMessageExpanded] = useState(false);
   const [prepCopyHint, setPrepCopyHint] = useState<string | null>(null);
+  const [merchantDocContactMethod, setMerchantDocContactMethod] =
+    useState<NonNullable<BuildJusticeIntakeParts["contact_method"]>>("email");
+  const [merchantDocContactDate, setMerchantDocContactDate] = useState("");
+  const [merchantDocMerchantResponseType, setMerchantDocMerchantResponseType] =
+    useState<NonNullable<BuildJusticeIntakeParts["merchant_response_type"]>>("no_response");
+  const [merchantDocContactProofType, setMerchantDocContactProofType] =
+    useState<NonNullable<BuildJusticeIntakeParts["contact_proof_type"]>>("none");
+  const [merchantDocContactProofText, setMerchantDocContactProofText] = useState("");
+  const [merchantDocContactDateError, setMerchantDocContactDateError] = useState<string | null>(null);
+  const [merchantDocContactProofError, setMerchantDocContactProofError] = useState<string | null>(null);
+  const [savingMerchantContactDocumentation, setSavingMerchantContactDocumentation] = useState(false);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -1424,6 +1603,78 @@ export default function JusticeChatAiPage() {
       console.warn("justice chat-ai: prepared packet approve error", e);
     } finally {
       setApprovingPreparedPacket(false);
+    }
+  }
+
+  async function handleSaveMerchantContactDocumentationFromChat(e: FormEvent) {
+    e.preventDefault();
+    if (!isLoaded) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    setSavingMerchantContactDocumentation(true);
+    setMerchantDocContactDateError(null);
+    setMerchantDocContactProofError(null);
+    try {
+      const intake = buildJusticeIntakeFromParts(parts);
+      const result = await documentMerchantContact({
+        intake,
+        input: {
+          contactMethod: merchantDocContactMethod,
+          contactDate: merchantDocContactDate,
+          merchantResponseType: merchantDocMerchantResponseType,
+          contactProofType: merchantDocContactProofType,
+          contactProofText: merchantDocContactProofText,
+        },
+        caseId: caseId || null,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        logLabel: "justice chat-ai",
+      });
+      if (!result.ok) {
+        setMerchantDocContactDateError(result.contactDateError ?? null);
+        setMerchantDocContactProofError(result.contactProofError ?? null);
+        return;
+      }
+
+      const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(result.updatedIntake);
+      setParts(hydratedParts);
+      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
+
+      const manualFtc =
+        typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+      const nextAction = recomputeApprovedNextActionAfterIntake(result.updatedIntake, {
+        existing: approvedNextAction,
+        manualFtc,
+      });
+      setApprovedNextAction(nextAction);
+      if (caseId) {
+        writeSessionApprovedNextAction(caseId, nextAction);
+      }
+
+      if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
+        try {
+          const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+          if (!getRes.ok) {
+            console.warn("justice chat-ai: GET before contact doc next action failed", getRes.status);
+            return;
+          }
+          const existing = (await getRes.json()) as { client_state?: unknown };
+          const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextAction);
+          const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ client_state: merged }),
+          });
+          if (!patchRes.ok) {
+            console.warn("justice chat-ai: PATCH contact doc next action failed", patchRes.status);
+          }
+        } catch (err) {
+          console.warn("justice chat-ai: contact doc next action error", err);
+        }
+      }
+    } finally {
+      setSavingMerchantContactDocumentation(false);
     }
   }
 
@@ -2578,6 +2829,13 @@ export default function JusticeChatAiPage() {
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started") &&
     Boolean(chatInlineApprovedPrepContent);
+  const showInlineMerchantContactDocumentation =
+    showInlineApprovedPrep &&
+    chatInlineApprovedPrepContent?.kind === "merchant_message" &&
+    parts.already_contacted !== "yes";
+  const merchantDocUseCompanyContactLabels =
+    cfpbLikelyRelevant(buildJusticeIntakeFromParts(parts)) ||
+    fccLikelyRelevant(buildJusticeIntakeFromParts(parts));
   const activeCaseProductLine = truncateActiveCaseProduct(parts.purchase_or_signup);
   const activeCaseSubline = [categoryLabel(parts.problem_category), activeCaseProductLine]
     .filter(Boolean)
@@ -2783,6 +3041,34 @@ export default function JusticeChatAiPage() {
                     }
                   })();
                 }}
+              />
+            ) : null}
+            {showInlineMerchantContactDocumentation ? (
+              <ChatInlineMerchantContactDocumentationBlock
+                useCompanyContactLabels={merchantDocUseCompanyContactLabels}
+                contactMethod={merchantDocContactMethod}
+                onContactMethodChange={setMerchantDocContactMethod}
+                contactDate={merchantDocContactDate}
+                onContactDateChange={(value) => {
+                  setMerchantDocContactDate(value);
+                  setMerchantDocContactDateError(null);
+                }}
+                merchantResponseType={merchantDocMerchantResponseType}
+                onMerchantResponseTypeChange={setMerchantDocMerchantResponseType}
+                contactProofType={merchantDocContactProofType}
+                onContactProofTypeChange={(value) => {
+                  setMerchantDocContactProofType(value);
+                  setMerchantDocContactProofError(null);
+                }}
+                contactProofText={merchantDocContactProofText}
+                onContactProofTextChange={(value) => {
+                  setMerchantDocContactProofText(value);
+                  setMerchantDocContactProofError(null);
+                }}
+                contactDateError={merchantDocContactDateError}
+                contactProofError={merchantDocContactProofError}
+                saving={savingMerchantContactDocumentation}
+                onSubmit={(e) => void handleSaveMerchantContactDocumentationFromChat(e)}
               />
             ) : null}
             {approvedNextAction ? (
