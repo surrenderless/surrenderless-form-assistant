@@ -1135,6 +1135,9 @@ function ChatInlineMerchantContactDocumentationBlock({
 const CHAT_FILING_INPUT_CLS =
   "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
 
+const CHAT_TRACKING_SAVE_ERROR_MESSAGE =
+  "Your tracking update was not saved to your case on the server. This device still shows your latest changes — try the action again.";
+
 function ChatHandlingWorkbenchOptionalLink() {
   return (
     <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/65 dark:text-emerald-200/65">
@@ -1802,6 +1805,7 @@ export default function JusticeChatAiPage() {
   const [submissionDraftReviewChecked, setSubmissionDraftReviewChecked] = useState(false);
   const [markingSubmissionDraftReviewed, setMarkingSubmissionDraftReviewed] = useState(false);
   const [submissionDraftReviewError, setSubmissionDraftReviewError] = useState<string | null>(null);
+  const [trackingSaveError, setTrackingSaveError] = useState<string | null>(null);
   const [submissionDraftReviewOverride, setSubmissionDraftReviewOverride] = useState(false);
   const [draftPreviewExpanded, setDraftPreviewExpanded] = useState(false);
   const [packetPreviewExpanded, setPacketPreviewExpanded] = useState(false);
@@ -1951,10 +1955,12 @@ export default function JusticeChatAiPage() {
     setApprovePreparedPacketChecked(false);
 
     setApprovingPreparedPacket(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before prepared packet approve failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -1970,9 +1976,13 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH prepared packet approve failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: prepared packet approve error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setApprovingPreparedPacket(false);
     }
@@ -2137,10 +2147,12 @@ export default function JusticeChatAiPage() {
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
     setRequestingHandling(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before handling request failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2152,9 +2164,13 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH handling request failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: handling request error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setRequestingHandling(false);
     }
@@ -2181,10 +2197,12 @@ export default function JusticeChatAiPage() {
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
     setUpdatingHandlingNote(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before handling note update failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2196,9 +2214,13 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH handling note update failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: handling note update error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setUpdatingHandlingNote(false);
     }
@@ -2223,10 +2245,12 @@ export default function JusticeChatAiPage() {
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
     setAcknowledgingHandling(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before acknowledge handling failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2238,6 +2262,7 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH acknowledge handling failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const data = (await patchRes.json()) as { client_state?: unknown };
@@ -2246,8 +2271,10 @@ export default function JusticeChatAiPage() {
         writeSessionApprovedNextAction(caseId, hydrated);
         setApprovedNextAction(hydrated);
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: acknowledge handling error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setAcknowledgingHandling(false);
     }
@@ -2290,10 +2317,12 @@ export default function JusticeChatAiPage() {
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
     setMarkingActionHandled(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before mark action handled failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2305,9 +2334,13 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH mark action handled failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: mark action handled error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setMarkingActionHandled(false);
     }
@@ -2366,10 +2399,12 @@ export default function JusticeChatAiPage() {
     }
 
     setMarkingActionStarted(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before open approved step failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2381,9 +2416,13 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH open approved step failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: open approved step error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setMarkingActionStarted(false);
     }
@@ -2464,10 +2503,12 @@ export default function JusticeChatAiPage() {
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before save outcome tracking failed", getRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2479,9 +2520,13 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH save outcome tracking failed", patchRes.status);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: save outcome tracking error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     }
   }
 
@@ -3823,6 +3868,11 @@ export default function JusticeChatAiPage() {
                 <p className="text-xs font-semibold text-emerald-950 dark:text-emerald-100">
                   Current action tracking
                 </p>
+                {trackingSaveError ? (
+                  <p className="mt-2 text-xs text-red-700 dark:text-red-300" role="alert">
+                    {trackingSaveError}
+                  </p>
+                ) : null}
                 {approvedNextAction.label ? (
                   <p className="mt-1 text-xs text-emerald-900/95 dark:text-emerald-100/95">
                     Next step: <strong>{approvedNextAction.label}</strong>
