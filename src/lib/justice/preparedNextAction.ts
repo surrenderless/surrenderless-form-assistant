@@ -20,9 +20,18 @@ export function pickPreparedNextAction(params: {
     };
   }
 
+  return pickFirstRoutablePreparedAction(destinations);
+}
+
+function pickFirstRoutablePreparedAction(
+  destinations: JusticeDestination[],
+  skipHref?: string
+): PreparedNextActionPick {
+  const skip = skipHref?.trim();
   const firstRoutableDest = destinations.find(
     (d) =>
       d.internalRoute &&
+      d.internalRoute !== skip &&
       (d.status === "recommended" || d.status === "available")
   );
 
@@ -37,6 +46,27 @@ export function pickPreparedNextAction(params: {
     detailHref: null,
     stepLabel: "Prepared case review",
   };
+}
+
+/** Next routable approved step after the user marks the current href handled. */
+export function pickNextPreparedActionAfterCompleted(params: {
+  contacted: boolean;
+  useCompanyContactLabels: boolean;
+  destinations: JusticeDestination[];
+  completedHref: string;
+}): PreparedNextActionPick | null {
+  const { contacted, useCompanyContactLabels, destinations, completedHref } = params;
+  const completed = completedHref.trim();
+  if (!completed) return null;
+
+  if (!contacted) {
+    if (completed !== "/justice/merchant") return null;
+    const next = pickFirstRoutablePreparedAction(destinations, completed);
+    return next.detailHref ? next : null;
+  }
+
+  const next = pickFirstRoutablePreparedAction(destinations, completed);
+  return next.detailHref ? next : null;
 }
 
 export function buildApprovedNextActionTarget(

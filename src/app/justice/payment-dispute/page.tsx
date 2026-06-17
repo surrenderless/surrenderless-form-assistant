@@ -8,55 +8,20 @@ import Header from "@/app/components/Header";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1 } from "@/lib/justice/types";
 import {
   buildBankLetter,
-  buildDefaultPaymentDisputeDraft,
   type DisputeReasonOption,
   type PaymentDisputeDraft,
   type PaymentDisputeProofType,
   type PaymentMethodOption,
 } from "@/lib/justice/buildPaymentDisputeBankLetter";
-import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import {
-  appendPaymentChecklistViewedOnce,
-  appendTimelineEvent,
-  readTimeline,
-  replaceTimelineForCase,
-} from "@/lib/justice/timeline";
-
-const DISPUTE_REASON_VALUES: DisputeReasonOption[] = [
-  "unauthorized_charge",
-  "duplicate_charge",
-  "wrong_amount",
-  "canceled_refunded_still_charged",
-  "goods_not_received",
-  "service_not_as_promised",
-  "other",
-];
-
-function isDisputeReasonOption(s: string): s is DisputeReasonOption {
-  return DISPUTE_REASON_VALUES.includes(s as DisputeReasonOption);
-}
-
-function loadDraft(caseId: string): Partial<PaymentDisputeDraft> | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = sessionStorage.getItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1);
-    if (!raw) return null;
-    const d = JSON.parse(raw) as Partial<PaymentDisputeDraft> & { dispute_reason?: string };
-    if (d.case_id !== caseId) return null;
-    return d;
-  } catch {
-    return null;
-  }
-}
-
-function saveDraft(draft: PaymentDisputeDraft) {
-  if (typeof window === "undefined") return;
-  sessionStorage.setItem(STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1, JSON.stringify(draft));
-}
+  logPaymentDisputeChecklistViewed,
+  preparePaymentDisputeChecklist,
+  resolvePaymentDisputeFormFields,
+} from "@/lib/justice/preparePaymentDisputeChecklist";
+import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -87,48 +52,17 @@ export default function JusticePaymentDisputePage() {
       return;
     }
     setCaseId(cid);
-    appendPaymentChecklistViewedOnce(cid);
-    void fetch("/api/justice/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event_name: "payment_dispute_checklist_viewed",
-        payload: { case_id: cid },
-      }),
-    }).catch(() => {});
+    void logPaymentDisputeChecklistViewed(cid);
 
-    const saved = loadDraft(cid);
-    if (saved && saved.case_id === cid) {
-      if (saved.payment_method) setPaymentMethod(saved.payment_method);
-      if (typeof saved.charge_date === "string") setChargeDate(saved.charge_date);
-      if (typeof saved.charge_amount === "string") setChargeAmount(saved.charge_amount);
-      if (typeof saved.merchant_name === "string") setMerchantName(saved.merchant_name);
-      if (typeof saved.dispute_reason === "string") {
-        if (isDisputeReasonOption(saved.dispute_reason)) {
-          setDisputeReason(saved.dispute_reason);
-          if (typeof saved.dispute_reason_other === "string") {
-            setDisputeReasonOther(saved.dispute_reason_other);
-          }
-        } else {
-          setDisputeReason("other");
-          setDisputeReasonOther(saved.dispute_reason);
-        }
-      }
-      if (saved.prior_company_contact === "yes" || saved.prior_company_contact === "no") {
-        setPriorContact(saved.prior_company_contact);
-      }
-      if (saved.proof_type) setProofType(saved.proof_type);
-    } else {
-      const defaults = buildDefaultPaymentDisputeDraft(cid, intake);
-      setChargeAmount(defaults.charge_amount);
-      setChargeDate(defaults.charge_date);
-      setMerchantName(defaults.merchant_name);
-      setPaymentMethod(defaults.payment_method);
-      setDisputeReason(defaults.dispute_reason);
-      setDisputeReasonOther("");
-      setPriorContact(defaults.prior_company_contact);
-      setProofType(defaults.proof_type);
-    }
+    const fields = resolvePaymentDisputeFormFields(cid, intake);
+    setPaymentMethod(fields.paymentMethod);
+    setChargeDate(fields.chargeDate);
+    setChargeAmount(fields.chargeAmount);
+    setMerchantName(fields.merchantName);
+    setDisputeReason(fields.disputeReason);
+    setDisputeReasonOther(fields.disputeReasonOther);
+    setPriorContact(fields.priorContact);
+    setProofType(fields.proofType);
     setFormReady(true);
   }, [hydrationStatus, intake, router]);
 
@@ -170,50 +104,12 @@ export default function JusticePaymentDisputePage() {
     if (!intake || !draft || !caseId) return;
     setSaving(true);
     try {
-      saveDraft(draft);
-      appendTimelineEvent(caseId, {
-        type: "payment_dispute_checklist_prepared",
-        label: "Payment dispute checklist prepared",
+      await preparePaymentDisputeChecklist({
+        draft,
+        caseId,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
       });
-
-      if (isLoaded && isSignedIn && caseId) {
-        try {
-          const timeline = readTimeline(caseId);
-          const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ payment_dispute_draft: draft, timeline }),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as {
-              payment_dispute_draft?: unknown;
-              timeline?: unknown;
-            };
-            if (data.payment_dispute_draft != null) {
-              sessionStorage.setItem(
-                STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
-                JSON.stringify(data.payment_dispute_draft)
-              );
-            }
-            if (Array.isArray(data.timeline)) {
-              replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
-            }
-          } else {
-            console.warn("justice payment-dispute: PATCH /api/justice/cases/[id] failed", res.status);
-          }
-        } catch (e) {
-          console.warn("justice payment-dispute: PATCH /api/justice/cases/[id] error", e);
-        }
-      }
-
-      await fetch("/api/justice/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event_name: "payment_dispute_checklist_prepared",
-          payload: { case_id: caseId },
-        }),
-      }).catch(() => {});
       router.push("/justice/chat-ai");
     } finally {
       setSaving(false);

@@ -52,9 +52,27 @@ import {
 } from "@/lib/justice/evidence";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
-import { getChatInlineApprovedPrepContent } from "@/lib/justice/chatInlineApprovedPrep";
+import {
+  buildBankLetter,
+  type DisputeReasonOption,
+  type PaymentDisputeProofType,
+  type PaymentMethodOption,
+} from "@/lib/justice/buildPaymentDisputeBankLetter";
+import {
+  CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+  getChatInlineApprovedPrepContent,
+} from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
-import { recomputeApprovedNextActionAfterIntake } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import {
+  advanceApprovedNextActionAfterCompleted,
+  recomputeApprovedNextActionAfterIntake,
+} from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import {
+  buildPaymentDisputeDraftFromFields,
+  logPaymentDisputeChecklistViewed,
+  preparePaymentDisputeChecklist,
+  resolvePaymentDisputeFormFields,
+} from "@/lib/justice/preparePaymentDisputeChecklist";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   applyServerTimelineFromResponse,
@@ -634,6 +652,240 @@ function ChatInlineApprovedPrepActionBlock({
         </span>
       </p>
     </div>
+  );
+}
+
+function ChatInlinePaymentDisputePrepBlock({
+  letterText,
+  letterExpanded,
+  onLetterExpandedChange,
+  copyHint,
+  onCopyLetter,
+  paymentMethod,
+  onPaymentMethodChange,
+  chargeDate,
+  onChargeDateChange,
+  chargeAmount,
+  onChargeAmountChange,
+  merchantName,
+  onMerchantNameChange,
+  disputeReason,
+  onDisputeReasonChange,
+  disputeReasonOther,
+  onDisputeReasonOtherChange,
+  priorContact,
+  onPriorContactChange,
+  proofType,
+  onProofTypeChange,
+  saving,
+  saveSuccess,
+  onSubmit,
+}: {
+  letterText: string;
+  letterExpanded: boolean;
+  onLetterExpandedChange: (expanded: boolean) => void;
+  copyHint: string | null;
+  onCopyLetter: () => void;
+  paymentMethod: PaymentMethodOption;
+  onPaymentMethodChange: (value: PaymentMethodOption) => void;
+  chargeDate: string;
+  onChargeDateChange: (value: string) => void;
+  chargeAmount: string;
+  onChargeAmountChange: (value: string) => void;
+  merchantName: string;
+  onMerchantNameChange: (value: string) => void;
+  disputeReason: DisputeReasonOption;
+  onDisputeReasonChange: (value: DisputeReasonOption) => void;
+  disputeReasonOther: string;
+  onDisputeReasonOtherChange: (value: string) => void;
+  priorContact: "yes" | "no";
+  onPriorContactChange: (value: "yes" | "no") => void;
+  proofType: PaymentDisputeProofType;
+  onProofTypeChange: (value: PaymentDisputeProofType) => void;
+  saving: boolean;
+  saveSuccess: string | null;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  const canTruncateLetter = letterText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
+  const displayLetter =
+    letterExpanded || !canTruncateLetter
+      ? letterText
+      : `${letterText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30"
+    >
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Payment dispute (bank/card)</p>
+      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+        Fill in dispute details, copy the bank letter below, then save to record it on your case timeline.
+        Surrenderless does not submit disputes for you.
+      </p>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Payment method</label>
+        <select
+          className={CHAT_FILING_INPUT_CLS}
+          value={paymentMethod}
+          onChange={(e) => onPaymentMethodChange(e.target.value as PaymentMethodOption)}
+          required
+        >
+          <option value="credit_card">Credit card</option>
+          <option value="debit_card">Debit card</option>
+          <option value="bank_account_ach">Bank account / ACH</option>
+          <option value="paypal">PayPal / similar wallet</option>
+          <option value="apple_google_pay">Apple Pay / Google Pay</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Charge date</label>
+        <input
+          className={CHAT_FILING_INPUT_CLS}
+          value={chargeDate}
+          onChange={(e) => onChargeDateChange(e.target.value)}
+          required
+          placeholder="As shown on your statement"
+        />
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Charge amount</label>
+        <input
+          className={CHAT_FILING_INPUT_CLS}
+          value={chargeAmount}
+          onChange={(e) => onChargeAmountChange(e.target.value)}
+          required
+          placeholder="e.g. $49.99"
+        />
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Merchant / company name</label>
+        <input
+          className={CHAT_FILING_INPUT_CLS}
+          value={merchantName}
+          onChange={(e) => onMerchantNameChange(e.target.value)}
+          required
+          placeholder="As on your statement"
+        />
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Dispute reason</label>
+        <select
+          className={CHAT_FILING_INPUT_CLS}
+          value={disputeReason}
+          onChange={(e) => onDisputeReasonChange(e.target.value as DisputeReasonOption)}
+          required
+        >
+          <option value="unauthorized_charge">Unauthorized charge</option>
+          <option value="duplicate_charge">Duplicate charge</option>
+          <option value="wrong_amount">Wrong amount</option>
+          <option value="canceled_refunded_still_charged">Canceled or refunded but still charged</option>
+          <option value="goods_not_received">Goods or services not received</option>
+          <option value="service_not_as_promised">Service not as promised</option>
+          <option value="other">Other</option>
+        </select>
+        {disputeReason === "other" ? (
+          <textarea
+            className={`${CHAT_FILING_INPUT_CLS} mt-1.5 min-h-[56px] resize-y`}
+            rows={2}
+            value={disputeReasonOther}
+            onChange={(e) => onDisputeReasonOtherChange(e.target.value)}
+            required
+            placeholder="Briefly explain what happened."
+          />
+        ) : null}
+      </div>
+      <div>
+        <span className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">
+          Prior contact about this charge?
+        </span>
+        <div className="mt-1.5 flex gap-3">
+          <label className="flex items-center gap-1.5 text-[11px] text-emerald-900 dark:text-emerald-100">
+            <input
+              type="radio"
+              name="chat-payment-dispute-prior"
+              checked={priorContact === "yes"}
+              onChange={() => onPriorContactChange("yes")}
+            />
+            Yes
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-emerald-900 dark:text-emerald-100">
+            <input
+              type="radio"
+              name="chat-payment-dispute-prior"
+              checked={priorContact === "no"}
+              onChange={() => onPriorContactChange("no")}
+            />
+            No
+          </label>
+        </div>
+      </div>
+      <div>
+        <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Proof type</label>
+        <select
+          className={CHAT_FILING_INPUT_CLS}
+          value={proofType}
+          onChange={(e) => onProofTypeChange(e.target.value as PaymentDisputeProofType)}
+          required
+        >
+          <option value="receipt_order_confirmation">Receipt or order confirmation</option>
+          <option value="screenshot">Screenshot(s)</option>
+          <option value="email_chain">Email thread with merchant</option>
+          <option value="merchant_chat_log">Chat log with merchant</option>
+          <option value="bank_statement">Bank or card statement</option>
+          <option value="none_yet">No proof gathered yet</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      {letterText ? (
+        <>
+          <p className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Bank / card issuer letter</p>
+          <pre className="max-h-[min(220px,36vh)] overflow-auto whitespace-pre-wrap rounded-md border border-emerald-200/80 bg-white/80 p-2 text-[11px] leading-relaxed text-neutral-900 dark:border-emerald-900/40 dark:bg-neutral-950/80 dark:text-neutral-100">
+            {displayLetter}
+          </pre>
+          {canTruncateLetter ? (
+            <button
+              type="button"
+              onClick={() => onLetterExpandedChange(!letterExpanded)}
+              className="text-[11px] font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              {letterExpanded ? "Show less" : "Show full letter"}
+            </button>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onCopyLetter}
+              className="inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+            >
+              Copy letter
+            </button>
+            {copyHint ? (
+              <span className="text-[11px] text-emerald-800 dark:text-emerald-300">{copyHint}</span>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+      {saveSuccess ? (
+        <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300">{saveSuccess}</p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {saving ? "Saving…" : "Save checklist"}
+      </button>
+      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        <Link
+          href={CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF}
+          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+        >
+          Open full payment dispute page
+        </Link>
+        <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
+      </p>
+    </form>
   );
 }
 
@@ -1467,6 +1719,22 @@ export default function JusticeChatAiPage() {
   const [merchantDocContactDateError, setMerchantDocContactDateError] = useState<string | null>(null);
   const [merchantDocContactProofError, setMerchantDocContactProofError] = useState<string | null>(null);
   const [savingMerchantContactDocumentation, setSavingMerchantContactDocumentation] = useState(false);
+  const [paymentDisputePaymentMethod, setPaymentDisputePaymentMethod] =
+    useState<PaymentMethodOption>("credit_card");
+  const [paymentDisputeChargeDate, setPaymentDisputeChargeDate] = useState("");
+  const [paymentDisputeChargeAmount, setPaymentDisputeChargeAmount] = useState("");
+  const [paymentDisputeMerchantName, setPaymentDisputeMerchantName] = useState("");
+  const [paymentDisputeReason, setPaymentDisputeReason] =
+    useState<DisputeReasonOption>("unauthorized_charge");
+  const [paymentDisputeReasonOther, setPaymentDisputeReasonOther] = useState("");
+  const [paymentDisputePriorContact, setPaymentDisputePriorContact] = useState<"yes" | "no">("no");
+  const [paymentDisputeProofType, setPaymentDisputeProofType] =
+    useState<PaymentDisputeProofType>("receipt_order_confirmation");
+  const [paymentDisputeLetterExpanded, setPaymentDisputeLetterExpanded] = useState(false);
+  const [paymentDisputeCopyHint, setPaymentDisputeCopyHint] = useState<string | null>(null);
+  const [savingPaymentDisputeChecklist, setSavingPaymentDisputeChecklist] = useState(false);
+  const [paymentDisputeSaveSuccess, setPaymentDisputeSaveSuccess] = useState<string | null>(null);
+  const paymentDisputeFormHydratedForCaseRef = useRef<string | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -1678,6 +1946,40 @@ export default function JusticeChatAiPage() {
     }
   }
 
+  async function handleSavePaymentDisputeChecklistFromChat(e: FormEvent) {
+    e.preventDefault();
+    if (!isLoaded) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId) return;
+
+    const draft = buildPaymentDisputeDraftFromFields(caseId, {
+      paymentMethod: paymentDisputePaymentMethod,
+      chargeDate: paymentDisputeChargeDate,
+      chargeAmount: paymentDisputeChargeAmount,
+      merchantName: paymentDisputeMerchantName,
+      disputeReason: paymentDisputeReason,
+      disputeReasonOther: paymentDisputeReasonOther,
+      priorContact: paymentDisputePriorContact,
+      proofType: paymentDisputeProofType,
+    });
+
+    setSavingPaymentDisputeChecklist(true);
+    setPaymentDisputeSaveSuccess(null);
+    try {
+      await preparePaymentDisputeChecklist({
+        draft,
+        caseId,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        logLabel: "justice chat-ai",
+      });
+      setPaymentDisputeSaveSuccess("Checklist saved on your case timeline.");
+    } finally {
+      setSavingPaymentDisputeChecklist(false);
+    }
+  }
+
   async function handleRequestSurrenderlessHandling(note?: string) {
     if (!approvedNextAction || approvedNextAction.status === "completed") return;
     if (approvedNextAction.handling_requested_at?.trim()) return;
@@ -1821,13 +2123,28 @@ export default function JusticeChatAiPage() {
   async function handleMarkApprovedNextActionHandled() {
     if (!approvedNextAction || approvedNextAction.status !== "started") return;
 
-    const next: JusticeApprovedNextAction = {
+    const completedHref = approvedNextAction.href?.trim() ?? "";
+    const completed: JusticeApprovedNextAction = {
       ...approvedNextAction,
       status: "completed",
       completed_at: new Date().toISOString(),
     };
-    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
-    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, completed);
+
+    const intake = buildJusticeIntakeFromParts(parts);
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const advanced = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
+      existing: withTracking,
+      manualFtc,
+    });
+    const nextApprovedAction =
+      advanced?.href?.trim() &&
+      advanced.href.trim() !== completedHref &&
+      advanced.status === "approved"
+        ? advanced
+        : withTracking;
+    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(nextApprovedAction);
     setApprovedNextAction(local);
 
     const caseId =
@@ -1847,7 +2164,7 @@ export default function JusticeChatAiPage() {
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextApprovedAction);
       const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -2559,6 +2876,46 @@ export default function JusticeChatAiPage() {
     }
   }, [parts.already_contacted, parts.contact_proof_type, parts.contact_proof_text]);
 
+  useEffect(() => {
+    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) return;
+    if (!preparedPacketApproved || !approvedNextAction) return;
+    if (approvedNextAction.href?.trim() !== CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF) {
+      paymentDisputeFormHydratedForCaseRef.current = null;
+      return;
+    }
+    if (
+      approvedNextAction.handling_requested_at?.trim() ||
+      (approvedNextAction.status !== "approved" && approvedNextAction.status !== "started")
+    ) {
+      return;
+    }
+    if (paymentDisputeFormHydratedForCaseRef.current === caseId) return;
+
+    const intake = buildJusticeIntakeFromParts(parts);
+    const fields = resolvePaymentDisputeFormFields(caseId, intake);
+    setPaymentDisputePaymentMethod(fields.paymentMethod);
+    setPaymentDisputeChargeDate(fields.chargeDate);
+    setPaymentDisputeChargeAmount(fields.chargeAmount);
+    setPaymentDisputeMerchantName(fields.merchantName);
+    setPaymentDisputeReason(fields.disputeReason);
+    setPaymentDisputeReasonOther(fields.disputeReasonOther);
+    setPaymentDisputePriorContact(fields.priorContact);
+    setPaymentDisputeProofType(fields.proofType);
+    setPaymentDisputeSaveSuccess(null);
+    paymentDisputeFormHydratedForCaseRef.current = caseId;
+    void logPaymentDisputeChecklistViewed(caseId, "justice chat-ai");
+  }, [
+    isUpdatingExistingCase,
+    isLoaded,
+    isSignedIn,
+    preparedPacketApproved,
+    approvedNextAction,
+    parts,
+  ]);
+
   async function handleSend() {
     if (sendInFlightRef.current || loading) return;
 
@@ -2833,6 +3190,44 @@ export default function JusticeChatAiPage() {
     showInlineApprovedPrep &&
     chatInlineApprovedPrepContent?.kind === "merchant_message" &&
     parts.already_contacted !== "yes";
+  const showInlinePaymentDisputePrep =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    preparedPacketApproved &&
+    Boolean(approvedNextAction) &&
+    approvedNextAction?.href?.trim() === CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF &&
+    !approvedNextAction?.handling_requested_at?.trim() &&
+    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
+  const prepInlineInChat = showInlineApprovedPrep || showInlinePaymentDisputePrep;
+  const paymentDisputeLetterText = useMemo(() => {
+    if (!showInlinePaymentDisputePrep || !activeUuidCaseId) return "";
+    const intake = buildJusticeIntakeFromParts(parts);
+    const draft = buildPaymentDisputeDraftFromFields(activeUuidCaseId, {
+      paymentMethod: paymentDisputePaymentMethod,
+      chargeDate: paymentDisputeChargeDate,
+      chargeAmount: paymentDisputeChargeAmount,
+      merchantName: paymentDisputeMerchantName,
+      disputeReason: paymentDisputeReason,
+      disputeReasonOther: paymentDisputeReasonOther,
+      priorContact: paymentDisputePriorContact,
+      proofType: paymentDisputeProofType,
+    });
+    return buildBankLetter(draft, intake);
+  }, [
+    showInlinePaymentDisputePrep,
+    activeUuidCaseId,
+    parts,
+    paymentDisputePaymentMethod,
+    paymentDisputeChargeDate,
+    paymentDisputeChargeAmount,
+    paymentDisputeMerchantName,
+    paymentDisputeReason,
+    paymentDisputeReasonOther,
+    paymentDisputePriorContact,
+    paymentDisputeProofType,
+  ]);
   const merchantDocUseCompanyContactLabels =
     cfpbLikelyRelevant(buildJusticeIntakeFromParts(parts)) ||
     fccLikelyRelevant(buildJusticeIntakeFromParts(parts));
@@ -3071,6 +3466,45 @@ export default function JusticeChatAiPage() {
                 onSubmit={(e) => void handleSaveMerchantContactDocumentationFromChat(e)}
               />
             ) : null}
+            {showInlinePaymentDisputePrep ? (
+              <ChatInlinePaymentDisputePrepBlock
+                letterText={paymentDisputeLetterText}
+                letterExpanded={paymentDisputeLetterExpanded}
+                onLetterExpandedChange={setPaymentDisputeLetterExpanded}
+                copyHint={paymentDisputeCopyHint}
+                onCopyLetter={() => {
+                  void (async () => {
+                    if (!paymentDisputeLetterText) return;
+                    try {
+                      await navigator.clipboard.writeText(paymentDisputeLetterText);
+                      setPaymentDisputeCopyHint("Copied to clipboard.");
+                      window.setTimeout(() => setPaymentDisputeCopyHint(null), 2500);
+                    } catch {
+                      setPaymentDisputeCopyHint("Copy failed — select the text and copy manually.");
+                    }
+                  })();
+                }}
+                paymentMethod={paymentDisputePaymentMethod}
+                onPaymentMethodChange={setPaymentDisputePaymentMethod}
+                chargeDate={paymentDisputeChargeDate}
+                onChargeDateChange={setPaymentDisputeChargeDate}
+                chargeAmount={paymentDisputeChargeAmount}
+                onChargeAmountChange={setPaymentDisputeChargeAmount}
+                merchantName={paymentDisputeMerchantName}
+                onMerchantNameChange={setPaymentDisputeMerchantName}
+                disputeReason={paymentDisputeReason}
+                onDisputeReasonChange={setPaymentDisputeReason}
+                disputeReasonOther={paymentDisputeReasonOther}
+                onDisputeReasonOtherChange={setPaymentDisputeReasonOther}
+                priorContact={paymentDisputePriorContact}
+                onPriorContactChange={setPaymentDisputePriorContact}
+                proofType={paymentDisputeProofType}
+                onProofTypeChange={setPaymentDisputeProofType}
+                saving={savingPaymentDisputeChecklist}
+                saveSuccess={paymentDisputeSaveSuccess}
+                onSubmit={(e) => void handleSavePaymentDisputeChecklistFromChat(e)}
+              />
+            ) : null}
             {approvedNextAction ? (
               <>
                 {approvedNextAction.label?.trim() ? (
@@ -3252,7 +3686,7 @@ export default function JusticeChatAiPage() {
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
-                    {!showInlineApprovedPrep ? (
+                    {!prepInlineInChat ? (
                       <p className="mt-1.5 text-xs text-emerald-800 dark:text-emerald-200">
                         <Link
                           href={approvedNextAction.href.trim()}
@@ -3351,7 +3785,7 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       markAcknowledgedOnScreen={false}
-                      prepInlineInChat={showInlineApprovedPrep}
+                      prepInlineInChat={prepInlineInChat}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
@@ -3410,7 +3844,7 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
-                      prepInlineInChat={showInlineApprovedPrep}
+                      prepInlineInChat={prepInlineInChat}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
