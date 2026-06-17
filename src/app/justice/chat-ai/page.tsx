@@ -1135,6 +1135,20 @@ function ChatInlineMerchantContactDocumentationBlock({
 const CHAT_FILING_INPUT_CLS =
   "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
 
+function ChatHandlingWorkbenchOptionalLink() {
+  return (
+    <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/65 dark:text-emerald-200/65">
+      <Link
+        href="/justice/handling"
+        className="underline underline-offset-2 hover:text-emerald-900/90 dark:hover:text-emerald-100/90"
+      >
+        Handling workbench
+      </Link>
+      <span className="text-emerald-900/60 dark:text-emerald-100/60"> (optional)</span>
+    </p>
+  );
+}
+
 function showChatApprovedPacketActionHandlingTracking(input: {
   preparedPacketApproved: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -3923,14 +3937,6 @@ export default function JusticeChatAiPage() {
                       Approved case packet and next in-app step — not a Surrenderless handling request.
                       Request handling below when you want internal triage tracking.
                     </p>
-                    <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                      <Link
-                        href="/justice/handling"
-                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                      >
-                        View on handling workbench
-                      </Link>
-                    </p>
                     <ChatHandlingTrackingStatusReadOnly
                       readinessLoading={chatHandlingReadinessLoading}
                       approvedNextAction={approvedNextAction}
@@ -4011,14 +4017,6 @@ export default function JusticeChatAiPage() {
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
                       <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                     ) : null}
-                    <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
-                      <Link
-                        href="/justice/handling"
-                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                      >
-                        View in handling workbench
-                      </Link>
-                    </p>
                     {!approvedNextAction.handling_acknowledged_at?.trim() ? (
                       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                         <button
@@ -4053,6 +4051,12 @@ export default function JusticeChatAiPage() {
                       className="mt-1 text-emerald-800 dark:text-emerald-200"
                     />
                   </>
+                ) : null}
+                {showChatApprovedPacketActionHandlingTracking({
+                  preparedPacketApproved,
+                  approvedNextAction,
+                }) || approvedNextAction.handling_requested_at?.trim() ? (
+                  <ChatHandlingWorkbenchOptionalLink />
                 ) : null}
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
