@@ -26,8 +26,12 @@ import {
   ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION,
+  HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
   HANDLING_TRACKING_STEP_ADD_FILING,
+  HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
   HANDLING_TRACKING_STEP_COMPLETE,
+  isHandlingTrackingAddFilingStep,
+  isHandlingTrackingFilingCaptureStep,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -1164,6 +1168,7 @@ function deriveChatManualActionNextStep(input: {
   handlingRequestedAt?: string;
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
+  canCaptureFilingInline?: boolean;
 }): string {
   if (!input.readyForExternalManualAction) {
     return "Review packet and saved proof before external manual action.";
@@ -1172,10 +1177,14 @@ function deriveChatManualActionNextStep(input: {
     return "Open the approved step and prepare the manual action.";
   }
   if (!input.hasFilingRecord) {
-    return "Add filing records from the case packet after external submission.";
+    return input.canCaptureFilingInline
+      ? HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE
+      : HANDLING_TRACKING_STEP_ADD_FILING;
   }
   if (!input.hasConfirmationOnFile) {
-    return "Add or edit the filing confirmation from the case packet after external submission.";
+    return input.canCaptureFilingInline
+      ? HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE
+      : HANDLING_TRACKING_STEP_ADD_CONFIRMATION;
   }
   if (input.status === "completed" && !input.outcomeNote?.trim()) {
     return "Record the handling outcome.";
@@ -1201,6 +1210,7 @@ function deriveChatHandlingTrackingLine(input: {
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
   next: JusticeApprovedNextAction;
+  canCaptureFilingInline?: boolean;
 }): string {
   const readyForManualReview = chatReadyForManualReview({
     basicsReady: input.basicsReady,
@@ -1222,6 +1232,7 @@ function deriveChatHandlingTrackingLine(input: {
     handlingRequestedAt: input.next.handling_requested_at,
     handlingAcknowledgedAt: input.next.handling_acknowledged_at,
     followUpNeeded: input.next.follow_up_needed === true,
+    canCaptureFilingInline: input.canCaptureFilingInline,
   });
 }
 
@@ -1490,6 +1501,7 @@ function ChatHandlingTrackingStatusReadOnly({
       </p>
     );
   }
+  const canCaptureFilingInline = canCaptureFiling && Boolean(caseId);
   const derivedStep = deriveChatHandlingTrackingLine({
     basicsReady,
     draftReviewed,
@@ -1497,14 +1509,13 @@ function ChatHandlingTrackingStatusReadOnly({
     evidenceCount,
     filings,
     next: approvedNextAction,
+    canCaptureFilingInline,
   });
   const showInlineFilingCapture =
-    canCaptureFiling &&
-    Boolean(caseId) &&
-    (derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ||
-      derivedStep === HANDLING_TRACKING_STEP_ADD_CONFIRMATION);
-  const inlineFilingMode =
-    derivedStep === HANDLING_TRACKING_STEP_ADD_FILING ? "add_filing" : "add_confirmation";
+    canCaptureFilingInline && isHandlingTrackingFilingCaptureStep(derivedStep);
+  const inlineFilingMode = isHandlingTrackingAddFilingStep(derivedStep)
+    ? "add_filing"
+    : "add_confirmation";
   const showArchiveWhenComplete =
     canArchiveCase &&
     Boolean(caseId) &&
@@ -1528,6 +1539,7 @@ function ChatHandlingTrackingStatusReadOnly({
           evidenceCount={evidenceCount}
           markAcknowledgedOnScreen={markAcknowledgedOnScreen}
           prepInlineInChat={prepInlineInChat}
+          inlineFilingCaptureInChat={showInlineFilingCapture}
         />
       ) : null}
       {showInlineFilingCapture && onFilingsSaved ? (
