@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
+import { isChatInlinePrepHref } from "@/lib/justice/chatInlineApprovedPrep";
 
 /** Read-only / interactive copy for approved-next-action handling request tracking. */
 
@@ -90,8 +91,8 @@ export function resolveHandlingTrackingContextualLink(input: {
   basicsReady?: boolean;
   evidenceCount?: number;
   markAcknowledgedOnScreen?: boolean;
-  /** When merchant contact prep is embedded in chat-ai, suppress redundant open-step link. */
-  merchantPrepInlineInChat?: boolean;
+  /** When approved prep is embedded in chat-ai, suppress redundant open-step link. */
+  prepInlineInChat?: boolean;
 }): HandlingTrackingContextualLink | null {
   const { derivedStep } = input;
 
@@ -109,7 +110,7 @@ export function resolveHandlingTrackingContextualLink(input: {
   if (derivedStep === HANDLING_TRACKING_STEP_OPEN_APPROVED) {
     const href = input.approvedNextAction?.href?.trim() || "/justice/packet";
     if (input.surface === "packet" && href.startsWith("/justice/packet")) return null;
-    if (input.surface === "chat-ai" && input.merchantPrepInlineInChat && href === "/justice/merchant") {
+    if (input.surface === "chat-ai" && input.prepInlineInChat && isChatInlinePrepHref(href)) {
       return null;
     }
     return { href, label: "Open approved step" };
@@ -159,7 +160,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   basicsReady,
   evidenceCount,
   markAcknowledgedOnScreen = false,
-  merchantPrepInlineInChat = false,
+  prepInlineInChat = false,
   onNavigate,
   tone = "emerald",
   className = "mt-1 text-xs",
@@ -170,7 +171,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   basicsReady?: boolean;
   evidenceCount?: number;
   markAcknowledgedOnScreen?: boolean;
-  merchantPrepInlineInChat?: boolean;
+  prepInlineInChat?: boolean;
   onNavigate?: (href: string) => void;
   tone?: "emerald" | "neutral";
   className?: string;
@@ -182,7 +183,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
     basicsReady,
     evidenceCount,
     markAcknowledgedOnScreen,
-    merchantPrepInlineInChat,
+    prepInlineInChat,
   });
   if (!link) return null;
   const linkCls =
