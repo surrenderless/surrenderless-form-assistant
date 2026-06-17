@@ -1,5 +1,6 @@
 // src/app/api/fill-form/route.ts
 import { NextResponse, type NextRequest } from "next/server";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
@@ -7,9 +8,19 @@ import path from "path";
 import os from "os";
 import util from "util";
 
-import { supabase } from "@/utils/supabaseClient";
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
 
 type Decision = {
   fieldsToFill?: { selector: string; value: string }[];
@@ -54,6 +65,14 @@ export async function POST(req: NextRequest) {
 
     if (!url || !decision) {
       return NextResponse.json({ error: "Missing url or decision" }, { status: 400 });
+    }
+
+    const supabase = getSupabaseAdmin();
+    if (!supabase) {
+      return NextResponse.json(
+        { error: "Supabase is not configured on this server." },
+        { status: 503 }
+      );
     }
 
     const storageConfigured = !!(
