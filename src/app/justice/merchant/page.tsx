@@ -8,29 +8,15 @@ import Header from "@/app/components/Header";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
-import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import type { JusticeIntake } from "@/lib/justice/types";
+import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { buildMerchantMessage, cfpbFinancialProductSummary } from "@/lib/justice/buildMerchantContactMessage";
-import { cfpbLikelyRelevant, fccLikelyRelevant, isValidDocumentedContactDate } from "@/lib/justice/rules";
 import {
-  appendEscalationUnlockedFromMerchantSaveOnce,
-  appendTimelineEvent,
-  readTimeline,
-  replaceTimelineForCase,
-} from "@/lib/justice/timeline";
+  documentMerchantContact,
+  readSessionCaseIdForMerchantContact,
+} from "@/lib/justice/documentMerchantContact";
+import { cfpbLikelyRelevant, fccLikelyRelevant, isValidDocumentedContactDate } from "@/lib/justice/rules";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
-
-async function logEvent(event_name: string, payload: Record<string, unknown>) {
-  try {
-    await fetch("/api/justice/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_name, payload }),
-    });
-  } catch {
-    /* ignore */
-  }
-}
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -82,83 +68,28 @@ export default function JusticeMerchantPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!intake) return;
-    const dateTrimmed = contactDate.trim();
-    if (!dateTrimmed || !isValidDocumentedContactDate(dateTrimmed)) {
-      setContactDateError("Enter the contact date.");
-      return;
-    }
     setContactDateError(null);
-    if (contactProofType === "none" && !contactProofText.trim()) {
-      setContactProofError("Describe your contact attempt before saving.");
-      return;
-    }
-    if (contactProofType === "ticket" && !contactProofText.trim()) {
-      setContactProofError("Enter the ticket or case number before saving.");
-      return;
-    }
     setContactProofError(null);
     setSaving(true);
     try {
-      const updated: JusticeIntake = {
-        ...intake,
-        already_contacted: "yes",
-        contact_method: contactMethod,
-        contact_date: dateTrimmed,
-        merchant_response_type: merchantResponseType,
-        contact_proof_type: contactProofType,
-      };
-      if (contactProofText.trim()) {
-        updated.contact_proof_text = contactProofText.trim();
-      } else {
-        delete updated.contact_proof_text;
-      }
-      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(updated));
-      sessionStorage.removeItem("justice_ftc_mock_completed");
-      sessionStorage.removeItem(STORAGE_FTC_MANUAL_UNLOCK);
-
-      const caseId = sessionStorage.getItem(STORAGE_CASE_ID);
-      if (caseId) {
-        const companyContact =
-          cfpbLikelyRelevant(updated) || fccLikelyRelevant(updated);
-        appendTimelineEvent(caseId, {
-          type: "merchant_contact_saved",
-          label: companyContact ? "Company contact documented" : "Merchant contact saved",
-          detail: `${companyContact ? "Company" : "Merchant"} response: ${merchantResponseType}`,
-        });
-        appendEscalationUnlockedFromMerchantSaveOnce(caseId, updated);
-      }
-
-      if (isLoaded && isSignedIn && caseId) {
-        try {
-          const timeline = readTimeline(caseId);
-          const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ intake: updated, timeline }),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as {
-              intake?: JusticeIntake;
-              timeline?: unknown;
-            };
-            if (data.intake) {
-              sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
-            }
-            if (Array.isArray(data.timeline)) {
-              replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
-            }
-          } else {
-            console.warn("justice merchant: PATCH /api/justice/cases/[id] failed", res.status);
-          }
-        } catch (e) {
-          console.warn("justice merchant: PATCH /api/justice/cases/[id] error", e);
-        }
-      }
-
-      await logEvent("merchant_contact_saved", {
-        case_id: sessionStorage.getItem(STORAGE_CASE_ID),
-        merchant_response_type: merchantResponseType,
+      const result = await documentMerchantContact({
+        intake,
+        input: {
+          contactMethod,
+          contactDate,
+          merchantResponseType,
+          contactProofType,
+          contactProofText,
+        },
+        caseId: readSessionCaseIdForMerchantContact(),
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
       });
+      if (!result.ok) {
+        setContactDateError(result.contactDateError ?? null);
+        setContactProofError(result.contactProofError ?? null);
+        return;
+      }
       router.push("/justice/chat-ai");
     } finally {
       setSaving(false);
