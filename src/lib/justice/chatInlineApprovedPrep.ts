@@ -6,11 +6,13 @@ import type { JusticeIntake } from "@/lib/justice/types";
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
 export const CHAT_INLINE_CFPB_PREP_HREF = "/justice/cfpb";
 export const CHAT_INLINE_FCC_PREP_HREF = "/justice/fcc";
+export const CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF = "/justice/payment-dispute";
 
 const CHAT_INLINE_PREP_HREFS = new Set([
   CHAT_INLINE_MERCHANT_PREP_HREF,
   CHAT_INLINE_CFPB_PREP_HREF,
   CHAT_INLINE_FCC_PREP_HREF,
+  CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
 ]);
 
 export type ChatInlineApprovedPrepContent = {

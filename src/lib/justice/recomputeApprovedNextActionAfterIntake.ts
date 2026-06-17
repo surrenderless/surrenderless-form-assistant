@@ -1,6 +1,7 @@
 import { mergeApprovedNextActionTrackingFields } from "@/lib/justice/approvedNextActionState";
 import {
   buildApprovedNextActionTarget,
+  pickNextPreparedActionAfterCompleted,
   pickPreparedNextAction,
 } from "@/lib/justice/preparedNextAction";
 import {
@@ -29,6 +30,30 @@ export function recomputeApprovedNextActionAfterIntake(
   const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
   const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
   const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
+  const nextActionTarget = buildApprovedNextActionTarget(prepared);
+  return mergeApprovedNextActionTrackingFields(options.existing, nextActionTarget);
+}
+
+/** Advance to the next routable approved action after the current href is marked handled. */
+export function advanceApprovedNextActionAfterCompleted(
+  intake: JusticeIntake,
+  completedHref: string,
+  options: RecomputeApprovedNextActionAfterIntakeOptions = {}
+): JusticeApprovedNextAction | null {
+  const manualFtc = options.manualFtc ?? false;
+  const contacted = intake.already_contacted === "yes";
+  const cfpbRel = cfpbLikelyRelevant(intake);
+  const fccRel = fccLikelyRelevant(intake);
+  const dotRel = dotLikelyRelevant(intake);
+  const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
+  const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+  const prepared = pickNextPreparedActionAfterCompleted({
+    contacted,
+    useCompanyContactLabels,
+    destinations,
+    completedHref,
+  });
+  if (!prepared?.detailHref) return null;
   const nextActionTarget = buildApprovedNextActionTarget(prepared);
   return mergeApprovedNextActionTrackingFields(options.existing, nextActionTarget);
 }
