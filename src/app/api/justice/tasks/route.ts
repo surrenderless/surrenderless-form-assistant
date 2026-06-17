@@ -1,13 +1,30 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
-import { userOwnsJusticeCase } from "@/server/justiceCaseOwnership";
-import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
-import { supabaseAdmin } from "@/utils/supabaseClient";
 
 const MAX_TITLE = 500;
 const MAX_DUE = 200;
 const MAX_NOTES = 8000;
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
+
+function supabaseUnavailableResponse() {
+  return NextResponse.json(
+    { error: "Supabase is not configured on this server." },
+    { status: 503 }
+  );
+}
 
 function nonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
@@ -25,6 +42,88 @@ function clampLen(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
 }
 
+function normalizeTimeline(v: unknown): TimelineEntry[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((item) => item !== null && typeof item === "object" && !Array.isArray(item)) as TimelineEntry[];
+}
+
+function sortByTs(entries: TimelineEntry[]): TimelineEntry[] {
+  return [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
+}
+
+async function userOwnsJusticeCase(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("justice_cases")
+    .select("id")
+    .eq("id", caseId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("justice_case ownership check:", error.message);
+    return false;
+  }
+  return !!data;
+}
+
+async function appendCaseTimelineEntry(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  entry: {
+    id: string;
+    type: TimelineEntryType;
+    label: string;
+    detail?: string;
+    ts?: string;
+  }
+): Promise<TimelineEntry[] | null> {
+  const { data: row, error: fetchErr } = await supabase
+    .from("justice_cases")
+    .select("timeline")
+    .eq("id", caseId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchErr || !row) {
+    console.warn("justice timeline append: load case", fetchErr?.message ?? "not found");
+    return null;
+  }
+
+  let timeline = normalizeTimeline(row.timeline);
+  if (timeline.some((e) => e.id === entry.id)) {
+    return sortByTs(timeline);
+  }
+
+  const newEntry: TimelineEntry = {
+    id: entry.id,
+    case_id: caseId,
+    type: entry.type,
+    label: entry.label,
+    ts: entry.ts ?? new Date().toISOString(),
+    ...(entry.detail !== undefined && entry.detail !== "" ? { detail: entry.detail } : {}),
+  };
+
+  timeline = sortByTs([...timeline, newEntry]);
+
+  const { error: upErr } = await supabase
+    .from("justice_cases")
+    .update({ timeline })
+    .eq("id", caseId)
+    .eq("user_id", userId);
+
+  if (upErr) {
+    console.warn("justice timeline append: update", upErr.message);
+    return null;
+  }
+
+  return timeline;
+}
+
 export async function GET(req: NextRequest) {
   const userId = getUserOr401(req);
   if (!userId) {
@@ -36,11 +135,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
   }
 
-  if (!(await userOwnsJusticeCase(userId, caseId))) {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return supabaseUnavailableResponse();
+
+  if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from("justice_case_tasks")
     .select("id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at")
     .eq("case_id", caseId)
@@ -78,10 +180,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
   }
 
-  if (!(await userOwnsJusticeCase(userId, caseId))) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   if (!nonEmptyString(b.title)) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
@@ -99,6 +197,13 @@ export async function POST(req: NextRequest) {
   }
   const notesVal = notes == null ? notes : clampLen(notes, MAX_NOTES);
 
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return supabaseUnavailableResponse();
+
+  if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const insertRow: Record<string, unknown> = {
     user_id: userId,
     case_id: caseId,
@@ -107,7 +212,7 @@ export async function POST(req: NextRequest) {
   if (dueDateVal !== undefined) insertRow.due_date = dueDateVal;
   if (notesVal !== undefined) insertRow.notes = notesVal;
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from("justice_case_tasks")
     .insert(insertRow)
     .select("id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at")
@@ -120,7 +225,7 @@ export async function POST(req: NextRequest) {
 
   const due = data.due_date?.trim();
   const taskDetail = due ? `${data.title} — due ${due}` : data.title;
-  const timeline = await appendCaseTimelineEntry(userId, caseId, {
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
     id: `justice_task_add:${data.id}`,
     type: "task_added",
     label: "Follow-up task added",
