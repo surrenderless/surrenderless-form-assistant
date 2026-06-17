@@ -7,7 +7,11 @@ import Header from "@/app/components/Header";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
-import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  buildFccComplaintDraft,
+  fccDesiredResolutionPhrase,
+  fccServiceSummarySegment,
+} from "@/lib/justice/buildFccComplaintDraft";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { fccLikelyRelevant } from "@/lib/justice/rules";
 import {
@@ -19,99 +23,6 @@ import {
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const FCC_COMPLAINT_URL = "https://consumercomplaints.fcc.gov/";
-
-function desiredResolutionPhrase(category: JusticeIntake["problem_category"]): string {
-  switch (category) {
-    case "online_purchase":
-      return "A full refund or a correct replacement, whichever fairly applies.";
-    case "subscription":
-      return "Cancellation of unwanted recurring charges and any refund owed for improper renewals.";
-    case "service_failed":
-      return "A remedy that matches what was promised (refund, redo, or credit).";
-    case "charge_dispute":
-      return "Reversal of the charge or a clear written justification.";
-    case "something_else":
-      return "A fair resolution that puts me back to where I should have been.";
-    default:
-      return "A fair resolution that puts me back to where I should have been.";
-  }
-}
-
-/** For FCC-style framing: headline segment and draft labels (not raw intake problem_category). */
-function fccServiceSummarySegment(intake: JusticeIntake): string {
-  const svc = intake.purchase_or_signup.trim();
-  return svc || "communications service issue";
-}
-
-function buildFccComplaintDraft(intake: JusticeIntake): string {
-  const fccRel = fccLikelyRelevant(intake);
-  const intakeCategoryLabel = intake.problem_category.replace(/_/g, " ");
-  const serviceSummary = fccServiceSummarySegment(intake);
-  const ask = desiredResolutionPhrase(intake.problem_category);
-  const lines: string[] = [
-    "DRAFT FOR FCC CONSUMER COMPLAINT",
-    "(Copy and paste into the official FCC consumer complaint flow — this app does not submit for you.)",
-    "",
-    `Company or provider: ${intake.company_name}`,
-    intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",
-    "",
-  ];
-
-  if (fccRel) {
-    lines.push(
-      "Nature of complaint:",
-      "Communications service issue",
-      "",
-      "Service or product involved:",
-      serviceSummary,
-      ""
-    );
-  } else {
-    lines.push(
-      "Type of issue (from my intake):",
-      intakeCategoryLabel,
-      "",
-      "Service or product:",
-      intake.purchase_or_signup,
-      ""
-    );
-  }
-
-  lines.push(
-    "What happened:",
-    intake.story.trim(),
-    "",
-    `Approximate amount involved (if any): ${intake.money_involved}`,
-    `Problem date / start date: ${intake.pay_or_order_date}`,
-    "",
-    intake.order_confirmation_details.trim()
-      ? `Account / confirmation details: ${intake.order_confirmation_details.trim()}`
-      : "",
-    "",
-    "Outcome I am seeking:",
-    ask,
-    "",
-    "My contact:",
-    `${intake.user_display_name} <${intake.reply_email}>`
-  );
-
-  if (intake.already_contacted === "yes" && intake.contact_method) {
-    lines.push(
-      "",
-      "Prior contact with the company:",
-      `Method: ${intake.contact_method}`,
-      intake.contact_date ? `Date: ${intake.contact_date}` : "",
-      intake.merchant_response_type
-        ? `Their response (as I understand it): ${intake.merchant_response_type.replace(/_/g, " ")}`
-        : "",
-      intake.contact_proof_text?.trim()
-        ? `Notes on proof: ${intake.contact_proof_text.trim()}`
-        : ""
-    );
-  }
-
-  return lines.filter(Boolean).join("\n").trim();
-}
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -180,7 +91,7 @@ export default function JusticeFccPrepPage() {
   const issueSummary = likelyFit
     ? `${intake.company_name} — ${fccServiceSummarySegment(intake)}`
     : `${intake.company_name} — ${intake.problem_category.replace(/_/g, " ")}`;
-  const desiredResolution = desiredResolutionPhrase(intake.problem_category);
+  const desiredResolution = fccDesiredResolutionPhrase(intake.problem_category);
 
   const fitNote = likelyFit
     ? "Your description includes wording that often lines up with FCC topics (for example phone, internet, cable, or unwanted calls). This is only a rough guide — use the official FCC complaint site to confirm categories and required details."
