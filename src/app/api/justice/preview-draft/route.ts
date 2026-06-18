@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
@@ -7,7 +8,6 @@ import {
   type PreviewDraftAiTimelineItem,
 } from "@/lib/justice/buildSubmissionDraftAiPrompt";
 import type { DestinationId, JusticeIntake } from "@/lib/justice/types";
-import { userOwnsJusticeCase } from "@/server/justiceCaseOwnership";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
 
@@ -35,6 +35,43 @@ const DESTINATION_IDS = new Set<DestinationId>([
 function clampStr(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max);
+}
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
+
+function supabaseUnavailableResponse() {
+  return NextResponse.json(
+    { error: "Supabase is not configured on this server." },
+    { status: 503 }
+  );
+}
+
+async function userOwnsJusticeCase(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("justice_cases")
+    .select("id")
+    .eq("id", caseId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("justice_case ownership check:", error.message);
+    return false;
+  }
+  return !!data;
 }
 
 function clampIntake(intake: JusticeIntake): JusticeIntake {
@@ -170,7 +207,9 @@ export async function POST(req: NextRequest) {
       if (!isUuid(case_id)) {
         return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
       }
-      if (!(await userOwnsJusticeCase(userId, case_id))) {
+      const supabase = getSupabaseAdmin();
+      if (!supabase) return supabaseUnavailableResponse();
+      if (!(await userOwnsJusticeCase(supabase, userId, case_id))) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
     }

@@ -6,7 +6,10 @@
   "dev": "next dev",
   "build": "next build",
   "start": "next start",
-  "lint": "next lint"
+  "lint": "next lint",
+  "lint:ci": "next lint --file vitest.config.ts --file src/lib/justice/commitIntakeToSessionAndServer.test.ts --file src/lib/justice/preparedNextAction.test.ts --file src/lib/justice/recomputeApprovedNextActionAfterIntake.test.ts --file src/lib/justice/chatInlineApprovedPrep.test.ts --file src/lib/justice/approvedNextActionHandlingDisplay.test.ts",
+  "test": "vitest run",
+  "test:watch": "vitest"
 },
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.23",
@@ -37,6 +40,7 @@
     "postcss-loader": "^8.1.1",
     "style-loader": "^4.0.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

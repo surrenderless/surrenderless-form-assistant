@@ -1,9 +1,27 @@
 // src/app/api/tasks/usps-submit/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/utils/supabaseClient';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { runCrewBridge } from '@/server/CrewBridge';
 import { rateLimit } from '@/utils/rateLimiter';
 import { getUserOr401 } from '@/server/requireUser';
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
+
+function supabaseUnavailableResponse() {
+  return NextResponse.json(
+    { error: 'Supabase is not configured on this server.' },
+    { status: 503 }
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,7 +43,8 @@ export async function POST(request: NextRequest) {
       console.warn('⚠️ Rate limit check failed, allowing request:', (e as any)?.message);
     }
 
-    const supabase = supabaseAdmin;
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return supabaseUnavailableResponse();
 
     // load profile
     const { data: profile, error: profileError } = await supabase

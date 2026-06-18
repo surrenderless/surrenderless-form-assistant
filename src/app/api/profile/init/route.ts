@@ -1,6 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseAdmin } from "@/utils/supabaseClient";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getAuth } from "@clerk/nextjs/server";
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
+
+function supabaseUnavailableResponse() {
+  return NextResponse.json(
+    { error: "Supabase is not configured on this server." },
+    { status: 503 }
+  );
+}
 
 export async function POST(req: NextRequest) {
   console.log("🔄 /api/profile/init");
@@ -14,7 +32,10 @@ export async function POST(req: NextRequest) {
   const email = body?.email ?? sessionClaims?.email ?? "No Email";
   console.log("👤", { userId, name, email });
 
-  const { error } = await supabaseAdmin
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return supabaseUnavailableResponse();
+
+  const { error } = await supabase
     .from("users")
     .upsert([{ id: userId, name, email }]);
 

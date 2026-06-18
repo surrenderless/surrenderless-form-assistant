@@ -1,12 +1,26 @@
 // force rebuild
 import { Redis } from "@upstash/redis";
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+let redisClient: Redis | null | undefined;
+
+function getRedis(): Redis | null {
+  if (redisClient !== undefined) return redisClient;
+
+  const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (!url || !token) {
+    redisClient = null;
+    return null;
+  }
+
+  redisClient = new Redis({ url, token });
+  return redisClient;
+}
 
 export async function rateLimit(userId: string) {
+  const redis = getRedis();
+  if (!redis) return false;
+
   const key = `rate:${userId}`;
   const current = await redis.incr(key);
 
