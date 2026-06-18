@@ -16,6 +16,8 @@ export const CHAT_INLINE_DOT_PREP_HREF = "/justice/dot";
 export const CHAT_INLINE_DEMAND_LETTER_PREP_HREF = "/justice/demand-letter";
 export const CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF = "/justice/payment-dispute";
 export const CHAT_INLINE_FTC_REVIEW_PREP_HREF = "/justice/ftc-review";
+/** Approved-action fallback when no routable destination prep step exists (post–packet approval). */
+export const CHAT_INLINE_PACKET_FALLBACK_PREP_HREF = "/justice/packet";
 
 const CHAT_INLINE_PREP_HREFS = new Set([
   CHAT_INLINE_MERCHANT_PREP_HREF,
@@ -27,6 +29,7 @@ const CHAT_INLINE_PREP_HREFS = new Set([
   CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+  CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
 ]);
 
 export type ChatInlineApprovedPrepContent = {
@@ -50,6 +53,11 @@ export type ChatInlineApprovedPrepContent = {
 export function isChatInlinePrepHref(href: string | undefined): boolean {
   const trimmed = href?.trim();
   return Boolean(trimmed && CHAT_INLINE_PREP_HREFS.has(trimmed));
+}
+
+/** True when the approved next action is the packet fallback step (not pre-approval funnel). */
+export function isChatInlinePacketFallbackPrepHref(href: string | undefined): boolean {
+  return href?.trim() === CHAT_INLINE_PACKET_FALLBACK_PREP_HREF;
 }
 
 /** @deprecated Use {@link isChatInlinePrepHref}. */

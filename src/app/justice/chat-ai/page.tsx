@@ -64,6 +64,7 @@ import {
 } from "@/lib/justice/buildPaymentDisputeBankLetter";
 import {
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+  CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   getChatInlineApprovedPrepContent,
 } from "@/lib/justice/chatInlineApprovedPrep";
@@ -3397,8 +3398,21 @@ export default function JusticeChatAiPage() {
     approvedNextAction?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF &&
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
+  const showInlinePacketFallbackPrep =
+    isUpdatingExistingCase &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    preparedPacketApproved &&
+    Boolean(approvedNextAction) &&
+    approvedNextAction?.href?.trim() === CHAT_INLINE_PACKET_FALLBACK_PREP_HREF &&
+    !approvedNextAction?.handling_requested_at?.trim() &&
+    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
   const prepInlineInChat =
-    showInlineApprovedPrep || showInlinePaymentDisputePrep || showInlineFtcPracticePrep;
+    showInlineApprovedPrep ||
+    showInlinePaymentDisputePrep ||
+    showInlineFtcPracticePrep ||
+    showInlinePacketFallbackPrep;
   const ftcPracticeSummaryLines = useMemo(() => {
     if (!showInlineFtcPracticePrep) return [];
     return buildFtcPracticeSummaryLines(buildJusticeIntakeFromParts(parts));
@@ -3760,6 +3774,44 @@ export default function JusticeChatAiPage() {
                 error={ftcPracticeError}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
               />
+            ) : null}
+            {showInlinePacketFallbackPrep ? (
+              chatHandlingReadinessLoading ? (
+                <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+                  <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+                    {approvedNextAction?.label?.trim() || "Prepared case review"}
+                  </p>
+                  <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
+                    Loading packet preview…
+                  </p>
+                </div>
+              ) : (
+                <ChatInlineApprovedPrepActionBlock
+                  title={approvedNextAction?.label?.trim() || "Prepared case review"}
+                  messageText={chatPacketPlainText}
+                  helperText="Review your prepared case packet below. Mark step opened when ready — Surrenderless does not submit, file, or contact anyone."
+                  copyButtonLabel="Copy packet"
+                  optionalPageHref={CHAT_INLINE_PACKET_FALLBACK_PREP_HREF}
+                  optionalPageLabel="Open full packet page"
+                  optionalPageNote="optional — print and copy tools"
+                  expanded={packetPreviewExpanded}
+                  onExpandedChange={setPacketPreviewExpanded}
+                  copyHint={prepCopyHint}
+                  onCopy={() => {
+                    void (async () => {
+                      const text = chatPacketPlainText;
+                      if (!text) return;
+                      try {
+                        await navigator.clipboard.writeText(text);
+                        setPrepCopyHint("Copied to clipboard.");
+                        window.setTimeout(() => setPrepCopyHint(null), 2500);
+                      } catch {
+                        setPrepCopyHint("Copy failed — select the text and copy manually.");
+                      }
+                    })();
+                  }}
+                />
+              )
             ) : null}
             {approvedNextAction ? (
               <>
