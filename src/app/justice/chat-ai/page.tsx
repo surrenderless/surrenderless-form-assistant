@@ -3442,9 +3442,13 @@ export default function JusticeChatAiPage() {
   const activeCaseFocusLine =
     basicsMissing.length > 0
       ? stillNeededBeforePreviewMessage(basicsMissing)
-      : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
-        ? "Review your submission draft before continuing."
-        : "Describe what to add or change, then save in chat.";
+      : showInlineSubmissionDraftReview
+        ? "Review your submission draft below in this chat."
+        : showInlinePreparedPacketApproval
+          ? "Approve your prepared packet below in this chat."
+          : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
+            ? "Review your submission draft before continuing."
+            : "Describe what to add or change, then save in chat.";
   const activeCaseWorkHref = resolveActiveCaseWorkHref(
     activeCaseDraftReviewed,
     preparedPacketApproved
@@ -3565,31 +3569,66 @@ export default function JusticeChatAiPage() {
               </li>
               <li>
                 Submission draft reviewed: {activeCaseDraftReviewed ? "yes" : "not yet"}
-                {!activeCaseDraftReviewed && !showInlineSubmissionDraftReview ? (
-                  <>
-                    {" · "}
-                    <Link href="/justice/preview" className={activeCaseChecklistLinkCls}>
-                      Review submission draft
-                    </Link>
-                  </>
+                {!activeCaseDraftReviewed ? (
+                  showInlineSubmissionDraftReview ? (
+                    <>
+                      {" · "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          document
+                            .getElementById("chat-ai-inline-submission-draft-review")
+                            ?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+                        }
+                        className={activeCaseChecklistLinkCls}
+                      >
+                        Review below
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {" · "}
+                      <Link href="/justice/preview" className={activeCaseChecklistLinkCls}>
+                        Review submission draft
+                      </Link>
+                    </>
+                  )
                 ) : null}
               </li>
               {activeCaseDraftReviewed ? (
                 <li>
                   Prepared case packet reviewed: {preparedPacketApproved ? "yes" : "not yet"}
-                  {!preparedPacketApproved && !showInlinePreparedPacketApproval ? (
-                    <>
-                      {" · "}
-                      <Link href="/justice/packet" className={activeCaseChecklistLinkCls}>
-                        Review prepared case packet
-                      </Link>
-                    </>
+                  {!preparedPacketApproved ? (
+                    showInlinePreparedPacketApproval ? (
+                      <>
+                        {" · "}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            document
+                              .getElementById("chat-ai-inline-prepared-packet-approval")
+                              ?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+                          }
+                          className={activeCaseChecklistLinkCls}
+                        >
+                          Approve below
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {" · "}
+                        <Link href="/justice/packet" className={activeCaseChecklistLinkCls}>
+                          Review prepared case packet
+                        </Link>
+                      </>
+                    )
                   ) : null}
                 </li>
               ) : null}
             </ul>
             {showInlineSubmissionDraftReview ? (
-              <ChatInlineSubmissionDraftReviewBlock
+              <div id="chat-ai-inline-submission-draft-review">
+                <ChatInlineSubmissionDraftReviewBlock
                 draftText={chatSubmissionDraftText}
                 destinationLabel={chatPreviewDestination?.label}
                 checked={submissionDraftReviewChecked}
@@ -3599,10 +3638,12 @@ export default function JusticeChatAiPage() {
                 saving={markingSubmissionDraftReviewed}
                 error={submissionDraftReviewError}
                 onSubmit={() => void handleMarkSubmissionDraftReviewedFromChat()}
-              />
+                />
+              </div>
             ) : null}
             {showInlinePreparedPacketApproval ? (
-              <ChatInlinePreparedPacketApprovalBlock
+              <div id="chat-ai-inline-prepared-packet-approval">
+                <ChatInlinePreparedPacketApprovalBlock
                 packetText={chatPacketPlainText}
                 loading={chatHandlingReadinessLoading}
                 checked={approvePreparedPacketChecked}
@@ -3611,7 +3652,8 @@ export default function JusticeChatAiPage() {
                 onExpandedChange={setPacketPreviewExpanded}
                 approving={approvingPreparedPacket}
                 onSubmit={() => void handleApprovePreparedPacketFromChat()}
-              />
+                />
+              </div>
             ) : null}
             {showInlineApprovedPrep && chatInlineApprovedPrepContent ? (
               <ChatInlineApprovedPrepActionBlock
