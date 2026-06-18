@@ -3,10 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
-import {
-  CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
-  isChatInlinePrepHref,
-} from "@/lib/justice/chatInlineApprovedPrep";
+import { isChatInlinePrepHref } from "@/lib/justice/chatInlineApprovedPrep";
 
 /** Read-only / interactive copy for approved-next-action handling request tracking. */
 
@@ -134,11 +131,7 @@ export function resolveHandlingTrackingContextualLink(input: {
       return { href: "/justice/chat-ai", label: "Update case in chat" };
     }
     if (input.surface === "packet") return null;
-    if (
-      input.surface === "chat-ai" &&
-      input.prepInlineInChat &&
-      input.approvedNextAction?.href?.trim() === CHAT_INLINE_PACKET_FALLBACK_PREP_HREF
-    ) {
+    if (input.surface === "chat-ai" && input.prepInlineInChat) {
       return null;
     }
     return { href: "/justice/packet", label: "Review case packet" };
