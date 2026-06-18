@@ -120,20 +120,7 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
-  it("suppresses review-packet link on chat-ai when packet fallback prep is inline", () => {
-    expect(
-      resolveHandlingTrackingContextualLink({
-        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
-        approvedNextAction: { href: CHAT_INLINE_PACKET_FALLBACK_PREP_HREF },
-        surface: "chat-ai",
-        prepInlineInChat: true,
-        basicsReady: true,
-        evidenceCount: 1,
-      })
-    ).toBeNull();
-  });
-
-  it("still offers review-packet link on chat-ai when other prep is inline", () => {
+  it("suppresses review-packet link on chat-ai when prepInlineInChat is true", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
@@ -143,10 +130,7 @@ describe("resolveHandlingTrackingContextualLink", () => {
         basicsReady: true,
         evidenceCount: 1,
       })
-    ).toEqual({
-      href: "/justice/packet",
-      label: "Review case packet",
-    });
+    ).toBeNull();
   });
 
   it("suppresses packet filing link on chat-ai when filing capture is inline", () => {
