@@ -13,7 +13,9 @@ import {
   getChatInlineApprovedPrepContent,
   isChatInlinePacketFallbackPrepHref,
   isChatInlinePrepHref,
+  shouldShowChatInlineFtcReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
+  shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -243,6 +245,82 @@ describe("shouldShowChatInlinePacketFallbackReadOnlyPrep", () => {
         preparedPacketApproved: true,
         status: "started",
         href: CHAT_INLINE_MERCHANT_PREP_HREF,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("shouldShowChatInlinePaymentDisputeReadOnlyPrep", () => {
+  it("shows read-only payment dispute prep after handling request", () => {
+    expect(
+      shouldShowChatInlinePaymentDisputeReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+        handlingRequested: true,
+      })
+    ).toBe(true);
+  });
+
+  it("returns false when handling is not requested", () => {
+    expect(
+      shouldShowChatInlinePaymentDisputeReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(false);
+  });
+
+  it("returns false for non-payment-dispute href", () => {
+    expect(
+      shouldShowChatInlinePaymentDisputeReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_MERCHANT_PREP_HREF,
+        handlingRequested: true,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
+  it("shows read-only FTC prep after handling request", () => {
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+        handlingRequested: true,
+      })
+    ).toBe(true);
+  });
+
+  it("returns false when handling is not requested", () => {
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(false);
+  });
+
+  it("returns false for non-FTC href", () => {
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_MERCHANT_PREP_HREF,
+        handlingRequested: true,
       })
     ).toBe(false);
   });

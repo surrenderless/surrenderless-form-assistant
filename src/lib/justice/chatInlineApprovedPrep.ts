@@ -32,6 +32,26 @@ export function shouldShowChatInlinePacketFallbackReadOnlyPrep(
   return input.status === "approved" || input.status === "started";
 }
 
+/** Read-only payment-dispute letter when interactive checklist is hidden after handling request. */
+export function shouldShowChatInlinePaymentDisputeReadOnlyPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
+): boolean {
+  if (!input.handlingRequested) return false;
+  if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
+  if (input.href?.trim() !== CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF) return false;
+  return input.status === "approved" || input.status === "started";
+}
+
+/** Read-only FTC practice summary when practice-run form is hidden after handling request. */
+export function shouldShowChatInlineFtcReadOnlyPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
+): boolean {
+  if (!input.handlingRequested) return false;
+  if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
+  if (input.href?.trim() !== CHAT_INLINE_FTC_REVIEW_PREP_HREF) return false;
+  return input.status === "approved" || input.status === "started";
+}
+
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
 export const CHAT_INLINE_CFPB_PREP_HREF = "/justice/cfpb";
 export const CHAT_INLINE_FCC_PREP_HREF = "/justice/fcc";
