@@ -4648,12 +4648,27 @@ export default function JusticeChatAiPage() {
               {stagedProofFlushError ? (
                 <p className="mt-3 text-xs text-red-600 dark:text-red-400">{stagedProofFlushError}</p>
               ) : null}
-              <Link
-                href="/justice/evidence"
-                className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-blue-600 bg-white px-4 py-2 text-sm font-semibold text-blue-600 shadow-sm transition hover:bg-blue-50 dark:border-blue-500 dark:bg-neutral-900 dark:text-blue-400 dark:hover:bg-neutral-800"
-              >
-                Organize evidence
-              </Link>
+              {canAddProofNoteInChat ? (
+                <p className="mt-3 text-xs text-neutral-700 dark:text-neutral-300">
+                  <Link
+                    href="/justice/evidence"
+                    className="font-medium underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                  >
+                    Organize evidence
+                  </Link>
+                  <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {" "}
+                    (optional — full list and links)
+                  </span>
+                </p>
+              ) : (
+                <Link
+                  href="/justice/evidence"
+                  className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-blue-600 bg-white px-4 py-2 text-sm font-semibold text-blue-600 shadow-sm transition hover:bg-blue-50 dark:border-blue-500 dark:bg-neutral-900 dark:text-blue-400 dark:hover:bg-neutral-800"
+                >
+                  Organize evidence
+                </Link>
+              )}
             </div>
 
             {basicsMissing.length === 0 && !contactProofCheck.ok ? (
