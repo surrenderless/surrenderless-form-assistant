@@ -67,6 +67,8 @@ import {
   CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   getChatInlineApprovedPrepContent,
+  shouldShowChatInlinePacketFallbackReadOnlyPrep,
+  shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
 import {
@@ -3364,20 +3366,21 @@ export default function JusticeChatAiPage() {
       approvedNextAction.label
     );
   }, [preparedPacketApproved, approvedNextAction, parts]);
+  const isActiveUuidCaseChat =
+    isUpdatingExistingCase && isLoaded && Boolean(isSignedIn) && Boolean(activeUuidCaseId);
   const showInlineApprovedPrep =
-    isUpdatingExistingCase &&
-    isLoaded &&
-    Boolean(isSignedIn) &&
-    Boolean(activeUuidCaseId) &&
-    preparedPacketApproved &&
     Boolean(approvedNextAction) &&
-    !approvedNextAction?.handling_requested_at?.trim() &&
-    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started") &&
-    Boolean(chatInlineApprovedPrepContent);
+    shouldShowChatInlineReadOnlyApprovedPrep({
+      isActiveUuidCase: isActiveUuidCaseChat,
+      preparedPacketApproved,
+      status: approvedNextAction?.status,
+      hasPrepContent: Boolean(chatInlineApprovedPrepContent),
+    });
   const showInlineMerchantContactDocumentation =
     showInlineApprovedPrep &&
     chatInlineApprovedPrepContent?.kind === "merchant_message" &&
-    parts.already_contacted !== "yes";
+    parts.already_contacted !== "yes" &&
+    !approvedNextAction?.handling_requested_at?.trim();
   const showInlinePaymentDisputePrep =
     isUpdatingExistingCase &&
     isLoaded &&
@@ -3399,15 +3402,13 @@ export default function JusticeChatAiPage() {
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
   const showInlinePacketFallbackPrep =
-    isUpdatingExistingCase &&
-    isLoaded &&
-    Boolean(isSignedIn) &&
-    Boolean(activeUuidCaseId) &&
-    preparedPacketApproved &&
     Boolean(approvedNextAction) &&
-    approvedNextAction?.href?.trim() === CHAT_INLINE_PACKET_FALLBACK_PREP_HREF &&
-    !approvedNextAction?.handling_requested_at?.trim() &&
-    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
+    shouldShowChatInlinePacketFallbackReadOnlyPrep({
+      isActiveUuidCase: isActiveUuidCaseChat,
+      preparedPacketApproved,
+      status: approvedNextAction?.status,
+      href: approvedNextAction?.href,
+    });
   const prepInlineInChat =
     showInlineApprovedPrep ||
     showInlinePaymentDisputePrep ||
