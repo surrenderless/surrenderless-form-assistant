@@ -67,7 +67,9 @@ import {
   CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   getChatInlineApprovedPrepContent,
+  shouldShowChatInlineFtcReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
+  shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
@@ -3409,15 +3411,43 @@ export default function JusticeChatAiPage() {
       status: approvedNextAction?.status,
       href: approvedNextAction?.href,
     });
+  const handlingRequestedForApprovedPrep = Boolean(approvedNextAction?.handling_requested_at?.trim());
+  const showInlinePaymentDisputeReadOnlyPrep =
+    Boolean(approvedNextAction) &&
+    shouldShowChatInlinePaymentDisputeReadOnlyPrep({
+      isActiveUuidCase: isActiveUuidCaseChat,
+      preparedPacketApproved,
+      status: approvedNextAction?.status,
+      href: approvedNextAction?.href,
+      handlingRequested: handlingRequestedForApprovedPrep,
+    });
+  const showInlineFtcReadOnlyPrep =
+    Boolean(approvedNextAction) &&
+    shouldShowChatInlineFtcReadOnlyPrep({
+      isActiveUuidCase: isActiveUuidCaseChat,
+      preparedPacketApproved,
+      status: approvedNextAction?.status,
+      href: approvedNextAction?.href,
+      handlingRequested: handlingRequestedForApprovedPrep,
+    });
   const prepInlineInChat =
     showInlineApprovedPrep ||
     showInlinePaymentDisputePrep ||
+    showInlinePaymentDisputeReadOnlyPrep ||
     showInlineFtcPracticePrep ||
+    showInlineFtcReadOnlyPrep ||
     showInlinePacketFallbackPrep;
   const ftcPracticeSummaryLines = useMemo(() => {
-    if (!showInlineFtcPracticePrep) return [];
+    if (!showInlineFtcPracticePrep && !showInlineFtcReadOnlyPrep) return [];
     return buildFtcPracticeSummaryLines(buildJusticeIntakeFromParts(parts));
-  }, [showInlineFtcPracticePrep, parts]);
+  }, [showInlineFtcPracticePrep, showInlineFtcReadOnlyPrep, parts]);
+  const paymentDisputeReadOnlyLetterText = useMemo(() => {
+    if (!showInlinePaymentDisputeReadOnlyPrep || !activeUuidCaseId) return "";
+    const intake = buildJusticeIntakeFromParts(parts);
+    const fields = resolvePaymentDisputeFormFields(activeUuidCaseId, intake);
+    const draft = buildPaymentDisputeDraftFromFields(activeUuidCaseId, fields);
+    return buildBankLetter(draft, intake);
+  }, [showInlinePaymentDisputeReadOnlyPrep, activeUuidCaseId, parts]);
   const paymentDisputeLetterText = useMemo(() => {
     if (!showInlinePaymentDisputePrep || !activeUuidCaseId) return "";
     const intake = buildJusticeIntakeFromParts(parts);
@@ -3725,6 +3755,33 @@ export default function JusticeChatAiPage() {
                 onSubmit={(e) => void handleSaveMerchantContactDocumentationFromChat(e)}
               />
             ) : null}
+            {showInlinePaymentDisputeReadOnlyPrep ? (
+              <ChatInlineApprovedPrepActionBlock
+                title={approvedNextAction?.label?.trim() || "Payment dispute (bank/card)"}
+                messageText={paymentDisputeReadOnlyLetterText}
+                helperText="Copy the bank letter below for your dispute. Surrenderless does not submit disputes for you."
+                copyButtonLabel="Copy letter"
+                optionalPageHref={CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF}
+                optionalPageLabel="Open full payment dispute page"
+                optionalPageNote="optional — evidence checklist"
+                expanded={paymentDisputeLetterExpanded}
+                onExpandedChange={setPaymentDisputeLetterExpanded}
+                copyHint={paymentDisputeCopyHint}
+                onCopy={() => {
+                  void (async () => {
+                    const text = paymentDisputeReadOnlyLetterText;
+                    if (!text) return;
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setPaymentDisputeCopyHint("Copied to clipboard.");
+                      window.setTimeout(() => setPaymentDisputeCopyHint(null), 2500);
+                    } catch {
+                      setPaymentDisputeCopyHint("Copy failed — select the text and copy manually.");
+                    }
+                  })();
+                }}
+              />
+            ) : null}
             {showInlinePaymentDisputePrep ? (
               <ChatInlinePaymentDisputePrepBlock
                 letterText={paymentDisputeLetterText}
@@ -3762,6 +3819,33 @@ export default function JusticeChatAiPage() {
                 saving={savingPaymentDisputeChecklist}
                 saveSuccess={paymentDisputeSaveSuccess}
                 onSubmit={(e) => void handleSavePaymentDisputeChecklistFromChat(e)}
+              />
+            ) : null}
+            {showInlineFtcReadOnlyPrep ? (
+              <ChatInlineApprovedPrepActionBlock
+                title={approvedNextAction?.label?.trim() || "FTC practice complaint"}
+                messageText={ftcPracticeSummaryLines.join("\n")}
+                helperText="Practice complaint summary from your case — copy for reference. This is not a real government submission. Surrenderless does not file for you."
+                copyButtonLabel="Copy summary"
+                optionalPageHref={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
+                optionalPageLabel="Open full FTC practice page"
+                optionalPageNote="optional — evidence list"
+                expanded={prepMessageExpanded}
+                onExpandedChange={setPrepMessageExpanded}
+                copyHint={prepCopyHint}
+                onCopy={() => {
+                  void (async () => {
+                    const text = ftcPracticeSummaryLines.join("\n");
+                    if (!text) return;
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setPrepCopyHint("Copied to clipboard.");
+                      window.setTimeout(() => setPrepCopyHint(null), 2500);
+                    } catch {
+                      setPrepCopyHint("Copy failed — select the text and copy manually.");
+                    }
+                  })();
+                }}
               />
             ) : null}
             {showInlineFtcPracticePrep ? (
