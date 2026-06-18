@@ -204,7 +204,7 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   ) {
     const incomingNext = parseApprovedNextActionFromClientState(patch.client_state);
     if (incomingNext?.handling_requested_at?.trim()) {
-      const timeline = await appendCaseTimelineEntry(userId, id, {
+      const timeline = await appendCaseTimelineEntry(supabase, userId, id, {
         ...buildHandlingRequestTimelineEntry(id, incomingNext),
       });
       if (timeline) {
