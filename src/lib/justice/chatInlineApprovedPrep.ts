@@ -1,5 +1,6 @@
 import { buildBbbComplaintDraft } from "@/lib/justice/buildBbbComplaintDraft";
 import { buildCfpbComplaintDraft } from "@/lib/justice/buildCfpbComplaintDraft";
+import { buildDotAviationComplaintDraft } from "@/lib/justice/buildDotAviationComplaintDraft";
 import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildStateAgComplaintDraft } from "@/lib/justice/buildStateAgComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
@@ -10,6 +11,7 @@ export const CHAT_INLINE_CFPB_PREP_HREF = "/justice/cfpb";
 export const CHAT_INLINE_FCC_PREP_HREF = "/justice/fcc";
 export const CHAT_INLINE_BBB_PREP_HREF = "/justice/bbb";
 export const CHAT_INLINE_STATE_AG_PREP_HREF = "/justice/state-ag";
+export const CHAT_INLINE_DOT_PREP_HREF = "/justice/dot";
 export const CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF = "/justice/payment-dispute";
 export const CHAT_INLINE_FTC_REVIEW_PREP_HREF = "/justice/ftc-review";
 
@@ -19,12 +21,19 @@ const CHAT_INLINE_PREP_HREFS = new Set([
   CHAT_INLINE_FCC_PREP_HREF,
   CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_STATE_AG_PREP_HREF,
+  CHAT_INLINE_DOT_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
 ]);
 
 export type ChatInlineApprovedPrepContent = {
-  kind: "merchant_message" | "cfpb_complaint" | "fcc_complaint" | "bbb_complaint" | "state_ag_complaint";
+  kind:
+    | "merchant_message"
+    | "cfpb_complaint"
+    | "fcc_complaint"
+    | "bbb_complaint"
+    | "state_ag_complaint"
+    | "dot_complaint";
   title: string;
   messageText: string;
   helperText: string;
@@ -137,6 +146,23 @@ export function getChatInlineApprovedPrepContent(
         ? `Open full ${label.toLowerCase()} page`
         : "Open full State AG prep page",
       optionalPageNote: "optional — choose state, evidence checklist, and mark filed",
+    };
+  }
+
+  if (trimmedHref === CHAT_INLINE_DOT_PREP_HREF) {
+    const title = label || "USDOT aviation complaint prep";
+    return {
+      kind: "dot_complaint",
+      title,
+      messageText: buildDotAviationComplaintDraft(intake),
+      helperText:
+        "Copy the draft below and paste it into the official U.S. Department of Transportation aviation consumer complaint process. Verify categories, company matching, and attachments on the official site. Surrenderless does not file for you.",
+      copyButtonLabel: "Copy draft",
+      optionalPageHref: CHAT_INLINE_DOT_PREP_HREF,
+      optionalPageLabel: label
+        ? `Open full ${label.toLowerCase()} page`
+        : "Open full DOT prep page",
+      optionalPageNote: "optional — evidence checklist and filing records",
     };
   }
 
