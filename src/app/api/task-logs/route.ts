@@ -1,8 +1,26 @@
 // src/app/api/task-logs/route.ts
 import { getAuth } from '@clerk/nextjs/server';
-import { supabaseAdmin } from '@/utils/supabaseClient';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse, type NextRequest } from 'next/server';
 import { rateLimit } from '@/utils/rateLimiter'; // ⬅️ added
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch },
+  });
+}
+
+function supabaseUnavailableResponse() {
+  return NextResponse.json(
+    { error: 'Supabase is not configured on this server.' },
+    { status: 503 }
+  );
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,7 +40,10 @@ export async function GET(request: NextRequest) {
     const limitParam = Number(url.searchParams.get('limit') ?? '10');
     const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : 10;
 
-    const { data: logs, error } = await supabaseAdmin
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return supabaseUnavailableResponse();
+
+    const { data: logs, error } = await supabase
       .from('task_logs')
       .select('*')
       .eq('user_id', userId)
