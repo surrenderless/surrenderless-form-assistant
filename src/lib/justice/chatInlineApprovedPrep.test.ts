@@ -13,6 +13,8 @@ import {
   getChatInlineApprovedPrepContent,
   isChatInlinePacketFallbackPrepHref,
   isChatInlinePrepHref,
+  shouldShowChatInlinePacketFallbackReadOnlyPrep,
+  shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -160,5 +162,88 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(
       getChatInlineApprovedPrepContent(CHAT_INLINE_PACKET_FALLBACK_PREP_HREF, baseIntake())
     ).toBeNull();
+  });
+});
+
+describe("shouldShowChatInlineReadOnlyApprovedPrep", () => {
+  it("shows read-only prep for active UUID case with approved/started status and prep content", () => {
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "approved",
+        hasPrepContent: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        hasPrepContent: true,
+      })
+    ).toBe(true);
+  });
+
+  it("does not gate on handling_requested_at (read-only prep stays visible after handling request)", () => {
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        hasPrepContent: true,
+      })
+    ).toBe(true);
+  });
+
+  it("returns false without prep content or outside active-case gates", () => {
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "approved",
+        hasPrepContent: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: false,
+        preparedPacketApproved: true,
+        status: "approved",
+        hasPrepContent: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        hasPrepContent: true,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("shouldShowChatInlinePacketFallbackReadOnlyPrep", () => {
+  it("shows packet fallback read-only prep for matching href without handling gate", () => {
+    expect(
+      shouldShowChatInlinePacketFallbackReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
+      })
+    ).toBe(true);
+  });
+
+  it("returns false for non-packet href", () => {
+    expect(
+      shouldShowChatInlinePacketFallbackReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: CHAT_INLINE_MERCHANT_PREP_HREF,
+      })
+    ).toBe(false);
   });
 });

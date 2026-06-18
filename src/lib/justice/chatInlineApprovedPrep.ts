@@ -5,7 +5,32 @@ import { buildDotAviationComplaintDraft } from "@/lib/justice/buildDotAviationCo
 import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildStateAgComplaintDraft } from "@/lib/justice/buildStateAgComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
+
+export type ChatInlineReadOnlyPrepGateInput = {
+  isActiveUuidCase: boolean;
+  preparedPacketApproved: boolean;
+  status?: JusticeApprovedNextAction["status"];
+};
+
+/** Read-only copy/preview prep in chat-ai — not gated on handling_requested_at. */
+export function shouldShowChatInlineReadOnlyApprovedPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { hasPrepContent: boolean }
+): boolean {
+  if (!input.isActiveUuidCase || !input.preparedPacketApproved || !input.hasPrepContent) {
+    return false;
+  }
+  return input.status === "approved" || input.status === "started";
+}
+
+/** Packet fallback read-only prep — same handling-request visibility as other read-only prep. */
+export function shouldShowChatInlinePacketFallbackReadOnlyPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { href?: string }
+): boolean {
+  if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
+  if (input.href?.trim() !== CHAT_INLINE_PACKET_FALLBACK_PREP_HREF) return false;
+  return input.status === "approved" || input.status === "started";
+}
 
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
 export const CHAT_INLINE_CFPB_PREP_HREF = "/justice/cfpb";
