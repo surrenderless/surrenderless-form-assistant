@@ -88,6 +88,7 @@ export type TimelineEntryType =
   | "submission_draft_reviewed"
   | "evidence_added"
   | "filing_recorded"
+  | "handling_requested"
   | "task_added"
   | "task_completed";
 

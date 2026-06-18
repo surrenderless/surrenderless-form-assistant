@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
-import { supabaseAdmin } from "@/utils/supabaseClient";
 
 function normalizeTimeline(v: unknown): TimelineEntry[] {
   if (!Array.isArray(v)) return [];
@@ -16,6 +16,7 @@ function sortByTs(entries: TimelineEntry[]): TimelineEntry[] {
  * Returns the full sorted timeline after update, or null on failure.
  */
 export async function appendCaseTimelineEntry(
+  supabase: SupabaseClient,
   userId: string,
   caseId: string,
   entry: {
@@ -26,7 +27,7 @@ export async function appendCaseTimelineEntry(
     ts?: string;
   }
 ): Promise<TimelineEntry[] | null> {
-  const { data: row, error: fetchErr } = await supabaseAdmin
+  const { data: row, error: fetchErr } = await supabase
     .from("justice_cases")
     .select("timeline")
     .eq("id", caseId)
@@ -54,7 +55,7 @@ export async function appendCaseTimelineEntry(
 
   timeline = sortByTs([...timeline, newEntry]);
 
-  const { error: upErr } = await supabaseAdmin
+  const { error: upErr } = await supabase
     .from("justice_cases")
     .update({ timeline })
     .eq("id", caseId)
@@ -70,10 +71,11 @@ export async function appendCaseTimelineEntry(
 
 /** Latest persisted timeline for a case (sorted by ts). */
 export async function getJusticeCaseTimelineForUser(
+  supabase: SupabaseClient,
   userId: string,
   caseId: string
 ): Promise<TimelineEntry[] | null> {
-  const { data: row, error } = await supabaseAdmin
+  const { data: row, error } = await supabase
     .from("justice_cases")
     .select("timeline")
     .eq("id", caseId)

@@ -2172,6 +2172,8 @@ export default function JusticeChatAiPage() {
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
+      const payload = (await patchRes.json()) as unknown;
+      applyServerTimelineFromResponse(caseId, payload);
       setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: handling request error", e);

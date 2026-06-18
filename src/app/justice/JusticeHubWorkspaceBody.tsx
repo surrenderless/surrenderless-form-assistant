@@ -34,7 +34,7 @@ import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNext
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
-import { readTimeline, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
+import { readTimeline, applyServerTimelineFromResponse, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
@@ -426,6 +426,7 @@ export default function JusticeHubWorkspaceBody() {
       });
       if (patchRes.ok) {
         const data = (await patchRes.json()) as { client_state?: unknown };
+        applyServerTimelineFromResponse(snapshot.caseId, data);
         const hydrated =
           hydrateApprovedNextActionForDisplay(snapshot.caseId, data.client_state) ?? local;
         applyHydratedApprovedNext(snapshot.caseId, snapshot.intake, hydrated);

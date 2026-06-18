@@ -60,7 +60,7 @@ import type {
 import { STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
-import { readTimeline } from "@/lib/justice/timeline";
+import { readTimeline, applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 /** Post-review prepared-packet framing gates (page-local; does not change rules). */
@@ -124,7 +124,10 @@ async function persistApprovedNextActionClientState(
     });
     if (!patchRes.ok) {
       console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) failed", patchRes.status);
+      return;
     }
+    const payload = (await patchRes.json()) as unknown;
+    applyServerTimelineFromResponse(caseId, payload);
   } catch (e) {
     console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) error", e);
   }
