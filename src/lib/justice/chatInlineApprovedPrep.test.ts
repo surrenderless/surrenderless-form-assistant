@@ -6,6 +6,7 @@ import {
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_MERCHANT_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+  CHAT_INLINE_STATE_AG_PREP_HREF,
   getChatInlineApprovedPrepContent,
   isChatInlinePrepHref,
 } from "@/lib/justice/chatInlineApprovedPrep";
@@ -34,6 +35,7 @@ describe("isChatInlinePrepHref", () => {
     CHAT_INLINE_CFPB_PREP_HREF,
     CHAT_INLINE_FCC_PREP_HREF,
     CHAT_INLINE_BBB_PREP_HREF,
+    CHAT_INLINE_STATE_AG_PREP_HREF,
     CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
     CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   ];
@@ -69,7 +71,28 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.optionalPageNote).toContain("optional");
   });
 
+  it("returns State AG complaint draft content with optional full-page link", () => {
+    const intake = baseIntake({ consumer_us_state: "CA" });
+    const content = getChatInlineApprovedPrepContent(
+      CHAT_INLINE_STATE_AG_PREP_HREF,
+      intake,
+      "State AG complaint"
+    );
+
+    expect(content).not.toBeNull();
+    expect(content?.kind).toBe("state_ag_complaint");
+    expect(content?.title).toBe("State AG complaint");
+    expect(content?.messageText).toContain("DRAFT FOR STATE ATTORNEY GENERAL");
+    expect(content?.messageText).toContain("California (CA)");
+    expect(content?.messageText).toContain("Example Retail Co");
+    expect(content?.helperText).toContain("Attorney General");
+    expect(content?.copyButtonLabel).toBe("Copy draft");
+    expect(content?.optionalPageHref).toBe(CHAT_INLINE_STATE_AG_PREP_HREF);
+    expect(content?.optionalPageLabel).toBe("Open full state ag complaint page");
+    expect(content?.optionalPageNote).toContain("optional");
+  });
+
   it("returns null for routes without inline prep content", () => {
-    expect(getChatInlineApprovedPrepContent("/justice/state-ag", baseIntake())).toBeNull();
+    expect(getChatInlineApprovedPrepContent("/justice/dot", baseIntake())).toBeNull();
   });
 });
