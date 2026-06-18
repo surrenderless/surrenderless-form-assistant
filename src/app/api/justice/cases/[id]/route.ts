@@ -1,8 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
-import { getUserOr401 } from "@/server/requireUser";
+import { parseApprovedNextActionFromClientState } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload, isTimelineArray } from "@/lib/justice/caseApiValidation";
+import {
+  buildHandlingRequestTimelineEntry,
+  isFirstHandlingRequestTransition,
+} from "@/lib/justice/handlingRequestTimeline";
+import { getUserOr401 } from "@/server/requireUser";
+import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -154,6 +160,25 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
+  let existingClientState: unknown;
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+    const { data: existingRow, error: existingErr } = await supabase
+      .from("justice_cases")
+      .select("client_state")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (existingErr) {
+      console.warn("justice_cases select before patch:", existingErr.message);
+      return NextResponse.json({ error: existingErr.message }, { status: 500 });
+    }
+    if (!existingRow) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    existingClientState = existingRow.client_state;
+  }
+
   const { data, error } = await supabase
     .from("justice_cases")
     .update(patch)
@@ -171,5 +196,22 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json(data as CaseResponse);
+  let responseData = data as CaseResponse;
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    isFirstHandlingRequestTransition(existingClientState, patch.client_state)
+  ) {
+    const incomingNext = parseApprovedNextActionFromClientState(patch.client_state);
+    if (incomingNext?.handling_requested_at?.trim()) {
+      const timeline = await appendCaseTimelineEntry(userId, id, {
+        ...buildHandlingRequestTimelineEntry(id, incomingNext),
+      });
+      if (timeline) {
+        responseData = { ...responseData, timeline };
+      }
+    }
+  }
+
+  return NextResponse.json(responseData);
 }
