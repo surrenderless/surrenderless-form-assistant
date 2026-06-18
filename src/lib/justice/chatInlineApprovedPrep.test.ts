@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_CFPB_PREP_HREF,
+  CHAT_INLINE_DOT_PREP_HREF,
   CHAT_INLINE_FCC_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_MERCHANT_PREP_HREF,
@@ -36,6 +37,7 @@ describe("isChatInlinePrepHref", () => {
     CHAT_INLINE_FCC_PREP_HREF,
     CHAT_INLINE_BBB_PREP_HREF,
     CHAT_INLINE_STATE_AG_PREP_HREF,
+    CHAT_INLINE_DOT_PREP_HREF,
     CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
     CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   ];
@@ -92,7 +94,32 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.optionalPageNote).toContain("optional");
   });
 
+  it("returns DOT aviation complaint draft content with optional full-page link", () => {
+    const intake = baseIntake({
+      company_name: "Example Airlines",
+      purchase_or_signup: "Round-trip flight ORD–LAX",
+      story: "Flight was canceled and I was not rebooked.",
+    });
+    const content = getChatInlineApprovedPrepContent(
+      CHAT_INLINE_DOT_PREP_HREF,
+      intake,
+      "USDOT aviation complaint"
+    );
+
+    expect(content).not.toBeNull();
+    expect(content?.kind).toBe("dot_complaint");
+    expect(content?.title).toBe("USDOT aviation complaint");
+    expect(content?.messageText).toContain("DRAFT FOR USDOT / AVIATION CONSUMER COMPLAINT");
+    expect(content?.messageText).toContain("Example Airlines");
+    expect(content?.messageText).toContain("Flight was canceled");
+    expect(content?.helperText).toContain("Department of Transportation");
+    expect(content?.copyButtonLabel).toBe("Copy draft");
+    expect(content?.optionalPageHref).toBe(CHAT_INLINE_DOT_PREP_HREF);
+    expect(content?.optionalPageLabel).toBe("Open full usdot aviation complaint page");
+    expect(content?.optionalPageNote).toContain("optional");
+  });
+
   it("returns null for routes without inline prep content", () => {
-    expect(getChatInlineApprovedPrepContent("/justice/dot", baseIntake())).toBeNull();
+    expect(getChatInlineApprovedPrepContent("/justice/demand-letter", baseIntake())).toBeNull();
   });
 });
