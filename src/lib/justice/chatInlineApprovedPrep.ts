@@ -1,3 +1,4 @@
+import { buildBbbComplaintDraft } from "@/lib/justice/buildBbbComplaintDraft";
 import { buildCfpbComplaintDraft } from "@/lib/justice/buildCfpbComplaintDraft";
 import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
@@ -6,6 +7,7 @@ import type { JusticeIntake } from "@/lib/justice/types";
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
 export const CHAT_INLINE_CFPB_PREP_HREF = "/justice/cfpb";
 export const CHAT_INLINE_FCC_PREP_HREF = "/justice/fcc";
+export const CHAT_INLINE_BBB_PREP_HREF = "/justice/bbb";
 export const CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF = "/justice/payment-dispute";
 export const CHAT_INLINE_FTC_REVIEW_PREP_HREF = "/justice/ftc-review";
 
@@ -13,12 +15,13 @@ const CHAT_INLINE_PREP_HREFS = new Set([
   CHAT_INLINE_MERCHANT_PREP_HREF,
   CHAT_INLINE_CFPB_PREP_HREF,
   CHAT_INLINE_FCC_PREP_HREF,
+  CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
 ]);
 
 export type ChatInlineApprovedPrepContent = {
-  kind: "merchant_message" | "cfpb_complaint" | "fcc_complaint";
+  kind: "merchant_message" | "cfpb_complaint" | "fcc_complaint" | "bbb_complaint";
   title: string;
   messageText: string;
   helperText: string;
@@ -96,6 +99,23 @@ export function getChatInlineApprovedPrepContent(
       optionalPageLabel: label
         ? `Open full ${label.toLowerCase()} page`
         : "Open full FCC prep page",
+      optionalPageNote: "optional — evidence checklist and mark filed",
+    };
+  }
+
+  if (trimmedHref === CHAT_INLINE_BBB_PREP_HREF) {
+    const title = label || "BBB complaint prep";
+    return {
+      kind: "bbb_complaint",
+      title,
+      messageText: buildBbbComplaintDraft(intake),
+      helperText:
+        "Copy the draft below and paste it into the official BBB.org complaint flow. Verify the correct business profile before submitting. Surrenderless does not file for you.",
+      copyButtonLabel: "Copy draft",
+      optionalPageHref: CHAT_INLINE_BBB_PREP_HREF,
+      optionalPageLabel: label
+        ? `Open full ${label.toLowerCase()} page`
+        : "Open full BBB prep page",
       optionalPageNote: "optional — evidence checklist and mark filed",
     };
   }

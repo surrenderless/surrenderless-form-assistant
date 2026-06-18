@@ -5,7 +5,7 @@ import {
   HANDLING_TRACKING_STEP_OPEN_APPROVED,
   resolveHandlingTrackingContextualLink,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
-import { CHAT_INLINE_MERCHANT_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import { CHAT_INLINE_BBB_PREP_HREF, CHAT_INLINE_MERCHANT_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
 
 describe("resolveHandlingTrackingContextualLink", () => {
   it("suppresses open-step link on chat-ai when prep is inline", () => {
@@ -23,14 +23,25 @@ describe("resolveHandlingTrackingContextualLink", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
-        approvedNextAction: { href: "/justice/bbb" },
+        approvedNextAction: { href: "/justice/state-ag" },
         surface: "chat-ai",
         prepInlineInChat: false,
       })
     ).toEqual({
-      href: "/justice/bbb",
+      href: "/justice/state-ag",
       label: "Open approved step",
     });
+  });
+
+  it("suppresses open-step link on chat-ai when BBB prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: CHAT_INLINE_BBB_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+      })
+    ).toBeNull();
   });
 
   it("suppresses packet filing link on chat-ai when filing capture is inline", () => {
