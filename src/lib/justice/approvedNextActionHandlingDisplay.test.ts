@@ -3,9 +3,17 @@ import {
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
   HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
   HANDLING_TRACKING_STEP_OPEN_APPROVED,
+  HANDLING_TRACKING_STEP_REVIEW_PACKET,
   resolveHandlingTrackingContextualLink,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
-import { CHAT_INLINE_BBB_PREP_HREF, CHAT_INLINE_DEMAND_LETTER_PREP_HREF, CHAT_INLINE_DOT_PREP_HREF, CHAT_INLINE_MERCHANT_PREP_HREF, CHAT_INLINE_STATE_AG_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import {
+  CHAT_INLINE_BBB_PREP_HREF,
+  CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
+  CHAT_INLINE_DOT_PREP_HREF,
+  CHAT_INLINE_MERCHANT_PREP_HREF,
+  CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
+  CHAT_INLINE_STATE_AG_PREP_HREF,
+} from "@/lib/justice/chatInlineApprovedPrep";
 
 describe("resolveHandlingTrackingContextualLink", () => {
   it("suppresses open-step link on chat-ai when prep is inline", () => {
@@ -75,6 +83,46 @@ describe("resolveHandlingTrackingContextualLink", () => {
         prepInlineInChat: true,
       })
     ).toBeNull();
+  });
+
+  it("suppresses open-step link on chat-ai when packet fallback prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: CHAT_INLINE_PACKET_FALLBACK_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+      })
+    ).toBeNull();
+  });
+
+  it("suppresses review-packet link on chat-ai when packet fallback prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        approvedNextAction: { href: CHAT_INLINE_PACKET_FALLBACK_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+        basicsReady: true,
+        evidenceCount: 1,
+      })
+    ).toBeNull();
+  });
+
+  it("still offers review-packet link on chat-ai when other prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        approvedNextAction: { href: CHAT_INLINE_MERCHANT_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+        basicsReady: true,
+        evidenceCount: 1,
+      })
+    ).toEqual({
+      href: "/justice/packet",
+      label: "Review case packet",
+    });
   });
 
   it("suppresses packet filing link on chat-ai when filing capture is inline", () => {

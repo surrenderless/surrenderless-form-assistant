@@ -7,9 +7,11 @@ import {
   CHAT_INLINE_FCC_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_MERCHANT_PREP_HREF,
+  CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   CHAT_INLINE_STATE_AG_PREP_HREF,
   getChatInlineApprovedPrepContent,
+  isChatInlinePacketFallbackPrepHref,
   isChatInlinePrepHref,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -42,6 +44,7 @@ describe("isChatInlinePrepHref", () => {
     CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
     CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
     CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+    CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   ];
 
   it.each(inlineHrefs)("returns true for inline prep route %s", (href) => {
@@ -50,10 +53,20 @@ describe("isChatInlinePrepHref", () => {
   });
 
   it("returns false for non-inline justice routes", () => {
-    expect(isChatInlinePrepHref("/justice/packet")).toBe(false);
     expect(isChatInlinePrepHref("/justice/handling")).toBe(false);
     expect(isChatInlinePrepHref(undefined)).toBe(false);
     expect(isChatInlinePrepHref("")).toBe(false);
+  });
+});
+
+describe("isChatInlinePacketFallbackPrepHref", () => {
+  it("returns true only for the packet fallback approved-action href", () => {
+    expect(isChatInlinePacketFallbackPrepHref(CHAT_INLINE_PACKET_FALLBACK_PREP_HREF)).toBe(true);
+    expect(isChatInlinePacketFallbackPrepHref(`  ${CHAT_INLINE_PACKET_FALLBACK_PREP_HREF}  `)).toBe(
+      true
+    );
+    expect(isChatInlinePacketFallbackPrepHref("/justice/merchant")).toBe(false);
+    expect(isChatInlinePacketFallbackPrepHref(undefined)).toBe(false);
   });
 });
 
@@ -144,5 +157,8 @@ describe("getChatInlineApprovedPrepContent", () => {
 
   it("returns null for routes without inline prep content", () => {
     expect(getChatInlineApprovedPrepContent("/justice/handling", baseIntake())).toBeNull();
+    expect(
+      getChatInlineApprovedPrepContent(CHAT_INLINE_PACKET_FALLBACK_PREP_HREF, baseIntake())
+    ).toBeNull();
   });
 });
