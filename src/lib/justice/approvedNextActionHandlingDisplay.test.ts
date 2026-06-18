@@ -5,7 +5,7 @@ import {
   HANDLING_TRACKING_STEP_OPEN_APPROVED,
   resolveHandlingTrackingContextualLink,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
-import { CHAT_INLINE_BBB_PREP_HREF, CHAT_INLINE_DOT_PREP_HREF, CHAT_INLINE_MERCHANT_PREP_HREF, CHAT_INLINE_STATE_AG_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import { CHAT_INLINE_BBB_PREP_HREF, CHAT_INLINE_DEMAND_LETTER_PREP_HREF, CHAT_INLINE_DOT_PREP_HREF, CHAT_INLINE_MERCHANT_PREP_HREF, CHAT_INLINE_STATE_AG_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
 
 describe("resolveHandlingTrackingContextualLink", () => {
   it("suppresses open-step link on chat-ai when prep is inline", () => {
@@ -60,6 +60,17 @@ describe("resolveHandlingTrackingContextualLink", () => {
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
         approvedNextAction: { href: CHAT_INLINE_DOT_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+      })
+    ).toBeNull();
+  });
+
+  it("suppresses open-step link on chat-ai when demand letter prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: CHAT_INLINE_DEMAND_LETTER_PREP_HREF },
         surface: "chat-ai",
         prepInlineInChat: true,
       })

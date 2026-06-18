@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_CFPB_PREP_HREF,
+  CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
   CHAT_INLINE_DOT_PREP_HREF,
   CHAT_INLINE_FCC_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
@@ -38,6 +39,7 @@ describe("isChatInlinePrepHref", () => {
     CHAT_INLINE_BBB_PREP_HREF,
     CHAT_INLINE_STATE_AG_PREP_HREF,
     CHAT_INLINE_DOT_PREP_HREF,
+    CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
     CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
     CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   ];
@@ -119,7 +121,28 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.optionalPageNote).toContain("optional");
   });
 
+  it("returns demand letter draft content with optional full-page link", () => {
+    const intake = baseIntake();
+    const content = getChatInlineApprovedPrepContent(
+      CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
+      intake,
+      "Demand letter"
+    );
+
+    expect(content).not.toBeNull();
+    expect(content?.kind).toBe("demand_letter");
+    expect(content?.title).toBe("Demand letter");
+    expect(content?.messageText).toContain("DRAFT DEMAND LETTER");
+    expect(content?.messageText).toContain("Example Retail Co");
+    expect(content?.messageText).toContain("Item never arrived after payment.");
+    expect(content?.helperText).toContain("not legal advice");
+    expect(content?.copyButtonLabel).toBe("Copy letter");
+    expect(content?.optionalPageHref).toBe(CHAT_INLINE_DEMAND_LETTER_PREP_HREF);
+    expect(content?.optionalPageLabel).toBe("Open full demand letter page");
+    expect(content?.optionalPageNote).toContain("optional");
+  });
+
   it("returns null for routes without inline prep content", () => {
-    expect(getChatInlineApprovedPrepContent("/justice/demand-letter", baseIntake())).toBeNull();
+    expect(getChatInlineApprovedPrepContent("/justice/handling", baseIntake())).toBeNull();
   });
 });
