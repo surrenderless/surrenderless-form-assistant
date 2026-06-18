@@ -3508,6 +3508,8 @@ export default function JusticeChatAiPage() {
       : null;
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
+  const chatFirstActiveCaseBreadcrumbContinuity =
+    isUpdatingExistingCase && Boolean(activeUuidCaseId);
   const breadcrumbWorkHref =
     chatFirstBreadcrumbContinuity || !isUpdatingExistingCase
       ? "/justice"
@@ -3522,24 +3524,38 @@ export default function JusticeChatAiPage() {
       <Header />
       <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-lg flex-col bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          <Link href="/" className="text-blue-600 hover:underline">
-            Home
-          </Link>
-          {" · "}
-          <Link
-            href={breadcrumbWorkHref}
-            className="text-blue-600 hover:underline"
-          >
-            {breadcrumbWorkLabel}
-          </Link>
-          {" · "}
-          <Link href="/justice/chat" className="text-blue-600 hover:underline">
-            Step-by-step chat
-          </Link>
-          {" · "}
-          <Link href="/justice/intake" className="text-blue-600 hover:underline">
-            Structured form
-          </Link>
+          {chatFirstActiveCaseBreadcrumbContinuity ? (
+            <>
+              Home
+              {" · "}
+              {breadcrumbWorkLabel}
+              {" · "}
+              Step-by-step chat
+              {" · "}
+              Structured form
+            </>
+          ) : (
+            <>
+              <Link href="/" className="text-blue-600 hover:underline">
+                Home
+              </Link>
+              {" · "}
+              <Link
+                href={breadcrumbWorkHref}
+                className="text-blue-600 hover:underline"
+              >
+                {breadcrumbWorkLabel}
+              </Link>
+              {" · "}
+              <Link href="/justice/chat" className="text-blue-600 hover:underline">
+                Step-by-step chat
+              </Link>
+              {" · "}
+              <Link href="/justice/intake" className="text-blue-600 hover:underline">
+                Structured form
+              </Link>
+            </>
+          )}
         </p>
 
         <h1 className="mt-4 text-2xl font-bold text-neutral-900 dark:text-neutral-100">
