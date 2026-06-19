@@ -47,7 +47,12 @@ import {
   mergeClientStateWithClearedFollowUp,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
-import { isApprovedActionOpenedForHandlingTracking, deriveHandlingClosureStepAfterFilingConfirmation } from "@/lib/justice/handlingTrackingProgress";
+import {
+  chatOutcomeTrackingFormOpen,
+  chatOutcomeTrackingSaveAllowed,
+  deriveHandlingClosureStepAfterFilingConfirmation,
+  isApprovedActionOpenedForHandlingTracking,
+} from "@/lib/justice/handlingTrackingProgress";
 import {
   isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
@@ -1166,11 +1171,6 @@ function showChatApprovedPacketActionHandlingTracking(input: {
   if (input.approvedNextAction.handling_requested_at?.trim()) return false;
   const status = input.approvedNextAction.status;
   return status === "approved" || status === "started" || status === "completed";
-}
-
-function chatOutcomeTrackingFormOpen(action: JusticeApprovedNextAction): boolean {
-  if (!action.outcome_note?.trim()) return true;
-  return action.follow_up_needed === true;
 }
 
 function chatReadyForManualReview(input: {
@@ -2478,7 +2478,7 @@ export default function JusticeChatAiPage() {
     follow_up_needed: boolean;
     follow_up_at: string;
   }) {
-    if (!approvedNextAction || approvedNextAction.status !== "completed") return;
+    if (!approvedNextAction || !chatOutcomeTrackingSaveAllowed(approvedNextAction)) return;
     const trimmedNote = draft.outcome_note.trim();
     const next: JusticeApprovedNextAction = { ...approvedNextAction };
     if (trimmedNote) next.outcome_note = trimmedNote;
@@ -4257,6 +4257,18 @@ export default function JusticeChatAiPage() {
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
                     />
+                    {approvedNextAction.status !== "completed" &&
+                    chatOutcomeTrackingFormOpen(approvedNextAction) ? (
+                      <ApprovedNextActionOutcomeTrackingForm
+                        action={approvedNextAction}
+                        onSave={handleSaveApprovedNextActionTracking}
+                      />
+                    ) : approvedNextAction.status !== "completed" &&
+                      approvedNextAction.outcome_note?.trim() ? (
+                      <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                        {approvedNextAction.outcome_note.trim()}
+                      </p>
+                    ) : null}
                     {approvedNextAction.status === "completed" &&
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
                       <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
@@ -4278,13 +4290,29 @@ export default function JusticeChatAiPage() {
                     ) : null}
                   </>
                 ) : null}
-                {approvedNextAction.status !== "completed" ? (
+                {approvedNextAction.status !== "completed" &&
+                !approvedNextAction.handling_requested_at?.trim() ? (
                   <>
                     {approvedNextAction.outcome_note?.trim() ? (
                       <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
                         {approvedNextAction.outcome_note.trim()}
                       </p>
                     ) : null}
+                    {approvedNextAction.follow_up_needed === true ? (
+                      <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                        Follow-up needed
+                      </p>
+                    ) : null}
+                    <ApprovedNextActionFollowUpTimingLine
+                      followUpAt={approvedNextAction.follow_up_at}
+                      className="mt-1 text-emerald-800 dark:text-emerald-200"
+                    />
+                  </>
+                ) : null}
+                {approvedNextAction.status !== "completed" &&
+                approvedNextAction.handling_requested_at?.trim() &&
+                !chatOutcomeTrackingFormOpen(approvedNextAction) ? (
+                  <>
                     {approvedNextAction.follow_up_needed === true ? (
                       <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
                         Follow-up needed

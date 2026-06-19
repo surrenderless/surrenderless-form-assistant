@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  chatOutcomeTrackingFormOpen,
+  chatOutcomeTrackingSaveAllowed,
   deriveHandlingClosureStepAfterFilingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -87,5 +89,35 @@ describe("deriveHandlingClosureStepAfterFilingConfirmation", () => {
         outcomeNote: "Resolved for now.",
       })
     ).toBe(HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED);
+  });
+});
+
+describe("chatOutcomeTrackingFormOpen", () => {
+  it("opens when outcome is missing or follow-up is still needed", () => {
+    expect(chatOutcomeTrackingFormOpen({})).toBe(true);
+    expect(chatOutcomeTrackingFormOpen({ outcome_note: "Resolved." })).toBe(false);
+    expect(
+      chatOutcomeTrackingFormOpen({ outcome_note: "Resolved.", follow_up_needed: true })
+    ).toBe(true);
+  });
+});
+
+describe("chatOutcomeTrackingSaveAllowed", () => {
+  it("allows save for completed actions", () => {
+    expect(chatOutcomeTrackingSaveAllowed({ status: "completed" })).toBe(true);
+  });
+
+  it("allows save for handling-requested approved actions", () => {
+    expect(
+      chatOutcomeTrackingSaveAllowed({
+        status: "approved",
+        handling_requested_at: "2026-06-16T12:00:00.000Z",
+      })
+    ).toBe(true);
+  });
+
+  it("blocks save for approved actions without handling request", () => {
+    expect(chatOutcomeTrackingSaveAllowed({ status: "approved" })).toBe(false);
+    expect(chatOutcomeTrackingSaveAllowed({ status: "started" })).toBe(false);
   });
 });
