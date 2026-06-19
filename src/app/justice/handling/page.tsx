@@ -48,6 +48,10 @@ import type {
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
+import {
+  buildLastAssistedSubmissionAttemptSummaryDisplay,
+  readLastAssistedSubmissionAttemptFromClientState,
+} from "@/lib/justice/submissionAttemptState";
 
 /** Must stay within `GET /api/justice/cases` `MAX_LIST_LIMIT`. */
 const CASES_FETCH_LIMIT = 50;
@@ -107,6 +111,50 @@ function handlingFilingFiledAtLine(filedAt: string): string {
     }
   }
   return t;
+}
+
+function LastAssistedSubmissionAttemptReadOnly({ clientState }: { clientState: unknown }) {
+  const snapshot = useMemo(
+    () => readLastAssistedSubmissionAttemptFromClientState(clientState),
+    [clientState]
+  );
+  const display = useMemo(
+    () => (snapshot ? buildLastAssistedSubmissionAttemptSummaryDisplay(snapshot) : null),
+    [snapshot]
+  );
+  if (!display) return null;
+
+  return (
+    <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+      <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+        Last assisted submission attempt
+      </p>
+      <p className="mt-1 text-xs font-medium text-neutral-900 dark:text-neutral-100">
+        {display.destination}
+      </p>
+      <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+        Attempted {display.attemptedAtLabel}
+      </p>
+      {display.confirmation ? (
+        <p className="mt-0.5 font-mono text-[11px] text-neutral-700 dark:text-neutral-300">
+          Confirmation: {display.confirmation}
+        </p>
+      ) : null}
+      {display.filingId ? (
+        <p className="mt-0.5 font-mono text-[11px] text-neutral-700 dark:text-neutral-300">
+          Filing id: {display.filingId}
+        </p>
+      ) : null}
+      {display.executionContextLabel ? (
+        <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+          {display.executionContextLabel}
+        </p>
+      ) : null}
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Read-only — mock practice lane snapshot from chat assisted submission.
+      </p>
+    </div>
+  );
 }
 
 function caseDraftReviewed(row: CaseRow): boolean {
@@ -873,6 +921,7 @@ function HandlingWorkbenchCaseCard({
           </details>
         </div>
       ) : null}
+      <LastAssistedSubmissionAttemptReadOnly clientState={caseRow.client_state} />
       <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
         <details>
           <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">
@@ -1238,6 +1287,7 @@ function ApprovedPacketActionCaseCard({
         Approved case packet and next in-app step — not a Surrenderless handling request. Request
         Surrenderless handling from chat intake when you want internal triage tracking.
       </p>
+      <LastAssistedSubmissionAttemptReadOnly clientState={caseRow.client_state} />
       {showRecordHandled ? (
         <>
           <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
