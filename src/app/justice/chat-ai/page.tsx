@@ -91,7 +91,12 @@ import {
   resolvePaymentDisputeFormFields,
 } from "@/lib/justice/preparePaymentDisputeChecklist";
 import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
-import { recordFtcPracticeFiling } from "@/lib/justice/recordFtcPracticeFiling";
+import { recordFtcPracticeFiling, buildFtcPracticeSubmissionAttempt } from "@/lib/justice/recordFtcPracticeFiling";
+import {
+  buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
+  mergeClientStateWithLastAssistedSubmissionAttempt,
+  type LastAssistedSubmissionAttemptSnapshot,
+} from "@/lib/justice/submissionAttemptState";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -2264,6 +2269,34 @@ export default function JusticeChatAiPage() {
     }
   }
 
+  async function persistLastAssistedSubmissionAttemptSnapshot(
+    caseId: string,
+    snapshot: LastAssistedSubmissionAttemptSnapshot
+  ) {
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        console.warn("justice chat-ai: GET before last assisted submission attempt failed", getRes.status);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithLastAssistedSubmissionAttempt(
+        existing.client_state,
+        snapshot
+      );
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        console.warn("justice chat-ai: PATCH last assisted submission attempt failed", patchRes.status);
+      }
+    } catch (e) {
+      console.warn("justice chat-ai: persist last assisted submission attempt error", e);
+    }
+  }
+
   async function handleRunFtcPracticeFromChat() {
     if (!ftcPracticeConfirmed || !isLoaded || !isSignedIn) return;
     const caseId =
@@ -2292,15 +2325,22 @@ export default function JusticeChatAiPage() {
           preparedPacketApproved &&
           approvedNextAction
         ) {
-          const filing = await recordFtcPracticeFiling(caseId, result, {
-            executionContext: "assisted_after_packet_approval",
+          const assistedFilingOptions = {
+            executionContext: "assisted_after_packet_approval" as const,
             ...(approvedNextAction.approved_at?.trim()
               ? { approvedAt: approvedNextAction.approved_at.trim() }
               : {}),
-          });
+          };
+          const filing = await recordFtcPracticeFiling(caseId, result, assistedFilingOptions);
           if (filing.ok) {
             applyServerTimelineFromResponse(caseId, filing.payload);
             requestSavedEvidencePreviewRefresh();
+            const attempt = buildFtcPracticeSubmissionAttempt(result, caseId, assistedFilingOptions);
+            const snapshot = buildLastAssistedSubmissionAttemptFromSubmissionAttempt(
+              attempt,
+              filing.payload
+            );
+            void persistLastAssistedSubmissionAttemptSnapshot(caseId, snapshot);
           } else {
             console.warn("justice chat-ai: FTC practice filing record failed", filing.error);
           }
