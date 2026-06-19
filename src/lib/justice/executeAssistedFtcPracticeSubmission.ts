@@ -251,7 +251,12 @@ async function recordAssistedSubmissionArtifacts(
   const filing = await recordFiling(caseId, practice, assistedFilingOptions);
   if (!filing.ok) {
     console.warn(`${logLabel}: FTC practice filing record failed`, filing.error);
-    return { recorded: false };
+    const snapshot = buildFailedAssistedSubmissionSnapshot(
+      approvedNextActionForSubmission,
+      filing.error
+    );
+    await persistLastAssistedSubmissionAttemptSnapshot(caseId, snapshot, logLabel, fetchFn);
+    return { recorded: false, snapshot };
   }
 
   applyTimeline(caseId, filing.payload);
