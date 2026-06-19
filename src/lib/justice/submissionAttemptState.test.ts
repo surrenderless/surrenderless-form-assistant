@@ -100,5 +100,37 @@ describe("submissionAttemptState", () => {
     expect(display.confirmation).toBe(FTC_PRACTICE_FILING_CONFIRMATION);
     expect(display.filingId).toBe("fil-123");
     expect(display.executionContextLabel).toBe("Assisted after packet approval");
+    expect(display.isFailed).toBe(false);
+    expect(display.outcomeLabel).toBeUndefined();
+  });
+
+  it("builds failed summary display with retry-needed label", () => {
+    const display = buildLastAssistedSubmissionAttemptSummaryDisplay({
+      kind: "ftc_practice",
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+      outcome: "failed",
+      error: "Request failed",
+      executionContext: "assisted_after_packet_approval",
+    });
+
+    expect(display.isFailed).toBe(true);
+    expect(display.outcomeLabel).toBe("Failed — retry needed");
+    expect(display.error).toBe("Request failed");
+  });
+
+  it("parses failed attempt outcome and error from client_state", () => {
+    const snapshot = readLastAssistedSubmissionAttemptFromClientState({
+      last_assisted_submission_attempt: {
+        kind: "ftc_practice",
+        attemptedAt: "2026-06-16T12:00:00.000Z",
+        filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+        outcome: "failed",
+        error: "Request failed",
+      },
+    });
+
+    expect(snapshot?.outcome).toBe("failed");
+    expect(snapshot?.error).toBe("Request failed");
   });
 });

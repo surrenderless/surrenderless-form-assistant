@@ -14,6 +14,7 @@ import {
   type RunFtcPracticeSuccess,
 } from "@/lib/justice/runFtcPractice";
 import {
+  buildFailedLastAssistedSubmissionAttemptSnapshot,
   buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
   mergeClientStateWithLastAssistedSubmissionAttempt,
   type LastAssistedSubmissionAttemptSnapshot,
@@ -49,6 +50,7 @@ export type ExecuteAssistedFtcPracticeSubmissionSuccess = {
 export type ExecuteAssistedFtcPracticeSubmissionFailure = {
   ok: false;
   error: string;
+  lastAssistedSubmissionAttempt?: LastAssistedSubmissionAttemptSnapshot;
 };
 
 export type ExecuteAssistedFtcPracticeSubmissionResult =
@@ -207,6 +209,43 @@ async function recordAssistedSubmissionArtifacts(
   return { recorded: true, snapshot };
 }
 
+function buildFailedAssistedSubmissionSnapshot(
+  approvedNextActionForSubmission: JusticeApprovedNextAction,
+  error: string
+): LastAssistedSubmissionAttemptSnapshot {
+  return buildFailedLastAssistedSubmissionAttemptSnapshot({
+    attemptedAt: new Date().toISOString(),
+    error,
+    executionContext: "assisted_after_packet_approval",
+    ...(approvedNextActionForSubmission.approved_at?.trim()
+      ? { approvedAt: approvedNextActionForSubmission.approved_at.trim() }
+      : {}),
+  });
+}
+
+async function persistFailedAssistedSubmissionAttemptIfEligible(
+  params: ExecuteAssistedFtcPracticeSubmissionParams,
+  approvedNextActionForSubmission: JusticeApprovedNextAction | null | undefined,
+  error: string,
+  fetchFn: typeof fetch,
+  logLabel: string
+): Promise<LastAssistedSubmissionAttemptSnapshot | undefined> {
+  if (
+    !shouldRecordAssistedSubmission(
+      params.isSignedIn,
+      params.caseId,
+      params.preparedPacketApproved,
+      approvedNextActionForSubmission
+    )
+  ) {
+    return undefined;
+  }
+
+  const snapshot = buildFailedAssistedSubmissionSnapshot(approvedNextActionForSubmission, error);
+  await persistLastAssistedSubmissionAttemptSnapshot(params.caseId, snapshot, logLabel, fetchFn);
+  return snapshot;
+}
+
 /** Chat-ai assisted FTC practice lane: promote, run mock practice, record filing + snapshot. */
 export async function executeAssistedFtcPracticeSubmission(
   params: ExecuteAssistedFtcPracticeSubmissionParams
@@ -232,7 +271,18 @@ export async function executeAssistedFtcPracticeSubmission(
   });
 
   if (!practiceResult.ok) {
-    return { ok: false, error: practiceResult.error };
+    const lastAssistedSubmissionAttempt = await persistFailedAssistedSubmissionAttemptIfEligible(
+      params,
+      approvedNextActionForSubmission,
+      practiceResult.error,
+      fetchFn,
+      logLabel
+    );
+    return {
+      ok: false,
+      error: practiceResult.error,
+      ...(lastAssistedSubmissionAttempt ? { lastAssistedSubmissionAttempt } : {}),
+    };
   }
 
   let assistedSubmissionRecorded = false;

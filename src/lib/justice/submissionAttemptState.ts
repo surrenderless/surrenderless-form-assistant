@@ -1,8 +1,10 @@
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
-import type {
-  SubmissionAttemptExecutionContext,
-  SubmissionAttemptKind,
-  SubmissionAttemptOutcome,
+import {
+  FTC_PRACTICE_FILING_DESTINATION,
+  type SubmissionAttemptExecutionContext,
+  type SubmissionAttemptKind,
+  type SubmissionAttemptOutcome,
+  type SubmissionAttemptStatus,
 } from "@/lib/justice/submissionAttempt";
 import type { JusticeCaseClientState } from "@/lib/justice/types";
 
@@ -15,6 +17,9 @@ export type LastAssistedSubmissionAttemptSnapshot = {
   filingId?: string;
   confirmation?: string;
   artifactUrl?: string;
+  /** Omitted on legacy success snapshots; treated as success when absent. */
+  outcome?: SubmissionAttemptStatus;
+  error?: string;
 };
 
 export function buildLastAssistedSubmissionAttemptSnapshot(input: {
@@ -26,6 +31,8 @@ export function buildLastAssistedSubmissionAttemptSnapshot(input: {
   filingId?: string;
   confirmation?: string;
   artifactUrl?: string;
+  outcome?: SubmissionAttemptStatus;
+  error?: string;
 }): LastAssistedSubmissionAttemptSnapshot {
   const snapshot: LastAssistedSubmissionAttemptSnapshot = {
     kind: input.kind,
@@ -41,7 +48,27 @@ export function buildLastAssistedSubmissionAttemptSnapshot(input: {
   if (confirmation) snapshot.confirmation = confirmation;
   const artifactUrl = input.artifactUrl?.trim();
   if (artifactUrl) snapshot.artifactUrl = artifactUrl;
+  if (input.outcome) snapshot.outcome = input.outcome;
+  const error = input.error?.trim();
+  if (error) snapshot.error = error;
   return snapshot;
+}
+
+export function buildFailedLastAssistedSubmissionAttemptSnapshot(input: {
+  attemptedAt: string;
+  error: string;
+  approvedAt?: string;
+  executionContext?: SubmissionAttemptExecutionContext;
+}): LastAssistedSubmissionAttemptSnapshot {
+  return buildLastAssistedSubmissionAttemptSnapshot({
+    kind: "ftc_practice",
+    attemptedAt: input.attemptedAt,
+    filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+    outcome: "failed",
+    error: input.error,
+    ...(input.approvedAt?.trim() ? { approvedAt: input.approvedAt.trim() } : {}),
+    ...(input.executionContext ? { executionContext: input.executionContext } : {}),
+  });
 }
 
 export function extractFilingRefsFromRecordPayload(payload: unknown): {
@@ -108,7 +135,16 @@ export function parseLastAssistedSubmissionAttempt(
   if (confirmation) snapshot.confirmation = confirmation;
   const artifactUrl = typeof o.artifactUrl === "string" ? o.artifactUrl.trim() : "";
   if (artifactUrl) snapshot.artifactUrl = artifactUrl;
+  if (o.outcome === "success" || o.outcome === "failed") snapshot.outcome = o.outcome;
+  const error = typeof o.error === "string" ? o.error.trim() : "";
+  if (error) snapshot.error = error;
   return snapshot;
+}
+
+export function isLastAssistedSubmissionAttemptFailed(
+  snapshot: LastAssistedSubmissionAttemptSnapshot
+): boolean {
+  return snapshot.outcome === "failed";
 }
 
 export function readLastAssistedSubmissionAttemptFromClientState(
@@ -137,6 +173,9 @@ export type LastAssistedSubmissionAttemptSummaryDisplay = {
   confirmation?: string;
   filingId?: string;
   executionContextLabel?: string;
+  isFailed: boolean;
+  outcomeLabel?: string;
+  error?: string;
 };
 
 function formatLastAssistedSubmissionAttemptAttemptedAt(iso: string): string {
@@ -164,9 +203,14 @@ export function buildLastAssistedSubmissionAttemptSummaryDisplay(
 ): LastAssistedSubmissionAttemptSummaryDisplay {
   const confirmation = snapshot.confirmation?.trim();
   const filingId = snapshot.filingId?.trim();
+  const failed = isLastAssistedSubmissionAttemptFailed(snapshot);
+  const error = snapshot.error?.trim();
   return {
     destination: snapshot.filingDestination,
     attemptedAtLabel: formatLastAssistedSubmissionAttemptAttemptedAt(snapshot.attemptedAt),
+    isFailed: failed,
+    ...(failed ? { outcomeLabel: "Failed — retry needed" } : {}),
+    ...(failed && error ? { error } : {}),
     ...(confirmation ? { confirmation } : {}),
     ...(filingId ? { filingId } : {}),
     ...(snapshot.executionContext === "assisted_after_packet_approval"
