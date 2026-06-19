@@ -1537,9 +1537,10 @@ function ChatHandlingPersistedStatusReadOnly({
     : handlingRequested
       ? { text: "Handling task: not saved yet" }
       : null;
-  const followUpLine =
-    followUpFlagged || followUpTask
-      ? formatChatPersistedTaskLine(followUpTask, "Follow-up task")
+  const followUpLine = followUpTask
+    ? formatChatPersistedTaskLine(followUpTask, "Follow-up task")
+    : followUpFlagged
+      ? { text: "Follow-up task: not saved yet" }
       : null;
 
   return (
