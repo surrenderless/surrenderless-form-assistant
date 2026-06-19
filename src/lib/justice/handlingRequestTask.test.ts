@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildHandlingRequestTaskNotes,
   buildHandlingRequestTaskTitle,
+  handlingRequestTaskCompletedTimelineId,
   handlingRequestTaskNotesMarker,
+  isFirstFilingConfirmationTransition,
   taskNotesMatchHandlingRequestMarker,
 } from "@/lib/justice/handlingRequestTask";
 import { handlingRequestTimelineEntryId } from "@/lib/justice/handlingRequestTimeline";
@@ -52,5 +54,28 @@ describe("taskNotesMatchHandlingRequestMarker", () => {
 
   it("does not match unrelated notes", () => {
     expect(taskNotesMatchHandlingRequestMarker("Follow up with merchant", CASE_ID)).toBe(false);
+  });
+});
+
+describe("isFirstFilingConfirmationTransition", () => {
+  it("returns true when confirmation_number transitions from empty to present", () => {
+    expect(isFirstFilingConfirmationTransition(null, "BBB-123")).toBe(true);
+    expect(isFirstFilingConfirmationTransition("", "BBB-123")).toBe(true);
+    expect(isFirstFilingConfirmationTransition("   ", "BBB-123")).toBe(true);
+  });
+
+  it("returns false when confirmation was already present or remains empty", () => {
+    expect(isFirstFilingConfirmationTransition("BBB-123", "BBB-456")).toBe(false);
+    expect(isFirstFilingConfirmationTransition(null, null)).toBe(false);
+    expect(isFirstFilingConfirmationTransition("BBB-123", "")).toBe(false);
+  });
+});
+
+describe("handlingRequestTaskCompletedTimelineId", () => {
+  it("uses a stable idempotent id per task", () => {
+    const taskId = "660e8400-e29b-41d4-a716-446655440001";
+    expect(handlingRequestTaskCompletedTimelineId(taskId)).toBe(
+      `handling_request_task_done:${taskId}`
+    );
   });
 });

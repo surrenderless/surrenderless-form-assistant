@@ -42,6 +42,19 @@ export function taskNotesMatchHandlingRequestMarker(notes: string | null | undef
   return trimmed === marker || trimmed.startsWith(`${marker}\n`);
 }
 
+/** True when confirmation_number goes from empty/missing to a non-empty value. */
+export function isFirstFilingConfirmationTransition(
+  before: string | null | undefined,
+  after: string | null | undefined
+): boolean {
+  return !before?.trim() && Boolean(after?.trim());
+}
+
+/** Stable idempotent timeline id when a handling-request task is completed. */
+export function handlingRequestTaskCompletedTimelineId(taskId: string): string {
+  return `handling_request_task_done:${taskId}`;
+}
+
 export type EnsureHandlingRequestTaskResult = {
   task: JusticeCaseTaskRow | null;
   timeline: TimelineEntry[] | null;
@@ -106,4 +119,77 @@ export async function ensureHandlingRequestTask(
   });
 
   return { task, timeline, created: true };
+}
+
+export type CompleteHandlingRequestTaskResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: TimelineEntry[] | null;
+  completed: boolean;
+};
+
+async function findHandlingRequestTask(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<JusticeCaseTaskRow | null> {
+  const marker = handlingRequestTaskNotesMarker(caseId);
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .limit(1);
+
+  if (existingErr) {
+    console.warn("justice handling request task: select for complete", existingErr.message);
+    return null;
+  }
+
+  const existing = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  return existing ?? null;
+}
+
+/**
+ * Completes the handling-request task for a case when filing confirmation is recorded.
+ * Idempotent: no-op when task is missing or already completed; timeline dedupes by stable id.
+ */
+export async function completeHandlingRequestTaskIfOpen(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<CompleteHandlingRequestTaskResult> {
+  const task = await findHandlingRequestTask(supabase, userId, caseId);
+  if (!task) {
+    return { task: null, timeline: null, completed: false };
+  }
+  if (task.completed_at?.trim()) {
+    return { task, timeline: null, completed: false };
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: completedAt })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn("justice handling request task: complete update", error?.message ?? "not found");
+    return { task, timeline: null, completed: false };
+  }
+
+  const updated = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: handlingRequestTaskCompletedTimelineId(task.id),
+    type: "task_completed",
+    label: "Follow-up task completed",
+    detail: updated.title.trim(),
+    ts: completedAt,
+  });
+
+  return { task: updated, timeline, completed: true };
 }
