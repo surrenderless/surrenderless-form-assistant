@@ -2562,6 +2562,7 @@ export default function JusticeChatAiPage() {
   async function clearApprovedNextActionFollowUp() {
     if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return;
 
+    const previousApprovedNextAction = approvedNextAction;
     const cleared = clearFollowUpFromApprovedNextAction(approvedNextAction);
     const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, cleared);
     const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
@@ -2576,11 +2577,21 @@ export default function JusticeChatAiPage() {
 
     if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
 
+    function revertClearFollowUpOptimistic() {
+      setApprovedNextAction(previousApprovedNextAction);
+      if (caseId) {
+        writeSessionApprovedNextAction(caseId, previousApprovedNextAction);
+      }
+    }
+
     setClearingFollowUp(true);
+    setTrackingSaveError(null);
     try {
       const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before clear follow-up failed", getRes.status);
+        revertClearFollowUpOptimistic();
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
@@ -2592,13 +2603,18 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH clear follow-up failed", patchRes.status);
-      } else {
-        const data = (await patchRes.json()) as { timeline?: unknown };
-        applyServerTimelineFromResponse(caseId, data);
-        requestSavedEvidencePreviewRefresh();
+        revertClearFollowUpOptimistic();
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
       }
+      const data = (await patchRes.json()) as { timeline?: unknown };
+      applyServerTimelineFromResponse(caseId, data);
+      requestSavedEvidencePreviewRefresh();
+      setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: clear follow-up error", e);
+      revertClearFollowUpOptimistic();
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setClearingFollowUp(false);
     }
