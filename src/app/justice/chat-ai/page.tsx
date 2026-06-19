@@ -1504,11 +1504,13 @@ function ChatHandlingPersistedStatusReadOnly({
   filings,
   tasks,
   approvedNextAction,
+  refreshing = false,
 }: {
   caseId: string;
   filings: JusticeCaseFilingRow[];
   tasks: JusticeCaseTaskRow[];
   approvedNextAction: JusticeApprovedNextAction;
+  refreshing?: boolean;
 }) {
   if (!caseId) return null;
 
@@ -1530,9 +1532,10 @@ function ChatHandlingPersistedStatusReadOnly({
         ? `${filingsCount} filing record${filingsCount === 1 ? "" : "s"} · confirmation on file`
         : `${filingsCount} filing record${filingsCount === 1 ? "" : "s"} · confirmation missing`;
 
-  const handlingLine =
-    handlingRequested || handlingTask
-      ? formatChatPersistedTaskLine(handlingTask, "Handling task")
+  const handlingLine = handlingTask
+    ? formatChatPersistedTaskLine(handlingTask, "Handling task")
+    : handlingRequested
+      ? { text: "Handling task: not saved yet" }
       : null;
   const followUpLine =
     followUpFlagged || followUpTask
@@ -1542,6 +1545,9 @@ function ChatHandlingPersistedStatusReadOnly({
   return (
     <div className="mt-1.5 space-y-0.5 rounded-md border border-emerald-400/35 bg-white/50 px-2 py-1.5 dark:border-emerald-600/35 dark:bg-emerald-950/30">
       <p className="text-[11px] font-medium text-emerald-950 dark:text-emerald-100">Saved status</p>
+      {refreshing ? (
+        <p className="text-[10px] text-emerald-800/75 dark:text-emerald-200/75">Updating saved status…</p>
+      ) : null}
       <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">Filing: {filingText}</p>
       {handlingLine ? (
         <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
@@ -1619,30 +1625,30 @@ function ChatHandlingTrackingStatusReadOnly({
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
   const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
   if (!handlingRequested && !showApprovedPacketActionPath) return null;
-  if (readinessLoading) {
-    return (
-      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
-        <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
-        Loading handling tracking context...
-      </p>
-    );
-  }
+
   const canCaptureFilingInline = canCaptureFiling && Boolean(caseId);
-  const derivedStep = deriveChatHandlingTrackingLine({
-    basicsReady,
-    draftReviewed,
-    preparedPacketApproved,
-    evidenceCount,
-    filings,
-    next: approvedNextAction,
-    canCaptureFilingInline,
-  });
+  const derivedStep = readinessLoading
+    ? null
+    : deriveChatHandlingTrackingLine({
+        basicsReady,
+        draftReviewed,
+        preparedPacketApproved,
+        evidenceCount,
+        filings,
+        next: approvedNextAction,
+        canCaptureFilingInline,
+      });
   const showInlineFilingCapture =
-    canCaptureFilingInline && isHandlingTrackingFilingCaptureStep(derivedStep);
-  const inlineFilingMode = isHandlingTrackingAddFilingStep(derivedStep)
-    ? "add_filing"
-    : "add_confirmation";
+    !readinessLoading &&
+    canCaptureFilingInline &&
+    derivedStep !== null &&
+    isHandlingTrackingFilingCaptureStep(derivedStep);
+  const inlineFilingMode =
+    derivedStep !== null && isHandlingTrackingAddFilingStep(derivedStep)
+      ? "add_filing"
+      : "add_confirmation";
   const showArchiveWhenComplete =
+    !readinessLoading &&
     canArchiveCase &&
     Boolean(caseId) &&
     derivedStep === HANDLING_TRACKING_STEP_COMPLETE &&
@@ -1651,7 +1657,7 @@ function ChatHandlingTrackingStatusReadOnly({
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
         <span className="font-medium text-emerald-900 dark:text-emerald-100">Handling tracking:</span>{" "}
-        {derivedStep}
+        {readinessLoading ? "Loading handling tracking context..." : derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         In-app tracking only — not filed or submitted.
@@ -1662,9 +1668,10 @@ function ChatHandlingTrackingStatusReadOnly({
           filings={filings}
           tasks={tasks}
           approvedNextAction={approvedNextAction}
+          refreshing={readinessLoading}
         />
       ) : null}
-      {!showInlineFilingCapture ? (
+      {!readinessLoading && derivedStep !== null && !showInlineFilingCapture ? (
         <ApprovedNextActionHandlingTrackingContextualLink
           derivedStep={derivedStep}
           approvedNextAction={approvedNextAction}
