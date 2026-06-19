@@ -31,6 +31,16 @@ export function isFirstFollowUpNeededTransition(
   return !before && after;
 }
 
+/** True when follow_up_needed goes from true to false/missing. */
+export function isFirstFollowUpClearedTransition(
+  existingClientState: unknown,
+  incomingClientState: unknown
+): boolean {
+  const before = pickFollowUpNeeded(existingClientState);
+  const after = pickFollowUpNeeded(incomingClientState);
+  return before && !after;
+}
+
 /** Stable idempotency marker stored in task notes. */
 export function followUpTaskNotesMarker(caseId: string): string {
   return `follow_up:${caseId}`;
@@ -130,4 +140,82 @@ export async function ensureFollowUpCaseTask(
   });
 
   return { task, timeline, created: true };
+}
+
+/** Stable idempotent timeline id when a follow-up task is completed. */
+export function followUpTaskCompletedTimelineId(taskId: string): string {
+  return `follow_up_task_done:${taskId}`;
+}
+
+export type CompleteFollowUpCaseTaskResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: TimelineEntry[] | null;
+  completed: boolean;
+};
+
+async function findFollowUpCaseTask(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<JusticeCaseTaskRow | null> {
+  const marker = followUpTaskNotesMarker(caseId);
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .limit(1);
+
+  if (existingErr) {
+    console.warn("justice follow-up task: select for complete", existingErr.message);
+    return null;
+  }
+
+  const existing = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  return existing ?? null;
+}
+
+/**
+ * Completes the follow-up task for a case when follow-up is marked handled.
+ * Idempotent: no-op when task is missing or already completed; timeline dedupes by stable id.
+ */
+export async function completeFollowUpCaseTaskIfOpen(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<CompleteFollowUpCaseTaskResult> {
+  const task = await findFollowUpCaseTask(supabase, userId, caseId);
+  if (!task) {
+    return { task: null, timeline: null, completed: false };
+  }
+  if (task.completed_at?.trim()) {
+    return { task, timeline: null, completed: false };
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: completedAt })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn("justice follow-up task: complete update", error?.message ?? "not found");
+    return { task, timeline: null, completed: false };
+  }
+
+  const updated = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: followUpTaskCompletedTimelineId(task.id),
+    type: "task_completed",
+    label: "Follow-up task completed",
+    detail: updated.title.trim(),
+    ts: completedAt,
+  });
+
+  return { task: updated, timeline, completed: true };
 }

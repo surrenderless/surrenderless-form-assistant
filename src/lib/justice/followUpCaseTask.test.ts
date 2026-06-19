@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildFollowUpTaskNotes,
   buildFollowUpTaskTitle,
+  followUpTaskCompletedTimelineId,
   followUpTaskDueDateFromApprovedNext,
   followUpTaskNotesMarker,
+  isFirstFollowUpClearedTransition,
   isFirstFollowUpNeededTransition,
   taskNotesMatchFollowUpMarker,
 } from "@/lib/justice/followUpCaseTask";
@@ -33,6 +35,39 @@ describe("isFirstFollowUpNeededTransition", () => {
       isFirstFollowUpNeededTransition(
         { approved_next_action: { follow_up_needed: true } },
         { approved_next_action: {} }
+      )
+    ).toBe(false);
+  });
+});
+
+describe("isFirstFollowUpClearedTransition", () => {
+  it("returns true when follow_up_needed transitions from true to absent", () => {
+    expect(
+      isFirstFollowUpClearedTransition(
+        {
+          approved_next_action: {
+            label: "File BBB complaint",
+            follow_up_needed: true,
+            outcome_note: "Waiting on refund.",
+          },
+        },
+        {
+          approved_next_action: {
+            label: "File BBB complaint",
+            outcome_note: "Waiting on refund.",
+          },
+        }
+      )
+    ).toBe(true);
+  });
+
+  it("returns false when follow_up_needed stays true or was never true", () => {
+    const withFollowUp = { approved_next_action: { follow_up_needed: true } };
+    expect(isFirstFollowUpClearedTransition(withFollowUp, withFollowUp)).toBe(false);
+    expect(
+      isFirstFollowUpClearedTransition(
+        { approved_next_action: {} },
+        { approved_next_action: { follow_up_needed: true } }
       )
     ).toBe(false);
   });
@@ -90,5 +125,12 @@ describe("followUpTaskDueDateFromApprovedNext", () => {
     expect(followUpTaskDueDateFromApprovedNext({})).toBeNull();
     expect(followUpTaskDueDateFromApprovedNext({ follow_up_at: "   " })).toBeNull();
     expect(followUpTaskDueDateFromApprovedNext({ follow_up_at: "not-a-date" })).toBeNull();
+  });
+});
+
+describe("followUpTaskCompletedTimelineId", () => {
+  it("uses a stable idempotent id per task", () => {
+    const taskId = "660e8400-e29b-41d4-a716-446655440001";
+    expect(followUpTaskCompletedTimelineId(taskId)).toBe(`follow_up_task_done:${taskId}`);
   });
 });
