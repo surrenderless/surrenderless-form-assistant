@@ -1536,13 +1536,15 @@ function ChatHandlingPersistedStatusReadOnly({
   const hasConfirmation = filings.some((f) => f.confirmation_number?.trim());
 
   const outcomeNote = approvedNextAction.outcome_note?.trim() ?? "";
+  const handlingAcknowledgedAt = approvedNextAction.handling_acknowledged_at?.trim() ?? "";
   const hasAnything =
     filingsCount > 0 ||
     handlingTask ||
     followUpTask ||
     followUpFlagged ||
     handlingRequested ||
-    Boolean(outcomeNote);
+    Boolean(outcomeNote) ||
+    Boolean(handlingAcknowledgedAt);
   if (!hasAnything) return null;
 
   const filingText =
@@ -1586,6 +1588,11 @@ function ChatHandlingPersistedStatusReadOnly({
       {outcomeNote ? (
         <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
           Outcome: {truncateAttentionNote(outcomeNote, 200)}
+        </p>
+      ) : null}
+      {handlingAcknowledgedAt ? (
+        <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
+          Acknowledged: {formatApprovedNextActionHandlingTimestamp(handlingAcknowledgedAt)}
         </p>
       ) : null}
       {followUpFlagged ? (
