@@ -38,7 +38,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
-import { CHAT_INLINE_FTC_REVIEW_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { computeJusticeDestinations, ftcUnlockedFromIntake } from "@/lib/justice/rules";
@@ -116,24 +116,6 @@ function handlingFilingFiledAtLine(filedAt: string): string {
   return t;
 }
 
-function isHandlingAssistedMockSubmissionEligible(input: {
-  isLoaded: boolean;
-  isSignedIn: boolean;
-  caseId: string;
-  preparedPacketApproved: boolean;
-  approvedNextAction: JusticeApprovedNextAction;
-}): boolean {
-  return (
-    input.isLoaded &&
-    input.isSignedIn &&
-    isUuid(input.caseId) &&
-    input.preparedPacketApproved &&
-    input.approvedNextAction.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF &&
-    (input.approvedNextAction.status === "approved" ||
-      input.approvedNextAction.status === "started")
-  );
-}
-
 function HandlingAssistedMockSubmissionTrigger({
   caseRow,
   approvedNextAction,
@@ -153,7 +135,7 @@ function HandlingAssistedMockSubmissionTrigger({
   const [error, setError] = useState<string | null>(null);
   const preparedPacketApproved =
     parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
-  const eligible = isHandlingAssistedMockSubmissionEligible({
+  const eligible = isAssistedMockSubmissionEligible({
     isLoaded,
     isSignedIn,
     caseId: caseRow.id,
@@ -2078,6 +2060,31 @@ export default function JusticeHandlingWorkbenchPage() {
   const hasApprovedPacketActions = approvedPacketActionItems.length > 0;
   const hasAnyWorkbenchContent = hasApprovedPacketActions || hasAnyHandling;
 
+  const assistedMockSubmissionEligibleItems = useMemo(() => {
+    if (!isLoaded || !isSignedIn) return [];
+    const seen = new Set<string>();
+    const eligible: HandlingWorkbenchItem[] = [];
+    for (const item of [...approvedPacketActionItems, ...allHandlingItems]) {
+      if (seen.has(item.caseRow.id)) continue;
+      const preparedPacketApproved =
+        parseJusticeCaseClientState(item.caseRow.client_state).prepared_packet_approved === true;
+      if (
+        !isAssistedMockSubmissionEligible({
+          isLoaded,
+          isSignedIn: Boolean(isSignedIn),
+          caseId: item.caseRow.id,
+          preparedPacketApproved,
+          approvedNextAction: item.next,
+        })
+      ) {
+        continue;
+      }
+      seen.add(item.caseRow.id);
+      eligible.push(item);
+    }
+    return eligible;
+  }, [isLoaded, isSignedIn, approvedPacketActionItems, allHandlingItems]);
+
   return (
     <>
       <Header />
@@ -2112,14 +2119,66 @@ export default function JusticeHandlingWorkbenchPage() {
           <p className="mt-8 text-sm text-neutral-500 dark:text-neutral-400">Loading cases…</p>
         ) : loadError ? (
           <p className="mt-8 text-sm text-red-600 dark:text-red-400">{loadError}</p>
-        ) : !hasAnyWorkbenchContent ? (
-          <p className="mt-8 text-sm text-neutral-600 dark:text-neutral-400">
-            No approved packet actions or handling requests yet. Approve your prepared case packet from
-            chat intake or on the case packet, or request Surrenderless handling when an approved next
-            action is active.
-          </p>
         ) : (
           <div className="mt-8 space-y-10">
+            <section aria-labelledby="assisted-mock-submission-ready-heading">
+              <h2
+                id="assisted-mock-submission-ready-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Ready for assisted mock submission
+                <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                  ({assistedMockSubmissionEligibleItems.length})
+                </span>
+              </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                Mock FTC practice lane only — eligible cases can run assisted submission from their
+                case cards below.
+              </p>
+              {assistedMockSubmissionEligibleItems.length === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  No cases ready right now.
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-1.5 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+                  {assistedMockSubmissionEligibleItems.map((item) => {
+                    const actionLabel = item.next.label?.trim();
+                    const statusLabel = approvedNextActionStatusLabel(item.next.status);
+                    return (
+                      <li
+                        key={item.caseRow.id}
+                        className="text-xs text-neutral-700 dark:text-neutral-300"
+                      >
+                        <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                          {caseDisplayTitle(item.caseRow)}
+                        </span>
+                        {actionLabel ? (
+                          <>
+                            {" "}
+                            — <span>{actionLabel}</span>
+                          </>
+                        ) : null}
+                        {statusLabel ? (
+                          <span className="text-neutral-500 dark:text-neutral-400">
+                            {" "}
+                            ({statusLabel})
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+
+            {!hasAnyWorkbenchContent ? (
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                No approved packet actions or handling requests yet. Approve your prepared case packet
+                from chat intake or on the case packet, or request Surrenderless handling when an
+                approved next action is active.
+              </p>
+            ) : (
+              <>
             {hasApprovedPacketActions ? (
               <section aria-labelledby="approved-packet-actions-heading">
                 <h2
@@ -2605,6 +2664,8 @@ export default function JusticeHandlingWorkbenchPage() {
             </section>
             </>
             ) : null}
+              </>
+            )}
           </div>
         )}
       </main>
