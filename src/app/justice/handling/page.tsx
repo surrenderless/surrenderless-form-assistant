@@ -52,6 +52,7 @@ import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import {
   buildLastAssistedSubmissionAttemptSummaryDisplay,
+  isLastAssistedSubmissionAttemptFailed,
   mergeClientStateWithLastAssistedSubmissionAttempt,
   readLastAssistedSubmissionAttemptFromClientState,
 } from "@/lib/justice/submissionAttemptState";
@@ -2110,6 +2111,13 @@ export default function JusticeHandlingWorkbenchPage() {
     return eligible;
   }, [isLoaded, isSignedIn, approvedPacketActionItems, allHandlingItems]);
 
+  const assistedMockSubmissionRetryItems = useMemo(() => {
+    return assistedMockSubmissionEligibleItems.filter((item) => {
+      const snapshot = readLastAssistedSubmissionAttemptFromClientState(item.caseRow.client_state);
+      return snapshot !== undefined && isLastAssistedSubmissionAttemptFailed(snapshot);
+    });
+  }, [assistedMockSubmissionEligibleItems]);
+
   return (
     <>
       <Header />
@@ -2187,6 +2195,65 @@ export default function JusticeHandlingWorkbenchPage() {
                           <span className="text-neutral-500 dark:text-neutral-400">
                             {" "}
                             ({statusLabel})
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+
+            <section aria-labelledby="assisted-mock-submission-retry-heading">
+              <h2
+                id="assisted-mock-submission-retry-heading"
+                className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+              >
+                Retry needed
+                <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                  ({assistedMockSubmissionRetryItems.length})
+                </span>
+              </h2>
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                Mock FTC practice lane only — eligible cases whose last assisted submission attempt
+                failed. Retry from their case cards below.
+              </p>
+              {assistedMockSubmissionRetryItems.length === 0 ? (
+                <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                  No retry-needed cases right now.
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-1.5 rounded-lg border border-red-200/90 bg-red-50/90 px-2.5 py-2 dark:border-red-900/60 dark:bg-red-950/30">
+                  {assistedMockSubmissionRetryItems.map((item) => {
+                    const actionLabel = item.next.label?.trim();
+                    const statusLabel = approvedNextActionStatusLabel(item.next.status);
+                    const snapshot = readLastAssistedSubmissionAttemptFromClientState(
+                      item.caseRow.client_state
+                    );
+                    const error = snapshot?.error?.trim();
+                    return (
+                      <li
+                        key={item.caseRow.id}
+                        className="text-xs text-neutral-700 dark:text-neutral-300"
+                      >
+                        <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                          {caseDisplayTitle(item.caseRow)}
+                        </span>
+                        {actionLabel ? (
+                          <>
+                            {" "}
+                            — <span>{actionLabel}</span>
+                          </>
+                        ) : null}
+                        {statusLabel ? (
+                          <span className="text-neutral-500 dark:text-neutral-400">
+                            {" "}
+                            ({statusLabel})
+                          </span>
+                        ) : null}
+                        {error ? (
+                          <span className="mt-0.5 block font-medium text-red-700 dark:text-red-400">
+                            {error}
                           </span>
                         ) : null}
                       </li>
