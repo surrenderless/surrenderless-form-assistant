@@ -330,7 +330,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     );
   });
 
-  it("does not complete when assisted recording fails", async () => {
+  it("does not complete when assisted recording fails but persists failed filing snapshot", async () => {
     recordFiling.mockResolvedValue({ ok: false, error: "Filing record failed" });
     const onApprovedNextActionCompleted = vi.fn();
 
@@ -352,9 +352,26 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     if (!result.ok) return;
     expect(result.assistedSubmissionRecorded).toBe(false);
     expect(result.approvedNextActionForSubmission?.status).toBe("started");
-    expect(result.lastAssistedSubmissionAttempt).toBeUndefined();
+    expect(result.lastAssistedSubmissionAttempt).toEqual(
+      expect.objectContaining({
+        kind: "ftc_practice",
+        outcome: "failed",
+        error: "Filing record failed",
+        filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+        executionContext: "assisted_after_packet_approval",
+        approvedAt: "2026-06-15T10:00:00.000Z",
+      })
+    );
     expect(onApprovedNextActionCompleted).not.toHaveBeenCalled();
     const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(
+      patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: { last_assisted_submission_attempt?: { outcome?: string } };
+        };
+        return body.client_state?.last_assisted_submission_attempt?.outcome === "failed";
+      })
+    ).toBe(true);
     expect(
       patchCalls.some(([, init]) => {
         const body = JSON.parse(String(init?.body)) as {
@@ -363,6 +380,46 @@ describe("executeAssistedFtcPracticeSubmission", () => {
         return body.client_state?.approved_next_action?.status === "completed";
       })
     ).toBe(false);
+  });
+
+  it("returns filing failure snapshot even when failure persist PATCH fails", async () => {
+    recordFiling.mockResolvedValue({ ok: false, error: "Filing record failed" });
+    fetchFn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as {
+          client_state?: { last_assisted_submission_attempt?: unknown };
+        };
+        if (body.client_state?.last_assisted_submission_attempt) {
+          return new Response("failed", { status: 500 });
+        }
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      if (url.includes("/api/justice/cases/")) {
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: { ...approvedNextAction, status: "started" },
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.assistedSubmissionRecorded).toBe(false);
+    expect(result.lastAssistedSubmissionAttempt?.outcome).toBe("failed");
+    expect(result.lastAssistedSubmissionAttempt?.error).toBe("Filing record failed");
+    expect(result.approvedNextActionForSubmission?.status).toBe("started");
   });
 
   it("returns practice error without recording filing", async () => {
