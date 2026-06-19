@@ -1159,6 +1159,9 @@ const CHAT_FILING_INPUT_CLS =
 const CHAT_TRACKING_SAVE_ERROR_MESSAGE =
   "Your tracking update was not saved to your case on the server. This device still shows your latest changes — try the action again.";
 
+const CHAT_ARCHIVE_ERROR_MESSAGE =
+  "This case could not be archived on the server. Try again.";
+
 function ChatHandlingWorkbenchOptionalLink() {
   return (
     <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/65 dark:text-emerald-200/65">
@@ -1605,6 +1608,7 @@ function ChatHandlingTrackingStatusReadOnly({
   canArchiveCase = false,
   onArchiveCase,
   archiving = false,
+  archiveError = null,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -1622,6 +1626,7 @@ function ChatHandlingTrackingStatusReadOnly({
   canArchiveCase?: boolean;
   onArchiveCase?: (caseId: string) => void;
   archiving?: boolean;
+  archiveError?: string | null;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
   const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
@@ -1707,6 +1712,11 @@ function ChatHandlingTrackingStatusReadOnly({
           >
             {archiving ? "Archiving…" : "Archive case"}
           </button>
+          {archiveError ? (
+            <p className="text-[11px] text-red-700 dark:text-red-300" role="alert">
+              {archiveError}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </>
@@ -1926,6 +1936,7 @@ export default function JusticeChatAiPage() {
   const [stagedProofNotes, setStagedProofNotes] = useState<StagedProofNote[]>([]);
   const [stagedProofFlushError, setStagedProofFlushError] = useState<string | null>(null);
   const [archivingCase, setArchivingCase] = useState(false);
+  const [archiveCaseError, setArchiveCaseError] = useState<string | null>(null);
   const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
   const [approvingPreparedPacket, setApprovingPreparedPacket] = useState(false);
   const [submissionDraftReviewChecked, setSubmissionDraftReviewChecked] = useState(false);
@@ -2033,6 +2044,7 @@ export default function JusticeChatAiPage() {
     if (!caseId || !isUuid(caseId)) return;
 
     setArchivingCase(true);
+    setArchiveCaseError(null);
     try {
       const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
@@ -2041,12 +2053,14 @@ export default function JusticeChatAiPage() {
       });
       if (!res.ok) {
         console.warn("justice chat-ai: archive failed", res.status);
+        setArchiveCaseError(CHAT_ARCHIVE_ERROR_MESSAGE);
         return;
       }
       clearLocalJusticeSession();
       router.push("/justice");
     } catch (e) {
       console.warn("justice chat-ai: archive error", e);
+      setArchiveCaseError(CHAT_ARCHIVE_ERROR_MESSAGE);
     } finally {
       setArchivingCase(false);
     }
@@ -4359,6 +4373,7 @@ export default function JusticeChatAiPage() {
                       canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
+                      archiveError={archiveCaseError}
                     />
                   </>
                 ) : null}
@@ -4419,6 +4434,7 @@ export default function JusticeChatAiPage() {
                       canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
+                      archiveError={archiveCaseError}
                     />
                     {approvedNextAction.status !== "completed" &&
                     chatOutcomeTrackingFormOpen(approvedNextAction) ? (
