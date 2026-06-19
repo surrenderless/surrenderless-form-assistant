@@ -280,7 +280,7 @@ describe("shouldShowChatInlinePaymentDisputeReadOnlyPrep", () => {
     ).toBe(true);
   });
 
-  it("returns false when handling is not requested", () => {
+  it("returns false when handling is not requested unless status is completed", () => {
     expect(
       shouldShowChatInlinePaymentDisputeReadOnlyPrep({
         isActiveUuidCase: true,
@@ -290,6 +290,15 @@ describe("shouldShowChatInlinePaymentDisputeReadOnlyPrep", () => {
         handlingRequested: false,
       })
     ).toBe(false);
+    expect(
+      shouldShowChatInlinePaymentDisputeReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(true);
   });
 
   it("returns false for non-payment-dispute href", () => {
@@ -327,7 +336,7 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
     ).toBe(true);
   });
 
-  it("returns false when handling is not requested", () => {
+  it("returns false when handling is not requested unless status is completed", () => {
     expect(
       shouldShowChatInlineFtcReadOnlyPrep({
         isActiveUuidCase: true,
@@ -337,6 +346,15 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
         handlingRequested: false,
       })
     ).toBe(false);
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(true);
   });
 
   it("returns false for non-FTC href", () => {
