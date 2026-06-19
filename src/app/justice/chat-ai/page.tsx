@@ -2286,14 +2286,31 @@ export default function JusticeChatAiPage() {
           setApprovedNextAction(local);
           if (caseId) writeSessionApprovedNextAction(caseId, local);
         },
+        onApprovedNextActionCompleted: (local) => {
+          setApprovedNextAction(local);
+          if (caseId) writeSessionApprovedNextAction(caseId, local);
+        },
         onAssistedSubmissionRecorded: requestSavedEvidencePreviewRefresh,
       });
-      if (result.ok) {
-        setFtcPracticeSuccess(true);
-        setFtcPracticeStorageSkipped(result.storageSkipped);
-      } else {
+      if (!result.ok) {
         setFtcPracticeError(result.error);
+        return;
       }
+      if (!result.assistedSubmissionRecorded) {
+        const snapshotError = result.lastAssistedSubmissionAttempt?.error?.trim();
+        setFtcPracticeError(
+          snapshotError
+            ? `Practice completed, but assisted filing recording failed: ${snapshotError}. You can retry when ready.`
+            : "Practice completed, but assisted filing recording failed. You can retry when ready."
+        );
+        return;
+      }
+      if (result.approvedNextActionForSubmission) {
+        setApprovedNextAction(result.approvedNextActionForSubmission);
+        if (caseId) writeSessionApprovedNextAction(caseId, result.approvedNextActionForSubmission);
+      }
+      setFtcPracticeSuccess(true);
+      setFtcPracticeStorageSkipped(result.storageSkipped);
     } finally {
       setFtcPracticeRunning(false);
     }
