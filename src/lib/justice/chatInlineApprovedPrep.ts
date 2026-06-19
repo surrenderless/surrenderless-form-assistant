@@ -43,20 +43,22 @@ export function shouldShowChatInlinePacketFallbackReadOnlyPrep(
 export function shouldShowChatInlinePaymentDisputeReadOnlyPrep(
   input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
 ): boolean {
-  if (!input.handlingRequested) return false;
   if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
   if (input.href?.trim() !== CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF) return false;
-  return isChatInlineReadOnlyPrepStatusVisible(input.status);
+  if (!isChatInlineReadOnlyPrepStatusVisible(input.status)) return false;
+  if (!input.handlingRequested && input.status !== "completed") return false;
+  return true;
 }
 
 /** Read-only FTC practice summary when practice-run form is hidden after handling request. */
 export function shouldShowChatInlineFtcReadOnlyPrep(
   input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
 ): boolean {
-  if (!input.handlingRequested) return false;
   if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
   if (input.href?.trim() !== CHAT_INLINE_FTC_REVIEW_PREP_HREF) return false;
-  return isChatInlineReadOnlyPrepStatusVisible(input.status);
+  if (!isChatInlineReadOnlyPrepStatusVisible(input.status)) return false;
+  if (!input.handlingRequested && input.status !== "completed") return false;
+  return true;
 }
 
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
