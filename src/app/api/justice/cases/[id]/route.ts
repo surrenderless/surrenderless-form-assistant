@@ -14,6 +14,12 @@ import {
   isFirstFollowUpClearedTransition,
   isFirstFollowUpNeededTransition,
 } from "@/lib/justice/followUpCaseTask";
+import {
+  buildHandlingAcknowledgedTimelineEntry,
+  buildOutcomeRecordedTimelineEntry,
+  isFirstHandlingAcknowledgedTransition,
+  isFirstOutcomeNoteTransition,
+} from "@/lib/justice/handlingClosureTimeline";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -245,6 +251,34 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, id);
     if (taskResult.timeline) {
       responseData = { ...responseData, timeline: taskResult.timeline };
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+    const incomingNext = parseApprovedNextActionFromClientState(patch.client_state);
+
+    if (
+      isFirstOutcomeNoteTransition(existingClientState, patch.client_state) &&
+      incomingNext?.outcome_note?.trim()
+    ) {
+      const timeline = await appendCaseTimelineEntry(supabase, userId, id, {
+        ...buildOutcomeRecordedTimelineEntry(id, incomingNext),
+      });
+      if (timeline) {
+        responseData = { ...responseData, timeline };
+      }
+    }
+
+    if (
+      isFirstHandlingAcknowledgedTransition(existingClientState, patch.client_state) &&
+      incomingNext?.handling_acknowledged_at?.trim()
+    ) {
+      const timeline = await appendCaseTimelineEntry(supabase, userId, id, {
+        ...buildHandlingAcknowledgedTimelineEntry(id, incomingNext),
+      });
+      if (timeline) {
+        responseData = { ...responseData, timeline };
+      }
     }
   }
 

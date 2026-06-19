@@ -89,6 +89,8 @@ export type TimelineEntryType =
   | "evidence_added"
   | "filing_recorded"
   | "handling_requested"
+  | "outcome_recorded"
+  | "handling_acknowledged"
   | "task_added"
   | "task_completed";
 

@@ -2269,12 +2269,13 @@ export default function JusticeChatAiPage() {
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
-      const data = (await patchRes.json()) as { client_state?: unknown };
+      const data = (await patchRes.json()) as { client_state?: unknown; timeline?: unknown };
       if (data.client_state !== undefined) {
         const hydrated = hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? local;
         writeSessionApprovedNextAction(caseId, hydrated);
         setApprovedNextAction(hydrated);
       }
+      applyServerTimelineFromResponse(caseId, data);
       setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: acknowledge handling error", e);
@@ -2527,6 +2528,8 @@ export default function JusticeChatAiPage() {
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
         return;
       }
+      const data = (await patchRes.json()) as { timeline?: unknown };
+      applyServerTimelineFromResponse(caseId, data);
       setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: save outcome tracking error", e);
