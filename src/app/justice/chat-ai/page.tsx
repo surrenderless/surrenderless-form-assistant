@@ -2323,7 +2323,8 @@ export default function JusticeChatAiPage() {
           caseId &&
           isUuid(caseId) &&
           preparedPacketApproved &&
-          approvedNextAction
+          approvedNextAction &&
+          (approvedNextAction.status === "started" || approvedNextAction.status === "completed")
         ) {
           const assistedFilingOptions = {
             executionContext: "assisted_after_packet_approval" as const,
