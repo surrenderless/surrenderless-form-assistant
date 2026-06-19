@@ -2287,6 +2287,7 @@ export default function JusticeChatAiPage() {
       }
       const payload = (await patchRes.json()) as unknown;
       applyServerTimelineFromResponse(caseId, payload);
+      requestSavedEvidencePreviewRefresh();
       setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: handling request error", e);
@@ -2392,6 +2393,7 @@ export default function JusticeChatAiPage() {
         setApprovedNextAction(hydrated);
       }
       applyServerTimelineFromResponse(caseId, data);
+      requestSavedEvidencePreviewRefresh();
       setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: acknowledge handling error", e);
@@ -2585,6 +2587,7 @@ export default function JusticeChatAiPage() {
       } else {
         const data = (await patchRes.json()) as { timeline?: unknown };
         applyServerTimelineFromResponse(caseId, data);
+        requestSavedEvidencePreviewRefresh();
       }
     } catch (e) {
       console.warn("justice chat-ai: clear follow-up error", e);
@@ -2649,6 +2652,7 @@ export default function JusticeChatAiPage() {
       }
       const data = (await patchRes.json()) as { timeline?: unknown };
       applyServerTimelineFromResponse(caseId, data);
+      requestSavedEvidencePreviewRefresh();
       setTrackingSaveError(null);
     } catch (e) {
       console.warn("justice chat-ai: save outcome tracking error", e);
