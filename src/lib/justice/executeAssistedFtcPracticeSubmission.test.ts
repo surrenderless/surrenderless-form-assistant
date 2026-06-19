@@ -99,6 +99,106 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     expect(fetchFn).toHaveBeenCalled();
   });
 
+  it("awaits snapshot persist before returning success", async () => {
+    let resolveSnapshotPatch!: () => void;
+    const snapshotPatchGate = new Promise<void>((resolve) => {
+      resolveSnapshotPatch = resolve;
+    });
+    let resultResolved = false;
+
+    fetchFn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as {
+          client_state?: { last_assisted_submission_attempt?: unknown };
+        };
+        if (body.client_state?.last_assisted_submission_attempt) {
+          await snapshotPatchGate;
+        }
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      if (url.includes("/api/justice/cases/")) {
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const resultPromise = executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: { ...approvedNextAction, status: "started" },
+      logLabel: "test",
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    }).then((result) => {
+      resultResolved = true;
+      return result;
+    });
+
+    await vi.waitFor(() => {
+      const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+      expect(patchCalls.length).toBeGreaterThanOrEqual(1);
+      const snapshotPatch = patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: { last_assisted_submission_attempt?: unknown };
+        };
+        return Boolean(body.client_state?.last_assisted_submission_attempt);
+      });
+      expect(snapshotPatch).toBe(true);
+    });
+    expect(resultResolved).toBe(false);
+
+    resolveSnapshotPatch();
+    const result = await resultPromise;
+    expect(resultResolved).toBe(true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.assistedSubmissionRecorded).toBe(true);
+    }
+  });
+
+  it("still returns success when snapshot persist PATCH fails", async () => {
+    fetchFn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as {
+          client_state?: { last_assisted_submission_attempt?: unknown };
+        };
+        if (body.client_state?.last_assisted_submission_attempt) {
+          return new Response("failed", { status: 500 });
+        }
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      if (url.includes("/api/justice/cases/")) {
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: { ...approvedNextAction, status: "started" },
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.assistedSubmissionRecorded).toBe(true);
+    }
+  });
+
   it("still runs practice when promotion PATCH fails", async () => {
     fetchFn.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "PATCH") {
