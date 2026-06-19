@@ -168,7 +168,7 @@ describe("getChatInlineApprovedPrepContent", () => {
 });
 
 describe("shouldShowChatInlineReadOnlyApprovedPrep", () => {
-  it("shows read-only prep for active UUID case with approved/started status and prep content", () => {
+  it("shows read-only prep for active UUID case with approved/started/completed status and prep content", () => {
     expect(
       shouldShowChatInlineReadOnlyApprovedPrep({
         isActiveUuidCase: true,
@@ -182,6 +182,14 @@ describe("shouldShowChatInlineReadOnlyApprovedPrep", () => {
         isActiveUuidCase: true,
         preparedPacketApproved: true,
         status: "started",
+        hasPrepContent: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
         hasPrepContent: true,
       })
     ).toBe(true);
@@ -215,14 +223,6 @@ describe("shouldShowChatInlineReadOnlyApprovedPrep", () => {
         hasPrepContent: true,
       })
     ).toBe(false);
-    expect(
-      shouldShowChatInlineReadOnlyApprovedPrep({
-        isActiveUuidCase: true,
-        preparedPacketApproved: true,
-        status: "completed",
-        hasPrepContent: true,
-      })
-    ).toBe(false);
   });
 });
 
@@ -233,6 +233,14 @@ describe("shouldShowChatInlinePacketFallbackReadOnlyPrep", () => {
         isActiveUuidCase: true,
         preparedPacketApproved: true,
         status: "started",
+        href: CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlinePacketFallbackReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
         href: CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
       })
     ).toBe(true);
@@ -257,6 +265,15 @@ describe("shouldShowChatInlinePaymentDisputeReadOnlyPrep", () => {
         isActiveUuidCase: true,
         preparedPacketApproved: true,
         status: "started",
+        href: CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+        handlingRequested: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlinePaymentDisputeReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
         href: CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
         handlingRequested: true,
       })
@@ -295,6 +312,15 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
         isActiveUuidCase: true,
         preparedPacketApproved: true,
         status: "started",
+        href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+        handlingRequested: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
         href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
         handlingRequested: true,
       })
