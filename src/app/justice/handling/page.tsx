@@ -52,6 +52,7 @@ import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import {
   buildLastAssistedSubmissionAttemptSummaryDisplay,
+  mergeClientStateWithLastAssistedSubmissionAttempt,
   readLastAssistedSubmissionAttemptFromClientState,
 } from "@/lib/justice/submissionAttemptState";
 
@@ -164,6 +165,7 @@ function HandlingAssistedMockSubmissionTrigger({
 
   async function handleRunAssistedMockSubmission() {
     const clientStateAtStart = caseRow.client_state;
+    let clientStateForMerge = parseJusticeCaseClientState(clientStateAtStart);
     setRunning(true);
     setError(null);
     try {
@@ -176,15 +178,23 @@ function HandlingAssistedMockSubmissionTrigger({
         approvedNextAction,
         logLabel: "justice handling",
         onApprovedNextActionPromoted: (promoted) => {
-          onCaseClientStateUpdate(
-            caseRow.id,
-            mergeClientStateWithApprovedNextAction(clientStateAtStart, promoted)
+          clientStateForMerge = mergeClientStateWithApprovedNextAction(
+            clientStateForMerge,
+            promoted
           );
+          onCaseClientStateUpdate(caseRow.id, clientStateForMerge);
         },
       });
       if (!result.ok) {
         setError(result.error);
         return;
+      }
+      if (result.lastAssistedSubmissionAttempt) {
+        clientStateForMerge = mergeClientStateWithLastAssistedSubmissionAttempt(
+          clientStateForMerge,
+          result.lastAssistedSubmissionAttempt
+        );
+        onCaseClientStateUpdate(caseRow.id, clientStateForMerge);
       }
       await onRefreshAfterAssistedSubmission?.(caseRow.id);
     } catch (e) {
