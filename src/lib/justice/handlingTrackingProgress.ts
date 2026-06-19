@@ -37,3 +37,17 @@ export function deriveHandlingClosureStepAfterFilingConfirmation(input: {
 
   return null;
 }
+
+/** Whether chat-ai should show the outcome/follow-up capture form. */
+export function chatOutcomeTrackingFormOpen(action: JusticeApprovedNextAction): boolean {
+  if (!action.outcome_note?.trim()) return true;
+  return action.follow_up_needed === true;
+}
+
+/** Whether chat-ai may persist outcome/follow-up fields for the current action. */
+export function chatOutcomeTrackingSaveAllowed(
+  action: Pick<JusticeApprovedNextAction, "status" | "handling_requested_at">
+): boolean {
+  if (action.status === "completed") return true;
+  return Boolean(action.handling_requested_at?.trim());
+}
