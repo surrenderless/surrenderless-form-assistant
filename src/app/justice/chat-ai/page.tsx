@@ -1535,8 +1535,14 @@ function ChatHandlingPersistedStatusReadOnly({
   const filingsCount = filings.length;
   const hasConfirmation = filings.some((f) => f.confirmation_number?.trim());
 
+  const outcomeNote = approvedNextAction.outcome_note?.trim() ?? "";
   const hasAnything =
-    filingsCount > 0 || handlingTask || followUpTask || followUpFlagged || handlingRequested;
+    filingsCount > 0 ||
+    handlingTask ||
+    followUpTask ||
+    followUpFlagged ||
+    handlingRequested ||
+    Boolean(outcomeNote);
   if (!hasAnything) return null;
 
   const filingText =
@@ -1575,6 +1581,11 @@ function ChatHandlingPersistedStatusReadOnly({
               </span>
             </>
           ) : null}
+        </p>
+      ) : null}
+      {outcomeNote ? (
+        <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
+          Outcome: {truncateAttentionNote(outcomeNote, 200)}
         </p>
       ) : null}
       {followUpFlagged ? (
