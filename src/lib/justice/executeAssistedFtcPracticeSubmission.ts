@@ -43,6 +43,7 @@ export type ExecuteAssistedFtcPracticeSubmissionSuccess = {
   storageSkipped: boolean;
   assistedSubmissionRecorded: boolean;
   approvedNextActionForSubmission: JusticeApprovedNextAction | null | undefined;
+  lastAssistedSubmissionAttempt?: LastAssistedSubmissionAttemptSnapshot;
 };
 
 export type ExecuteAssistedFtcPracticeSubmissionFailure = {
@@ -180,7 +181,10 @@ async function recordAssistedSubmissionArtifacts(
   logLabel: string,
   recordFiling: typeof recordFtcPracticeFiling,
   applyTimeline: typeof applyServerTimelineFromResponse
-): Promise<boolean> {
+): Promise<{
+  recorded: boolean;
+  snapshot?: LastAssistedSubmissionAttemptSnapshot;
+}> {
   const { caseId } = params;
   const assistedFilingOptions = {
     executionContext: "assisted_after_packet_approval" as const,
@@ -191,7 +195,7 @@ async function recordAssistedSubmissionArtifacts(
   const filing = await recordFiling(caseId, practice, assistedFilingOptions);
   if (!filing.ok) {
     console.warn(`${logLabel}: FTC practice filing record failed`, filing.error);
-    return false;
+    return { recorded: false };
   }
 
   applyTimeline(caseId, filing.payload);
@@ -200,7 +204,7 @@ async function recordAssistedSubmissionArtifacts(
   const attempt = buildFtcPracticeSubmissionAttempt(practice, caseId, assistedFilingOptions);
   const snapshot = buildLastAssistedSubmissionAttemptFromSubmissionAttempt(attempt, filing.payload);
   await persistLastAssistedSubmissionAttemptSnapshot(caseId, snapshot, logLabel, fetchFn);
-  return true;
+  return { recorded: true, snapshot };
 }
 
 /** Chat-ai assisted FTC practice lane: promote, run mock practice, record filing + snapshot. */
@@ -232,6 +236,7 @@ export async function executeAssistedFtcPracticeSubmission(
   }
 
   let assistedSubmissionRecorded = false;
+  let lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | undefined;
   if (
     shouldRecordAssistedSubmission(
       params.isSignedIn,
@@ -240,7 +245,7 @@ export async function executeAssistedFtcPracticeSubmission(
       approvedNextActionForSubmission
     )
   ) {
-    assistedSubmissionRecorded = await recordAssistedSubmissionArtifacts(
+    const artifacts = await recordAssistedSubmissionArtifacts(
       params,
       practiceResult,
       approvedNextActionForSubmission,
@@ -249,6 +254,8 @@ export async function executeAssistedFtcPracticeSubmission(
       recordFiling,
       applyTimeline
     );
+    assistedSubmissionRecorded = artifacts.recorded;
+    lastAssistedSubmissionAttempt = artifacts.snapshot;
   }
 
   return {
@@ -257,5 +264,6 @@ export async function executeAssistedFtcPracticeSubmission(
     storageSkipped: practiceResult.storageSkipped,
     assistedSubmissionRecorded,
     approvedNextActionForSubmission,
+    ...(lastAssistedSubmissionAttempt ? { lastAssistedSubmissionAttempt } : {}),
   };
 }
