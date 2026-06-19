@@ -2125,6 +2125,11 @@ export default function JusticeHandlingWorkbenchPage() {
     });
   }, [assistedMockSubmissionEligibleItems]);
 
+  const assistedMockSubmissionReadyItems = useMemo(() => {
+    const retryCaseIds = new Set(assistedMockSubmissionRetryItems.map((item) => item.caseRow.id));
+    return assistedMockSubmissionEligibleItems.filter((item) => !retryCaseIds.has(item.caseRow.id));
+  }, [assistedMockSubmissionEligibleItems, assistedMockSubmissionRetryItems]);
+
   return (
     <>
       <Header />
@@ -2168,20 +2173,20 @@ export default function JusticeHandlingWorkbenchPage() {
               >
                 Ready for assisted mock submission
                 <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
-                  ({assistedMockSubmissionEligibleItems.length})
+                  ({assistedMockSubmissionReadyItems.length})
                 </span>
               </h2>
               <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
                 Mock FTC practice lane only — eligible cases can run assisted submission from their
                 case cards below.
               </p>
-              {assistedMockSubmissionEligibleItems.length === 0 ? (
+              {assistedMockSubmissionReadyItems.length === 0 ? (
                 <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
                   No cases ready right now.
                 </p>
               ) : (
                 <ul className="mt-2 space-y-1.5 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
-                  {assistedMockSubmissionEligibleItems.map((item) => {
+                  {assistedMockSubmissionReadyItems.map((item) => {
                     const actionLabel = item.next.label?.trim();
                     const statusLabel = approvedNextActionStatusLabel(item.next.status);
                     return (
