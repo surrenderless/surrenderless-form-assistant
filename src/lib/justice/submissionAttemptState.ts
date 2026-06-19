@@ -130,3 +130,47 @@ export function mergeClientStateWithLastAssistedSubmissionAttempt(
     last_assisted_submission_attempt: snapshot,
   };
 }
+
+export type LastAssistedSubmissionAttemptSummaryDisplay = {
+  destination: string;
+  attemptedAtLabel: string;
+  confirmation?: string;
+  filingId?: string;
+  executionContextLabel?: string;
+};
+
+function formatLastAssistedSubmissionAttemptAttemptedAt(iso: string): string {
+  const t = iso.trim();
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) {
+    try {
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return t;
+    }
+  }
+  return t;
+}
+
+/** Compact read-only summary for workbench / handling surfaces. */
+export function buildLastAssistedSubmissionAttemptSummaryDisplay(
+  snapshot: LastAssistedSubmissionAttemptSnapshot
+): LastAssistedSubmissionAttemptSummaryDisplay {
+  const confirmation = snapshot.confirmation?.trim();
+  const filingId = snapshot.filingId?.trim();
+  return {
+    destination: snapshot.filingDestination,
+    attemptedAtLabel: formatLastAssistedSubmissionAttemptAttemptedAt(snapshot.attemptedAt),
+    ...(confirmation ? { confirmation } : {}),
+    ...(filingId ? { filingId } : {}),
+    ...(snapshot.executionContext === "assisted_after_packet_approval"
+      ? { executionContextLabel: "Assisted after packet approval" }
+      : {}),
+  };
+}

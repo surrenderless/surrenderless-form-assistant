@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
+  buildLastAssistedSubmissionAttemptSummaryDisplay,
   mergeClientStateWithLastAssistedSubmissionAttempt,
   parseLastAssistedSubmissionAttempt,
   readLastAssistedSubmissionAttemptFromClientState,
@@ -82,5 +83,22 @@ describe("submissionAttemptState", () => {
 
     expect(parseLastAssistedSubmissionAttempt(undefined)).toBeUndefined();
     expect(snapshot?.filingId).toBe("fil-123");
+  });
+
+  it("builds compact summary display for handling surfaces", () => {
+    const display = buildLastAssistedSubmissionAttemptSummaryDisplay({
+      kind: "ftc_practice",
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+      confirmation: FTC_PRACTICE_FILING_CONFIRMATION,
+      filingId: "fil-123",
+      executionContext: "assisted_after_packet_approval",
+    });
+
+    expect(display.destination).toBe(FTC_PRACTICE_FILING_DESTINATION);
+    expect(display.attemptedAtLabel).toContain("2026");
+    expect(display.confirmation).toBe(FTC_PRACTICE_FILING_CONFIRMATION);
+    expect(display.filingId).toBe("fil-123");
+    expect(display.executionContextLabel).toBe("Assisted after packet approval");
   });
 });
