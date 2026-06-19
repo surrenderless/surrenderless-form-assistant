@@ -1502,6 +1502,17 @@ function formatChatPersistedTaskLine(
   return { text: `${label}: open`, dueKind };
 }
 
+function formatChatPersistedFollowUpDue(iso?: string): string {
+  const raw = iso?.trim();
+  if (!raw) return "";
+  const ymd = isoToDateInputValue(raw);
+  if (ymd) {
+    const [y, mo, day] = ymd.split("-").map(Number);
+    return new Date(y, mo - 1, day).toLocaleDateString(undefined, { dateStyle: "medium" });
+  }
+  return formatApprovedNextActionHandlingTimestamp(raw);
+}
+
 function ChatHandlingPersistedStatusReadOnly({
   caseId,
   filings,
@@ -1570,7 +1581,7 @@ function ChatHandlingPersistedStatusReadOnly({
         <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
           Follow-up: flagged
           {approvedNextAction.follow_up_at?.trim()
-            ? ` · due ${approvedNextAction.follow_up_at.trim()}`
+            ? ` · due ${formatChatPersistedFollowUpDue(approvedNextAction.follow_up_at)}`
             : ""}
         </p>
       ) : null}
