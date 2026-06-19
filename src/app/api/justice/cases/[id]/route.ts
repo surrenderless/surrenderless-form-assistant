@@ -20,6 +20,10 @@ import {
   isFirstHandlingAcknowledgedTransition,
   isFirstOutcomeNoteTransition,
 } from "@/lib/justice/handlingClosureTimeline";
+import {
+  buildCaseArchivedTimelineEntry,
+  isFirstArchiveTransition,
+} from "@/lib/justice/caseArchiveTimeline";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -174,10 +178,14 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   if (!supabase) return supabaseUnavailableResponse();
 
   let existingClientState: unknown;
-  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+  let existingArchivedAt: string | null | undefined;
+  const needsExistingRow =
+    Object.prototype.hasOwnProperty.call(patch, "client_state") ||
+    Object.prototype.hasOwnProperty.call(patch, "archived_at");
+  if (needsExistingRow) {
     const { data: existingRow, error: existingErr } = await supabase
       .from("justice_cases")
-      .select("client_state")
+      .select("client_state, archived_at")
       .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -190,6 +198,7 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     existingClientState = existingRow.client_state;
+    existingArchivedAt = existingRow.archived_at as string | null;
   }
 
   const { data, error } = await supabase
@@ -275,6 +284,22 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     ) {
       const timeline = await appendCaseTimelineEntry(supabase, userId, id, {
         ...buildHandlingAcknowledgedTimelineEntry(id, incomingNext),
+      });
+      if (timeline) {
+        responseData = { ...responseData, timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "archived_at") &&
+    isFirstArchiveTransition(existingArchivedAt, patch.archived_at)
+  ) {
+    const archivedAt =
+      typeof patch.archived_at === "string" ? patch.archived_at.trim() : "";
+    if (archivedAt) {
+      const timeline = await appendCaseTimelineEntry(supabase, userId, id, {
+        ...buildCaseArchivedTimelineEntry(id, archivedAt),
       });
       if (timeline) {
         responseData = { ...responseData, timeline };
