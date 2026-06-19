@@ -199,7 +199,7 @@ async function recordAssistedSubmissionArtifacts(
 
   const attempt = buildFtcPracticeSubmissionAttempt(practice, caseId, assistedFilingOptions);
   const snapshot = buildLastAssistedSubmissionAttemptFromSubmissionAttempt(attempt, filing.payload);
-  void persistLastAssistedSubmissionAttemptSnapshot(caseId, snapshot, logLabel, fetchFn);
+  await persistLastAssistedSubmissionAttemptSnapshot(caseId, snapshot, logLabel, fetchFn);
   return true;
 }
 
