@@ -91,6 +91,7 @@ import {
   resolvePaymentDisputeFormFields,
 } from "@/lib/justice/preparePaymentDisputeChecklist";
 import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
+import { recordFtcPracticeFiling } from "@/lib/justice/recordFtcPracticeFiling";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -2284,6 +2285,15 @@ export default function JusticeChatAiPage() {
       if (result.ok) {
         setFtcPracticeSuccess(true);
         setFtcPracticeStorageSkipped(result.storageSkipped);
+        if (isSignedIn && caseId && isUuid(caseId)) {
+          const filing = await recordFtcPracticeFiling(caseId, result);
+          if (filing.ok) {
+            applyServerTimelineFromResponse(caseId, filing.payload);
+            requestSavedEvidencePreviewRefresh();
+          } else {
+            console.warn("justice chat-ai: FTC practice filing record failed", filing.error);
+          }
+        }
       } else {
         setFtcPracticeError(result.error);
       }
