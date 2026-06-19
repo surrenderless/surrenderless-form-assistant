@@ -8,6 +8,10 @@ import {
   isFirstHandlingRequestTransition,
 } from "@/lib/justice/handlingRequestTimeline";
 import { ensureHandlingRequestTask } from "@/lib/justice/handlingRequestTask";
+import {
+  ensureFollowUpCaseTask,
+  isFirstFollowUpNeededTransition,
+} from "@/lib/justice/followUpCaseTask";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -213,6 +217,19 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       }
 
       const taskResult = await ensureHandlingRequestTask(supabase, userId, id, incomingNext);
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    isFirstFollowUpNeededTransition(existingClientState, patch.client_state)
+  ) {
+    const incomingNext = parseApprovedNextActionFromClientState(patch.client_state);
+    if (incomingNext?.follow_up_needed === true) {
+      const taskResult = await ensureFollowUpCaseTask(supabase, userId, id, incomingNext);
       if (taskResult.timeline) {
         responseData = { ...responseData, timeline: taskResult.timeline };
       }
