@@ -60,6 +60,7 @@ import {
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
 import {
@@ -90,11 +91,19 @@ import {
   resolvePaymentDisputeFormFields,
 } from "@/lib/justice/preparePaymentDisputeChecklist";
 import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
-import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
+import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import {
+  getJusticeTaskDueKind,
+  justiceTaskDueBadgeClass,
+  justiceTaskDueKindLabel,
+} from "@/lib/justice/taskDueStatus";
 import {
   applyServerTimelineFromResponse,
   appendSubmissionDraftReviewedOnce,
   readTimeline,
+  replaceTimelineForCase,
   SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID,
 } from "@/lib/justice/timeline";
 import {
@@ -111,6 +120,7 @@ import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
   JusticeDestination,
+  TimelineEntry,
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import {
@@ -1477,6 +1487,100 @@ function ChatManualFilingCaptureForm({
   );
 }
 
+function formatChatPersistedTaskLine(
+  task: JusticeCaseTaskRow | undefined,
+  label: string
+): { text: string; dueKind?: ReturnType<typeof getJusticeTaskDueKind> } | null {
+  if (!task) return null;
+  if (task.completed_at?.trim()) {
+    return { text: `${label}: completed` };
+  }
+  const dueKind = getJusticeTaskDueKind(task);
+  return { text: `${label}: open`, dueKind };
+}
+
+function ChatHandlingPersistedStatusReadOnly({
+  caseId,
+  filings,
+  tasks,
+  approvedNextAction,
+}: {
+  caseId: string;
+  filings: JusticeCaseFilingRow[];
+  tasks: JusticeCaseTaskRow[];
+  approvedNextAction: JusticeApprovedNextAction;
+}) {
+  if (!caseId) return null;
+
+  const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
+  const handlingTask = tasks.find((t) => taskNotesMatchHandlingRequestMarker(t.notes, caseId));
+  const followUpTask = tasks.find((t) => taskNotesMatchFollowUpMarker(t.notes, caseId));
+  const followUpFlagged = approvedNextAction.follow_up_needed === true;
+  const filingsCount = filings.length;
+  const hasConfirmation = filings.some((f) => f.confirmation_number?.trim());
+
+  const hasAnything =
+    filingsCount > 0 || handlingTask || followUpTask || followUpFlagged || handlingRequested;
+  if (!hasAnything) return null;
+
+  const filingText =
+    filingsCount === 0
+      ? "No filing records saved"
+      : hasConfirmation
+        ? `${filingsCount} filing record${filingsCount === 1 ? "" : "s"} · confirmation on file`
+        : `${filingsCount} filing record${filingsCount === 1 ? "" : "s"} · confirmation missing`;
+
+  const handlingLine =
+    handlingRequested || handlingTask
+      ? formatChatPersistedTaskLine(handlingTask, "Handling task")
+      : null;
+  const followUpLine =
+    followUpFlagged || followUpTask
+      ? formatChatPersistedTaskLine(followUpTask, "Follow-up task")
+      : null;
+
+  return (
+    <div className="mt-1.5 space-y-0.5 rounded-md border border-emerald-400/35 bg-white/50 px-2 py-1.5 dark:border-emerald-600/35 dark:bg-emerald-950/30">
+      <p className="text-[11px] font-medium text-emerald-950 dark:text-emerald-100">Saved status</p>
+      <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">Filing: {filingText}</p>
+      {handlingLine ? (
+        <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
+          {handlingLine.text}
+          {handlingLine.dueKind ? (
+            <>
+              {" "}
+              <span className={justiceTaskDueBadgeClass(handlingLine.dueKind)}>
+                {justiceTaskDueKindLabel(handlingLine.dueKind)}
+              </span>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {followUpFlagged ? (
+        <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
+          Follow-up: flagged
+          {approvedNextAction.follow_up_at?.trim()
+            ? ` · due ${approvedNextAction.follow_up_at.trim()}`
+            : ""}
+        </p>
+      ) : null}
+      {followUpLine ? (
+        <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
+          {followUpLine.text}
+          {followUpLine.dueKind ? (
+            <>
+              {" "}
+              <span className={justiceTaskDueBadgeClass(followUpLine.dueKind)}>
+                {justiceTaskDueKindLabel(followUpLine.dueKind)}
+              </span>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ChatHandlingTrackingStatusReadOnly({
   readinessLoading,
   approvedNextAction,
@@ -1485,6 +1589,7 @@ function ChatHandlingTrackingStatusReadOnly({
   preparedPacketApproved,
   evidenceCount,
   filings,
+  tasks,
   markAcknowledgedOnScreen = false,
   prepInlineInChat = false,
   canCaptureFiling = false,
@@ -1501,6 +1606,7 @@ function ChatHandlingTrackingStatusReadOnly({
   preparedPacketApproved: boolean;
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
+  tasks: JusticeCaseTaskRow[];
   markAcknowledgedOnScreen?: boolean;
   prepInlineInChat?: boolean;
   canCaptureFiling?: boolean;
@@ -1550,6 +1656,14 @@ function ChatHandlingTrackingStatusReadOnly({
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         In-app tracking only — not filed or submitted.
       </p>
+      {caseId ? (
+        <ChatHandlingPersistedStatusReadOnly
+          caseId={caseId}
+          filings={filings}
+          tasks={tasks}
+          approvedNextAction={approvedNextAction}
+        />
+      ) : null}
       {!showInlineFilingCapture ? (
         <ApprovedNextActionHandlingTrackingContextualLink
           derivedStep={derivedStep}
@@ -1777,6 +1891,7 @@ export default function JusticeChatAiPage() {
   const [preparedPacketApproved, setPreparedPacketApproved] = useState(false);
   const [savedEvidenceCount, setSavedEvidenceCount] = useState<number | null>(null);
   const [savedFilings, setSavedFilings] = useState<JusticeCaseFilingRow[]>([]);
+  const [savedTasks, setSavedTasks] = useState<JusticeCaseTaskRow[]>([]);
   const [chatHandlingReadinessLoading, setChatHandlingReadinessLoading] = useState(false);
   const [savedEvidenceRows, setSavedEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
   const [recentEvidenceRows, setRecentEvidenceRows] = useState<JusticeCaseEvidenceRow[]>([]);
@@ -2559,6 +2674,7 @@ export default function JusticeChatAiPage() {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
+      setSavedTasks([]);
       setChatHandlingReadinessLoading(false);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
@@ -2569,6 +2685,7 @@ export default function JusticeChatAiPage() {
     if (!caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
+      setSavedTasks([]);
       setChatHandlingReadinessLoading(false);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
@@ -2576,13 +2693,15 @@ export default function JusticeChatAiPage() {
     }
     setChatHandlingReadinessLoading(true);
     try {
-      const [evRes, filRes] = await Promise.all([
+      const [evRes, filRes, taskRes] = await Promise.all([
         fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, { signal }),
         fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`, { signal }),
+        fetch(`/api/justice/tasks?case_id=${encodeURIComponent(caseId)}`, { signal }),
       ]);
       if (signal.aborted) return;
       const evJson: unknown = evRes.ok ? await evRes.json() : [];
       const filJson: unknown = filRes.ok ? await filRes.json() : [];
+      const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
       const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
       const count = rows.length;
       if (sessionBaselineEvidenceCountRef.current === null) {
@@ -2590,12 +2709,14 @@ export default function JusticeChatAiPage() {
       }
       setSavedEvidenceCount(count);
       setSavedFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
+      setSavedTasks(Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : []);
       setSavedEvidenceRows(rows);
       setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
     } catch {
       if (!signal.aborted) {
         setSavedEvidenceCount(null);
         setSavedFilings([]);
+        setSavedTasks([]);
         setSavedEvidenceRows([]);
         setRecentEvidenceRows([]);
       }
@@ -2615,6 +2736,7 @@ export default function JusticeChatAiPage() {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
+      setSavedTasks([]);
       setChatHandlingReadinessLoading(false);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
@@ -2625,6 +2747,7 @@ export default function JusticeChatAiPage() {
     if (!caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
+      setSavedTasks([]);
       setChatHandlingReadinessLoading(false);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
@@ -3032,8 +3155,11 @@ export default function JusticeChatAiPage() {
           signal: ac.signal,
         });
         if (!res.ok) return;
-        const data = (await res.json()) as { client_state?: unknown };
+        const data = (await res.json()) as { client_state?: unknown; timeline?: unknown };
         if (ac.signal.aborted) return;
+        if (Array.isArray(data.timeline)) {
+          replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+        }
         const hydrated =
           hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
         if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
@@ -4196,6 +4322,7 @@ export default function JusticeChatAiPage() {
                       preparedPacketApproved={preparedPacketApproved}
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
+                      tasks={savedTasks}
                       markAcknowledgedOnScreen={false}
                       prepInlineInChat={prepInlineInChat}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
@@ -4255,6 +4382,7 @@ export default function JusticeChatAiPage() {
                       preparedPacketApproved={preparedPacketApproved}
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
+                      tasks={savedTasks}
                       markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
                       prepInlineInChat={prepInlineInChat}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
