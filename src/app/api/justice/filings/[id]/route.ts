@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import {
+  completeHandlingRequestTaskIfOpen,
+  isFirstFilingConfirmationTransition,
+} from "@/lib/justice/handlingRequestTask";
 import { getUserOr401 } from "@/server/requireUser";
 
 function getSupabaseAdmin(): SupabaseClient | null {
@@ -115,6 +119,21 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
+  const { data: prevRow, error: prevErr } = await supabase
+    .from("justice_case_filings")
+    .select("confirmation_number, case_id")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (prevErr) {
+    console.warn("justice_case_filings read before patch:", prevErr.message);
+    return NextResponse.json({ error: prevErr.message }, { status: 500 });
+  }
+  if (!prevRow) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const { data, error } = await supabase
     .from("justice_case_filings")
     .update(patch)
@@ -132,7 +151,22 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json(data);
+  let responseBody: Record<string, unknown> = { ...data };
+
+  if (
+    isFirstFilingConfirmationTransition(prevRow.confirmation_number, data.confirmation_number)
+  ) {
+    const taskResult = await completeHandlingRequestTaskIfOpen(
+      supabase,
+      userId,
+      data.case_id
+    );
+    if (taskResult.timeline) {
+      responseBody.timeline = taskResult.timeline;
+    }
+  }
+
+  return NextResponse.json(responseBody);
 }
 
 export async function DELETE(req: NextRequest, context: RouteCtx) {

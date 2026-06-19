@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import { completeHandlingRequestTaskIfOpen } from "@/lib/justice/handlingRequestTask";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 
@@ -244,12 +245,19 @@ export async function POST(req: NextRequest) {
 
   const conf = data.confirmation_number?.trim();
   const detail = conf ? `${data.destination} filed — ${conf}` : `${data.destination} filed`;
-  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+  let timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
     id: `justice_fil:${data.id}`,
     type: "filing_recorded",
     label: "Filing recorded",
     detail,
   });
+
+  if (conf) {
+    const taskResult = await completeHandlingRequestTaskIfOpen(supabase, userId, caseId);
+    if (taskResult.timeline) {
+      timeline = taskResult.timeline;
+    }
+  }
 
   return NextResponse.json(timeline ? { ...data, timeline } : data);
 }
