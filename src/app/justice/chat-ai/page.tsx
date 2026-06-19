@@ -47,6 +47,7 @@ import {
   mergeClientStateWithClearedFollowUp,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import { isApprovedActionOpenedForHandlingTracking } from "@/lib/justice/handlingTrackingProgress";
 import {
   isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
@@ -1241,7 +1242,7 @@ function deriveChatHandlingTrackingLine(input: {
   });
   const readyForExternalManualAction =
     readyForManualReview && input.evidenceCount > 0;
-  const actionOpened = input.next.status === "started" || input.next.status === "completed";
+  const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
   const hasFilingRecord = input.filings.length > 0;
   const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
   return deriveChatManualActionNextStep({
