@@ -2,6 +2,8 @@ export type SubmissionAttemptKind = "ftc_practice";
 
 export type SubmissionAttemptStatus = "success" | "failed";
 
+export type SubmissionAttemptExecutionContext = "assisted_after_packet_approval";
+
 export type SubmissionAttemptOutcome = {
   kind: SubmissionAttemptKind;
   caseId: string;
@@ -12,7 +14,24 @@ export type SubmissionAttemptOutcome = {
   notes?: string;
   artifactUrl?: string;
   filedAt?: string;
+  approvedAt?: string;
+  executionContext?: SubmissionAttemptExecutionContext;
 };
+
+export function buildSubmissionAttemptFilingNotes(outcome: SubmissionAttemptOutcome): string | undefined {
+  const parts: string[] = [];
+  if (outcome.executionContext === "assisted_after_packet_approval") {
+    const approvedAt = outcome.approvedAt?.trim();
+    parts.push(
+      approvedAt
+        ? `Assisted submission after packet approval (approved ${approvedAt}).`
+        : "Assisted submission after packet approval."
+    );
+  }
+  const base = outcome.notes?.trim();
+  if (base) parts.push(base);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
 
 export const FTC_PRACTICE_FILING_DESTINATION = "FTC (practice)";
 
@@ -36,7 +55,7 @@ export function buildFilingBodyFromAttempt(
   const confirmation = outcome.confirmation?.trim();
   if (confirmation) body.confirmation_number = confirmation;
 
-  const notes = outcome.notes?.trim();
+  const notes = buildSubmissionAttemptFilingNotes(outcome);
   if (notes) body.notes = notes;
 
   const artifactUrl = outcome.artifactUrl?.trim();

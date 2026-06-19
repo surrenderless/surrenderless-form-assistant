@@ -29,6 +29,24 @@ describe("buildFilingBodyFromAttempt", () => {
     });
   });
 
+  it("prepends assisted approval context to filing notes when present", () => {
+    const outcome: SubmissionAttemptOutcome = {
+      kind: "ftc_practice",
+      caseId: "00000000-0000-4000-8000-000000000001",
+      status: "success",
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filedAt: "2026-06-16T12:00:00.000Z",
+      destination: FTC_PRACTICE_FILING_DESTINATION,
+      executionContext: "assisted_after_packet_approval",
+      approvedAt: "2026-06-15T10:00:00.000Z",
+      notes: "Mock FTC practice autofill completed (/mock/ftc-complaint).",
+    };
+
+    expect(buildFilingBodyFromAttempt(outcome)?.notes).toBe(
+      "Assisted submission after packet approval (approved 2026-06-15T10:00:00.000Z). Mock FTC practice autofill completed (/mock/ftc-complaint)."
+    );
+  });
+
   it("returns null for failed attempts", () => {
     const outcome: SubmissionAttemptOutcome = {
       kind: "ftc_practice",

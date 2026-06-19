@@ -5,10 +5,16 @@ import {
   FTC_PRACTICE_FILING_DESTINATION,
   recordSubmissionAttemptAsFiling,
   type RecordSubmissionAttemptAsFilingResult,
+  type SubmissionAttemptExecutionContext,
   type SubmissionAttemptOutcome,
 } from "@/lib/justice/submissionAttempt";
 
 export { FTC_PRACTICE_FILING_CONFIRMATION, FTC_PRACTICE_FILING_DESTINATION };
+
+export type FtcPracticeFilingOptions = {
+  approvedAt?: string;
+  executionContext?: SubmissionAttemptExecutionContext;
+};
 
 function parseFtcPracticeFillResult(technicalDetails: string): {
   screenshot?: string;
@@ -37,7 +43,8 @@ function parseFtcPracticeFillResult(technicalDetails: string): {
 
 export function buildFtcPracticeSubmissionAttempt(
   result: RunFtcPracticeSuccess,
-  caseId = ""
+  caseId = "",
+  options?: FtcPracticeFilingOptions
 ): SubmissionAttemptOutcome {
   const attemptedAt = new Date().toISOString();
   const { screenshot, storageReason } = parseFtcPracticeFillResult(result.technicalDetails);
@@ -46,6 +53,7 @@ export function buildFtcPracticeSubmissionAttempt(
     result.storageSkipped ? "Screenshot storage skipped on this run." : null,
     storageReason ?? null,
   ].filter((part): part is string => Boolean(part));
+  const approvedAt = options?.approvedAt?.trim();
 
   return {
     kind: "ftc_practice",
@@ -57,6 +65,8 @@ export function buildFtcPracticeSubmissionAttempt(
     confirmation: FTC_PRACTICE_FILING_CONFIRMATION,
     notes: noteParts.join(" "),
     ...(screenshot ? { artifactUrl: screenshot } : {}),
+    ...(approvedAt ? { approvedAt } : {}),
+    ...(options?.executionContext ? { executionContext: options.executionContext } : {}),
   };
 }
 
@@ -73,7 +83,8 @@ export type RecordFtcPracticeFilingResult = RecordSubmissionAttemptAsFilingResul
 /** Persist a mock FTC practice run as a justice_case_filings row (practice lane only). */
 export async function recordFtcPracticeFiling(
   caseId: string,
-  result: RunFtcPracticeSuccess
+  result: RunFtcPracticeSuccess,
+  options?: FtcPracticeFilingOptions
 ): Promise<RecordFtcPracticeFilingResult> {
-  return recordSubmissionAttemptAsFiling(buildFtcPracticeSubmissionAttempt(result, caseId));
+  return recordSubmissionAttemptAsFiling(buildFtcPracticeSubmissionAttempt(result, caseId, options));
 }

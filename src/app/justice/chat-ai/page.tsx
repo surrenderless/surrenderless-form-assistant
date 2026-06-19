@@ -2285,8 +2285,19 @@ export default function JusticeChatAiPage() {
       if (result.ok) {
         setFtcPracticeSuccess(true);
         setFtcPracticeStorageSkipped(result.storageSkipped);
-        if (isSignedIn && caseId && isUuid(caseId)) {
-          const filing = await recordFtcPracticeFiling(caseId, result);
+        if (
+          isSignedIn &&
+          caseId &&
+          isUuid(caseId) &&
+          preparedPacketApproved &&
+          approvedNextAction
+        ) {
+          const filing = await recordFtcPracticeFiling(caseId, result, {
+            executionContext: "assisted_after_packet_approval",
+            ...(approvedNextAction.approved_at?.trim()
+              ? { approvedAt: approvedNextAction.approved_at.trim() }
+              : {}),
+          });
           if (filing.ok) {
             applyServerTimelineFromResponse(caseId, filing.payload);
             requestSavedEvidencePreviewRefresh();
