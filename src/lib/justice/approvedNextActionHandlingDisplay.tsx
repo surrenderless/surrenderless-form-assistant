@@ -134,7 +134,10 @@ export function resolveHandlingTrackingContextualLink(input: {
     if (input.surface === "chat-ai" && input.prepInlineInChat) {
       return null;
     }
-    return { href: "/justice/packet", label: "Review case packet" };
+    return {
+      href: "/justice/packet",
+      label: input.surface === "chat-ai" ? "Review case packet (optional)" : "Review case packet",
+    };
   }
 
   if (derivedStep === HANDLING_TRACKING_STEP_OPEN_APPROVED) {
@@ -143,7 +146,10 @@ export function resolveHandlingTrackingContextualLink(input: {
     if (input.surface === "chat-ai" && input.prepInlineInChat && isChatInlinePrepHref(href)) {
       return null;
     }
-    return { href, label: "Open approved step" };
+    return {
+      href,
+      label: input.surface === "chat-ai" ? "Open approved step (optional)" : "Open approved step",
+    };
   }
 
   if (

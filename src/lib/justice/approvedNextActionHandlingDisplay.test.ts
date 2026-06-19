@@ -39,7 +39,46 @@ describe("resolveHandlingTrackingContextualLink", () => {
       })
     ).toEqual({
       href: "/justice/state-ag",
+      label: "Open approved step (optional)",
+    });
+  });
+
+  it("marks review-packet link optional on chat-ai when shown", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        surface: "chat-ai",
+        prepInlineInChat: false,
+        basicsReady: true,
+        evidenceCount: 1,
+      })
+    ).toEqual({
+      href: "/justice/packet",
+      label: "Review case packet (optional)",
+    });
+  });
+
+  it("keeps non-chat-ai contextual labels unchanged", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: "/justice/state-ag" },
+        surface: "cases",
+      })
+    ).toEqual({
+      href: "/justice/state-ag",
       label: "Open approved step",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        surface: "cases",
+        basicsReady: true,
+        evidenceCount: 1,
+      })
+    ).toEqual({
+      href: "/justice/packet",
+      label: "Review case packet",
     });
   });
 
