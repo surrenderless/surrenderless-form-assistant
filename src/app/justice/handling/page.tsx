@@ -167,6 +167,13 @@ function HandlingAssistedMockSubmissionTrigger({
           );
           onCaseClientStateUpdate(caseRow.id, clientStateForMerge);
         },
+        onApprovedNextActionCompleted: (completed) => {
+          clientStateForMerge = mergeClientStateWithApprovedNextAction(
+            clientStateForMerge,
+            completed
+          );
+          onCaseClientStateUpdate(caseRow.id, clientStateForMerge);
+        },
       });
       if (!result.ok) {
         setError(result.error);

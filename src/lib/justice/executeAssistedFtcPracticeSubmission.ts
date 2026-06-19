@@ -31,6 +31,7 @@ export type ExecuteAssistedFtcPracticeSubmissionParams = {
   approvedNextAction: JusticeApprovedNextAction | null | undefined;
   logLabel?: string;
   onApprovedNextActionPromoted?: (promoted: JusticeApprovedNextAction) => void;
+  onApprovedNextActionCompleted?: (completed: JusticeApprovedNextAction) => void;
   onAssistedSubmissionRecorded?: () => void;
   fetchFn?: typeof fetch;
   runPractice?: typeof runFtcPractice;
@@ -78,16 +79,39 @@ function buildStartedApprovedNextAction(
   return { withTracking, local };
 }
 
-async function persistApprovedNextActionStartedPromotion(
+function buildCompletedApprovedNextAction(
+  approvedNextAction: JusticeApprovedNextAction
+): {
+  withTracking: JusticeApprovedNextAction;
+  local: JusticeApprovedNextAction;
+} {
+  const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
+  const label = approvedNextAction.label?.trim();
+  const next: JusticeApprovedNextAction = {
+    ...approvedNextAction,
+    ...(label ? { label } : {}),
+    href: approvedNextAction.href ?? targetHref,
+    status: "completed",
+    completed_at: approvedNextAction.completed_at ?? new Date().toISOString(),
+    ...(approvedNextAction.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
+    ...(approvedNextAction.started_at ? { started_at: approvedNextAction.started_at } : {}),
+  };
+  const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+  const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+  return { withTracking, local };
+}
+
+async function persistApprovedNextActionClientStateUpdate(
   caseId: string,
   withTracking: JusticeApprovedNextAction,
   logLabel: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  failureMessage: string
 ): Promise<void> {
   try {
     const getRes = await fetchFn(`/api/justice/cases/${encodeURIComponent(caseId)}`);
     if (!getRes.ok) {
-      console.warn(`${logLabel}: GET before FTC practice promote to started failed`, getRes.status);
+      console.warn(`${logLabel}: GET before ${failureMessage} failed`, getRes.status);
       return;
     }
     const existing = (await getRes.json()) as { client_state?: unknown };
@@ -98,11 +122,41 @@ async function persistApprovedNextActionStartedPromotion(
       body: JSON.stringify({ client_state: merged }),
     });
     if (!patchRes.ok) {
-      console.warn(`${logLabel}: PATCH FTC practice promote to started failed`, patchRes.status);
+      console.warn(`${logLabel}: PATCH ${failureMessage} failed`, patchRes.status);
     }
   } catch (e) {
-    console.warn(`${logLabel}: FTC practice promote to started error`, e);
+    console.warn(`${logLabel}: ${failureMessage} error`, e);
   }
+}
+
+async function persistApprovedNextActionStartedPromotion(
+  caseId: string,
+  withTracking: JusticeApprovedNextAction,
+  logLabel: string,
+  fetchFn: typeof fetch
+): Promise<void> {
+  await persistApprovedNextActionClientStateUpdate(
+    caseId,
+    withTracking,
+    logLabel,
+    fetchFn,
+    "FTC practice promote to started"
+  );
+}
+
+async function persistApprovedNextActionCompletedUpdate(
+  caseId: string,
+  withTracking: JusticeApprovedNextAction,
+  logLabel: string,
+  fetchFn: typeof fetch
+): Promise<void> {
+  await persistApprovedNextActionClientStateUpdate(
+    caseId,
+    withTracking,
+    logLabel,
+    fetchFn,
+    "assisted submission complete approved next action"
+  );
 }
 
 async function persistLastAssistedSubmissionAttemptSnapshot(
@@ -209,6 +263,28 @@ async function recordAssistedSubmissionArtifacts(
   return { recorded: true, snapshot };
 }
 
+async function completeApprovedNextActionAfterAssistedRecording(
+  params: ExecuteAssistedFtcPracticeSubmissionParams,
+  approvedNextActionForSubmission: JusticeApprovedNextAction,
+  fetchFn: typeof fetch,
+  logLabel: string
+): Promise<JusticeApprovedNextAction> {
+  const { caseId, isSignedIn, preparedPacketApproved, onApprovedNextActionCompleted } = params;
+
+  if (approvedNextActionForSubmission.status === "completed") {
+    return approvedNextActionForSubmission;
+  }
+
+  if (!isSignedIn || !caseId || !isUuid(caseId) || !preparedPacketApproved) {
+    return approvedNextActionForSubmission;
+  }
+
+  const { withTracking, local } = buildCompletedApprovedNextAction(approvedNextActionForSubmission);
+  onApprovedNextActionCompleted?.(local);
+  await persistApprovedNextActionCompletedUpdate(caseId, withTracking, logLabel, fetchFn);
+  return local;
+}
+
 function buildFailedAssistedSubmissionSnapshot(
   approvedNextActionForSubmission: JusticeApprovedNextAction,
   error: string
@@ -287,6 +363,7 @@ export async function executeAssistedFtcPracticeSubmission(
 
   let assistedSubmissionRecorded = false;
   let lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | undefined;
+  let approvedNextActionAfterSubmission = approvedNextActionForSubmission;
   if (
     shouldRecordAssistedSubmission(
       params.isSignedIn,
@@ -306,6 +383,14 @@ export async function executeAssistedFtcPracticeSubmission(
     );
     assistedSubmissionRecorded = artifacts.recorded;
     lastAssistedSubmissionAttempt = artifacts.snapshot;
+    if (artifacts.recorded && approvedNextActionForSubmission) {
+      approvedNextActionAfterSubmission = await completeApprovedNextActionAfterAssistedRecording(
+        params,
+        approvedNextActionForSubmission,
+        fetchFn,
+        logLabel
+      );
+    }
   }
 
   return {
@@ -313,7 +398,7 @@ export async function executeAssistedFtcPracticeSubmission(
     practice: practiceResult,
     storageSkipped: practiceResult.storageSkipped,
     assistedSubmissionRecorded,
-    approvedNextActionForSubmission,
+    approvedNextActionForSubmission: approvedNextActionAfterSubmission,
     ...(lastAssistedSubmissionAttempt ? { lastAssistedSubmissionAttempt } : {}),
   };
 }
