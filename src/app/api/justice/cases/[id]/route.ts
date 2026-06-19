@@ -7,6 +7,7 @@ import {
   buildHandlingRequestTimelineEntry,
   isFirstHandlingRequestTransition,
 } from "@/lib/justice/handlingRequestTimeline";
+import { ensureHandlingRequestTask } from "@/lib/justice/handlingRequestTask";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -209,6 +210,11 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       });
       if (timeline) {
         responseData = { ...responseData, timeline };
+      }
+
+      const taskResult = await ensureHandlingRequestTask(supabase, userId, id, incomingNext);
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
       }
     }
   }
