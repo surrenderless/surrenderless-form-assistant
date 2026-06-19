@@ -47,7 +47,7 @@ import {
   mergeClientStateWithClearedFollowUp,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
-import { isApprovedActionOpenedForHandlingTracking } from "@/lib/justice/handlingTrackingProgress";
+import { isApprovedActionOpenedForHandlingTracking, deriveHandlingClosureStepAfterFilingConfirmation } from "@/lib/justice/handlingTrackingProgress";
 import {
   isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
@@ -1209,17 +1209,13 @@ function deriveChatManualActionNextStep(input: {
       ? HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE
       : HANDLING_TRACKING_STEP_ADD_CONFIRMATION;
   }
-  if (input.status === "completed" && !input.outcomeNote?.trim()) {
-    return "Record the handling outcome.";
-  }
-  if (
-    input.status === "completed" &&
-    input.outcomeNote?.trim() &&
-    input.handlingRequestedAt?.trim() &&
-    !input.handlingAcknowledgedAt?.trim()
-  ) {
-    return "Mark the handling request acknowledged.";
-  }
+  const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+    status: input.status,
+    outcomeNote: input.outcomeNote,
+    handlingRequestedAt: input.handlingRequestedAt,
+    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+  });
+  if (closureStep) return closureStep;
   if (input.followUpNeeded === true) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
