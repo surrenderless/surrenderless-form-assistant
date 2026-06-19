@@ -1369,6 +1369,7 @@ function ChatManualFilingCaptureForm({
         setError(err.error ?? "Could not update filing record.");
         return;
       }
+      applyServerTimelineFromResponse(caseId, payload);
       setConfirmationNumber("");
       setNotes("");
       onSaved();
@@ -2466,6 +2467,9 @@ export default function JusticeChatAiPage() {
       });
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH clear follow-up failed", patchRes.status);
+      } else {
+        const data = (await patchRes.json()) as { timeline?: unknown };
+        applyServerTimelineFromResponse(caseId, data);
       }
     } catch (e) {
       console.warn("justice chat-ai: clear follow-up error", e);
