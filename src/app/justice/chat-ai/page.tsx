@@ -90,13 +90,8 @@ import {
   preparePaymentDisputeChecklist,
   resolvePaymentDisputeFormFields,
 } from "@/lib/justice/preparePaymentDisputeChecklist";
-import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
-import { recordFtcPracticeFiling, buildFtcPracticeSubmissionAttempt } from "@/lib/justice/recordFtcPracticeFiling";
-import {
-  buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
-  mergeClientStateWithLastAssistedSubmissionAttempt,
-  type LastAssistedSubmissionAttemptSnapshot,
-} from "@/lib/justice/submissionAttemptState";
+import { buildFtcPracticeSummaryLines } from "@/lib/justice/runFtcPractice";
+import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -2269,34 +2264,6 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function persistLastAssistedSubmissionAttemptSnapshot(
-    caseId: string,
-    snapshot: LastAssistedSubmissionAttemptSnapshot
-  ) {
-    try {
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-      if (!getRes.ok) {
-        console.warn("justice chat-ai: GET before last assisted submission attempt failed", getRes.status);
-        return;
-      }
-      const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithLastAssistedSubmissionAttempt(
-        existing.client_state,
-        snapshot
-      );
-      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_state: merged }),
-      });
-      if (!patchRes.ok) {
-        console.warn("justice chat-ai: PATCH last assisted submission attempt failed", patchRes.status);
-      }
-    } catch (e) {
-      console.warn("justice chat-ai: persist last assisted submission attempt error", e);
-    }
-  }
-
   async function handleRunFtcPracticeFromChat() {
     if (!ftcPracticeConfirmed || !isLoaded || !isSignedIn) return;
     const caseId =
@@ -2307,99 +2274,23 @@ export default function JusticeChatAiPage() {
     setFtcPracticeSuccess(false);
     setFtcPracticeStorageSkipped(false);
     try {
-      let approvedNextActionForSubmission = approvedNextAction;
-
-      if (
-        isSignedIn &&
-        caseId &&
-        isUuid(caseId) &&
-        preparedPacketApproved &&
-        approvedNextAction &&
-        approvedNextAction.status === "approved"
-      ) {
-        const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
-        const label = approvedNextAction.label?.trim();
-        const next: JusticeApprovedNextAction = {
-          ...approvedNextAction,
-          ...(label ? { label } : {}),
-          href: approvedNextAction.href ?? targetHref,
-          status: "started",
-          started_at: approvedNextAction.started_at ?? new Date().toISOString(),
-          ...(approvedNextAction.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
-        };
-        const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
-        const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
-        approvedNextActionForSubmission = local;
-        setApprovedNextAction(local);
-        writeSessionApprovedNextAction(caseId, local);
-
-        try {
-          const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-          if (!getRes.ok) {
-            console.warn(
-              "justice chat-ai: GET before FTC practice promote to started failed",
-              getRes.status
-            );
-          } else {
-            const existing = (await getRes.json()) as { client_state?: unknown };
-            const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
-            const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ client_state: merged }),
-            });
-            if (!patchRes.ok) {
-              console.warn(
-                "justice chat-ai: PATCH FTC practice promote to started failed",
-                patchRes.status
-              );
-            }
-          }
-        } catch (e) {
-          console.warn("justice chat-ai: FTC practice promote to started error", e);
-        }
-      }
-
-      const intake = buildJusticeIntakeFromParts(parts);
-      const result = await runFtcPractice({
-        intake,
-        caseId: caseId || null,
+      const result = await executeAssistedFtcPracticeSubmission({
+        intake: buildJusticeIntakeFromParts(parts),
+        caseId,
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
+        preparedPacketApproved,
+        approvedNextAction,
         logLabel: "justice chat-ai",
+        onApprovedNextActionPromoted: (local) => {
+          setApprovedNextAction(local);
+          if (caseId) writeSessionApprovedNextAction(caseId, local);
+        },
+        onAssistedSubmissionRecorded: requestSavedEvidencePreviewRefresh,
       });
       if (result.ok) {
         setFtcPracticeSuccess(true);
         setFtcPracticeStorageSkipped(result.storageSkipped);
-        if (
-          isSignedIn &&
-          caseId &&
-          isUuid(caseId) &&
-          preparedPacketApproved &&
-          approvedNextActionForSubmission &&
-          (approvedNextActionForSubmission.status === "started" ||
-            approvedNextActionForSubmission.status === "completed")
-        ) {
-          const assistedFilingOptions = {
-            executionContext: "assisted_after_packet_approval" as const,
-            ...(approvedNextActionForSubmission.approved_at?.trim()
-              ? { approvedAt: approvedNextActionForSubmission.approved_at.trim() }
-              : {}),
-          };
-          const filing = await recordFtcPracticeFiling(caseId, result, assistedFilingOptions);
-          if (filing.ok) {
-            applyServerTimelineFromResponse(caseId, filing.payload);
-            requestSavedEvidencePreviewRefresh();
-            const attempt = buildFtcPracticeSubmissionAttempt(result, caseId, assistedFilingOptions);
-            const snapshot = buildLastAssistedSubmissionAttemptFromSubmissionAttempt(
-              attempt,
-              filing.payload
-            );
-            void persistLastAssistedSubmissionAttemptSnapshot(caseId, snapshot);
-          } else {
-            console.warn("justice chat-ai: FTC practice filing record failed", filing.error);
-          }
-        }
       } else {
         setFtcPracticeError(result.error);
       }
