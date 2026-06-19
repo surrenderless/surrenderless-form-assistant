@@ -38,6 +38,8 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import { CHAT_INLINE_FTC_REVIEW_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { computeJusticeDestinations, ftcUnlockedFromIntake } from "@/lib/justice/rules";
 import type {
@@ -111,6 +113,105 @@ function handlingFilingFiledAtLine(filedAt: string): string {
     }
   }
   return t;
+}
+
+function isHandlingAssistedMockSubmissionEligible(input: {
+  isLoaded: boolean;
+  isSignedIn: boolean;
+  caseId: string;
+  preparedPacketApproved: boolean;
+  approvedNextAction: JusticeApprovedNextAction;
+}): boolean {
+  return (
+    input.isLoaded &&
+    input.isSignedIn &&
+    isUuid(input.caseId) &&
+    input.preparedPacketApproved &&
+    input.approvedNextAction.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF &&
+    (input.approvedNextAction.status === "approved" ||
+      input.approvedNextAction.status === "started")
+  );
+}
+
+function HandlingAssistedMockSubmissionTrigger({
+  caseRow,
+  approvedNextAction,
+  isLoaded,
+  isSignedIn,
+  onCaseClientStateUpdate,
+  onRefreshAfterAssistedSubmission,
+}: {
+  caseRow: CaseRow;
+  approvedNextAction: JusticeApprovedNextAction;
+  isLoaded: boolean;
+  isSignedIn: boolean;
+  onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
+  onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
+}) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const preparedPacketApproved =
+    parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
+  const eligible = isHandlingAssistedMockSubmissionEligible({
+    isLoaded,
+    isSignedIn,
+    caseId: caseRow.id,
+    preparedPacketApproved,
+    approvedNextAction,
+  });
+
+  if (!eligible) return null;
+
+  async function handleRunAssistedMockSubmission() {
+    const clientStateAtStart = caseRow.client_state;
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await executeAssistedFtcPracticeSubmission({
+        intake: caseRow.intake,
+        caseId: caseRow.id,
+        isLoaded,
+        isSignedIn,
+        preparedPacketApproved,
+        approvedNextAction,
+        logLabel: "justice handling",
+        onApprovedNextActionPromoted: (promoted) => {
+          onCaseClientStateUpdate(
+            caseRow.id,
+            mergeClientStateWithApprovedNextAction(clientStateAtStart, promoted)
+          );
+        },
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      await onRefreshAfterAssistedSubmission?.(caseRow.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
+      <button
+        type="button"
+        disabled={running}
+        onClick={() => void handleRunAssistedMockSubmission()}
+        className={`${navButtonSecondaryCls} disabled:opacity-60`}
+      >
+        {running ? "Running…" : "Run assisted mock submission"}
+      </button>
+      {error ? (
+        <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-400">{error}</p>
+      ) : null}
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Mock FTC practice lane only — same assisted submission flow as chat-ai after packet approval.
+      </p>
+    </div>
+  );
 }
 
 function LastAssistedSubmissionAttemptReadOnly({ clientState }: { clientState: unknown }) {
@@ -585,6 +686,7 @@ function HandlingWorkbenchCaseCard({
   savedFilings,
   filingsReady,
   evidenceCount,
+  onRefreshAfterAssistedSubmission,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
@@ -605,6 +707,7 @@ function HandlingWorkbenchCaseCard({
   savedFilings?: JusticeCaseFilingRow[];
   filingsReady?: boolean;
   evidenceCount?: number;
+  onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
   const [clearingFollowUp, setClearingFollowUp] = useState(false);
@@ -922,6 +1025,14 @@ function HandlingWorkbenchCaseCard({
         </div>
       ) : null}
       <LastAssistedSubmissionAttemptReadOnly clientState={caseRow.client_state} />
+      <HandlingAssistedMockSubmissionTrigger
+        caseRow={caseRow}
+        approvedNextAction={next}
+        isLoaded={Boolean(isLoaded)}
+        isSignedIn={Boolean(isSignedIn)}
+        onCaseClientStateUpdate={onCaseClientStateUpdate}
+        onRefreshAfterAssistedSubmission={onRefreshAfterAssistedSubmission}
+      />
       <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
         <details>
           <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">
@@ -1234,6 +1345,8 @@ function ApprovedPacketActionCaseCard({
   onOpenChat,
   onOpenApprovedStep,
   onRecordActionHandled,
+  onCaseClientStateUpdate,
+  onRefreshAfterAssistedSubmission,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
@@ -1244,7 +1357,10 @@ function ApprovedPacketActionCaseCard({
   onOpenChat: () => void;
   onOpenApprovedStep?: () => void;
   onRecordActionHandled?: () => void;
+  onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
+  onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
 }) {
+  const { isLoaded, isSignedIn } = useAuth();
   const { caseRow, next } = item;
   const title = caseDisplayTitle(caseRow);
   const product = caseRow.intake.purchase_or_signup.trim();
@@ -1288,6 +1404,14 @@ function ApprovedPacketActionCaseCard({
         Surrenderless handling from chat intake when you want internal triage tracking.
       </p>
       <LastAssistedSubmissionAttemptReadOnly clientState={caseRow.client_state} />
+      <HandlingAssistedMockSubmissionTrigger
+        caseRow={caseRow}
+        approvedNextAction={next}
+        isLoaded={Boolean(isLoaded)}
+        isSignedIn={Boolean(isSignedIn)}
+        onCaseClientStateUpdate={onCaseClientStateUpdate}
+        onRefreshAfterAssistedSubmission={onRefreshAfterAssistedSubmission}
+      />
       {showRecordHandled ? (
         <>
           <p className="mt-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
@@ -1681,6 +1805,46 @@ export default function JusticeHandlingWorkbenchPage() {
     if (parsed) writeSessionApprovedNextAction(caseId, parsed);
   }
 
+  const refreshCaseFilingsAndClientState = useCallback(async (caseId: string) => {
+    if (!isUuid(caseId)) return;
+    try {
+      const [filRes, caseRes] = await Promise.all([
+        fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`),
+        fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`),
+      ]);
+      if (filRes.ok) {
+        const filJson: unknown = await filRes.json();
+        const rows = Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : [];
+        setFilingsByCaseId((prev) => ({ ...prev, [caseId]: rows }));
+      }
+      if (caseRes.ok) {
+        const data = (await caseRes.json()) as {
+          client_state?: unknown;
+          timeline?: unknown;
+        };
+        if (data.client_state !== undefined) {
+          const mergedClientState = data.client_state as JusticeCaseClientState;
+          setCases(
+            (prev) =>
+              prev?.map((c) =>
+                c.id === caseId
+                  ? {
+                      ...c,
+                      client_state: mergedClientState,
+                      ...(Array.isArray(data.timeline) ? { timeline: data.timeline } : {}),
+                    }
+                  : c
+              ) ?? prev
+          );
+          const parsed = parseApprovedNextAction(mergedClientState.approved_next_action);
+          if (parsed) writeSessionApprovedNextAction(caseId, parsed);
+        }
+      }
+    } catch (e) {
+      console.warn("justice handling: refresh after assisted submission error", e);
+    }
+  }, []);
+
   function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
     applyApprovedNextActionToCaseRow(caseId, mergedClientState);
   }
@@ -1858,6 +2022,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedFilings={filingsByCaseId[item.caseRow.id]}
         filingsReady={filingsReady}
         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+        onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
       />
     );
   }
@@ -1894,6 +2059,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedFilings={filingsByCaseId[item.caseRow.id]}
         filingsReady={filingsReady}
         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+        onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
       />
     );
   }
@@ -1987,6 +2153,8 @@ export default function JusticeHandlingWorkbenchPage() {
                         onRecordActionHandled={() =>
                           void markApprovedPacketActionHandled(item.caseRow, item.next)
                         }
+                        onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
+                        onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     );
                   })}
@@ -2143,6 +2311,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         savedFilings={filingsByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                        onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     ))}
                   </ul>
@@ -2200,6 +2369,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         savedFilings={filingsByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                        onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     );
                   })}
@@ -2383,6 +2553,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         savedFilings={filingsByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                        onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     );
                   })}
