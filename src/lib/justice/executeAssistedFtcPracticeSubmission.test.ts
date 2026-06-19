@@ -59,8 +59,9 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     });
   });
 
-  it("promotes approved to started, runs practice, and records assisted submission", async () => {
+  it("promotes approved to started, runs practice, records assisted submission, and completes action", async () => {
     const onApprovedNextActionPromoted = vi.fn();
+    const onApprovedNextActionCompleted = vi.fn();
     const onAssistedSubmissionRecorded = vi.fn();
 
     const result = await executeAssistedFtcPracticeSubmission({
@@ -72,6 +73,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
       approvedNextAction,
       logLabel: "test",
       onApprovedNextActionPromoted,
+      onApprovedNextActionCompleted,
       onAssistedSubmissionRecorded,
       fetchFn,
       runPractice,
@@ -83,9 +85,13 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     if (!result.ok) return;
     expect(result.storageSkipped).toBe(false);
     expect(result.assistedSubmissionRecorded).toBe(true);
-    expect(result.approvedNextActionForSubmission?.status).toBe("started");
+    expect(result.approvedNextActionForSubmission?.status).toBe("completed");
+    expect(result.approvedNextActionForSubmission?.completed_at).toEqual(expect.any(String));
     expect(onApprovedNextActionPromoted).toHaveBeenCalledWith(
       expect.objectContaining({ status: "started" })
+    );
+    expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed", completed_at: expect.any(String) })
     );
     expect(runPractice).toHaveBeenCalledOnce();
     expect(recordFiling).toHaveBeenCalledWith(
@@ -108,6 +114,15 @@ describe("executeAssistedFtcPracticeSubmission", () => {
         approvedAt: "2026-06-15T10:00:00.000Z",
       })
     );
+    const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(
+      patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: { approved_next_action?: { status?: string } };
+        };
+        return body.client_state?.approved_next_action?.status === "completed";
+      })
+    ).toBe(true);
   });
 
   it("returns snapshot on success even when snapshot persist PATCH fails", async () => {
@@ -175,7 +190,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     );
 
     expect(merged.last_assisted_submission_attempt.filingId).toBe("fil-123");
-    expect(merged.approved_next_action?.status).toBe("started");
+    expect(result.approvedNextActionForSubmission?.status).toBe("completed");
   });
 
   it("awaits snapshot persist before returning success", async () => {
@@ -266,7 +281,88 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     expect(runPractice).toHaveBeenCalledOnce();
     if (result.ok) {
       expect(result.assistedSubmissionRecorded).toBe(true);
+      expect(result.approvedNextActionForSubmission?.status).toBe("completed");
     }
+  });
+
+  it("returns success with completed action even when completion PATCH fails", async () => {
+    fetchFn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as {
+          client_state?: {
+            approved_next_action?: { status?: string };
+            last_assisted_submission_attempt?: unknown;
+          };
+        };
+        if (body.client_state?.approved_next_action?.status === "completed") {
+          return new Response("failed", { status: 500 });
+        }
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      if (url.includes("/api/justice/cases/")) {
+        return new Response(JSON.stringify({ client_state: {} }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    const onApprovedNextActionCompleted = vi.fn();
+
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: { ...approvedNextAction, status: "started" },
+      onApprovedNextActionCompleted,
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.assistedSubmissionRecorded).toBe(true);
+    expect(result.approvedNextActionForSubmission?.status).toBe("completed");
+    expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" })
+    );
+  });
+
+  it("does not complete when assisted recording fails", async () => {
+    recordFiling.mockResolvedValue({ ok: false, error: "Filing record failed" });
+    const onApprovedNextActionCompleted = vi.fn();
+
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: { ...approvedNextAction, status: "started" },
+      onApprovedNextActionCompleted,
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.assistedSubmissionRecorded).toBe(false);
+    expect(result.approvedNextActionForSubmission?.status).toBe("started");
+    expect(result.lastAssistedSubmissionAttempt).toBeUndefined();
+    expect(onApprovedNextActionCompleted).not.toHaveBeenCalled();
+    const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(
+      patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: { approved_next_action?: { status?: string } };
+        };
+        return body.client_state?.approved_next_action?.status === "completed";
+      })
+    ).toBe(false);
   });
 
   it("returns practice error without recording filing", async () => {
@@ -386,6 +482,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     if (result.ok) {
       expect(result.assistedSubmissionRecorded).toBe(false);
       expect(result.lastAssistedSubmissionAttempt).toBeUndefined();
+      expect(result.approvedNextActionForSubmission?.status).toBe("started");
     }
     expect(recordFiling).not.toHaveBeenCalled();
   });
