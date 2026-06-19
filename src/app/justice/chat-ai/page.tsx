@@ -2307,6 +2307,59 @@ export default function JusticeChatAiPage() {
     setFtcPracticeSuccess(false);
     setFtcPracticeStorageSkipped(false);
     try {
+      let approvedNextActionForSubmission = approvedNextAction;
+
+      if (
+        isSignedIn &&
+        caseId &&
+        isUuid(caseId) &&
+        preparedPacketApproved &&
+        approvedNextAction &&
+        approvedNextAction.status === "approved"
+      ) {
+        const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
+        const label = approvedNextAction.label?.trim();
+        const next: JusticeApprovedNextAction = {
+          ...approvedNextAction,
+          ...(label ? { label } : {}),
+          href: approvedNextAction.href ?? targetHref,
+          status: "started",
+          started_at: approvedNextAction.started_at ?? new Date().toISOString(),
+          ...(approvedNextAction.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
+        };
+        const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+        const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+        approvedNextActionForSubmission = local;
+        setApprovedNextAction(local);
+        writeSessionApprovedNextAction(caseId, local);
+
+        try {
+          const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+          if (!getRes.ok) {
+            console.warn(
+              "justice chat-ai: GET before FTC practice promote to started failed",
+              getRes.status
+            );
+          } else {
+            const existing = (await getRes.json()) as { client_state?: unknown };
+            const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+            const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ client_state: merged }),
+            });
+            if (!patchRes.ok) {
+              console.warn(
+                "justice chat-ai: PATCH FTC practice promote to started failed",
+                patchRes.status
+              );
+            }
+          }
+        } catch (e) {
+          console.warn("justice chat-ai: FTC practice promote to started error", e);
+        }
+      }
+
       const intake = buildJusticeIntakeFromParts(parts);
       const result = await runFtcPractice({
         intake,
@@ -2323,13 +2376,14 @@ export default function JusticeChatAiPage() {
           caseId &&
           isUuid(caseId) &&
           preparedPacketApproved &&
-          approvedNextAction &&
-          (approvedNextAction.status === "started" || approvedNextAction.status === "completed")
+          approvedNextActionForSubmission &&
+          (approvedNextActionForSubmission.status === "started" ||
+            approvedNextActionForSubmission.status === "completed")
         ) {
           const assistedFilingOptions = {
             executionContext: "assisted_after_packet_approval" as const,
-            ...(approvedNextAction.approved_at?.trim()
-              ? { approvedAt: approvedNextAction.approved_at.trim() }
+            ...(approvedNextActionForSubmission.approved_at?.trim()
+              ? { approvedAt: approvedNextActionForSubmission.approved_at.trim() }
               : {}),
           };
           const filing = await recordFtcPracticeFiling(caseId, result, assistedFilingOptions);
