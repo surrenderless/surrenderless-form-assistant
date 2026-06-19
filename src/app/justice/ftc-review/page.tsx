@@ -9,10 +9,13 @@ import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResum
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import { computeFtcUnlocked } from "@/lib/justice/rules";
+import { recordFtcPracticeFiling } from "@/lib/justice/recordFtcPracticeFiling";
 import { buildFtcPracticeSummaryLines, runFtcPractice } from "@/lib/justice/runFtcPractice";
+import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { validate as isUuid } from "uuid";
 
 export default function JusticeFtcReviewPage() {
   const router = useRouter();
@@ -60,11 +63,11 @@ export default function JusticeFtcReviewPage() {
     setPracticeSuccess(false);
     setStorageSkipped(false);
     setTechnicalDetails(null);
-    const caseId = sessionStorage.getItem(STORAGE_CASE_ID);
+    const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
 
     const result = await runFtcPractice({
       intake,
-      caseId,
+      caseId: caseId || null,
       isLoaded,
       isSignedIn: Boolean(isSignedIn),
     });
@@ -73,6 +76,14 @@ export default function JusticeFtcReviewPage() {
       setStorageSkipped(result.storageSkipped);
       setTechnicalDetails(result.technicalDetails);
       setPracticeSuccess(true);
+      if (isSignedIn && caseId && isUuid(caseId)) {
+        const filing = await recordFtcPracticeFiling(caseId, result);
+        if (filing.ok) {
+          applyServerTimelineFromResponse(caseId, filing.payload);
+        } else {
+          console.warn("justice ftc-review: FTC practice filing record failed", filing.error);
+        }
+      }
     } else {
       setError(result.error);
     }
