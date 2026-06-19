@@ -13,6 +13,13 @@ export type ChatInlineReadOnlyPrepGateInput = {
   status?: JusticeApprovedNextAction["status"];
 };
 
+/** Active UUID read-only prep stays visible after the user records the step handled. */
+function isChatInlineReadOnlyPrepStatusVisible(
+  status?: JusticeApprovedNextAction["status"]
+): boolean {
+  return status === "approved" || status === "started" || status === "completed";
+}
+
 /** Read-only copy/preview prep in chat-ai — not gated on handling_requested_at. */
 export function shouldShowChatInlineReadOnlyApprovedPrep(
   input: ChatInlineReadOnlyPrepGateInput & { hasPrepContent: boolean }
@@ -20,7 +27,7 @@ export function shouldShowChatInlineReadOnlyApprovedPrep(
   if (!input.isActiveUuidCase || !input.preparedPacketApproved || !input.hasPrepContent) {
     return false;
   }
-  return input.status === "approved" || input.status === "started";
+  return isChatInlineReadOnlyPrepStatusVisible(input.status);
 }
 
 /** Packet fallback read-only prep — same handling-request visibility as other read-only prep. */
@@ -29,7 +36,7 @@ export function shouldShowChatInlinePacketFallbackReadOnlyPrep(
 ): boolean {
   if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
   if (input.href?.trim() !== CHAT_INLINE_PACKET_FALLBACK_PREP_HREF) return false;
-  return input.status === "approved" || input.status === "started";
+  return isChatInlineReadOnlyPrepStatusVisible(input.status);
 }
 
 /** Read-only payment-dispute letter when interactive checklist is hidden after handling request. */
@@ -39,7 +46,7 @@ export function shouldShowChatInlinePaymentDisputeReadOnlyPrep(
   if (!input.handlingRequested) return false;
   if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
   if (input.href?.trim() !== CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF) return false;
-  return input.status === "approved" || input.status === "started";
+  return isChatInlineReadOnlyPrepStatusVisible(input.status);
 }
 
 /** Read-only FTC practice summary when practice-run form is hidden after handling request. */
@@ -49,7 +56,7 @@ export function shouldShowChatInlineFtcReadOnlyPrep(
   if (!input.handlingRequested) return false;
   if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
   if (input.href?.trim() !== CHAT_INLINE_FTC_REVIEW_PREP_HREF) return false;
-  return input.status === "approved" || input.status === "started";
+  return isChatInlineReadOnlyPrepStatusVisible(input.status);
 }
 
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
