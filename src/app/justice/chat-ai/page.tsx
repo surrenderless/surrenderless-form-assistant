@@ -3243,6 +3243,11 @@ export default function JusticeChatAiPage() {
       setPacketPreviewExpanded(false);
       setPrepMessageExpanded(false);
       setPrepCopyHint(null);
+      setFtcPracticeConfirmed(false);
+      setFtcPracticeRunning(false);
+      setFtcPracticeSuccess(false);
+      setFtcPracticeStorageSkipped(false);
+      setFtcPracticeError(null);
       setFtcPracticeLastAssistedSubmissionAttempt(null);
       return;
     }
@@ -3253,6 +3258,11 @@ export default function JusticeChatAiPage() {
     if (!caseId) {
       setPreparedPacketApproved(false);
       setApprovedNextAction(undefined);
+      setFtcPracticeConfirmed(false);
+      setFtcPracticeRunning(false);
+      setFtcPracticeSuccess(false);
+      setFtcPracticeStorageSkipped(false);
+      setFtcPracticeError(null);
       setFtcPracticeLastAssistedSubmissionAttempt(null);
       return;
     }
