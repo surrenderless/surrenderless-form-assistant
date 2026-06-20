@@ -50,7 +50,7 @@ import type {
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
-import { LastAssistedSubmissionAttemptSummaryReadOnly } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
+import { LastAssistedSubmissionAttemptSummaryReadOnlyFromClientState } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
 import {
   isLastAssistedSubmissionAttemptFailed,
   mergeClientStateWithLastAssistedSubmissionAttempt,
@@ -219,16 +219,6 @@ function HandlingAssistedMockSubmissionTrigger({
       </p>
     </div>
   );
-}
-
-function LastAssistedSubmissionAttemptReadOnly({ clientState }: { clientState: unknown }) {
-  const snapshot = useMemo(
-    () => readLastAssistedSubmissionAttemptFromClientState(clientState),
-    [clientState]
-  );
-  if (!snapshot) return null;
-
-  return <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={snapshot} />;
 }
 
 function caseDraftReviewed(row: CaseRow): boolean {
@@ -997,7 +987,7 @@ function HandlingWorkbenchCaseCard({
           </details>
         </div>
       ) : null}
-      <LastAssistedSubmissionAttemptReadOnly clientState={caseRow.client_state} />
+      <LastAssistedSubmissionAttemptSummaryReadOnlyFromClientState clientState={caseRow.client_state} />
       <HandlingAssistedMockSubmissionTrigger
         caseRow={caseRow}
         approvedNextAction={next}
@@ -1376,7 +1366,7 @@ function ApprovedPacketActionCaseCard({
         Approved case packet and next in-app step — not a Surrenderless handling request. Request
         Surrenderless handling from chat intake when you want internal triage tracking.
       </p>
-      <LastAssistedSubmissionAttemptReadOnly clientState={caseRow.client_state} />
+      <LastAssistedSubmissionAttemptSummaryReadOnlyFromClientState clientState={caseRow.client_state} />
       <HandlingAssistedMockSubmissionTrigger
         caseRow={caseRow}
         approvedNextAction={next}
