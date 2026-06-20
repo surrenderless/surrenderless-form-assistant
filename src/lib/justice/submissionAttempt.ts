@@ -1,3 +1,5 @@
+import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
+
 export type SubmissionAttemptKind = "ftc_practice";
 
 export type SubmissionAttemptStatus = "success" | "failed";
@@ -33,9 +35,11 @@ export function buildSubmissionAttemptFilingNotes(outcome: SubmissionAttemptOutc
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-export const FTC_PRACTICE_FILING_DESTINATION = "FTC (practice)";
+export const FTC_PRACTICE_FILING_DESTINATION =
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination;
 
-export const FTC_PRACTICE_FILING_CONFIRMATION = "FTC mock practice complete";
+export const FTC_PRACTICE_FILING_CONFIRMATION =
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingConfirmation;
 
 export type RecordSubmissionAttemptAsFilingResult =
   | { ok: true; payload: unknown }

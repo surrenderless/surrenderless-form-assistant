@@ -1,4 +1,5 @@
 import type { RunFtcPracticeSuccess } from "@/lib/justice/runFtcPractice";
+import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildFilingBodyFromAttempt,
   FTC_PRACTICE_FILING_CONFIRMATION,
@@ -49,7 +50,7 @@ export function buildFtcPracticeSubmissionAttempt(
   const attemptedAt = new Date().toISOString();
   const { screenshot, storageReason } = parseFtcPracticeFillResult(result.technicalDetails);
   const noteParts = [
-    "Mock FTC practice autofill completed (/mock/ftc-complaint).",
+    `Mock FTC practice autofill completed (${MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath}).`,
     result.storageSkipped ? "Screenshot storage skipped on this run." : null,
     storageReason ?? null,
   ].filter((part): part is string => Boolean(part));
