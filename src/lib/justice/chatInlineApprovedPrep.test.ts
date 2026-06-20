@@ -315,6 +315,27 @@ describe("shouldShowChatInlinePaymentDisputeReadOnlyPrep", () => {
 });
 
 describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
+  it("shows read-only FTC prep for /justice/ftc-review when other gates pass", () => {
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "started",
+        href: "/justice/ftc-review",
+        handlingRequested: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(true);
+  });
+
   it("shows read-only FTC prep after handling request", () => {
     expect(
       shouldShowChatInlineFtcReadOnlyPrep({
@@ -357,7 +378,7 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
     ).toBe(true);
   });
 
-  it("returns false for non-FTC href", () => {
+  it("returns false for unrelated hrefs", () => {
     expect(
       shouldShowChatInlineFtcReadOnlyPrep({
         isActiveUuidCase: true,
@@ -365,6 +386,15 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
         status: "started",
         href: CHAT_INLINE_MERCHANT_PREP_HREF,
         handlingRequested: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: CHAT_INLINE_CFPB_PREP_HREF,
+        handlingRequested: false,
       })
     ).toBe(false);
   });
