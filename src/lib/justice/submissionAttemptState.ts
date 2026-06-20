@@ -114,13 +114,13 @@ export function parseLastAssistedSubmissionAttempt(
 ): LastAssistedSubmissionAttemptSnapshot | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
-  if (o.kind !== "ftc_practice") return undefined;
+  if (o.kind !== MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return undefined;
   const attemptedAt = typeof o.attemptedAt === "string" ? o.attemptedAt.trim() : "";
   const filingDestination = typeof o.filingDestination === "string" ? o.filingDestination.trim() : "";
   if (!attemptedAt || !filingDestination) return undefined;
 
   const snapshot: LastAssistedSubmissionAttemptSnapshot = {
-    kind: "ftc_practice",
+    kind: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id,
     attemptedAt,
     filingDestination,
   };
