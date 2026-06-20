@@ -74,6 +74,7 @@ import {
   CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   getChatInlineApprovedPrepContent,
+  shouldShowChatInlineFtcPracticePrep,
   shouldShowChatInlineFtcReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
@@ -3699,18 +3700,14 @@ export default function JusticeChatAiPage() {
     approvedNextAction?.href?.trim() === CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF &&
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
-  const showInlineFtcPracticePrep =
-    isUpdatingExistingCase &&
-    Boolean(activeUuidCaseId) &&
-    Boolean(approvedNextAction) &&
-    !approvedNextAction?.handling_requested_at?.trim() &&
-    isAssistedMockSubmissionEligible({
-      isLoaded,
-      isSignedIn: Boolean(isSignedIn),
-      caseId: activeUuidCaseId!,
-      preparedPacketApproved,
-      approvedNextAction: approvedNextAction!,
-    });
+  const showInlineFtcPracticePrep = shouldShowChatInlineFtcPracticePrep({
+    isUpdatingExistingCase,
+    caseId: activeUuidCaseId,
+    isLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    preparedPacketApproved,
+    approvedNextAction,
+  });
   const showInlinePacketFallbackPrep =
     Boolean(approvedNextAction) &&
     shouldShowChatInlinePacketFallbackReadOnlyPrep({

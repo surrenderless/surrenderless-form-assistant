@@ -13,12 +13,13 @@ import {
   getChatInlineApprovedPrepContent,
   isChatInlinePacketFallbackPrepHref,
   isChatInlinePrepHref,
+  shouldShowChatInlineFtcPracticePrep,
   shouldShowChatInlineFtcReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 function baseIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
   return {
@@ -310,6 +311,97 @@ describe("shouldShowChatInlinePaymentDisputeReadOnlyPrep", () => {
         href: CHAT_INLINE_MERCHANT_PREP_HREF,
         handlingRequested: true,
       })
+    ).toBe(false);
+  });
+});
+
+describe("shouldShowChatInlineFtcPracticePrep", () => {
+  const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+  function practicePrepInput(
+    overrides: Partial<{
+      isUpdatingExistingCase: boolean;
+      caseId: string;
+      isLoaded: boolean;
+      isSignedIn: boolean;
+      preparedPacketApproved: boolean;
+      approvedNextAction: JusticeApprovedNextAction;
+    }> = {}
+  ) {
+    return {
+      isUpdatingExistingCase: true,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: {
+        label: "FTC review",
+        href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+        status: "approved" as const,
+      },
+      ...overrides,
+    };
+  }
+
+  it("shows FTC practice prep for /justice/ftc-review when all gates pass", () => {
+    expect(shouldShowChatInlineFtcPracticePrep(practicePrepInput())).toBe(true);
+    expect(
+      shouldShowChatInlineFtcPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "FTC review",
+            href: "/justice/ftc-review",
+            status: "started",
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
+  it("returns false when not updating an existing case", () => {
+    expect(
+      shouldShowChatInlineFtcPracticePrep(
+        practicePrepInput({ isUpdatingExistingCase: false })
+      )
+    ).toBe(false);
+  });
+
+  it("returns false without an active UUID case id", () => {
+    expect(shouldShowChatInlineFtcPracticePrep(practicePrepInput({ caseId: "" }))).toBe(false);
+    expect(
+      shouldShowChatInlineFtcPracticePrep(practicePrepInput({ caseId: "case_local_123" }))
+    ).toBe(false);
+  });
+
+  it("returns false when handling is requested", () => {
+    expect(
+      shouldShowChatInlineFtcPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "FTC review",
+            href: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+            status: "started",
+            handling_requested_at: "2026-01-01T00:00:00.000Z",
+          },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("returns false when assisted mock submission is not eligible", () => {
+    expect(
+      shouldShowChatInlineFtcPracticePrep(practicePrepInput({ isSignedIn: false }))
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineFtcPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "CFPB",
+            href: CHAT_INLINE_CFPB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
     ).toBe(false);
   });
 });
