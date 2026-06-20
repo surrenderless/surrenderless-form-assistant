@@ -51,7 +51,7 @@ describe("buildFtcPracticeFilingBody", () => {
     expect(body?.notes).toContain("Mock FTC practice autofill completed");
   });
 
-  it("builds submission attempt with lane id", () => {
+  it("builds submission attempt with lane id, destination, and confirmation", () => {
     const result: RunFtcPracticeSuccess = {
       ok: true,
       storageSkipped: false,
@@ -61,5 +61,7 @@ describe("buildFtcPracticeFilingBody", () => {
     const attempt = buildFtcPracticeSubmissionAttempt(result);
 
     expect(attempt.kind).toBe(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id);
+    expect(attempt.destination).toBe(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination);
+    expect(attempt.confirmation).toBe(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingConfirmation);
   });
 });
