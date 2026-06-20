@@ -2318,14 +2318,14 @@ export default function JusticeChatAiPage() {
         },
         onAssistedSubmissionRecorded: requestSavedEvidencePreviewRefresh,
       });
+      let ftcSnapshotFallback: LastAssistedSubmissionAttemptSnapshot | null = null;
       if (!result.ok) {
         setFtcPracticeError(result.error);
         if (result.lastAssistedSubmissionAttempt) {
           setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
+          ftcSnapshotFallback = result.lastAssistedSubmissionAttempt;
         }
-        return;
-      }
-      if (!result.assistedSubmissionRecorded) {
+      } else if (!result.assistedSubmissionRecorded) {
         const snapshotError = result.lastAssistedSubmissionAttempt?.error?.trim();
         setFtcPracticeError(
           snapshotError
@@ -2334,18 +2334,23 @@ export default function JusticeChatAiPage() {
         );
         if (result.lastAssistedSubmissionAttempt) {
           setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
+          ftcSnapshotFallback = result.lastAssistedSubmissionAttempt;
         }
-        return;
+      } else {
+        if (result.approvedNextActionForSubmission) {
+          setApprovedNextAction(result.approvedNextActionForSubmission);
+          if (caseId) writeSessionApprovedNextAction(caseId, result.approvedNextActionForSubmission);
+        }
+        if (result.lastAssistedSubmissionAttempt) {
+          setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
+          ftcSnapshotFallback = result.lastAssistedSubmissionAttempt;
+        }
+        setFtcPracticeSuccess(true);
+        setFtcPracticeStorageSkipped(result.storageSkipped);
       }
-      if (result.approvedNextActionForSubmission) {
-        setApprovedNextAction(result.approvedNextActionForSubmission);
-        if (caseId) writeSessionApprovedNextAction(caseId, result.approvedNextActionForSubmission);
+      if (result.ok || ftcSnapshotFallback) {
+        await refreshChatCaseFromServer(caseId, { ftcSnapshotFallback });
       }
-      if (result.lastAssistedSubmissionAttempt) {
-        setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
-      }
-      setFtcPracticeSuccess(true);
-      setFtcPracticeStorageSkipped(result.storageSkipped);
     } finally {
       setFtcPracticeRunning(false);
     }
@@ -2862,6 +2867,54 @@ export default function JusticeChatAiPage() {
     void loadSavedEvidencePreview(ac.signal);
   }, [loadSavedEvidencePreview]);
 
+  const refreshChatCaseFromServer = useCallback(
+    async (
+      caseId: string,
+      options?: {
+        signal?: AbortSignal;
+        ftcSnapshotFallback?: LastAssistedSubmissionAttemptSnapshot | null;
+        skipEvidenceRefresh?: boolean;
+      }
+    ) => {
+      if (!caseId || !isUuid(caseId)) return;
+      const sessionFallback = hydrateApprovedNextActionForDisplay(caseId);
+      try {
+        const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+          signal: options?.signal,
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { client_state?: unknown; timeline?: unknown };
+        if (options?.signal?.aborted) return;
+        if (Array.isArray(data.timeline)) {
+          replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+        }
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
+        if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
+        setApprovedNextAction(hydrated);
+        const sessionPacketApproved = readSessionPreparedPacketApproved(caseId);
+        const serverPacketApproved =
+          parseJusticeCaseClientState(data.client_state).prepared_packet_approved === true;
+        setPreparedPacketApproved(sessionPacketApproved || serverPacketApproved);
+        if (hydrated?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF) {
+          setFtcPracticeLastAssistedSubmissionAttempt(
+            readLastAssistedSubmissionAttemptFromClientState(data.client_state) ??
+              options?.ftcSnapshotFallback ??
+              null
+          );
+        } else {
+          setFtcPracticeLastAssistedSubmissionAttempt(null);
+        }
+      } catch {
+        // keep session fallback and post-run local state
+      }
+      if (!options?.skipEvidenceRefresh) {
+        requestSavedEvidencePreviewRefresh();
+      }
+    },
+    [requestSavedEvidencePreviewRefresh]
+  );
+
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
@@ -3291,39 +3344,10 @@ export default function JusticeChatAiPage() {
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
     const ac = new AbortController();
-    void (async () => {
-      try {
-        const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-          signal: ac.signal,
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as { client_state?: unknown; timeline?: unknown };
-        if (ac.signal.aborted) return;
-        if (Array.isArray(data.timeline)) {
-          replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
-        }
-        const hydrated =
-          hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
-        if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
-        setApprovedNextAction(hydrated);
-        const sessionPacketApproved = readSessionPreparedPacketApproved(caseId);
-        const serverPacketApproved =
-          parseJusticeCaseClientState(data.client_state).prepared_packet_approved === true;
-        setPreparedPacketApproved(sessionPacketApproved || serverPacketApproved);
-        if (hydrated?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF) {
-          setFtcPracticeLastAssistedSubmissionAttempt(
-            readLastAssistedSubmissionAttemptFromClientState(data.client_state) ?? null
-          );
-        } else {
-          setFtcPracticeLastAssistedSubmissionAttempt(null);
-        }
-      } catch {
-        // keep session fallback
-      }
-    })();
+    void refreshChatCaseFromServer(caseId, { signal: ac.signal, skipEvidenceRefresh: true });
 
     return () => ac.abort();
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, refreshChatCaseFromServer]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
