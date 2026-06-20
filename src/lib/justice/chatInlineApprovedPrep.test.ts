@@ -19,6 +19,7 @@ import {
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
+import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 function baseIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
@@ -404,6 +405,20 @@ describe("shouldShowChatInlineFtcPracticePrep", () => {
       )
     ).toBe(false);
   });
+
+  it("returns false for reserved BBB lane href until runnable", () => {
+    expect(
+      shouldShowChatInlineFtcPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+  });
 });
 
 describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
@@ -486,6 +501,18 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
         preparedPacketApproved: true,
         status: "completed",
         href: CHAT_INLINE_CFPB_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(false);
+  });
+
+  it("returns false for reserved BBB lane href until runnable", () => {
+    expect(
+      shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
         handlingRequested: false,
       })
     ).toBe(false);

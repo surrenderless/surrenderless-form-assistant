@@ -1,5 +1,8 @@
 import { validate as isUuid } from "uuid";
-import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
+import {
+  isRunnableAssistedSubmissionLane,
+  resolveAssistedSubmissionLaneForApprovedHref,
+} from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type AssistedMockSubmissionEligibilityInput = {
@@ -14,12 +17,14 @@ export type AssistedMockSubmissionEligibilityInput = {
 export function isAssistedMockSubmissionEligible(
   input: AssistedMockSubmissionEligibilityInput
 ): boolean {
+  const lane = resolveAssistedSubmissionLaneForApprovedHref(input.approvedNextAction.href);
   return (
     input.isLoaded &&
     input.isSignedIn &&
     isUuid(input.caseId) &&
     input.preparedPacketApproved &&
-    resolveAssistedSubmissionLaneForApprovedHref(input.approvedNextAction.href) !== undefined &&
+    lane !== undefined &&
+    isRunnableAssistedSubmissionLane(lane) &&
     (input.approvedNextAction.status === "approved" ||
       input.approvedNextAction.status === "started")
   );

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import { CHAT_INLINE_FTC_REVIEW_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import {
+  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  isRunnableAssistedSubmissionLane,
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  resolveAssistedSubmissionLaneForApprovedHref,
+} from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -72,6 +79,25 @@ describe("isAssistedMockSubmissionEligible", () => {
       isAssistedMockSubmissionEligible(
         eligibleInput({
           approvedNextAction: { ...approvedNextAction, status: "completed" },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("returns false for reserved BBB lane href until runnable", () => {
+    expect(
+      resolveAssistedSubmissionLaneForApprovedHref(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF)
+    ).toBe(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE);
+    expect(isRunnableAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
+    expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(false);
+    expect(
+      isAssistedMockSubmissionEligible(
+        eligibleInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
         })
       )
     ).toBe(false);
