@@ -3304,6 +3304,7 @@ export default function JusticeChatAiPage() {
       setPacketPreviewExpanded(false);
       setPrepMessageExpanded(false);
       setPrepCopyHint(null);
+      setFtcPracticeLastAssistedSubmissionAttempt(null);
       return;
     }
 
@@ -3313,6 +3314,7 @@ export default function JusticeChatAiPage() {
     if (!caseId) {
       setPreparedPacketApproved(false);
       setApprovedNextAction(undefined);
+      setFtcPracticeLastAssistedSubmissionAttempt(null);
       return;
     }
 
