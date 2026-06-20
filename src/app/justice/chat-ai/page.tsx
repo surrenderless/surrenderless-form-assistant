@@ -94,6 +94,7 @@ import { buildFtcPracticeSummaryLines } from "@/lib/justice/runFtcPractice";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import {
   buildLastAssistedSubmissionAttemptSummaryDisplay,
+  readLastAssistedSubmissionAttemptFromClientState,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
@@ -3345,6 +3346,13 @@ export default function JusticeChatAiPage() {
         const serverPacketApproved =
           parseJusticeCaseClientState(data.client_state).prepared_packet_approved === true;
         setPreparedPacketApproved(sessionPacketApproved || serverPacketApproved);
+        if (hydrated?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF) {
+          setFtcPracticeLastAssistedSubmissionAttempt(
+            readLastAssistedSubmissionAttemptFromClientState(data.client_state) ?? null
+          );
+        } else {
+          setFtcPracticeLastAssistedSubmissionAttempt(null);
+        }
       } catch {
         // keep session fallback
       }
