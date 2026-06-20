@@ -1,10 +1,10 @@
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
-import {
-  FTC_PRACTICE_FILING_DESTINATION,
-  type SubmissionAttemptExecutionContext,
-  type SubmissionAttemptKind,
-  type SubmissionAttemptOutcome,
-  type SubmissionAttemptStatus,
+import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
+import type {
+  SubmissionAttemptExecutionContext,
+  SubmissionAttemptKind,
+  SubmissionAttemptOutcome,
+  SubmissionAttemptStatus,
 } from "@/lib/justice/submissionAttempt";
 import type { JusticeCaseClientState } from "@/lib/justice/types";
 
@@ -61,9 +61,9 @@ export function buildFailedLastAssistedSubmissionAttemptSnapshot(input: {
   executionContext?: SubmissionAttemptExecutionContext;
 }): LastAssistedSubmissionAttemptSnapshot {
   return buildLastAssistedSubmissionAttemptSnapshot({
-    kind: "ftc_practice",
+    kind: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id,
     attemptedAt: input.attemptedAt,
-    filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+    filingDestination: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination,
     outcome: "failed",
     error: input.error,
     ...(input.approvedAt?.trim() ? { approvedAt: input.approvedAt.trim() } : {}),
