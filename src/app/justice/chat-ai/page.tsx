@@ -81,7 +81,6 @@ import {
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
-import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 import {
   advanceApprovedNextActionAfterCompleted,
@@ -2283,14 +2282,15 @@ export default function JusticeChatAiPage() {
     if (!ftcPracticeConfirmed) return;
     const caseId = activeUuidCaseId;
     if (
-      !approvedNextAction ||
-      !isAssistedMockSubmissionEligible({
+      !shouldShowChatInlineFtcPracticePrep({
+        isUpdatingExistingCase,
+        caseId,
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
-        caseId,
         preparedPacketApproved,
         approvedNextAction,
-      })
+      }) ||
+      !approvedNextAction
     ) {
       return;
     }
