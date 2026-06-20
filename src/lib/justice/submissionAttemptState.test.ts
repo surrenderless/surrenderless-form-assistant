@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
 import {
+  buildFailedLastAssistedSubmissionAttemptSnapshot,
   buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
   buildLastAssistedSubmissionAttemptSummaryDisplay,
   mergeClientStateWithLastAssistedSubmissionAttempt,
@@ -132,5 +134,44 @@ describe("submissionAttemptState", () => {
 
     expect(snapshot?.outcome).toBe("failed");
     expect(snapshot?.error).toBe("Request failed");
+  });
+
+  it("builds failed snapshot with lane id and filing destination", () => {
+    const snapshot = buildFailedLastAssistedSubmissionAttemptSnapshot({
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      error: "Request failed",
+      approvedAt: "2026-06-15T10:00:00.000Z",
+      executionContext: "assisted_after_packet_approval",
+    });
+
+    expect(snapshot.kind).toBe(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id);
+    expect(snapshot.filingDestination).toBe(
+      MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination
+    );
+    expect(snapshot.outcome).toBe("failed");
+    expect(snapshot.error).toBe("Request failed");
+  });
+
+  it("parses failed snapshot built from lane config", () => {
+    const built = buildFailedLastAssistedSubmissionAttemptSnapshot({
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      error: "Request failed",
+    });
+
+    const parsed = parseLastAssistedSubmissionAttempt(built);
+
+    expect(parsed).toEqual(built);
+  });
+
+  it("rejects snapshots with a non-lane kind", () => {
+    expect(
+      parseLastAssistedSubmissionAttempt({
+        kind: "other_lane",
+        attemptedAt: "2026-06-16T12:00:00.000Z",
+        filingDestination: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination,
+        outcome: "failed",
+        error: "Request failed",
+      })
+    ).toBeUndefined();
   });
 });
