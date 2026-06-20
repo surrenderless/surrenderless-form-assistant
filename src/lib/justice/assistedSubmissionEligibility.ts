@@ -1,5 +1,5 @@
 import { validate as isUuid } from "uuid";
-import { CHAT_INLINE_FTC_REVIEW_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
+import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type AssistedMockSubmissionEligibilityInput = {
@@ -19,7 +19,7 @@ export function isAssistedMockSubmissionEligible(
     input.isSignedIn &&
     isUuid(input.caseId) &&
     input.preparedPacketApproved &&
-    input.approvedNextAction.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF &&
+    resolveAssistedSubmissionLaneForApprovedHref(input.approvedNextAction.href) !== undefined &&
     (input.approvedNextAction.status === "approved" ||
       input.approvedNextAction.status === "started")
   );
