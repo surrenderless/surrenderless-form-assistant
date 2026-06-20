@@ -4,6 +4,7 @@ import {
   mergeClientStateWithApprovedNextAction,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildFtcPracticeSubmissionAttempt,
   recordFtcPracticeFiling,
@@ -198,6 +199,8 @@ function shouldRecordAssistedSubmission(
       isUuid(caseId) &&
       preparedPacketApproved &&
       approvedNextActionForSubmission &&
+      resolveAssistedSubmissionLaneForApprovedHref(approvedNextActionForSubmission.href) !==
+        undefined &&
       (approvedNextActionForSubmission.status === "started" ||
         approvedNextActionForSubmission.status === "completed")
   );
