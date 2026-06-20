@@ -5,6 +5,7 @@ import { buildDotAviationComplaintDraft } from "@/lib/justice/buildDotAviationCo
 import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildStateAgComplaintDraft } from "@/lib/justice/buildStateAgComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
+import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 export type ChatInlineReadOnlyPrepGateInput = {
@@ -55,7 +56,7 @@ export function shouldShowChatInlineFtcReadOnlyPrep(
   input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
 ): boolean {
   if (!input.isActiveUuidCase || !input.preparedPacketApproved) return false;
-  if (input.href?.trim() !== CHAT_INLINE_FTC_REVIEW_PREP_HREF) return false;
+  if (resolveAssistedSubmissionLaneForApprovedHref(input.href) === undefined) return false;
   if (!isChatInlineReadOnlyPrepStatusVisible(input.status)) return false;
   if (!input.handlingRequested && input.status !== "completed") return false;
   return true;
