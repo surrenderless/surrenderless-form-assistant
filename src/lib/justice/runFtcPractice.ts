@@ -1,4 +1,8 @@
 import { intakeToMockFtcUserData } from "@/lib/justice/ftc-user-data";
+import {
+  buildMockFtcPracticeSubmissionUrl,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+} from "@/lib/justice/assistedSubmissionLane";
 import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
@@ -87,14 +91,17 @@ export async function runFtcPractice({
     return { ok: false, error: "Practice autofill is only available in the browser." };
   }
 
-  const mockUrl = `${window.location.origin}/mock/ftc-complaint`;
+  const mockUrl = buildMockFtcPracticeSubmissionUrl(window.location.origin);
   const userData = intakeToMockFtcUserData(intake);
 
   if (caseId) {
     appendTimelineEvent(caseId, { type: "ftc_practice_started", label: "FTC practice started" });
   }
   await syncFtcPracticeTimelineToServer(caseId, isLoaded, isSignedIn, logLabel);
-  await logFtcPracticeEvent("ftc_mock_lane_started", { case_id: caseId, mock_path: "/mock/ftc-complaint" });
+  await logFtcPracticeEvent("ftc_mock_lane_started", {
+    case_id: caseId,
+    mock_path: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
+  });
 
   try {
     const res = await fetch("/api/submit-form", {
