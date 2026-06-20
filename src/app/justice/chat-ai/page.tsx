@@ -92,6 +92,10 @@ import {
 } from "@/lib/justice/preparePaymentDisputeChecklist";
 import { buildFtcPracticeSummaryLines } from "@/lib/justice/runFtcPractice";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
+import {
+  buildLastAssistedSubmissionAttemptSummaryDisplay,
+  type LastAssistedSubmissionAttemptSnapshot,
+} from "@/lib/justice/submissionAttemptState";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -925,6 +929,7 @@ function ChatInlineFtcPracticeBlock({
   practiceSuccess,
   storageSkipped,
   error,
+  lastAssistedSubmissionAttempt,
   onRunPractice,
 }: {
   summaryLines: string[];
@@ -934,6 +939,7 @@ function ChatInlineFtcPracticeBlock({
   practiceSuccess: boolean;
   storageSkipped: boolean;
   error: string | null;
+  lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
   onRunPractice: () => void;
 }) {
   return (
@@ -975,6 +981,9 @@ function ChatInlineFtcPracticeBlock({
           {storageSkipped ? " Screenshot storage was skipped locally." : ""}
         </p>
       ) : null}
+      {lastAssistedSubmissionAttempt ? (
+        <ChatInlineLastAssistedSubmissionAttemptReadOnly snapshot={lastAssistedSubmissionAttempt} />
+      ) : null}
       <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         <Link
           href={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
@@ -983,6 +992,67 @@ function ChatInlineFtcPracticeBlock({
           Open full FTC practice page
         </Link>
         <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
+      </p>
+    </div>
+  );
+}
+
+function ChatInlineLastAssistedSubmissionAttemptReadOnly({
+  snapshot,
+}: {
+  snapshot: LastAssistedSubmissionAttemptSnapshot;
+}) {
+  const display = useMemo(
+    () => buildLastAssistedSubmissionAttemptSummaryDisplay(snapshot),
+    [snapshot]
+  );
+
+  return (
+    <div
+      className={`mt-2 rounded-lg border px-2.5 py-2 ${
+        display.isFailed
+          ? "border-red-200/90 bg-red-50/90 dark:border-red-900/60 dark:bg-red-950/30"
+          : "border-neutral-200/90 bg-neutral-50/90 dark:border-neutral-600 dark:bg-neutral-800/40"
+      }`}
+    >
+      <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
+        Last assisted submission attempt
+      </p>
+      {display.outcomeLabel ? (
+        <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-400">
+          {display.outcomeLabel}
+        </p>
+      ) : null}
+      <p className="mt-1 text-xs font-medium text-neutral-900 dark:text-neutral-100">
+        {display.destination}
+      </p>
+      <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+        Attempted {display.attemptedAtLabel}
+      </p>
+      {display.error ? (
+        <p className="mt-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
+          {display.error}
+        </p>
+      ) : null}
+      {display.confirmation ? (
+        <p className="mt-0.5 font-mono text-[11px] text-neutral-700 dark:text-neutral-300">
+          Confirmation: {display.confirmation}
+        </p>
+      ) : null}
+      {display.filingId ? (
+        <p className="mt-0.5 font-mono text-[11px] text-neutral-700 dark:text-neutral-300">
+          Filing id: {display.filingId}
+        </p>
+      ) : null}
+      {display.executionContextLabel ? (
+        <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+          {display.executionContextLabel}
+        </p>
+      ) : null}
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        {display.isFailed
+          ? "Read-only — mock practice lane failure snapshot. Retry from the run button when ready."
+          : "Read-only — mock practice lane snapshot from chat assisted submission."}
       </p>
     </div>
   );
@@ -2010,6 +2080,8 @@ export default function JusticeChatAiPage() {
   const [ftcPracticeSuccess, setFtcPracticeSuccess] = useState(false);
   const [ftcPracticeStorageSkipped, setFtcPracticeStorageSkipped] = useState(false);
   const [ftcPracticeError, setFtcPracticeError] = useState<string | null>(null);
+  const [ftcPracticeLastAssistedSubmissionAttempt, setFtcPracticeLastAssistedSubmissionAttempt] =
+    useState<LastAssistedSubmissionAttemptSnapshot | null>(null);
   const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
 
@@ -2273,6 +2345,7 @@ export default function JusticeChatAiPage() {
     setFtcPracticeError(null);
     setFtcPracticeSuccess(false);
     setFtcPracticeStorageSkipped(false);
+    setFtcPracticeLastAssistedSubmissionAttempt(null);
     try {
       const result = await executeAssistedFtcPracticeSubmission({
         intake: buildJusticeIntakeFromParts(parts),
@@ -2294,6 +2367,9 @@ export default function JusticeChatAiPage() {
       });
       if (!result.ok) {
         setFtcPracticeError(result.error);
+        if (result.lastAssistedSubmissionAttempt) {
+          setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
+        }
         return;
       }
       if (!result.assistedSubmissionRecorded) {
@@ -2303,11 +2379,17 @@ export default function JusticeChatAiPage() {
             ? `Practice completed, but assisted filing recording failed: ${snapshotError}. You can retry when ready.`
             : "Practice completed, but assisted filing recording failed. You can retry when ready."
         );
+        if (result.lastAssistedSubmissionAttempt) {
+          setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
+        }
         return;
       }
       if (result.approvedNextActionForSubmission) {
         setApprovedNextAction(result.approvedNextActionForSubmission);
         if (caseId) writeSessionApprovedNextAction(caseId, result.approvedNextActionForSubmission);
+      }
+      if (result.lastAssistedSubmissionAttempt) {
+        setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
       }
       setFtcPracticeSuccess(true);
       setFtcPracticeStorageSkipped(result.storageSkipped);
@@ -3333,6 +3415,7 @@ export default function JusticeChatAiPage() {
     setFtcPracticeSuccess(false);
     setFtcPracticeStorageSkipped(false);
     setFtcPracticeError(null);
+    setFtcPracticeLastAssistedSubmissionAttempt(null);
   }, [approvedNextAction?.href]);
 
   async function handleSend() {
@@ -4100,6 +4183,7 @@ export default function JusticeChatAiPage() {
                 practiceSuccess={ftcPracticeSuccess}
                 storageSkipped={ftcPracticeStorageSkipped}
                 error={ftcPracticeError}
+                lastAssistedSubmissionAttempt={ftcPracticeLastAssistedSubmissionAttempt}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
               />
             ) : null}
