@@ -4156,31 +4156,38 @@ export default function JusticeChatAiPage() {
               />
             ) : null}
             {showInlineFtcReadOnlyPrep ? (
-              <ChatInlineApprovedPrepActionBlock
-                title={approvedNextAction?.label?.trim() || "FTC practice complaint"}
-                messageText={ftcPracticeSummaryLines.join("\n")}
-                helperText="Practice complaint summary from your case — copy for reference. This is not a real government submission. Surrenderless does not file for you."
-                copyButtonLabel="Copy summary"
-                optionalPageHref={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
-                optionalPageLabel="Open full FTC practice page"
-                optionalPageNote="optional — evidence list"
-                expanded={prepMessageExpanded}
-                onExpandedChange={setPrepMessageExpanded}
-                copyHint={prepCopyHint}
-                onCopy={() => {
-                  void (async () => {
-                    const text = ftcPracticeSummaryLines.join("\n");
-                    if (!text) return;
-                    try {
-                      await navigator.clipboard.writeText(text);
-                      setPrepCopyHint("Copied to clipboard.");
-                      window.setTimeout(() => setPrepCopyHint(null), 2500);
-                    } catch {
-                      setPrepCopyHint("Copy failed — select the text and copy manually.");
-                    }
-                  })();
-                }}
-              />
+              <>
+                <ChatInlineApprovedPrepActionBlock
+                  title={approvedNextAction?.label?.trim() || "FTC practice complaint"}
+                  messageText={ftcPracticeSummaryLines.join("\n")}
+                  helperText="Practice complaint summary from your case — copy for reference. This is not a real government submission. Surrenderless does not file for you."
+                  copyButtonLabel="Copy summary"
+                  optionalPageHref={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
+                  optionalPageLabel="Open full FTC practice page"
+                  optionalPageNote="optional — evidence list"
+                  expanded={prepMessageExpanded}
+                  onExpandedChange={setPrepMessageExpanded}
+                  copyHint={prepCopyHint}
+                  onCopy={() => {
+                    void (async () => {
+                      const text = ftcPracticeSummaryLines.join("\n");
+                      if (!text) return;
+                      try {
+                        await navigator.clipboard.writeText(text);
+                        setPrepCopyHint("Copied to clipboard.");
+                        window.setTimeout(() => setPrepCopyHint(null), 2500);
+                      } catch {
+                        setPrepCopyHint("Copy failed — select the text and copy manually.");
+                      }
+                    })();
+                  }}
+                />
+                {ftcPracticeLastAssistedSubmissionAttempt ? (
+                  <ChatInlineLastAssistedSubmissionAttemptReadOnly
+                    snapshot={ftcPracticeLastAssistedSubmissionAttempt}
+                  />
+                ) : null}
+              </>
             ) : null}
             {showInlineFtcPracticePrep ? (
               <ChatInlineFtcPracticeBlock
