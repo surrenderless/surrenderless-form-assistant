@@ -6,6 +6,7 @@ import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildStateAgComplaintDraft } from "@/lib/justice/buildStateAgComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
 import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
+import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 export type ChatInlineReadOnlyPrepGateInput = {
@@ -60,6 +61,32 @@ export function shouldShowChatInlineFtcReadOnlyPrep(
   if (!isChatInlineReadOnlyPrepStatusVisible(input.status)) return false;
   if (!input.handlingRequested && input.status !== "completed") return false;
   return true;
+}
+
+export type ChatInlineFtcPracticePrepGateInput = {
+  isUpdatingExistingCase: boolean;
+  caseId: string;
+  isLoaded: boolean;
+  isSignedIn: boolean;
+  preparedPacketApproved: boolean;
+  approvedNextAction?: JusticeApprovedNextAction;
+};
+
+/** Interactive FTC practice prep in chat-ai before handling request or completion. */
+export function shouldShowChatInlineFtcPracticePrep(
+  input: ChatInlineFtcPracticePrepGateInput
+): boolean {
+  if (!input.isUpdatingExistingCase) return false;
+  if (!input.caseId.trim()) return false;
+  if (!input.approvedNextAction) return false;
+  if (input.approvedNextAction.handling_requested_at?.trim()) return false;
+  return isAssistedMockSubmissionEligible({
+    isLoaded: input.isLoaded,
+    isSignedIn: input.isSignedIn,
+    caseId: input.caseId,
+    preparedPacketApproved: input.preparedPacketApproved,
+    approvedNextAction: input.approvedNextAction,
+  });
 }
 
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
