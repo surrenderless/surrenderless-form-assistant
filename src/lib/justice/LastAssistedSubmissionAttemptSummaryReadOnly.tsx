@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import {
   buildLastAssistedSubmissionAttemptSummaryDisplay,
+  readLastAssistedSubmissionAttemptFromClientState,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
 
@@ -65,4 +66,18 @@ export function LastAssistedSubmissionAttemptSummaryReadOnly({
       </p>
     </div>
   );
+}
+
+export function LastAssistedSubmissionAttemptSummaryReadOnlyFromClientState({
+  clientState,
+}: {
+  clientState: unknown;
+}) {
+  const snapshot = useMemo(
+    () => readLastAssistedSubmissionAttemptFromClientState(clientState),
+    [clientState]
+  );
+  if (!snapshot) return null;
+
+  return <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={snapshot} />;
 }
