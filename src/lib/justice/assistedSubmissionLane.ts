@@ -40,6 +40,11 @@ export function buildMockFtcPracticeSubmissionUrl(origin: string): string {
   return `${origin}${MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath}`;
 }
 
+/** Lanes that may activate assisted mock submission eligibility/prep/run today. */
+export function isRunnableAssistedSubmissionLane(lane: AssistedSubmissionLaneConfig): boolean {
+  return lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id;
+}
+
 /** Map an approved next-action href to its assisted-submission lane, if any. */
 export function resolveAssistedSubmissionLaneForApprovedHref(
   href: string | null | undefined
