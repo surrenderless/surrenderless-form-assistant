@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildFtcPracticeFilingBody,
   buildFtcPracticeSubmissionAttempt,
@@ -48,5 +49,17 @@ describe("buildFtcPracticeFilingBody", () => {
 
     expect(body?.notes).toContain("Assisted submission after packet approval (approved 2026-06-15T10:00:00.000Z).");
     expect(body?.notes).toContain("Mock FTC practice autofill completed");
+  });
+
+  it("builds submission attempt with lane id", () => {
+    const result: RunFtcPracticeSuccess = {
+      ok: true,
+      storageSkipped: false,
+      technicalDetails: JSON.stringify({ fillResult: {} }),
+    };
+
+    const attempt = buildFtcPracticeSubmissionAttempt(result);
+
+    expect(attempt.kind).toBe(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id);
   });
 });

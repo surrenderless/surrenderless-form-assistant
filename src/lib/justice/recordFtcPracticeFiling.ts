@@ -57,7 +57,7 @@ export function buildFtcPracticeSubmissionAttempt(
   const approvedAt = options?.approvedAt?.trim();
 
   return {
-    kind: "ftc_practice",
+    kind: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id,
     caseId,
     status: "success",
     attemptedAt,
