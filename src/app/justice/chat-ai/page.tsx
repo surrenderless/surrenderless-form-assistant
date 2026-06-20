@@ -81,6 +81,7 @@ import {
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
 import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
+import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 import {
   advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
@@ -2279,8 +2280,7 @@ export default function JusticeChatAiPage() {
 
   async function handleRunFtcPracticeFromChat() {
     if (!ftcPracticeConfirmed) return;
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    const caseId = activeUuidCaseId;
     if (
       !approvedNextAction ||
       !isAssistedMockSubmissionEligible({
@@ -2896,7 +2896,7 @@ export default function JusticeChatAiPage() {
         const serverPacketApproved =
           parseJusticeCaseClientState(data.client_state).prepared_packet_approved === true;
         setPreparedPacketApproved(sessionPacketApproved || serverPacketApproved);
-        if (hydrated?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF) {
+        if (resolveAssistedSubmissionLaneForApprovedHref(hydrated?.href) !== undefined) {
           setFtcPracticeLastAssistedSubmissionAttempt(
             readLastAssistedSubmissionAttemptFromClientState(data.client_state) ??
               options?.ftcSnapshotFallback ??
@@ -3405,7 +3405,7 @@ export default function JusticeChatAiPage() {
   ]);
 
   useEffect(() => {
-    if (approvedNextAction?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF) return;
+    if (resolveAssistedSubmissionLaneForApprovedHref(approvedNextAction?.href) !== undefined) return;
     setFtcPracticeConfirmed(false);
     setFtcPracticeRunning(false);
     setFtcPracticeSuccess(false);
