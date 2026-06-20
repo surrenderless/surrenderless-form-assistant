@@ -80,6 +80,7 @@ import {
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
+import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import {
   advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
@@ -2277,9 +2278,21 @@ export default function JusticeChatAiPage() {
   }
 
   async function handleRunFtcPracticeFromChat() {
-    if (!ftcPracticeConfirmed || !isLoaded || !isSignedIn) return;
+    if (!ftcPracticeConfirmed) return;
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (
+      !approvedNextAction ||
+      !isAssistedMockSubmissionEligible({
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        caseId,
+        preparedPacketApproved,
+        approvedNextAction,
+      })
+    ) {
+      return;
+    }
 
     setFtcPracticeRunning(true);
     setFtcPracticeError(null);
@@ -3664,14 +3677,16 @@ export default function JusticeChatAiPage() {
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
   const showInlineFtcPracticePrep =
     isUpdatingExistingCase &&
-    isLoaded &&
-    Boolean(isSignedIn) &&
     Boolean(activeUuidCaseId) &&
-    preparedPacketApproved &&
     Boolean(approvedNextAction) &&
-    approvedNextAction?.href?.trim() === CHAT_INLINE_FTC_REVIEW_PREP_HREF &&
     !approvedNextAction?.handling_requested_at?.trim() &&
-    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
+    isAssistedMockSubmissionEligible({
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      caseId: activeUuidCaseId!,
+      preparedPacketApproved,
+      approvedNextAction: approvedNextAction!,
+    });
   const showInlinePacketFallbackPrep =
     Boolean(approvedNextAction) &&
     shouldShowChatInlinePacketFallbackReadOnlyPrep({
