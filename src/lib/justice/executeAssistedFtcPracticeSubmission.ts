@@ -5,6 +5,7 @@ import {
   omitClearedHandlingRequestNoteFromApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
   isRunnableAssistedSubmissionLane,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
@@ -347,7 +348,7 @@ export async function executeAssistedFtcPracticeSubmission(
   const applyTimeline = params.applyTimeline ?? applyServerTimelineFromResponse;
 
   const resolvedLane = resolveAssistedSubmissionLaneForApprovedHref(params.approvedNextAction?.href);
-  if (resolvedLane && !isRunnableAssistedSubmissionLane(resolvedLane)) {
+  if (resolvedLane && resolvedLane !== MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE) {
     return { ok: false, error: "Assisted submission is not available for this lane yet." };
   }
 

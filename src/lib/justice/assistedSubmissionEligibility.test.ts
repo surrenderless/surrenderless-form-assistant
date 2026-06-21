@@ -84,15 +84,29 @@ describe("isAssistedMockSubmissionEligible", () => {
     ).toBe(false);
   });
 
-  it("returns false for reserved BBB lane href until runnable", () => {
+  it("returns true for BBB mock practice lane href when all gates pass", () => {
     expect(
       resolveAssistedSubmissionLaneForApprovedHref(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF)
     ).toBe(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE);
-    expect(isRunnableAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
-    expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(false);
+    expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
     expect(
       isAssistedMockSubmissionEligible(
         eligibleInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
+  it("returns false for BBB mock practice lane when gates fail", () => {
+    expect(
+      isAssistedMockSubmissionEligible(
+        eligibleInput({
+          isSignedIn: false,
           approvedNextAction: {
             label: "BBB practice",
             href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,

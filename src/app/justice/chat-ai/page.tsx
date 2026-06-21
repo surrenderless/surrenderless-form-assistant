@@ -84,7 +84,12 @@ import {
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
-import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
+import {
+  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  resolveAssistedSubmissionLaneForApprovedHref,
+} from "@/lib/justice/assistedSubmissionLane";
 import {
   advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
@@ -927,7 +932,31 @@ function ChatInlinePaymentDisputePrepBlock({
   );
 }
 
-function ChatInlineFtcPracticeBlock({
+type AssistedMockPracticeLaneId =
+  | typeof MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+  | typeof MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id;
+
+function assistedMockPracticeUi(laneId: AssistedMockPracticeLaneId) {
+  if (laneId === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id) {
+    return {
+      title: "BBB practice complaint",
+      mockUrlPath: MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
+      notRealLabel: "real BBB filing",
+      optionalPageHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      optionalPageLabel: "Open full BBB practice page",
+    };
+  }
+  return {
+    title: "FTC practice complaint",
+    mockUrlPath: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
+    notRealLabel: "real government submission",
+    optionalPageHref: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
+    optionalPageLabel: "Open full FTC practice page",
+  };
+}
+
+function ChatInlineAssistedPracticeBlock({
+  laneId,
   summaryLines,
   confirmed,
   onConfirmedChange,
@@ -938,6 +967,7 @@ function ChatInlineFtcPracticeBlock({
   lastAssistedSubmissionAttempt,
   onRunPractice,
 }: {
+  laneId: AssistedMockPracticeLaneId;
   summaryLines: string[];
   confirmed: boolean;
   onConfirmedChange: (confirmed: boolean) => void;
@@ -948,12 +978,13 @@ function ChatInlineFtcPracticeBlock({
   lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
   onRunPractice: () => void;
 }) {
+  const ui = assistedMockPracticeUi(laneId);
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
-      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">FTC practice complaint</p>
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">{ui.title}</p>
       <p className="rounded-md border border-amber-300/80 bg-amber-50/90 px-2 py-1.5 text-[11px] leading-relaxed text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100">
-        Runs the <strong>internal practice form</strong> only (<code className="text-[10px]">/mock/ftc-complaint</code>
-        ). It is <strong>not</strong> a real government submission.
+        Runs the <strong>internal practice form</strong> only (<code className="text-[10px]">{ui.mockUrlPath}</code>
+        ). It is <strong>not</strong> a {ui.notRealLabel}.
       </p>
       <ul className="space-y-1 rounded-md border border-emerald-200/80 bg-white/70 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-800 dark:border-emerald-900/40 dark:bg-neutral-950/50 dark:text-neutral-100">
         {summaryLines.map((line) => (
@@ -992,10 +1023,10 @@ function ChatInlineFtcPracticeBlock({
       ) : null}
       <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         <Link
-          href={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
+          href={ui.optionalPageHref}
           className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
         >
-          Open full FTC practice page
+          {ui.optionalPageLabel}
         </Link>
         <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
       </p>
@@ -4211,7 +4242,22 @@ export default function JusticeChatAiPage() {
               </>
             ) : null}
             {showInlineFtcPracticePrep ? (
-              <ChatInlineFtcPracticeBlock
+              <ChatInlineAssistedPracticeBlock
+                laneId={MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id}
+                summaryLines={ftcPracticeSummaryLines}
+                confirmed={ftcPracticeConfirmed}
+                onConfirmedChange={setFtcPracticeConfirmed}
+                running={ftcPracticeRunning}
+                practiceSuccess={ftcPracticeSuccess}
+                storageSkipped={ftcPracticeStorageSkipped}
+                error={ftcPracticeError}
+                lastAssistedSubmissionAttempt={ftcPracticeLastAssistedSubmissionAttempt}
+                onRunPractice={() => void handleRunFtcPracticeFromChat()}
+              />
+            ) : null}
+            {showInlineBbbPracticePrep ? (
+              <ChatInlineAssistedPracticeBlock
+                laneId={MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id}
                 summaryLines={ftcPracticeSummaryLines}
                 confirmed={ftcPracticeConfirmed}
                 onConfirmedChange={setFtcPracticeConfirmed}

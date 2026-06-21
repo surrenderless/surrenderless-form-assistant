@@ -56,9 +56,9 @@ describe("assistedSubmissionLane", () => {
     );
   });
 
-  it("marks only FTC lane runnable today", () => {
+  it("marks mock FTC and BBB practice lanes runnable", () => {
     expect(isRunnableAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
-    expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(false);
+    expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
   });
 
   it("resolves FTC review href to mock FTC lane", () => {

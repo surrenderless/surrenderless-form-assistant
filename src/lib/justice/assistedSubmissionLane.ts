@@ -10,14 +10,11 @@ export const MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE = {
   filingConfirmation: "FTC mock practice complete",
 } as const;
 
-/**
- * Reserved approved-action href for a future BBB mock practice lane.
- * Not a chat inline prep href — do not assign until lane-specific run UI ships.
- */
+/** Approved-action href for mock BBB practice assisted submission. */
 export const ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF =
   "/justice/assisted-mock/bbb-practice";
 
-/** Mock BBB practice lane config (resolver-only until orchestrator/UI activation). */
+/** Mock BBB practice lane for assisted submission after packet approval. */
 export const MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE = {
   id: "bbb_practice",
   name: "BBB mock practice",
@@ -46,7 +43,10 @@ export function buildMockBbbPracticeSubmissionUrl(origin: string): string {
 
 /** Lanes that may activate assisted mock submission eligibility/prep/run today. */
 export function isRunnableAssistedSubmissionLane(lane: AssistedSubmissionLaneConfig): boolean {
-  return lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id;
+  return (
+    lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
+    lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+  );
 }
 
 /** Map an approved next-action href to its assisted-submission lane, if any. */
