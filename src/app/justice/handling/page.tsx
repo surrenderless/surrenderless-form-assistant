@@ -38,7 +38,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
-import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
+import { isHandlingWorkbenchAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { computeJusticeDestinations, ftcUnlockedFromIntake } from "@/lib/justice/rules";
@@ -136,7 +136,7 @@ function HandlingAssistedMockSubmissionTrigger({
   const [error, setError] = useState<string | null>(null);
   const preparedPacketApproved =
     parseJusticeCaseClientState(caseRow.client_state).prepared_packet_approved === true;
-  const eligible = isAssistedMockSubmissionEligible({
+  const eligible = isHandlingWorkbenchAssistedMockSubmissionEligible({
     isLoaded,
     isSignedIn,
     caseId: caseRow.id,
@@ -2040,7 +2040,7 @@ export default function JusticeHandlingWorkbenchPage() {
       const preparedPacketApproved =
         parseJusticeCaseClientState(item.caseRow.client_state).prepared_packet_approved === true;
       if (
-        !isAssistedMockSubmissionEligible({
+        !isHandlingWorkbenchAssistedMockSubmissionEligible({
           isLoaded,
           isSignedIn: Boolean(isSignedIn),
           caseId: item.caseRow.id,
