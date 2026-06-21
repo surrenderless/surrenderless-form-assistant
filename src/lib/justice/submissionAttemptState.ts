@@ -1,5 +1,8 @@
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
-import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
+import {
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+} from "@/lib/justice/assistedSubmissionLane";
 import type {
   SubmissionAttemptExecutionContext,
   SubmissionAttemptKind,
@@ -109,18 +112,25 @@ export function buildLastAssistedSubmissionAttemptFromSubmissionAttempt(
   });
 }
 
+function isAssistedPracticeSubmissionAttemptKind(kind: unknown): kind is SubmissionAttemptKind {
+  return (
+    kind === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
+    kind === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+  );
+}
+
 export function parseLastAssistedSubmissionAttempt(
   raw: unknown
 ): LastAssistedSubmissionAttemptSnapshot | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
-  if (o.kind !== MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return undefined;
+  if (!isAssistedPracticeSubmissionAttemptKind(o.kind)) return undefined;
   const attemptedAt = typeof o.attemptedAt === "string" ? o.attemptedAt.trim() : "";
   const filingDestination = typeof o.filingDestination === "string" ? o.filingDestination.trim() : "";
   if (!attemptedAt || !filingDestination) return undefined;
 
   const snapshot: LastAssistedSubmissionAttemptSnapshot = {
-    kind: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id,
+    kind: o.kind,
     attemptedAt,
     filingDestination,
   };
