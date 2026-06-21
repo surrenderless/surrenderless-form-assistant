@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+} from "@/lib/justice/assistedSubmissionLane";
+import {
   CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_CFPB_PREP_HREF,
   CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
@@ -10,16 +14,21 @@ import {
   CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
   CHAT_INLINE_STATE_AG_PREP_HREF,
+  buildChatInlineAssistedPracticeSummaryLines,
   getChatInlineApprovedPrepContent,
   isChatInlinePacketFallbackPrepHref,
   isChatInlinePrepHref,
+  resolveAssistedPracticeSubmissionLaneId,
+  shouldShowChatInlineBbbMockPracticePrep,
+  shouldShowChatInlineBbbMockReadOnlyPrep,
+  shouldShowChatInlineFtcMockPracticePrep,
+  shouldShowChatInlineFtcMockReadOnlyPrep,
   shouldShowChatInlineFtcPracticePrep,
   shouldShowChatInlineFtcReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
-import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 function baseIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
@@ -418,6 +427,121 @@ describe("shouldShowChatInlineFtcPracticePrep", () => {
         })
       )
     ).toBe(false);
+  });
+});
+
+describe("assisted mock practice lane prep and summary", () => {
+  const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+  function practicePrepInput(
+    overrides: Partial<{
+      isUpdatingExistingCase: boolean;
+      caseId: string;
+      isLoaded: boolean;
+      isSignedIn: boolean;
+      preparedPacketApproved: boolean;
+      approvedNextAction: JusticeApprovedNextAction;
+    }> = {}
+  ) {
+    return {
+      isUpdatingExistingCase: true,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: {
+        label: "FTC review",
+        href: ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+        status: "approved" as const,
+      },
+      ...overrides,
+    };
+  }
+
+  it("resolves lane ids from approved-action href", () => {
+    expect(resolveAssistedPracticeSubmissionLaneId(ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF)).toBe(
+      "ftc_practice"
+    );
+    expect(resolveAssistedPracticeSubmissionLaneId(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF)).toBe(
+      "bbb_practice"
+    );
+    expect(resolveAssistedPracticeSubmissionLaneId("/justice/cfpb")).toBeUndefined();
+  });
+
+  it("shows FTC mock practice prep only for the FTC assisted lane", () => {
+    expect(shouldShowChatInlineFtcMockPracticePrep(practicePrepInput())).toBe(true);
+    expect(
+      shouldShowChatInlineFtcMockPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("shows FTC mock read-only prep only for the FTC assisted lane", () => {
+    expect(
+      shouldShowChatInlineFtcMockReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineFtcMockReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(false);
+  });
+
+  it("keeps BBB mock practice prep hidden while non-runnable", () => {
+    expect(
+      shouldShowChatInlineBbbMockPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineBbbMockReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(false);
+  });
+
+  it("builds lane-specific assisted practice summary lines", () => {
+    const intake = baseIntake();
+    const ftcSummary = buildChatInlineAssistedPracticeSummaryLines(
+      intake,
+      ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+    );
+    const bbbSummary = buildChatInlineAssistedPracticeSummaryLines(
+      intake,
+      ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+    );
+
+    expect(ftcSummary[0]).toContain("Company:");
+    expect(bbbSummary[0]).toContain("Company:");
+    expect(ftcSummary).toEqual(bbbSummary);
+    expect(buildChatInlineAssistedPracticeSummaryLines(intake, "/justice/cfpb")).toEqual([]);
   });
 });
 

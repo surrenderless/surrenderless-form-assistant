@@ -73,9 +73,12 @@ import {
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
+  buildChatInlineAssistedPracticeSummaryLines,
   getChatInlineApprovedPrepContent,
-  shouldShowChatInlineFtcPracticePrep,
-  shouldShowChatInlineFtcReadOnlyPrep,
+  resolveAssistedPracticeSubmissionLaneId,
+  shouldShowChatInlineBbbMockPracticePrep,
+  shouldShowChatInlineFtcMockPracticePrep,
+  shouldShowChatInlineFtcMockReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
@@ -92,7 +95,7 @@ import {
   preparePaymentDisputeChecklist,
   resolvePaymentDisputeFormFields,
 } from "@/lib/justice/preparePaymentDisputeChecklist";
-import { buildFtcPracticeSummaryLines } from "@/lib/justice/runFtcPractice";
+import { executeAssistedBbbPracticeSubmission } from "@/lib/justice/executeAssistedBbbPracticeSubmission";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import { LastAssistedSubmissionAttemptSummaryReadOnly } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
 import {
@@ -2281,17 +2284,24 @@ export default function JusticeChatAiPage() {
   async function handleRunFtcPracticeFromChat() {
     if (!ftcPracticeConfirmed) return;
     const caseId = activeUuidCaseId;
+    const assistedPracticePrepInput = {
+      isUpdatingExistingCase,
+      caseId,
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      preparedPacketApproved,
+      approvedNextAction,
+    };
     if (
-      !shouldShowChatInlineFtcPracticePrep({
-        isUpdatingExistingCase,
-        caseId,
-        isLoaded,
-        isSignedIn: Boolean(isSignedIn),
-        preparedPacketApproved,
-        approvedNextAction,
-      }) ||
+      (!shouldShowChatInlineFtcMockPracticePrep(assistedPracticePrepInput) &&
+        !shouldShowChatInlineBbbMockPracticePrep(assistedPracticePrepInput)) ||
       !approvedNextAction
     ) {
+      return;
+    }
+
+    const assistedLaneId = resolveAssistedPracticeSubmissionLaneId(approvedNextAction.href);
+    if (assistedLaneId !== "ftc_practice" && assistedLaneId !== "bbb_practice") {
       return;
     }
 
@@ -2301,7 +2311,7 @@ export default function JusticeChatAiPage() {
     setFtcPracticeStorageSkipped(false);
     setFtcPracticeLastAssistedSubmissionAttempt(null);
     try {
-      const result = await executeAssistedFtcPracticeSubmission({
+      const submissionParams = {
         intake: buildJusticeIntakeFromParts(parts),
         caseId,
         isLoaded,
@@ -2309,16 +2319,20 @@ export default function JusticeChatAiPage() {
         preparedPacketApproved,
         approvedNextAction,
         logLabel: "justice chat-ai",
-        onApprovedNextActionPromoted: (local) => {
+        onApprovedNextActionPromoted: (local: JusticeApprovedNextAction) => {
           setApprovedNextAction(local);
           if (caseId) writeSessionApprovedNextAction(caseId, local);
         },
-        onApprovedNextActionCompleted: (local) => {
+        onApprovedNextActionCompleted: (local: JusticeApprovedNextAction) => {
           setApprovedNextAction(local);
           if (caseId) writeSessionApprovedNextAction(caseId, local);
         },
         onAssistedSubmissionRecorded: requestSavedEvidencePreviewRefresh,
-      });
+      };
+      const result =
+        assistedLaneId === "bbb_practice"
+          ? await executeAssistedBbbPracticeSubmission(submissionParams)
+          : await executeAssistedFtcPracticeSubmission(submissionParams);
       let ftcSnapshotFallback: LastAssistedSubmissionAttemptSnapshot | null = null;
       if (!result.ok) {
         setFtcPracticeError(result.error);
@@ -3700,7 +3714,15 @@ export default function JusticeChatAiPage() {
     approvedNextAction?.href?.trim() === CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF &&
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
-  const showInlineFtcPracticePrep = shouldShowChatInlineFtcPracticePrep({
+  const showInlineFtcPracticePrep = shouldShowChatInlineFtcMockPracticePrep({
+    isUpdatingExistingCase,
+    caseId: activeUuidCaseId,
+    isLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    preparedPacketApproved,
+    approvedNextAction,
+  });
+  const showInlineBbbPracticePrep = shouldShowChatInlineBbbMockPracticePrep({
     isUpdatingExistingCase,
     caseId: activeUuidCaseId,
     isLoaded,
@@ -3728,7 +3750,7 @@ export default function JusticeChatAiPage() {
     });
   const showInlineFtcReadOnlyPrep =
     Boolean(approvedNextAction) &&
-    shouldShowChatInlineFtcReadOnlyPrep({
+    shouldShowChatInlineFtcMockReadOnlyPrep({
       isActiveUuidCase: isActiveUuidCaseChat,
       preparedPacketApproved,
       status: approvedNextAction?.status,
@@ -3740,12 +3762,24 @@ export default function JusticeChatAiPage() {
     showInlinePaymentDisputePrep ||
     showInlinePaymentDisputeReadOnlyPrep ||
     showInlineFtcPracticePrep ||
+    showInlineBbbPracticePrep ||
     showInlineFtcReadOnlyPrep ||
     showInlinePacketFallbackPrep;
   const ftcPracticeSummaryLines = useMemo(() => {
-    if (!showInlineFtcPracticePrep && !showInlineFtcReadOnlyPrep) return [];
-    return buildFtcPracticeSummaryLines(buildJusticeIntakeFromParts(parts));
-  }, [showInlineFtcPracticePrep, showInlineFtcReadOnlyPrep, parts]);
+    if (!showInlineFtcPracticePrep && !showInlineFtcReadOnlyPrep && !showInlineBbbPracticePrep) {
+      return [];
+    }
+    return buildChatInlineAssistedPracticeSummaryLines(
+      buildJusticeIntakeFromParts(parts),
+      approvedNextAction?.href
+    );
+  }, [
+    showInlineFtcPracticePrep,
+    showInlineFtcReadOnlyPrep,
+    showInlineBbbPracticePrep,
+    approvedNextAction?.href,
+    parts,
+  ]);
   const paymentDisputeReadOnlyLetterText = useMemo(() => {
     if (!showInlinePaymentDisputeReadOnlyPrep || !activeUuidCaseId) return "";
     const intake = buildJusticeIntakeFromParts(parts);
