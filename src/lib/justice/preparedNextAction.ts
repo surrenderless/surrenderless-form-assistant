@@ -1,3 +1,7 @@
+import {
+  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+} from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction, JusticeDestination } from "@/lib/justice/types";
 
 export type PreparedNextActionPick = {
@@ -48,6 +52,33 @@ function pickFirstRoutablePreparedAction(
   };
 }
 
+function findCompletedDestination(
+  destinations: JusticeDestination[],
+  completedHref: string
+): JusticeDestination | undefined {
+  const completed = completedHref.trim();
+  const byRoute = destinations.find((d) => d.internalRoute === completed);
+  if (byRoute) return byRoute;
+  if (completed === ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF) {
+    return destinations.find((d) => d.id === "ftc");
+  }
+  if (completed === ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF) {
+    return destinations.find((d) => d.id === "bbb_practice");
+  }
+  return undefined;
+}
+
+function destinationsAfterCompletedPriority(
+  destinations: JusticeDestination[],
+  completedHref: string
+): JusticeDestination[] {
+  const completedDest = findCompletedDestination(destinations, completedHref);
+  if (completedDest === undefined) {
+    return destinations;
+  }
+  return destinations.filter((d) => d.priority > completedDest.priority);
+}
+
 /** Next routable approved step after the user marks the current href handled. */
 export function pickNextPreparedActionAfterCompleted(params: {
   contacted: boolean;
@@ -59,13 +90,15 @@ export function pickNextPreparedActionAfterCompleted(params: {
   const completed = completedHref.trim();
   if (!completed) return null;
 
+  const downstreamDestinations = destinationsAfterCompletedPriority(destinations, completed);
+
   if (!contacted) {
     if (completed !== "/justice/merchant") return null;
-    const next = pickFirstRoutablePreparedAction(destinations, completed);
+    const next = pickFirstRoutablePreparedAction(downstreamDestinations, completed);
     return next.detailHref ? next : null;
   }
 
-  const next = pickFirstRoutablePreparedAction(destinations, completed);
+  const next = pickFirstRoutablePreparedAction(downstreamDestinations, completed);
   return next.detailHref ? next : null;
 }
 

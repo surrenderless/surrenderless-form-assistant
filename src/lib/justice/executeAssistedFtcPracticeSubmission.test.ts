@@ -22,6 +22,22 @@ const intake: JusticeIntake = {
   already_contacted: "no",
 };
 
+const failedContactPracticeIntake: JusticeIntake = {
+  ...intake,
+  problem_category: "online_purchase",
+  company_name: "Acme Retail",
+  story: "Item never arrived",
+  purchase_or_signup: "web order",
+  money_involved: "",
+  pay_or_order_date: "",
+  already_contacted: "yes",
+  contact_method: "email",
+  contact_date: "2024-05-15",
+  merchant_response_type: "refused_help",
+  contact_proof_type: "paste",
+  contact_proof_text: "Refund denied",
+};
+
 const approvedNextAction: JusticeApprovedNextAction = {
   label: "FTC review",
   href: "/justice/ftc-review",
@@ -60,7 +76,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     });
   });
 
-  it("promotes approved to started, runs practice, records assisted submission, and completes action", async () => {
+  it("promotes approved to started, runs practice, records assisted submission, and completes action when no next step exists", async () => {
     const onApprovedNextActionPromoted = vi.fn();
     const onApprovedNextActionCompleted = vi.fn();
     const onAssistedSubmissionRecorded = vi.fn();
@@ -122,6 +138,52 @@ describe("executeAssistedFtcPracticeSubmission", () => {
           client_state?: { approved_next_action?: { status?: string } };
         };
         return body.client_state?.approved_next_action?.status === "completed";
+      })
+    ).toBe(true);
+  });
+
+  it("advances to BBB mock practice after successful FTC assisted submission when queue allows", async () => {
+    const onApprovedNextActionCompleted = vi.fn();
+
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake: failedContactPracticeIntake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction,
+      onApprovedNextActionCompleted,
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.assistedSubmissionRecorded).toBe(true);
+    expect(result.approvedNextActionForSubmission).toMatchObject({
+      status: "approved",
+      href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      label: "BBB mock practice",
+    });
+    expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "completed",
+        href: "/justice/ftc-review",
+      })
+    );
+    const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(
+      patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: { approved_next_action?: { status?: string; href?: string } };
+        };
+        return (
+          body.client_state?.approved_next_action?.status === "approved" &&
+          body.client_state?.approved_next_action?.href ===
+            ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+        );
       })
     ).toBe(true);
   });
