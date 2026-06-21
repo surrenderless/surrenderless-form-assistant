@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildApprovedNextActionTarget,
   pickNextPreparedActionAfterCompleted,
@@ -31,6 +32,24 @@ const cfpbDest: JusticeDestination = {
   status: "recommended",
   priority: 50,
   internalRoute: "/justice/cfpb",
+};
+
+const ftcDest: JusticeDestination = {
+  id: "ftc",
+  label: "FTC (consumer complaint)",
+  rationale: "",
+  status: "recommended",
+  priority: 30,
+  internalRoute: "/justice/ftc-review",
+};
+
+const bbbPracticeDest: JusticeDestination = {
+  id: "bbb_practice",
+  label: "BBB mock practice",
+  rationale: "",
+  status: "recommended",
+  priority: 31,
+  internalRoute: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
 };
 
 describe("pickPreparedNextAction", () => {
@@ -117,6 +136,33 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         useCompanyContactLabels: false,
         destinations,
         completedHref: "/justice/payment-dispute",
+      })
+    ).toBeNull();
+  });
+
+  it("advances from FTC practice to BBB mock practice without re-picking earlier steps", () => {
+    const practiceDestinations = [merchantDest, paymentDest, ftcDest, bbbPracticeDest, cfpbDest];
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: practiceDestinations,
+        completedHref: "/justice/ftc-review",
+      })
+    ).toEqual({
+      detailHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      stepLabel: "BBB mock practice",
+    });
+  });
+
+  it("does not advance past the last routable practice step", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, ftcDest, bbbPracticeDest],
+        completedHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
       })
     ).toBeNull();
   });

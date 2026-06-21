@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
-import { pickNextPreparedActionAfterCompleted } from "@/lib/justice/preparedNextAction";
 import {
   advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
@@ -82,19 +81,14 @@ describe("advanceApprovedNextActionAfterCompleted", () => {
       contact_proof_type: "paste",
       contact_proof_text: "Refund denied",
     });
-    const destinations = computeJusticeDestinations(practiceIntake, { manualFtc: false });
 
     expect(
       advanceApprovedNextActionAfterCompleted(practiceIntake, "/justice/merchant")?.href
     ).toBe("/justice/ftc-review");
 
-    const next = pickNextPreparedActionAfterCompleted({
-      contacted: true,
-      useCompanyContactLabels: false,
-      destinations: destinations.filter((d) => d.priority >= 30),
-      completedHref: "/justice/ftc-review",
-    });
-    expect(next?.detailHref).toBe(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF);
+    expect(
+      advanceApprovedNextActionAfterCompleted(practiceIntake, "/justice/ftc-review")?.href
+    ).toBe(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF);
   });
 });
 
