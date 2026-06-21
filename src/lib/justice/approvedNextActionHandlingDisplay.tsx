@@ -144,12 +144,13 @@ export function resolveHandlingTrackingContextualLink(input: {
   if (derivedStep === HANDLING_TRACKING_STEP_OPEN_APPROVED) {
     const href = input.approvedNextAction?.href?.trim() || "/justice/packet";
     if (input.surface === "packet" && href.startsWith("/justice/packet")) return null;
-    if (
-      input.surface === "chat-ai" &&
-      input.prepInlineInChat &&
-      (isChatInlinePrepHref(href) || resolveAssistedSubmissionLaneForApprovedHref(href) !== undefined)
-    ) {
-      return null;
+    if (input.surface === "chat-ai") {
+      if (resolveAssistedSubmissionLaneForApprovedHref(href) !== undefined) {
+        return null;
+      }
+      if (input.prepInlineInChat && isChatInlinePrepHref(href)) {
+        return null;
+      }
     }
     return {
       href,

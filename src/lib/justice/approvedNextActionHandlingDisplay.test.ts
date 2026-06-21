@@ -185,7 +185,7 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
-  it("still offers open-step link for BBB assisted mock-practice href when prep is not inline", () => {
+  it("suppresses open-step link on chat-ai for BBB assisted mock-practice href when prep is not inline", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
@@ -193,10 +193,18 @@ describe("resolveHandlingTrackingContextualLink", () => {
         surface: "chat-ai",
         prepInlineInChat: false,
       })
-    ).toEqual({
-      href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
-      label: "Open approved step (optional)",
-    });
+    ).toBeNull();
+  });
+
+  it("suppresses open-step link on chat-ai for FTC assisted mock-practice href when prep is not inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: false,
+      })
+    ).toBeNull();
   });
 
   it("suppresses review-packet link on chat-ai when prepInlineInChat is true", () => {
