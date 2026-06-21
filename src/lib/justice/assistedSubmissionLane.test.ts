@@ -9,7 +9,9 @@ import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissi
 import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
   ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+  buildMockBbbPracticeSubmissionUrl,
   buildMockFtcPracticeSubmissionUrl,
+  isRunnableAssistedSubmissionLane,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
   resolveAssistedSubmissionLaneForApprovedHref,
@@ -49,6 +51,14 @@ describe("assistedSubmissionLane", () => {
     expect(buildMockFtcPracticeSubmissionUrl("https://example.com")).toBe(
       "https://example.com/mock/ftc-complaint"
     );
+    expect(buildMockBbbPracticeSubmissionUrl("https://example.com")).toBe(
+      "https://example.com/mock/bbb-complaint"
+    );
+  });
+
+  it("marks only FTC lane runnable today", () => {
+    expect(isRunnableAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
+    expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(false);
   });
 
   it("resolves FTC review href to mock FTC lane", () => {
