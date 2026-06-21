@@ -1,3 +1,4 @@
+import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "./assistedSubmissionLane";
 import type {
   DestinationStatus,
   JusticeDestination,
@@ -274,6 +275,49 @@ export function computeJusticeDestinations(
     status: ftcStatus,
     priority: 30,
     internalRoute: ftcRoute,
+  });
+
+  let bbbPracticeStatus: DestinationStatus;
+  let bbbPracticeRationale: string;
+  let bbbPracticeRoute: string | undefined;
+  if (resolved) {
+    bbbPracticeStatus = "later";
+    bbbPracticeRationale = ctx.useCompanyContactLabels
+      ? "Not recommended while you consider the issue resolved with the company."
+      : "Not recommended while you consider the issue resolved with the merchant.";
+    bbbPracticeRoute = undefined;
+  } else if (ftcOpen) {
+    if (cfpbRel) {
+      bbbPracticeStatus = "available";
+      bbbPracticeRationale = ctx.useCompanyContactLabels
+        ? "Practice BBB complaint flow when company contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step."
+        : "Practice BBB complaint flow when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
+    } else if (fccRel) {
+      bbbPracticeStatus = "available";
+      bbbPracticeRationale = ctx.useCompanyContactLabels
+        ? "Practice BBB complaint flow when company contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step."
+        : "Practice BBB complaint flow when merchant contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step.";
+    } else {
+      bbbPracticeStatus = "recommended";
+      bbbPracticeRationale = ctx.useCompanyContactLabels
+        ? "Practice BBB complaint flow when company contact failed or was refused."
+        : "Practice BBB complaint flow when merchant contact failed or was refused.";
+    }
+    bbbPracticeRoute = ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF;
+  } else {
+    bbbPracticeStatus = "later";
+    bbbPracticeRationale = ctx.useCompanyContactLabels
+      ? "Unlocks after you document company contact and a failed or refused outcome."
+      : "Unlocks after you document merchant contact and a failed or refused outcome.";
+    bbbPracticeRoute = undefined;
+  }
+  push({
+    id: "bbb_practice",
+    label: "BBB mock practice",
+    rationale: bbbPracticeRationale,
+    status: bbbPracticeStatus,
+    priority: 31,
+    internalRoute: bbbPracticeRoute,
   });
 
   if (resolved) {

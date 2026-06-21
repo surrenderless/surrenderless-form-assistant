@@ -44,6 +44,7 @@ export type DestinationId =
   | "merchant_resolution"
   | "payment_dispute"
   | "ftc"
+  | "bbb_practice"
   | "bbb"
   | "state_ag"
   | "cfpb"
