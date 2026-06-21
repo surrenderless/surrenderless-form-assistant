@@ -7,6 +7,10 @@ import {
   resolveHandlingTrackingContextualLink,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
+  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+} from "@/lib/justice/assistedSubmissionLane";
+import {
   CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
   CHAT_INLINE_DOT_PREP_HREF,
@@ -157,6 +161,42 @@ describe("resolveHandlingTrackingContextualLink", () => {
         prepInlineInChat: true,
       })
     ).toBeNull();
+  });
+
+  it("suppresses open-step link on chat-ai when FTC assisted mock-practice prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+      })
+    ).toBeNull();
+  });
+
+  it("suppresses open-step link on chat-ai when BBB assisted mock-practice prep is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: true,
+      })
+    ).toBeNull();
+  });
+
+  it("still offers open-step link for BBB assisted mock-practice href when prep is not inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: false,
+      })
+    ).toEqual({
+      href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      label: "Open approved step (optional)",
+    });
   });
 
   it("suppresses review-packet link on chat-ai when prepInlineInChat is true", () => {

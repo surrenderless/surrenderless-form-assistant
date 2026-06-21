@@ -86,7 +86,6 @@ import {
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
 import {
-  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
   resolveAssistedSubmissionLaneForApprovedHref,
@@ -947,8 +946,6 @@ function assistedMockPracticeUi(laneId: AssistedMockPracticeLaneId) {
       title: "BBB practice complaint",
       mockUrlPath: MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
       notRealLabel: "real BBB filing",
-      optionalPageHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
-      optionalPageLabel: "Open full BBB practice page",
     };
   }
   return {
@@ -1026,15 +1023,17 @@ function ChatInlineAssistedPracticeBlock({
       {lastAssistedSubmissionAttempt ? (
         <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt} />
       ) : null}
-      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        <Link
-          href={ui.optionalPageHref}
-          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-        >
-          {ui.optionalPageLabel}
-        </Link>
-        <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
-      </p>
+      {ui.optionalPageHref && ui.optionalPageLabel ? (
+        <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+          <Link
+            href={ui.optionalPageHref}
+            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+          >
+            {ui.optionalPageLabel}
+          </Link>
+          <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
+        </p>
+      ) : null}
     </div>
   );
 }
