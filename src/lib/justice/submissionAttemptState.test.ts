@@ -4,9 +4,14 @@ import {
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
 } from "@/lib/justice/assistedSubmissionLane";
 import {
+  ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+} from "@/lib/justice/assistedSubmissionLane";
+import {
   buildFailedLastAssistedSubmissionAttemptSnapshot,
   buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
   buildLastAssistedSubmissionAttemptSummaryDisplay,
+  isLastAssistedSubmissionAttemptVisibleForApprovedHref,
   mergeClientStateWithLastAssistedSubmissionAttempt,
   parseLastAssistedSubmissionAttempt,
   readLastAssistedSubmissionAttemptFromClientState,
@@ -231,5 +236,82 @@ describe("submissionAttemptState", () => {
         filingDestination: "CFPB (practice)",
       })
     ).toBeUndefined();
+  });
+
+  describe("isLastAssistedSubmissionAttemptVisibleForApprovedHref", () => {
+    const ftcSnapshot = {
+      kind: "ftc_practice" as const,
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filingDestination: FTC_PRACTICE_FILING_DESTINATION,
+    };
+    const bbbSnapshot = {
+      kind: "bbb_practice" as const,
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filingDestination: BBB_PRACTICE_FILING_DESTINATION,
+    };
+
+    it("shows FTC snapshot on FTC practice href", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          ftcSnapshot,
+          ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(true);
+    });
+
+    it("shows BBB snapshot on BBB practice href", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          bbbSnapshot,
+          ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(true);
+    });
+
+    it("hides FTC snapshot on BBB practice href", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          ftcSnapshot,
+          ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(false);
+    });
+
+    it("hides BBB snapshot on FTC practice href", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          bbbSnapshot,
+          ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(false);
+    });
+
+    it("hides any snapshot on non-assisted href such as real BBB", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(ftcSnapshot, "/justice/bbb")
+      ).toBe(false);
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(bbbSnapshot, "/justice/bbb")
+      ).toBe(false);
+    });
+
+    it("hides when snapshot or active assisted lane is missing", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          null,
+          ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(false);
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          undefined,
+          ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(false);
+      expect(isLastAssistedSubmissionAttemptVisibleForApprovedHref(ftcSnapshot, undefined)).toBe(
+        false
+      );
+      expect(isLastAssistedSubmissionAttemptVisibleForApprovedHref(bbbSnapshot, "")).toBe(false);
+    });
   });
 });
