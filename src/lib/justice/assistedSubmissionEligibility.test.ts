@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
+import {
+  isAssistedMockSubmissionEligible,
+  isHandlingWorkbenchAssistedMockSubmissionEligible,
+} from "@/lib/justice/assistedSubmissionEligibility";
 import { CHAT_INLINE_FTC_REVIEW_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
 import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
@@ -112,6 +115,45 @@ describe("isAssistedMockSubmissionEligible", () => {
             href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
             status: "approved",
           },
+        })
+      )
+    ).toBe(false);
+  });
+});
+
+describe("isHandlingWorkbenchAssistedMockSubmissionEligible", () => {
+  it("returns true for FTC mock practice lane when all gates pass", () => {
+    expect(
+      resolveAssistedSubmissionLaneForApprovedHref(approvedNextAction.href)
+    ).toBe(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE);
+    expect(isHandlingWorkbenchAssistedMockSubmissionEligible(eligibleInput())).toBe(true);
+  });
+
+  it("returns false for BBB mock practice lane even when chat eligibility passes", () => {
+    const bbbInput = eligibleInput({
+      approvedNextAction: {
+        label: "BBB practice",
+        href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        status: "approved",
+      },
+    });
+    expect(isAssistedMockSubmissionEligible(bbbInput)).toBe(true);
+    expect(isHandlingWorkbenchAssistedMockSubmissionEligible(bbbInput)).toBe(false);
+  });
+
+  it("returns false when shared gates fail", () => {
+    expect(
+      isHandlingWorkbenchAssistedMockSubmissionEligible(eligibleInput({ isSignedIn: false }))
+    ).toBe(false);
+    expect(
+      isHandlingWorkbenchAssistedMockSubmissionEligible(
+        eligibleInput({ approvedNextAction: { ...approvedNextAction, href: "/justice/cfpb" } })
+      )
+    ).toBe(false);
+    expect(
+      isHandlingWorkbenchAssistedMockSubmissionEligible(
+        eligibleInput({
+          approvedNextAction: { ...approvedNextAction, status: "completed" },
         })
       )
     ).toBe(false);
