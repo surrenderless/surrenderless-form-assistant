@@ -4,7 +4,10 @@ import {
   mergeClientStateWithApprovedNextAction,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
-import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
+import {
+  isRunnableAssistedSubmissionLane,
+  resolveAssistedSubmissionLaneForApprovedHref,
+} from "@/lib/justice/assistedSubmissionLane";
 import {
   buildFtcPracticeSubmissionAttempt,
   recordFtcPracticeFiling,
@@ -193,14 +196,17 @@ function shouldRecordAssistedSubmission(
   preparedPacketApproved: boolean,
   approvedNextActionForSubmission: JusticeApprovedNextAction | null | undefined
 ): approvedNextActionForSubmission is JusticeApprovedNextAction {
+  const lane = approvedNextActionForSubmission
+    ? resolveAssistedSubmissionLaneForApprovedHref(approvedNextActionForSubmission.href)
+    : undefined;
   return Boolean(
     isSignedIn &&
       caseId &&
       isUuid(caseId) &&
       preparedPacketApproved &&
       approvedNextActionForSubmission &&
-      resolveAssistedSubmissionLaneForApprovedHref(approvedNextActionForSubmission.href) !==
-        undefined &&
+      lane !== undefined &&
+      isRunnableAssistedSubmissionLane(lane) &&
       (approvedNextActionForSubmission.status === "started" ||
         approvedNextActionForSubmission.status === "completed")
   );
@@ -339,6 +345,11 @@ export async function executeAssistedFtcPracticeSubmission(
   const runPractice = params.runPractice ?? runFtcPractice;
   const recordFiling = params.recordFiling ?? recordFtcPracticeFiling;
   const applyTimeline = params.applyTimeline ?? applyServerTimelineFromResponse;
+
+  const resolvedLane = resolveAssistedSubmissionLaneForApprovedHref(params.approvedNextAction?.href);
+  if (resolvedLane && !isRunnableAssistedSubmissionLane(resolvedLane)) {
+    return { ok: false, error: "Assisted submission is not available for this lane yet." };
+  }
 
   const approvedNextActionForSubmission = await promoteApprovedNextActionIfNeeded(
     params,

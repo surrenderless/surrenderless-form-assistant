@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import { mergeClientStateWithLastAssistedSubmissionAttempt } from "@/lib/justice/submissionAttemptState";
 import { FTC_PRACTICE_FILING_DESTINATION } from "@/lib/justice/submissionAttempt";
@@ -611,5 +612,58 @@ describe("executeAssistedFtcPracticeSubmission", () => {
       expect(result.approvedNextActionForSubmission?.status).toBe("started");
     }
     expect(recordFiling).not.toHaveBeenCalled();
+  });
+
+  it("does not run practice or record for reserved non-runnable BBB lane href", async () => {
+    const bbbAction: JusticeApprovedNextAction = {
+      ...approvedNextAction,
+      label: "BBB practice",
+      href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      status: "started",
+    };
+
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: bbbAction,
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Assisted submission is not available for this lane yet.",
+    });
+    expect(runPractice).not.toHaveBeenCalled();
+    expect(recordFiling).not.toHaveBeenCalled();
+    expect(fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("still records assisted submission for runnable FTC lane href", async () => {
+    const result = await executeAssistedFtcPracticeSubmission({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: { ...approvedNextAction, status: "started" },
+      fetchFn,
+      runPractice,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.assistedSubmissionRecorded).toBe(true);
+    expect(recordFiling).toHaveBeenCalledOnce();
+    expect(result.lastAssistedSubmissionAttempt).toEqual(
+      expect.objectContaining({ kind: "ftc_practice", filingId: "fil-123" })
+    );
   });
 });
