@@ -5,7 +5,8 @@ import {
   pickNextPreparedActionAfterCompleted,
   pickPreparedNextAction,
 } from "@/lib/justice/preparedNextAction";
-import type { JusticeDestination } from "@/lib/justice/types";
+import { computeJusticeDestinations } from "@/lib/justice/rules";
+import type { JusticeDestination, JusticeIntake } from "@/lib/justice/types";
 
 const merchantDest: JusticeDestination = {
   id: "merchant_resolution",
@@ -51,6 +52,46 @@ const bbbPracticeDest: JusticeDestination = {
   priority: 31,
   internalRoute: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
 };
+
+const realBbbDest: JusticeDestination = {
+  id: "bbb",
+  label: "Better Business Bureau",
+  rationale: "",
+  status: "manual",
+  priority: 40,
+  internalRoute: "/justice/bbb",
+};
+
+const stateAgDest: JusticeDestination = {
+  id: "state_ag",
+  label: "State Attorney General (consumer)",
+  rationale: "",
+  status: "manual",
+  priority: 50,
+  internalRoute: "/justice/state-ag",
+};
+
+function failedContactPracticeIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
+  return {
+    problem_category: "online_purchase",
+    company_name: "Acme Retail",
+    company_website: "",
+    purchase_or_signup: "web order",
+    story: "Item never arrived",
+    money_involved: "",
+    pay_or_order_date: "",
+    order_confirmation_details: "",
+    user_display_name: "Test User",
+    reply_email: "user@example.com",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2024-05-15",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "paste",
+    contact_proof_text: "Refund denied",
+    ...overrides,
+  };
+}
 
 describe("pickPreparedNextAction", () => {
   it("routes not-contacted users to merchant contact first", () => {
@@ -156,7 +197,67 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     });
   });
 
-  it("does not advance past the last routable practice step", () => {
+  it("advances from BBB mock practice to real BBB prep with full computed destinations", () => {
+    const destinations = computeJusticeDestinations(failedContactPracticeIntake(), {
+      manualFtc: false,
+    });
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations,
+        completedHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      })
+    ).toEqual({
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
+    });
+  });
+
+  it("selects real BBB over other manual destinations after BBB mock practice", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, ftcDest, bbbPracticeDest, realBbbDest, stateAgDest],
+        completedHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      })
+    ).toEqual({
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
+    });
+  });
+
+  it("does not allow real BBB manual selection except after BBB mock practice", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, paymentDest, ftcDest, bbbPracticeDest, realBbbDest, stateAgDest],
+        completedHref: "/justice/ftc-review",
+      })
+    ).toEqual({
+      detailHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      stepLabel: "BBB mock practice",
+    });
+  });
+
+  it("leaves BBB mock completed when no eligible real BBB destination exists", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: computeJusticeDestinations(
+          failedContactPracticeIntake({ company_name: "" }),
+          { manualFtc: false }
+        ),
+        completedHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      })
+    ).toBeNull();
+  });
+
+  it("does not advance past BBB mock practice when real BBB is absent from destinations", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
