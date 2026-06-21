@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
+import { pickNextPreparedActionAfterCompleted } from "@/lib/justice/preparedNextAction";
 import {
   advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
 } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { computeJusticeDestinations } from "@/lib/justice/rules";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 function baseIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
@@ -62,5 +65,77 @@ describe("advanceApprovedNextActionAfterCompleted", () => {
 
   it("returns null when completed href is empty", () => {
     expect(advanceApprovedNextActionAfterCompleted(contactedIntake, "  ")).toBeNull();
+  });
+
+  it("advances from FTC practice to BBB mock practice after FTC is handled", () => {
+    const practiceIntake = baseIntake({
+      problem_category: "online_purchase",
+      company_name: "Acme Retail",
+      story: "Item never arrived",
+      purchase_or_signup: "web order",
+      money_involved: "",
+      pay_or_order_date: "",
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2024-05-15",
+      merchant_response_type: "refused_help",
+      contact_proof_type: "paste",
+      contact_proof_text: "Refund denied",
+    });
+    const destinations = computeJusticeDestinations(practiceIntake, { manualFtc: false });
+
+    expect(
+      advanceApprovedNextActionAfterCompleted(practiceIntake, "/justice/merchant")?.href
+    ).toBe("/justice/ftc-review");
+
+    const next = pickNextPreparedActionAfterCompleted({
+      contacted: true,
+      useCompanyContactLabels: false,
+      destinations: destinations.filter((d) => d.priority >= 30),
+      completedHref: "/justice/ftc-review",
+    });
+    expect(next?.detailHref).toBe(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF);
+  });
+});
+
+describe("computeJusticeDestinations bbb_practice routing", () => {
+  const failedContactIntake = baseIntake({
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2024-05-15",
+    merchant_response_type: "no_response",
+    contact_proof_type: "paste",
+    contact_proof_text: "No reply after two emails",
+  });
+
+  it("includes BBB mock practice when failed-contact unlock matches FTC practice", () => {
+    const destinations = computeJusticeDestinations(failedContactIntake, { manualFtc: false });
+    const bbbPractice = destinations.find((d) => d.id === "bbb_practice");
+
+    expect(bbbPractice).toMatchObject({
+      status: "available",
+      priority: 31,
+      internalRoute: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+    });
+  });
+
+  it("keeps BBB mock practice locked until failed contact is documented", () => {
+    const destinations = computeJusticeDestinations(baseIntake(), { manualFtc: false });
+    const bbbPractice = destinations.find((d) => d.id === "bbb_practice");
+
+    expect(bbbPractice).toMatchObject({
+      status: "later",
+      internalRoute: undefined,
+    });
+  });
+
+  it("leaves the real BBB complaint destination on /justice/bbb", () => {
+    const destinations = computeJusticeDestinations(failedContactIntake, { manualFtc: false });
+    const bbb = destinations.find((d) => d.id === "bbb");
+
+    expect(bbb).toMatchObject({
+      status: "manual",
+      internalRoute: "/justice/bbb",
+    });
   });
 });
