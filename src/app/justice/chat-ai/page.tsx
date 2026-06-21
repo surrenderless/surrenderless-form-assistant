@@ -4544,7 +4544,9 @@ export default function JusticeChatAiPage() {
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
-                    {!prepInlineInChat ? (
+                    {!prepInlineInChat &&
+                    resolveAssistedSubmissionLaneForApprovedHref(approvedNextAction.href) ===
+                      undefined ? (
                       <p className="mt-1.5 text-xs text-emerald-800 dark:text-emerald-200">
                         <Link
                           href={approvedNextAction.href.trim()}
