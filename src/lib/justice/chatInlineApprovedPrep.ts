@@ -6,11 +6,29 @@ import { buildFccComplaintDraft } from "@/lib/justice/buildFccComplaintDraft";
 import { buildStateAgComplaintDraft } from "@/lib/justice/buildStateAgComplaintDraft";
 import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage";
 import {
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
   isRunnableAssistedSubmissionLane,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
+import { buildBbbPracticeSummaryLines } from "@/lib/justice/runBbbPractice";
+import { buildFtcPracticeSummaryLines } from "@/lib/justice/runFtcPractice";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
+
+export type AssistedPracticeSubmissionLaneId =
+  | typeof MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+  | typeof MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id;
+
+/** Resolve mock assisted-practice lane id from an approved next-action href. */
+export function resolveAssistedPracticeSubmissionLaneId(
+  href: string | undefined
+): AssistedPracticeSubmissionLaneId | undefined {
+  const lane = resolveAssistedSubmissionLaneForApprovedHref(href);
+  if (lane?.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return lane.id;
+  if (lane?.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return lane.id;
+  return undefined;
+}
 
 export type ChatInlineReadOnlyPrepGateInput = {
   isActiveUuidCase: boolean;
@@ -91,6 +109,53 @@ export function shouldShowChatInlineFtcPracticePrep(
     preparedPacketApproved: input.preparedPacketApproved,
     approvedNextAction: input.approvedNextAction,
   });
+}
+
+/** Interactive mock FTC practice prep when href resolves to the FTC assisted lane. */
+export function shouldShowChatInlineFtcMockPracticePrep(
+  input: ChatInlineFtcPracticePrepGateInput
+): boolean {
+  if (resolveAssistedPracticeSubmissionLaneId(input.approvedNextAction?.href) !== "ftc_practice") {
+    return false;
+  }
+  return shouldShowChatInlineFtcPracticePrep(input);
+}
+
+/** Interactive mock BBB practice prep when href resolves to the BBB assisted lane. */
+export function shouldShowChatInlineBbbMockPracticePrep(
+  input: ChatInlineFtcPracticePrepGateInput
+): boolean {
+  if (resolveAssistedPracticeSubmissionLaneId(input.approvedNextAction?.href) !== "bbb_practice") {
+    return false;
+  }
+  return shouldShowChatInlineFtcPracticePrep(input);
+}
+
+/** Read-only mock FTC practice summary when href resolves to the FTC assisted lane. */
+export function shouldShowChatInlineFtcMockReadOnlyPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
+): boolean {
+  if (resolveAssistedPracticeSubmissionLaneId(input.href) !== "ftc_practice") return false;
+  return shouldShowChatInlineFtcReadOnlyPrep(input);
+}
+
+/** Read-only mock BBB practice summary when href resolves to the BBB assisted lane. */
+export function shouldShowChatInlineBbbMockReadOnlyPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
+): boolean {
+  if (resolveAssistedPracticeSubmissionLaneId(input.href) !== "bbb_practice") return false;
+  return shouldShowChatInlineFtcReadOnlyPrep(input);
+}
+
+/** Summary lines for visible mock assisted-practice prep, keyed by approved-action href lane. */
+export function buildChatInlineAssistedPracticeSummaryLines(
+  intake: JusticeIntake,
+  href: string | undefined
+): string[] {
+  const laneId = resolveAssistedPracticeSubmissionLaneId(href);
+  if (laneId === "ftc_practice") return buildFtcPracticeSummaryLines(intake);
+  if (laneId === "bbb_practice") return buildBbbPracticeSummaryLines(intake);
+  return [];
 }
 
 export const CHAT_INLINE_MERCHANT_PREP_HREF = "/justice/merchant";
