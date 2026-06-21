@@ -3,12 +3,21 @@ import {
   chatOutcomeTrackingFormOpen,
   chatOutcomeTrackingSaveAllowed,
   deriveHandlingClosureStepAfterFilingConfirmation,
+  deriveManualActionTrackingFilingsState,
+  filingsForManualActionTracking,
   isApprovedActionOpenedForHandlingTracking,
+  isAssistedMockPracticeFilingDestination,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_RECORD_OUTCOME,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import {
+  BBB_PRACTICE_FILING_CONFIRMATION,
+  BBB_PRACTICE_FILING_DESTINATION,
+  FTC_PRACTICE_FILING_CONFIRMATION,
+  FTC_PRACTICE_FILING_DESTINATION,
+} from "@/lib/justice/submissionAttempt";
 
 describe("isApprovedActionOpenedForHandlingTracking", () => {
   it("returns true when status is started or completed", () => {
@@ -99,6 +108,100 @@ describe("chatOutcomeTrackingFormOpen", () => {
     expect(
       chatOutcomeTrackingFormOpen({ outcome_note: "Resolved.", follow_up_needed: true })
     ).toBe(true);
+  });
+});
+
+describe("deriveManualActionTrackingFilingsState", () => {
+  const ftcPracticeFiling = {
+    destination: FTC_PRACTICE_FILING_DESTINATION,
+    confirmation_number: FTC_PRACTICE_FILING_CONFIRMATION,
+  };
+  const bbbPracticeFiling = {
+    destination: BBB_PRACTICE_FILING_DESTINATION,
+    confirmation_number: BBB_PRACTICE_FILING_CONFIRMATION,
+  };
+  const realBbbFiling = {
+    destination: "Better Business Bureau",
+    confirmation_number: null,
+  };
+  const realBbbFilingConfirmed = {
+    destination: "Better Business Bureau",
+    confirmation_number: "BBB-REAL-123",
+  };
+
+  it("does not treat FTC practice filing alone as manual filing or confirmation", () => {
+    expect(deriveManualActionTrackingFilingsState([ftcPracticeFiling])).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("does not treat BBB practice filing alone as manual filing or confirmation", () => {
+    expect(deriveManualActionTrackingFilingsState([bbbPracticeFiling])).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("does not treat both practice filings together as manual filing or confirmation", () => {
+    expect(deriveManualActionTrackingFilingsState([ftcPracticeFiling, bbbPracticeFiling])).toEqual(
+      {
+        hasFilingRecord: false,
+        hasConfirmationOnFile: false,
+      }
+    );
+  });
+
+  it("treats a real BBB filing as satisfying the filing gate", () => {
+    expect(deriveManualActionTrackingFilingsState([realBbbFiling])).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("treats a real BBB confirmation as satisfying the confirmation gate", () => {
+    expect(deriveManualActionTrackingFilingsState([realBbbFilingConfirmed])).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("uses the real filing when practice and real filings are mixed", () => {
+    expect(
+      deriveManualActionTrackingFilingsState([
+        ftcPracticeFiling,
+        bbbPracticeFiling,
+        realBbbFiling,
+      ])
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+    expect(
+      deriveManualActionTrackingFilingsState([
+        ftcPracticeFiling,
+        bbbPracticeFiling,
+        realBbbFilingConfirmed,
+      ])
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("preserves all filings in history while filtering only tracking gates", () => {
+    const mixed = [ftcPracticeFiling, bbbPracticeFiling, realBbbFilingConfirmed];
+    expect(filingsForManualActionTracking(mixed)).toEqual([realBbbFilingConfirmed]);
+    expect(mixed).toHaveLength(3);
+  });
+});
+
+describe("isAssistedMockPracticeFilingDestination", () => {
+  it("matches only assisted mock-practice filing destinations", () => {
+    expect(isAssistedMockPracticeFilingDestination(FTC_PRACTICE_FILING_DESTINATION)).toBe(true);
+    expect(isAssistedMockPracticeFilingDestination(BBB_PRACTICE_FILING_DESTINATION)).toBe(true);
+    expect(isAssistedMockPracticeFilingDestination("Better Business Bureau")).toBe(false);
+    expect(isAssistedMockPracticeFilingDestination("CFPB")).toBe(false);
   });
 });
 
