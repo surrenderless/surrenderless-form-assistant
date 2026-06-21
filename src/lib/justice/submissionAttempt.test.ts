@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  BBB_PRACTICE_FILING_CONFIRMATION,
+  BBB_PRACTICE_FILING_DESTINATION,
   buildFilingBodyFromAttempt,
   FTC_PRACTICE_FILING_CONFIRMATION,
   FTC_PRACTICE_FILING_DESTINATION,
@@ -57,5 +59,27 @@ describe("buildFilingBodyFromAttempt", () => {
     };
 
     expect(buildFilingBodyFromAttempt(outcome)).toBeNull();
+  });
+
+  it("maps a successful BBB practice attempt to a filings POST body", () => {
+    const outcome: SubmissionAttemptOutcome = {
+      kind: "bbb_practice",
+      caseId: "00000000-0000-4000-8000-000000000001",
+      status: "success",
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filedAt: "2026-06-16T12:00:00.000Z",
+      destination: BBB_PRACTICE_FILING_DESTINATION,
+      confirmation: BBB_PRACTICE_FILING_CONFIRMATION,
+      notes: "Mock BBB practice autofill completed (/mock/bbb-complaint).",
+      artifactUrl: "https://example.com/bbb-shot.png",
+    };
+
+    expect(buildFilingBodyFromAttempt(outcome)).toEqual({
+      destination: BBB_PRACTICE_FILING_DESTINATION,
+      filed_at: "2026-06-16T12:00:00.000Z",
+      confirmation_number: BBB_PRACTICE_FILING_CONFIRMATION,
+      notes: "Mock BBB practice autofill completed (/mock/bbb-complaint).",
+      filing_url: "https://example.com/bbb-shot.png",
+    });
   });
 });

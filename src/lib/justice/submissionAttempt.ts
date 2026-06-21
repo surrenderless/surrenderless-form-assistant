@@ -1,6 +1,9 @@
-import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
+import {
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+} from "@/lib/justice/assistedSubmissionLane";
 
-export type SubmissionAttemptKind = "ftc_practice";
+export type SubmissionAttemptKind = "ftc_practice" | "bbb_practice";
 
 export type SubmissionAttemptStatus = "success" | "failed";
 
@@ -40,6 +43,12 @@ export const FTC_PRACTICE_FILING_DESTINATION =
 
 export const FTC_PRACTICE_FILING_CONFIRMATION =
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingConfirmation;
+
+export const BBB_PRACTICE_FILING_DESTINATION =
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination;
+
+export const BBB_PRACTICE_FILING_CONFIRMATION =
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.filingConfirmation;
 
 export type RecordSubmissionAttemptAsFilingResult =
   | { ok: true; payload: unknown }
