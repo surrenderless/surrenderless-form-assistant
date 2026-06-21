@@ -30,6 +30,26 @@ export function resolveAssistedPracticeSubmissionLaneId(
   return undefined;
 }
 
+/** True when shared assisted-practice run UI should clear after an approved-action href change. */
+export function shouldResetAssistedPracticeRunUiState(
+  previousHref: string | undefined,
+  nextHref: string | undefined
+): boolean {
+  const previousLaneId = resolveAssistedPracticeSubmissionLaneId(previousHref);
+  const nextLaneId = resolveAssistedPracticeSubmissionLaneId(nextHref);
+
+  if (previousLaneId === nextLaneId) {
+    return false;
+  }
+
+  // Entering an assisted lane from a non-assisted step: preserve initial empty UI state.
+  if (previousLaneId === undefined && nextLaneId !== undefined) {
+    return false;
+  }
+
+  return true;
+}
+
 export type ChatInlineReadOnlyPrepGateInput = {
   isActiveUuidCase: boolean;
   preparedPacketApproved: boolean;

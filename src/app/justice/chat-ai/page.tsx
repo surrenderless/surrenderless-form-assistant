@@ -76,6 +76,7 @@ import {
   buildChatInlineAssistedPracticeSummaryLines,
   getChatInlineApprovedPrepContent,
   resolveAssistedPracticeSubmissionLaneId,
+  shouldResetAssistedPracticeRunUiState,
   shouldShowChatInlineBbbMockPracticePrep,
   shouldShowChatInlineBbbMockReadOnlyPrep,
   shouldShowChatInlineFtcMockPracticePrep,
@@ -1966,6 +1967,7 @@ export default function JusticeChatAiPage() {
   const sessionHydratedRef = useRef(false);
   const sessionBaselinePartsRef = useRef<BuildJusticeIntakeParts | null>(null);
   const sessionBaselineEvidenceCountRef = useRef<number | null>(null);
+  const prevApprovedActionHrefForAssistedPracticeRef = useRef<string | undefined>(undefined);
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
   const [isUpdatingExistingCase, setIsUpdatingExistingCase] = useState(false);
@@ -3455,13 +3457,21 @@ export default function JusticeChatAiPage() {
   ]);
 
   useEffect(() => {
-    if (resolveAssistedSubmissionLaneForApprovedHref(approvedNextAction?.href) !== undefined) return;
-    setFtcPracticeConfirmed(false);
-    setFtcPracticeRunning(false);
-    setFtcPracticeSuccess(false);
-    setFtcPracticeStorageSkipped(false);
-    setFtcPracticeError(null);
-    setFtcPracticeLastAssistedSubmissionAttempt(null);
+    const nextHref = approvedNextAction?.href;
+    const previousHref = prevApprovedActionHrefForAssistedPracticeRef.current;
+
+    if (shouldResetAssistedPracticeRunUiState(previousHref, nextHref)) {
+      setFtcPracticeConfirmed(false);
+      setFtcPracticeRunning(false);
+      setFtcPracticeSuccess(false);
+      setFtcPracticeStorageSkipped(false);
+      setFtcPracticeError(null);
+      if (resolveAssistedPracticeSubmissionLaneId(nextHref) === undefined) {
+        setFtcPracticeLastAssistedSubmissionAttempt(null);
+      }
+    }
+
+    prevApprovedActionHrefForAssistedPracticeRef.current = nextHref;
   }, [approvedNextAction?.href]);
 
   async function handleSend() {

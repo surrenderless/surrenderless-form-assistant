@@ -19,6 +19,7 @@ import {
   isChatInlinePacketFallbackPrepHref,
   isChatInlinePrepHref,
   resolveAssistedPracticeSubmissionLaneId,
+  shouldResetAssistedPracticeRunUiState,
   shouldShowChatInlineBbbMockPracticePrep,
   shouldShowChatInlineBbbMockReadOnlyPrep,
   shouldShowChatInlineFtcMockPracticePrep,
@@ -686,6 +687,80 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
         href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
         handlingRequested: false,
       })
+    ).toBe(false);
+  });
+});
+
+describe("shouldResetAssistedPracticeRunUiState", () => {
+  it("does not reset when remaining on the FTC assisted lane", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+        ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+      )
+    ).toBe(false);
+  });
+
+  it("does not reset when remaining on the BBB assisted lane", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+      )
+    ).toBe(false);
+  });
+
+  it("resets when advancing from FTC practice to BBB practice", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+      )
+    ).toBe(true);
+  });
+
+  it("resets when moving from BBB practice back to FTC practice", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+      )
+    ).toBe(true);
+  });
+
+  it("resets when leaving an assisted lane for a non-assisted step", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+        CHAT_INLINE_MERCHANT_PREP_HREF
+      )
+    ).toBe(true);
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        CHAT_INLINE_CFPB_PREP_HREF
+      )
+    ).toBe(true);
+  });
+
+  it("does not reset when entering an assisted lane from a non-assisted step", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        CHAT_INLINE_MERCHANT_PREP_HREF,
+        ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF
+      )
+    ).toBe(false);
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        undefined,
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+      )
+    ).toBe(false);
+  });
+
+  it("does not reset when moving between non-assisted prep steps", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(CHAT_INLINE_MERCHANT_PREP_HREF, CHAT_INLINE_CFPB_PREP_HREF)
     ).toBe(false);
   });
 });
