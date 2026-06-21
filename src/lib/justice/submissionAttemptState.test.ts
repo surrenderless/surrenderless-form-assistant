@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
+import {
+  MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+} from "@/lib/justice/assistedSubmissionLane";
 import {
   buildFailedLastAssistedSubmissionAttemptSnapshot,
   buildLastAssistedSubmissionAttemptFromSubmissionAttempt,
@@ -9,6 +12,8 @@ import {
   readLastAssistedSubmissionAttemptFromClientState,
 } from "@/lib/justice/submissionAttemptState";
 import {
+  BBB_PRACTICE_FILING_CONFIRMATION,
+  BBB_PRACTICE_FILING_DESTINATION,
   FTC_PRACTICE_FILING_CONFIRMATION,
   FTC_PRACTICE_FILING_DESTINATION,
   type SubmissionAttemptOutcome,
@@ -171,6 +176,59 @@ describe("submissionAttemptState", () => {
         filingDestination: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.filingDestination,
         outcome: "failed",
         error: "Request failed",
+      })
+    ).toBeUndefined();
+  });
+
+  it("parses a valid BBB practice snapshot from client_state", () => {
+    const snapshot = readLastAssistedSubmissionAttemptFromClientState({
+      last_assisted_submission_attempt: {
+        kind: "bbb_practice",
+        attemptedAt: "2026-06-16T12:00:00.000Z",
+        filingDestination: BBB_PRACTICE_FILING_DESTINATION,
+        filingId: "fil-bbb-123",
+        confirmation: BBB_PRACTICE_FILING_CONFIRMATION,
+        executionContext: "assisted_after_packet_approval",
+        approvedAt: "2026-06-15T10:00:00.000Z",
+      },
+    });
+
+    expect(snapshot).toEqual({
+      kind: "bbb_practice",
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filingDestination: BBB_PRACTICE_FILING_DESTINATION,
+      filingId: "fil-bbb-123",
+      confirmation: BBB_PRACTICE_FILING_CONFIRMATION,
+      executionContext: "assisted_after_packet_approval",
+      approvedAt: "2026-06-15T10:00:00.000Z",
+    });
+    expect(snapshot?.kind).toBe(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id);
+  });
+
+  it("rejects malformed BBB practice snapshots", () => {
+    expect(
+      parseLastAssistedSubmissionAttempt({
+        kind: "bbb_practice",
+        attemptedAt: "",
+        filingDestination: BBB_PRACTICE_FILING_DESTINATION,
+      })
+    ).toBeUndefined();
+    expect(
+      parseLastAssistedSubmissionAttempt({
+        kind: "bbb_practice",
+        attemptedAt: "2026-06-16T12:00:00.000Z",
+        filingDestination: "",
+      })
+    ).toBeUndefined();
+    expect(parseLastAssistedSubmissionAttempt(null)).toBeUndefined();
+  });
+
+  it("rejects unsupported assisted submission attempt kinds", () => {
+    expect(
+      parseLastAssistedSubmissionAttempt({
+        kind: "cfpb_practice",
+        attemptedAt: "2026-06-16T12:00:00.000Z",
+        filingDestination: "CFPB (practice)",
       })
     ).toBeUndefined();
   });
