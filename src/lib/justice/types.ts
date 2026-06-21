@@ -77,6 +77,8 @@ export type TimelineEntryType =
   | "payment_dispute_checklist_prepared"
   | "ftc_practice_started"
   | "ftc_practice_completed"
+  | "bbb_practice_started"
+  | "bbb_practice_completed"
   | "bbb_prep_opened"
   | "state_ag_prep_opened"
   | "cfpb_prep_opened"

@@ -8,7 +8,11 @@ import {
   intakeToMockBbbUserData,
   runBbbPractice,
 } from "@/lib/justice/runBbbPractice";
+import { labelForTimelineEntryType, readTimeline } from "@/lib/justice/timeline";
 import type { JusticeIntake } from "@/lib/justice/types";
+import { STORAGE_TIMELINE_V1 } from "@/lib/justice/types";
+
+const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
 
 const intake: JusticeIntake = {
   company_name: "Acme",
@@ -23,6 +27,25 @@ const intake: JusticeIntake = {
   purchase_or_signup: "Widget",
   already_contacted: "no",
 };
+
+function createSessionStorageMock() {
+  const storage: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => storage[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      storage[key] = value;
+    }),
+    storage,
+  };
+}
+
+describe("labelForTimelineEntryType", () => {
+  it("maps BBB practice timeline entry types", () => {
+    expect(labelForTimelineEntryType("bbb_practice_started")).toBe("BBB practice started");
+    expect(labelForTimelineEntryType("bbb_practice_completed")).toBe("BBB practice completed");
+    expect(labelForTimelineEntryType("ftc_practice_started")).toBeUndefined();
+  });
+});
 
 describe("intakeToMockBbbUserData", () => {
   it("maps intake to mock BBB page field names", () => {
@@ -41,13 +64,15 @@ describe("intakeToMockBbbUserData", () => {
 
 describe("runBbbPractice", () => {
   const fetchMock = vi.fn();
-  const sessionStorageMock = { setItem: vi.fn(), getItem: vi.fn() };
+  let sessionStorageMock: ReturnType<typeof createSessionStorageMock>;
 
   beforeEach(() => {
+    sessionStorageMock = createSessionStorageMock();
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { location: { origin: "https://example.com" } });
     vi.stubGlobal("sessionStorage", sessionStorageMock);
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    vi.stubGlobal("crypto", { randomUUID: () => "test-timeline-id" });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/submit-form")) {
         return new Response(JSON.stringify({ fillResult: { storageSkipped: false } }), {
@@ -57,6 +82,13 @@ describe("runBbbPractice", () => {
       }
       if (url.includes("/api/justice/events")) {
         return new Response("{}", { status: 200 });
+      }
+      if (url.includes("/api/justice/cases/") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as { timeline?: unknown };
+        return new Response(JSON.stringify({ timeline: body.timeline ?? [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }
       return new Response("{}", { status: 404 });
     });
@@ -85,7 +117,7 @@ describe("runBbbPractice", () => {
   it("submits the mock BBB page URL with mapped field values", async () => {
     const result = await runBbbPractice({
       intake,
-      caseId: "550e8400-e29b-41d4-a716-446655440000",
+      caseId: CASE_ID,
       isLoaded: true,
       isSignedIn: true,
     });
@@ -114,5 +146,78 @@ describe("runBbbPractice", () => {
 
     const startedEvent = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/justice/events"));
     expect(startedEvent).toBeDefined();
+  });
+
+  it("appends and syncs started/completed timeline events on success", async () => {
+    const result = await runBbbPractice({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+    });
+
+    expect(result.ok).toBe(true);
+
+    const timeline = readTimeline(CASE_ID);
+    expect(timeline.map((entry) => entry.type)).toEqual(["bbb_practice_started", "bbb_practice_completed"]);
+    expect(timeline[0]?.label).toBe("BBB practice started");
+    expect(timeline[1]?.label).toBe("BBB practice completed");
+
+    const patchCalls = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/api/justice/cases/") && init?.method === "PATCH"
+    );
+    expect(patchCalls).toHaveLength(2);
+    const firstPatchTimeline = JSON.parse(String(patchCalls[0]?.[1]?.body)).timeline as Array<{ type: string }>;
+    const secondPatchTimeline = JSON.parse(String(patchCalls[1]?.[1]?.body)).timeline as Array<{ type: string }>;
+    expect(firstPatchTimeline.map((entry) => entry.type)).toEqual(["bbb_practice_started"]);
+    expect(secondPatchTimeline.map((entry) => entry.type)).toEqual([
+      "bbb_practice_started",
+      "bbb_practice_completed",
+    ]);
+    expect(sessionStorageMock.storage[STORAGE_TIMELINE_V1]).toBeDefined();
+  });
+
+  it("appends failure completed timeline event and syncs when submit fails", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/submit-form")) {
+        return new Response(JSON.stringify({ error: "Submit failed" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/api/justice/events")) {
+        return new Response("{}", { status: 200 });
+      }
+      if (url.includes("/api/justice/cases/") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as { timeline?: unknown };
+        return new Response(JSON.stringify({ timeline: body.timeline ?? [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const result = await runBbbPractice({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("Submit failed");
+    }
+
+    const timeline = readTimeline(CASE_ID);
+    expect(timeline.map((entry) => entry.type)).toEqual(["bbb_practice_started", "bbb_practice_completed"]);
+    expect(timeline[1]?.detail).toBe("Did not complete");
+
+    const patchCalls = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/api/justice/cases/") && init?.method === "PATCH"
+    );
+    expect(patchCalls).toHaveLength(2);
   });
 });

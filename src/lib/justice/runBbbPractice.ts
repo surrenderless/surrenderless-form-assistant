@@ -3,7 +3,8 @@ import {
   buildMockBbbPracticeSubmissionUrl,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
 } from "@/lib/justice/assistedSubmissionLane";
-import type { JusticeIntake } from "@/lib/justice/types";
+import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
 export const BBB_MOCK_COMPLETED_SESSION_KEY = "justice_bbb_mock_completed";
 
@@ -35,6 +36,33 @@ async function logBbbPracticeEvent(event_name: string, payload: Record<string, u
   }
 }
 
+async function syncBbbPracticeTimelineToServer(
+  caseId: string | null,
+  isLoaded: boolean,
+  isSignedIn: boolean,
+  logLabel: string
+): Promise<void> {
+  if (!caseId || !isLoaded || !isSignedIn) return;
+  try {
+    const timeline = readTimeline(caseId);
+    const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timeline }),
+    });
+    if (res.ok) {
+      const payload = (await res.json()) as { timeline?: unknown };
+      if (Array.isArray(payload.timeline)) {
+        replaceTimelineForCase(caseId, payload.timeline as TimelineEntry[]);
+      }
+    } else {
+      console.warn(`${logLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
+    }
+  } catch (e) {
+    console.warn(`${logLabel}: PATCH /api/justice/cases/[id] error`, e);
+  }
+}
+
 export type RunBbbPracticeParams = {
   intake: JusticeIntake;
   caseId: string | null;
@@ -56,13 +84,13 @@ export type RunBbbPracticeFailure = {
 
 export type RunBbbPracticeResult = RunBbbPracticeSuccess | RunBbbPracticeFailure;
 
-/** Run internal mock BBB practice autofill (events, session flag). Timeline types ship in a later slice. */
+/** Run internal mock BBB practice autofill (timeline, events, session flag). */
 export async function runBbbPractice({
   intake,
   caseId,
-  isLoaded: _isLoaded,
-  isSignedIn: _isSignedIn,
-  logLabel: _logLabel = "justice bbb-practice",
+  isLoaded,
+  isSignedIn,
+  logLabel = "justice bbb-practice",
 }: RunBbbPracticeParams): Promise<RunBbbPracticeResult> {
   if (typeof window === "undefined") {
     return { ok: false, error: "Practice autofill is only available in the browser." };
@@ -71,6 +99,10 @@ export async function runBbbPractice({
   const mockUrl = buildMockBbbPracticeSubmissionUrl(window.location.origin);
   const userData = intakeToMockBbbUserData(intake);
 
+  if (caseId) {
+    appendTimelineEvent(caseId, { type: "bbb_practice_started", label: "BBB practice started" });
+  }
+  await syncBbbPracticeTimelineToServer(caseId, isLoaded, isSignedIn, logLabel);
   await logBbbPracticeEvent("bbb_mock_lane_started", {
     case_id: caseId,
     mock_path: MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
@@ -91,6 +123,14 @@ export async function runBbbPractice({
     await logBbbPracticeEvent("bbb_mock_lane_completed", { case_id: caseId, outcome: "success" });
     sessionStorage.setItem(BBB_MOCK_COMPLETED_SESSION_KEY, "1");
     const fillResult = (data as { fillResult?: { storageSkipped?: boolean } }).fillResult;
+    if (caseId) {
+      appendTimelineEvent(caseId, {
+        type: "bbb_practice_completed",
+        label: "BBB practice completed",
+        detail: fillResult?.storageSkipped ? "Screenshot storage skipped locally" : undefined,
+      });
+    }
+    await syncBbbPracticeTimelineToServer(caseId, isLoaded, isSignedIn, logLabel);
 
     return {
       ok: true,
@@ -104,6 +144,14 @@ export async function runBbbPractice({
       outcome: "failed",
       error: message.slice(0, 200),
     });
+    if (caseId) {
+      appendTimelineEvent(caseId, {
+        type: "bbb_practice_completed",
+        label: "BBB practice completed",
+        detail: "Did not complete",
+      });
+    }
+    await syncBbbPracticeTimelineToServer(caseId, isLoaded, isSignedIn, logLabel);
     return { ok: false, error: message };
   }
 }

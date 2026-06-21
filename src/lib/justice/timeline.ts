@@ -193,6 +193,8 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     ftc_mock_review_opened: "FTC practice opened",
     ftc_mock_lane_started: "FTC practice started",
     ftc_mock_lane_completed: "FTC practice completed",
+    bbb_mock_lane_started: "BBB practice started",
+    bbb_mock_lane_completed: "BBB practice completed",
     bbb_prep_opened: "BBB prep opened",
     state_ag_prep_opened: "State AG prep opened",
     cfpb_prep_opened: "CFPB prep opened",
@@ -203,6 +205,15 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     fcc_complaint_filed: "FCC complaint filed",
   };
   return m[eventName];
+}
+
+/** Default user-facing labels for timeline entry types (when entry.label is missing). */
+export function labelForTimelineEntryType(type: TimelineEntryType): string | undefined {
+  const labels: Partial<Record<TimelineEntryType, string>> = {
+    bbb_practice_started: "BBB practice started",
+    bbb_practice_completed: "BBB practice completed",
+  };
+  return labels[type];
 }
 
 export function appendActionPlanViewedOnce(caseId: string): void {
