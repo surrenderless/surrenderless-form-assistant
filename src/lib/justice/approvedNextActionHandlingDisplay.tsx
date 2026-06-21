@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 import { isChatInlinePrepHref } from "@/lib/justice/chatInlineApprovedPrep";
+import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 
 /** Read-only / interactive copy for approved-next-action handling request tracking. */
 
@@ -143,7 +144,11 @@ export function resolveHandlingTrackingContextualLink(input: {
   if (derivedStep === HANDLING_TRACKING_STEP_OPEN_APPROVED) {
     const href = input.approvedNextAction?.href?.trim() || "/justice/packet";
     if (input.surface === "packet" && href.startsWith("/justice/packet")) return null;
-    if (input.surface === "chat-ai" && input.prepInlineInChat && isChatInlinePrepHref(href)) {
+    if (
+      input.surface === "chat-ai" &&
+      input.prepInlineInChat &&
+      (isChatInlinePrepHref(href) || resolveAssistedSubmissionLaneForApprovedHref(href) !== undefined)
+    ) {
       return null;
     }
     return {
