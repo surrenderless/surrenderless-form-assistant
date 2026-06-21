@@ -415,9 +415,20 @@ describe("shouldShowChatInlineFtcPracticePrep", () => {
     ).toBe(false);
   });
 
-  it("returns false for reserved BBB lane href until runnable", () => {
+  it("keeps FTC mock practice prep lane-specific while generic gate accepts runnable BBB href", () => {
     expect(
       shouldShowChatInlineFtcPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineFtcMockPracticePrep(
         practicePrepInput({
           approvedNextAction: {
             label: "BBB practice",
@@ -504,7 +515,7 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(false);
   });
 
-  it("keeps BBB mock practice prep hidden while non-runnable", () => {
+  it("shows BBB mock practice prep when all gates pass", () => {
     expect(
       shouldShowChatInlineBbbMockPracticePrep(
         practicePrepInput({
@@ -515,7 +526,7 @@ describe("assisted mock practice lane prep and summary", () => {
           },
         })
       )
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldShowChatInlineBbbMockReadOnlyPrep({
         isActiveUuidCase: true,
@@ -524,6 +535,33 @@ describe("assisted mock practice lane prep and summary", () => {
         href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
         handlingRequested: false,
       })
+    ).toBe(true);
+  });
+
+  it("keeps BBB mock practice prep hidden when gates fail", () => {
+    expect(
+      shouldShowChatInlineBbbMockPracticePrep(
+        practicePrepInput({
+          isSignedIn: false,
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineBbbMockPracticePrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+            handling_requested_at: "2026-06-16T12:00:00.000Z",
+          },
+        })
+      )
     ).toBe(false);
   });
 
@@ -630,9 +668,18 @@ describe("shouldShowChatInlineFtcReadOnlyPrep", () => {
     ).toBe(false);
   });
 
-  it("returns false for reserved BBB lane href until runnable", () => {
+  it("passes generic read-only gate for runnable BBB href; mock FTC gate stays lane-specific", () => {
     expect(
       shouldShowChatInlineFtcReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineFtcMockReadOnlyPrep({
         isActiveUuidCase: true,
         preparedPacketApproved: true,
         status: "completed",
