@@ -2,6 +2,7 @@ import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionSta
 import {
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import type {
   SubmissionAttemptExecutionContext,
@@ -155,6 +156,17 @@ export function isLastAssistedSubmissionAttemptFailed(
   snapshot: LastAssistedSubmissionAttemptSnapshot
 ): boolean {
   return snapshot.outcome === "failed";
+}
+
+/** True when a stored assisted submission snapshot matches the active assisted lane for href. */
+export function isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+  snapshot: LastAssistedSubmissionAttemptSnapshot | null | undefined,
+  approvedHref: string | undefined
+): boolean {
+  if (!snapshot) return false;
+  const activeLaneId = resolveAssistedSubmissionLaneForApprovedHref(approvedHref)?.id;
+  if (!activeLaneId) return false;
+  return snapshot.kind === activeLaneId;
 }
 
 export function readLastAssistedSubmissionAttemptFromClientState(

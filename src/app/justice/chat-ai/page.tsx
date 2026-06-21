@@ -106,6 +106,7 @@ import { executeAssistedBbbPracticeSubmission } from "@/lib/justice/executeAssis
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import { LastAssistedSubmissionAttemptSummaryReadOnly } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
 import {
+  isLastAssistedSubmissionAttemptVisibleForApprovedHref,
   readLastAssistedSubmissionAttemptFromClientState,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
@@ -969,6 +970,7 @@ function ChatInlineAssistedPracticeBlock({
   storageSkipped,
   error,
   lastAssistedSubmissionAttempt,
+  approvedHref,
   onRunPractice,
 }: {
   laneId: AssistedMockPracticeLaneId;
@@ -980,6 +982,7 @@ function ChatInlineAssistedPracticeBlock({
   storageSkipped: boolean;
   error: string | null;
   lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
+  approvedHref: string | undefined;
   onRunPractice: () => void;
 }) {
   const ui = assistedMockPracticeUi(laneId);
@@ -1022,8 +1025,11 @@ function ChatInlineAssistedPracticeBlock({
           {storageSkipped ? " Screenshot storage was skipped locally." : ""}
         </p>
       ) : null}
-      {lastAssistedSubmissionAttempt ? (
-        <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt} />
+      {isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+        lastAssistedSubmissionAttempt,
+        approvedHref
+      ) ? (
+        <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt!} />
       ) : null}
       {ui.optionalPageHref && ui.optionalPageLabel ? (
         <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
@@ -4266,9 +4272,12 @@ export default function JusticeChatAiPage() {
                     })();
                   }}
                 />
-                {ftcPracticeLastAssistedSubmissionAttempt ? (
+                {isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+                  ftcPracticeLastAssistedSubmissionAttempt,
+                  approvedNextAction?.href
+                ) ? (
                   <LastAssistedSubmissionAttemptSummaryReadOnly
-                    snapshot={ftcPracticeLastAssistedSubmissionAttempt}
+                    snapshot={ftcPracticeLastAssistedSubmissionAttempt!}
                   />
                 ) : null}
               </>
@@ -4297,9 +4306,12 @@ export default function JusticeChatAiPage() {
                     })();
                   }}
                 />
-                {ftcPracticeLastAssistedSubmissionAttempt ? (
+                {isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+                  ftcPracticeLastAssistedSubmissionAttempt,
+                  approvedNextAction?.href
+                ) ? (
                   <LastAssistedSubmissionAttemptSummaryReadOnly
-                    snapshot={ftcPracticeLastAssistedSubmissionAttempt}
+                    snapshot={ftcPracticeLastAssistedSubmissionAttempt!}
                   />
                 ) : null}
               </>
@@ -4314,7 +4326,15 @@ export default function JusticeChatAiPage() {
                 practiceSuccess={ftcPracticeSuccess}
                 storageSkipped={ftcPracticeStorageSkipped}
                 error={ftcPracticeError}
-                lastAssistedSubmissionAttempt={ftcPracticeLastAssistedSubmissionAttempt}
+                lastAssistedSubmissionAttempt={
+                  isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+                    ftcPracticeLastAssistedSubmissionAttempt,
+                    approvedNextAction?.href
+                  )
+                    ? ftcPracticeLastAssistedSubmissionAttempt
+                    : null
+                }
+                approvedHref={approvedNextAction?.href}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
               />
             ) : null}
@@ -4328,7 +4348,15 @@ export default function JusticeChatAiPage() {
                 practiceSuccess={ftcPracticeSuccess}
                 storageSkipped={ftcPracticeStorageSkipped}
                 error={ftcPracticeError}
-                lastAssistedSubmissionAttempt={ftcPracticeLastAssistedSubmissionAttempt}
+                lastAssistedSubmissionAttempt={
+                  isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+                    ftcPracticeLastAssistedSubmissionAttempt,
+                    approvedNextAction?.href
+                  )
+                    ? ftcPracticeLastAssistedSubmissionAttempt
+                    : null
+                }
+                approvedHref={approvedNextAction?.href}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
               />
             ) : null}
