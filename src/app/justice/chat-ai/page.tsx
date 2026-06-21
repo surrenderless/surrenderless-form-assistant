@@ -77,6 +77,7 @@ import {
   getChatInlineApprovedPrepContent,
   resolveAssistedPracticeSubmissionLaneId,
   shouldShowChatInlineBbbMockPracticePrep,
+  shouldShowChatInlineBbbMockReadOnlyPrep,
   shouldShowChatInlineFtcMockPracticePrep,
   shouldShowChatInlineFtcMockReadOnlyPrep,
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
@@ -633,9 +634,9 @@ function ChatInlineApprovedPrepActionBlock({
   messageText: string;
   helperText: string;
   copyButtonLabel: string;
-  optionalPageHref: string;
-  optionalPageLabel: string;
-  optionalPageNote: string;
+  optionalPageHref?: string;
+  optionalPageLabel?: string;
+  optionalPageNote?: string;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   copyHint: string | null;
@@ -682,18 +683,22 @@ function ChatInlineApprovedPrepActionBlock({
           <span className="text-[11px] text-emerald-800 dark:text-emerald-200">{copyHint}</span>
         ) : null}
       </div>
-      <p className="text-xs text-emerald-800 dark:text-emerald-200">
-        <Link
-          href={optionalPageHref}
-          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-        >
-          {optionalPageLabel}
-        </Link>
-        <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
-          {" "}
-          ({optionalPageNote})
-        </span>
-      </p>
+      {optionalPageHref && optionalPageLabel ? (
+        <p className="text-xs text-emerald-800 dark:text-emerald-200">
+          <Link
+            href={optionalPageHref}
+            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+          >
+            {optionalPageLabel}
+          </Link>
+          {optionalPageNote ? (
+            <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
+              {" "}
+              ({optionalPageNote})
+            </span>
+          ) : null}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -3788,6 +3793,15 @@ export default function JusticeChatAiPage() {
       href: approvedNextAction?.href,
       handlingRequested: handlingRequestedForApprovedPrep,
     });
+  const showInlineBbbReadOnlyPrep =
+    Boolean(approvedNextAction) &&
+    shouldShowChatInlineBbbMockReadOnlyPrep({
+      isActiveUuidCase: isActiveUuidCaseChat,
+      preparedPacketApproved,
+      status: approvedNextAction?.status,
+      href: approvedNextAction?.href,
+      handlingRequested: handlingRequestedForApprovedPrep,
+    });
   const prepInlineInChat =
     showInlineApprovedPrep ||
     showInlinePaymentDisputePrep ||
@@ -3795,9 +3809,15 @@ export default function JusticeChatAiPage() {
     showInlineFtcPracticePrep ||
     showInlineBbbPracticePrep ||
     showInlineFtcReadOnlyPrep ||
+    showInlineBbbReadOnlyPrep ||
     showInlinePacketFallbackPrep;
   const ftcPracticeSummaryLines = useMemo(() => {
-    if (!showInlineFtcPracticePrep && !showInlineFtcReadOnlyPrep && !showInlineBbbPracticePrep) {
+    if (
+      !showInlineFtcPracticePrep &&
+      !showInlineFtcReadOnlyPrep &&
+      !showInlineBbbPracticePrep &&
+      !showInlineBbbReadOnlyPrep
+    ) {
       return [];
     }
     return buildChatInlineAssistedPracticeSummaryLines(
@@ -3808,6 +3828,7 @@ export default function JusticeChatAiPage() {
     showInlineFtcPracticePrep,
     showInlineFtcReadOnlyPrep,
     showInlineBbbPracticePrep,
+    showInlineBbbReadOnlyPrep,
     approvedNextAction?.href,
     parts,
   ]);
@@ -4217,6 +4238,37 @@ export default function JusticeChatAiPage() {
                   optionalPageHref={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
                   optionalPageLabel="Open full FTC practice page"
                   optionalPageNote="optional — evidence list"
+                  expanded={prepMessageExpanded}
+                  onExpandedChange={setPrepMessageExpanded}
+                  copyHint={prepCopyHint}
+                  onCopy={() => {
+                    void (async () => {
+                      const text = ftcPracticeSummaryLines.join("\n");
+                      if (!text) return;
+                      try {
+                        await navigator.clipboard.writeText(text);
+                        setPrepCopyHint("Copied to clipboard.");
+                        window.setTimeout(() => setPrepCopyHint(null), 2500);
+                      } catch {
+                        setPrepCopyHint("Copy failed — select the text and copy manually.");
+                      }
+                    })();
+                  }}
+                />
+                {ftcPracticeLastAssistedSubmissionAttempt ? (
+                  <LastAssistedSubmissionAttemptSummaryReadOnly
+                    snapshot={ftcPracticeLastAssistedSubmissionAttempt}
+                  />
+                ) : null}
+              </>
+            ) : null}
+            {showInlineBbbReadOnlyPrep ? (
+              <>
+                <ChatInlineApprovedPrepActionBlock
+                  title={approvedNextAction?.label?.trim() || "BBB practice complaint"}
+                  messageText={ftcPracticeSummaryLines.join("\n")}
+                  helperText="Practice complaint summary from your case — copy for reference. This is not a real BBB filing. Surrenderless does not file for you."
+                  copyButtonLabel="Copy summary"
                   expanded={prepMessageExpanded}
                   onExpandedChange={setPrepMessageExpanded}
                   copyHint={prepCopyHint}
