@@ -23,6 +23,7 @@ import {
   mergeClientStateWithLastAssistedSubmissionAttempt,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
+import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -284,7 +285,8 @@ async function completeApprovedNextActionAfterAssistedRecording(
   fetchFn: typeof fetch,
   logLabel: string
 ): Promise<JusticeApprovedNextAction> {
-  const { caseId, isSignedIn, preparedPacketApproved, onApprovedNextActionCompleted } = params;
+  const { caseId, isSignedIn, preparedPacketApproved, intake, onApprovedNextActionCompleted } =
+    params;
 
   if (approvedNextActionForSubmission.status === "completed") {
     return approvedNextActionForSubmission;
@@ -294,10 +296,26 @@ async function completeApprovedNextActionAfterAssistedRecording(
     return approvedNextActionForSubmission;
   }
 
-  const { withTracking, local } = buildCompletedApprovedNextAction(approvedNextActionForSubmission);
-  onApprovedNextActionCompleted?.(local);
-  await persistApprovedNextActionCompletedUpdate(caseId, withTracking, logLabel, fetchFn);
-  return local;
+  const completedHref = approvedNextActionForSubmission.href?.trim() ?? "";
+  const { withTracking: completedWithTracking, local: completedLocal } =
+    buildCompletedApprovedNextAction(approvedNextActionForSubmission);
+  onApprovedNextActionCompleted?.(completedLocal);
+
+  const advanced = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
+    existing: completedWithTracking,
+  });
+  if (
+    advanced?.href?.trim() &&
+    advanced.href.trim() !== completedHref &&
+    advanced.status === "approved"
+  ) {
+    const resultLocal = omitClearedHandlingRequestNoteFromApprovedNextAction(advanced);
+    await persistApprovedNextActionCompletedUpdate(caseId, advanced, logLabel, fetchFn);
+    return resultLocal;
+  }
+
+  await persistApprovedNextActionCompletedUpdate(caseId, completedWithTracking, logLabel, fetchFn);
+  return completedLocal;
 }
 
 function buildFailedAssistedSubmissionSnapshot(

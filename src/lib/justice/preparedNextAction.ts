@@ -4,6 +4,14 @@ import {
 } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction, JusticeDestination } from "@/lib/justice/types";
 
+/** Real BBB complaint prep (distinct from mock practice assisted lane). */
+const REAL_BBB_COMPLAINT_PREP_HREF = "/justice/bbb";
+
+type PickFirstRoutablePreparedActionOptions = {
+  /** After BBB mock practice only: allow the real BBB manual destination. */
+  allowRealBbbManualAfterMockPractice?: boolean;
+};
+
 export type PreparedNextActionPick = {
   detailHref: string | null;
   stepLabel: string;
@@ -29,7 +37,8 @@ export function pickPreparedNextAction(params: {
 
 function pickFirstRoutablePreparedAction(
   destinations: JusticeDestination[],
-  skipHref?: string
+  skipHref?: string,
+  options: PickFirstRoutablePreparedActionOptions = {}
 ): PreparedNextActionPick {
   const skip = skipHref?.trim();
   const firstRoutableDest = destinations.find(
@@ -44,6 +53,22 @@ function pickFirstRoutablePreparedAction(
       detailHref: firstRoutableDest.internalRoute,
       stepLabel: firstRoutableDest.label,
     };
+  }
+
+  if (options.allowRealBbbManualAfterMockPractice) {
+    const realBbbDest = destinations.find(
+      (d) =>
+        d.id === "bbb" &&
+        d.internalRoute === REAL_BBB_COMPLAINT_PREP_HREF &&
+        d.internalRoute !== skip &&
+        d.status === "manual"
+    );
+    if (realBbbDest?.internalRoute) {
+      return {
+        detailHref: realBbbDest.internalRoute,
+        stepLabel: realBbbDest.label,
+      };
+    }
   }
 
   return {
@@ -91,14 +116,26 @@ export function pickNextPreparedActionAfterCompleted(params: {
   if (!completed) return null;
 
   const downstreamDestinations = destinationsAfterCompletedPriority(destinations, completed);
+  const pickOptions: PickFirstRoutablePreparedActionOptions = {
+    allowRealBbbManualAfterMockPractice:
+      completed === ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  };
 
   if (!contacted) {
     if (completed !== "/justice/merchant") return null;
-    const next = pickFirstRoutablePreparedAction(downstreamDestinations, completed);
+    const next = pickFirstRoutablePreparedAction(
+      downstreamDestinations,
+      completed,
+      pickOptions
+    );
     return next.detailHref ? next : null;
   }
 
-  const next = pickFirstRoutablePreparedAction(downstreamDestinations, completed);
+  const next = pickFirstRoutablePreparedAction(
+    downstreamDestinations,
+    completed,
+    pickOptions
+  );
   return next.detailHref ? next : null;
 }
 
