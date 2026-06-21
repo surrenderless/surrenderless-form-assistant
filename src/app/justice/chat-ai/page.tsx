@@ -51,6 +51,7 @@ import {
   chatOutcomeTrackingFormOpen,
   chatOutcomeTrackingSaveAllowed,
   deriveHandlingClosureStepAfterFilingConfirmation,
+  deriveManualActionTrackingFilingsState,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
@@ -1304,8 +1305,9 @@ function deriveChatHandlingTrackingLine(input: {
   const readyForExternalManualAction =
     readyForManualReview && input.evidenceCount > 0;
   const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
-  const hasFilingRecord = input.filings.length > 0;
-  const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
+  const { hasFilingRecord, hasConfirmationOnFile } = deriveManualActionTrackingFilingsState(
+    input.filings
+  );
   return deriveChatManualActionNextStep({
     readyForExternalManualAction,
     actionOpened,
