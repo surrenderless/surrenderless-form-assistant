@@ -11,6 +11,7 @@ import {
   commitIntakeToSessionAndServer,
   shouldRouteToChatAiAfterIntakeCommit,
 } from "@/lib/justice/commitIntakeToSessionAndServer";
+import { isEditingActiveLocalJusticeCase } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 import { cfpbLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
 
@@ -120,11 +121,14 @@ export default function JusticeIntakePage() {
           : {}),
       };
 
+      const isEditingActiveCase = isEditingActiveLocalJusticeCase();
+
       const commitResult = await commitIntakeToSessionAndServer({
         intake,
         isLoaded,
         isSignedIn: Boolean(isSignedIn),
         commitLogLabel: "justice intake",
+        mode: isEditingActiveCase ? "update" : "create",
       });
 
       router.push(
@@ -132,6 +136,7 @@ export default function JusticeIntakePage() {
           commitResult,
           isLoaded,
           isSignedIn: Boolean(isSignedIn),
+          isUpdatingExistingCase: isEditingActiveCase,
         })
           ? "/justice/chat-ai"
           : "/justice/preview"

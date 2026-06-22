@@ -6,6 +6,7 @@ import {
   STORAGE_INTAKE,
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
+import { validate as isUuid } from "uuid";
 
 export type JusticeCaseListRow = {
   id?: string;
@@ -25,6 +26,14 @@ export function readValidLocalJusticeIntake(): JusticeIntake | null {
   } catch {
     return null;
   }
+}
+
+/** True when session has valid intake and a UUID case id (structured-form / chat-ai update commit). */
+export function isEditingActiveLocalJusticeCase(): boolean {
+  if (typeof window === "undefined") return false;
+  if (!readValidLocalJusticeIntake()) return false;
+  const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+  return isUuid(caseId);
 }
 
 /**
