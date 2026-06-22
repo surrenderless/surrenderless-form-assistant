@@ -8,6 +8,7 @@ import {
   filingsForApprovedActionManualTracking,
   filingsForManualActionTracking,
   findApprovedActionFilingMissingConfirmation,
+  handlingWorkbenchOutcomeTrackingFormVisible,
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
@@ -117,6 +118,71 @@ describe("chatOutcomeTrackingFormOpen", () => {
     expect(
       chatOutcomeTrackingFormOpen({ outcome_note: "Resolved.", follow_up_needed: true })
     ).toBe(true);
+  });
+});
+
+describe("handlingWorkbenchOutcomeTrackingFormVisible", () => {
+  const handlingRequestedApproved = {
+    status: "approved" as const,
+    handling_requested_at: "2026-06-16T12:00:00.000Z",
+  };
+
+  it("shows the outcome form for handling-requested approved actions after filing gates are satisfied", () => {
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        filingsReady: true,
+        action: handlingRequestedApproved,
+      })
+    ).toBe(true);
+  });
+
+  it("shows the outcome form for completed actions that still require outcome recording", () => {
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        filingsReady: true,
+        action: { status: "completed" },
+      })
+    ).toBe(true);
+  });
+
+  it("hides the outcome form when acknowledgement is the derived next step", () => {
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+        filingsReady: true,
+        action: {
+          ...handlingRequestedApproved,
+          outcome_note: "Filed with BBB confirmation on file.",
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("hides the outcome form when filing or confirmation gates are not yet satisfied", () => {
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: "Add filing records from the case packet after external submission.",
+        filingsReady: true,
+        action: handlingRequestedApproved,
+      })
+    ).toBe(false);
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep:
+          "Add or edit the filing confirmation from the case packet after external submission.",
+        filingsReady: true,
+        action: handlingRequestedApproved,
+      })
+    ).toBe(false);
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        filingsReady: false,
+        action: handlingRequestedApproved,
+      })
+    ).toBe(false);
   });
 });
 

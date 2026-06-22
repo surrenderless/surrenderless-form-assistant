@@ -220,6 +220,22 @@ export function chatOutcomeTrackingFormOpen(action: JusticeApprovedNextAction): 
   return action.follow_up_needed === true;
 }
 
+/**
+ * Whether the handling workbench should show the outcome/follow-up capture form.
+ * Visible when filing gates are satisfied and the derived next step requires outcome recording.
+ */
+export function handlingWorkbenchOutcomeTrackingFormVisible(input: {
+  manualActionNextStep: string | null;
+  filingsReady: boolean;
+  action: JusticeApprovedNextAction;
+}): boolean {
+  if (!input.filingsReady) return false;
+  if (input.manualActionNextStep !== HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
+    return false;
+  }
+  return chatOutcomeTrackingFormOpen(input.action);
+}
+
 /** Whether chat-ai may persist outcome/follow-up fields for the current action. */
 export function chatOutcomeTrackingSaveAllowed(
   action: Pick<JusticeApprovedNextAction, "status" | "handling_requested_at">
