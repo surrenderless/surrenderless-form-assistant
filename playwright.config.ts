@@ -17,8 +17,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
-    url: "http://127.0.0.1:3000",
+    command: process.env.CI ? "npm run start" : "npm run dev",
+    url: "http://127.0.0.1:3000/mock/ftc-complaint",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
