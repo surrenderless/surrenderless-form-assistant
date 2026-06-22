@@ -10,6 +10,8 @@ const REAL_BBB_COMPLAINT_PREP_HREF = "/justice/bbb";
 type PickFirstRoutablePreparedActionOptions = {
   /** After BBB mock practice only: allow the real BBB manual destination. */
   allowRealBbbManualAfterMockPractice?: boolean;
+  /** After real BBB completion only: allow the first downstream manual destination. */
+  allowManualAfterRealBbbCompletion?: boolean;
 };
 
 export type PreparedNextActionPick = {
@@ -71,6 +73,21 @@ function pickFirstRoutablePreparedAction(
     }
   }
 
+  if (options.allowManualAfterRealBbbCompletion) {
+    const manualDest = destinations.find(
+      (d) =>
+        d.internalRoute &&
+        d.internalRoute !== skip &&
+        d.status === "manual"
+    );
+    if (manualDest?.internalRoute) {
+      return {
+        detailHref: manualDest.internalRoute,
+        stepLabel: manualDest.label,
+      };
+    }
+  }
+
   return {
     detailHref: null,
     stepLabel: "Prepared case review",
@@ -119,6 +136,7 @@ export function pickNextPreparedActionAfterCompleted(params: {
   const pickOptions: PickFirstRoutablePreparedActionOptions = {
     allowRealBbbManualAfterMockPractice:
       completed === ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+    allowManualAfterRealBbbCompletion: completed === REAL_BBB_COMPLAINT_PREP_HREF,
   };
 
   if (!contacted) {
