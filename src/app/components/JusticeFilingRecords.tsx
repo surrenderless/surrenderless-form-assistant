@@ -3,6 +3,10 @@
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import {
+  isFilingRecordDestinationLocked,
+  resolveFilingRecordSubmitDestination,
+} from "@/lib/justice/justiceFilingRecordDestination";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
@@ -22,9 +26,16 @@ function readCaseId(): string {
 export type JusticeFilingRecordsProps = {
   /** Called after list load or successful add/delete so parents (e.g. packet) can refresh bundle text. */
   onFilingsChange?: () => void;
+  /** When set, destination is read-only and always submitted as this canonical value. */
+  lockedDestination?: string;
 };
 
-export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingRecordsProps) {
+export default function JusticeFilingRecords({
+  onFilingsChange,
+  lockedDestination,
+}: JusticeFilingRecordsProps) {
+  const destinationLocked = isFilingRecordDestinationLocked(lockedDestination);
+  const lockedDestinationValue = lockedDestination?.trim() ?? "";
   const { isLoaded, isSignedIn } = useAuth();
   const [caseId, setCaseId] = useState("");
   const [items, setItems] = useState<JusticeCaseFilingRow[]>([]);
@@ -94,16 +105,27 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
     void refreshList();
   }, [caseId, isLoaded, isSignedIn, refreshList]);
 
+  useEffect(() => {
+    if (destinationLocked) {
+      setDestination(lockedDestinationValue);
+    }
+  }, [destinationLocked, lockedDestinationValue]);
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const cid = readCaseId();
     if (!cid || !isSignedIn) return;
+    const submitDestination = resolveFilingRecordSubmitDestination(
+      lockedDestination,
+      destination
+    );
+    if (!submitDestination) return;
     setAdding(true);
     setAddError(null);
     try {
       const body: Record<string, unknown> = {
         case_id: cid,
-        destination: destination.trim(),
+        destination: submitDestination,
       };
       const fa = filedAt.trim();
       if (fa) body.filed_at = fa;
@@ -128,7 +150,7 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
         return;
       }
       applyServerTimelineFromResponse(cid, payload);
-      setDestination("");
+      setDestination(destinationLocked ? lockedDestinationValue : "");
       setFiledAt("");
       setConfirmationNumber("");
       setFilingUrl("");
@@ -167,7 +189,9 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
   function startEdit(row: JusticeCaseFilingRow) {
     setEditingId(row.id);
     setEditError(null);
-    setEditDestination(row.destination);
+    setEditDestination(
+      destinationLocked ? lockedDestinationValue : row.destination
+    );
     setEditFiledAt(row.filed_at ?? "");
     setEditConfirmation(row.confirmation_number ?? "");
     setEditFilingUrl(row.filing_url ?? "");
@@ -182,7 +206,7 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
   async function handleSaveEdit(e: React.FormEvent, id: string) {
     e.preventDefault();
     if (!isSignedIn) return;
-    const dest = editDestination.trim();
+    const dest = resolveFilingRecordSubmitDestination(lockedDestination, editDestination);
     if (!dest) {
       setEditError("Destination is required.");
       return;
@@ -244,7 +268,10 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
                 id="filing-destination"
                 className={inputCls}
                 value={destination}
-                onChange={(e) => setDestination(e.target.value)}
+                onChange={(e) => {
+                  if (!destinationLocked) setDestination(e.target.value);
+                }}
+                readOnly={destinationLocked}
                 required
                 maxLength={500}
                 placeholder="e.g. CFPB, BBB, State AG — California"
@@ -309,7 +336,10 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
             {addError ? <p className="text-sm text-red-600 dark:text-red-400">{addError}</p> : null}
             <button
               type="submit"
-              disabled={adding || !destination.trim()}
+              disabled={
+                adding ||
+                !resolveFilingRecordSubmitDestination(lockedDestination, destination)
+              }
               className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
             >
               {adding ? "Adding…" : "Add filing record"}
@@ -344,7 +374,10 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
                             id={`filing-edit-dest-${row.id}`}
                             className={inputCls}
                             value={editDestination}
-                            onChange={(e) => setEditDestination(e.target.value)}
+                            onChange={(e) => {
+                              if (!destinationLocked) setEditDestination(e.target.value);
+                            }}
+                            readOnly={destinationLocked}
                             required
                             maxLength={500}
                             autoComplete="off"
@@ -407,7 +440,13 @@ export default function JusticeFilingRecords({ onFilingsChange }: JusticeFilingR
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
                             type="submit"
-                            disabled={editSaving || !editDestination.trim()}
+                            disabled={
+                              editSaving ||
+                              !resolveFilingRecordSubmitDestination(
+                                lockedDestination,
+                                editDestination
+                              )
+                            }
                             className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
                           >
                             {editSaving ? "Saving…" : "Save changes"}
