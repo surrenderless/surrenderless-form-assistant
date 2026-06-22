@@ -166,7 +166,7 @@ export function resolveHandlingTrackingContextualLink(input: {
       return null;
     }
     if (input.surface === "packet") {
-      return { href: PACKET_FILINGS_HASH, label: "Open filing records" };
+      return null;
     }
     return { href: `/justice/packet${PACKET_FILINGS_HASH}`, label: "Open filing records" };
   }
