@@ -7,11 +7,16 @@ import type { JusticeApprovedNextAction, JusticeDestination } from "@/lib/justic
 /** Real BBB complaint prep (distinct from mock practice assisted lane). */
 const REAL_BBB_COMPLAINT_PREP_HREF = "/justice/bbb";
 
+/** Real State AG complaint prep. */
+const REAL_STATE_AG_PREP_HREF = "/justice/state-ag";
+
 type PickFirstRoutablePreparedActionOptions = {
   /** After BBB mock practice only: allow the real BBB manual destination. */
   allowRealBbbManualAfterMockPractice?: boolean;
   /** After real BBB completion only: allow the first downstream manual destination. */
   allowManualAfterRealBbbCompletion?: boolean;
+  /** After State AG completion only: allow the first downstream manual destination. */
+  allowManualAfterStateAgCompletion?: boolean;
 };
 
 export type PreparedNextActionPick = {
@@ -73,7 +78,7 @@ function pickFirstRoutablePreparedAction(
     }
   }
 
-  if (options.allowManualAfterRealBbbCompletion) {
+  if (options.allowManualAfterRealBbbCompletion || options.allowManualAfterStateAgCompletion) {
     const manualDest = destinations.find(
       (d) =>
         d.internalRoute &&
@@ -137,6 +142,7 @@ export function pickNextPreparedActionAfterCompleted(params: {
     allowRealBbbManualAfterMockPractice:
       completed === ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
     allowManualAfterRealBbbCompletion: completed === REAL_BBB_COMPLAINT_PREP_HREF,
+    allowManualAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
   };
 
   if (!contacted) {
