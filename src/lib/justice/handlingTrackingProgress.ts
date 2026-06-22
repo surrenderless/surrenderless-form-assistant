@@ -236,6 +236,18 @@ export function handlingWorkbenchOutcomeTrackingFormVisible(input: {
   return chatOutcomeTrackingFormOpen(input.action);
 }
 
+/**
+ * Whether a surface should show the handling-request acknowledgment control.
+ * Visible only when the derived next step requires acknowledgement and none is on file.
+ */
+export function handlingClosureAcknowledgmentVisible(input: {
+  manualActionNextStep: string | null;
+  handlingAcknowledgedAt?: string;
+}): boolean {
+  if (input.handlingAcknowledgedAt?.trim()) return false;
+  return input.manualActionNextStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED;
+}
+
 /** Whether chat-ai may persist outcome/follow-up fields for the current action. */
 export function chatOutcomeTrackingSaveAllowed(
   action: Pick<JusticeApprovedNextAction, "status" | "handling_requested_at">
