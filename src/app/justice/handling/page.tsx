@@ -59,6 +59,7 @@ import {
 import {
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
+  handlingClosureAcknowledgmentVisible,
   handlingWorkbenchOutcomeTrackingFormVisible,
   isApprovedActionOpenedForHandlingTracking,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
@@ -629,7 +630,6 @@ function HandlingWorkbenchOperatorNoteSection({
 function HandlingWorkbenchCaseCard({
   item,
   isActiveSessionCase,
-  showMarkAcknowledged,
   compactNavigation,
   handledOpenTriageNoteVariant = "redirect",
   acknowledging,
@@ -649,7 +649,6 @@ function HandlingWorkbenchCaseCard({
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
-  showMarkAcknowledged: boolean;
   /** Nested Handled — open handling request rows (compact nav). */
   compactNavigation?: boolean;
   handledOpenTriageNoteVariant?: "redirect" | "inlineAck";
@@ -725,6 +724,10 @@ function HandlingWorkbenchCaseCard({
     manualActionNextStep,
     filingsReady: filingsReady === true,
     action: next,
+  });
+  const showWorkbenchAcknowledgment = handlingClosureAcknowledgmentVisible({
+    manualActionNextStep,
+    handlingAcknowledgedAt: next.handling_acknowledged_at,
   });
   const companyName = caseRow.intake.company_name.trim();
   const showHandoffCompany = Boolean(companyName && companyName !== title);
@@ -1268,7 +1271,7 @@ function HandlingWorkbenchCaseCard({
             {persistingOpen ? "Saving…" : "Open approved step"}
           </button>
         ) : null}
-        {showMarkAcknowledged ? (
+        {showWorkbenchAcknowledgment ? (
           <button
             type="button"
             disabled={acknowledging}
@@ -1287,7 +1290,7 @@ function HandlingWorkbenchCaseCard({
       <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
         Opens this case in your browser session first.
       </p>
-      {showMarkAcknowledged ? (
+      {showWorkbenchAcknowledgment ? (
         <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
           {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
         </p>
@@ -1965,7 +1968,6 @@ export default function JusticeHandlingWorkbenchPage() {
         key={item.caseRow.id}
         item={item}
         isActiveSessionCase={Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id}
-        showMarkAcknowledged
         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
         onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
         onOpenPacket={() => openPacket(item.caseRow)}
@@ -1992,13 +1994,11 @@ export default function JusticeHandlingWorkbenchPage() {
 
   function renderHandlingWorkbenchCaseCard(item: HandlingWorkbenchItem, keyPrefix: string) {
     const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
-    const showMarkAcknowledged = !item.next.handling_acknowledged_at?.trim();
     return (
       <HandlingWorkbenchCaseCard
         key={`${keyPrefix}-${item.caseRow.id}`}
         item={item}
         isActiveSessionCase={Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id}
-        showMarkAcknowledged={showMarkAcknowledged}
         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
         onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
         onOpenPacket={() => openPacket(item.caseRow)}
@@ -2009,11 +2009,7 @@ export default function JusticeHandlingWorkbenchPage() {
             : undefined
         }
         persistingOpen={persistingApprovedPacketOpenCaseId === item.caseRow.id}
-        onAcknowledge={
-          showMarkAcknowledged
-            ? () => void acknowledgeHandlingRequest(item.caseRow, item.next)
-            : undefined
-        }
+        onAcknowledge={() => void acknowledgeHandlingRequest(item.caseRow, item.next)}
         markingHandled={markingApprovedPacketHandledCaseId === item.caseRow.id}
         onRecordActionHandled={() =>
           void markApprovedPacketActionHandled(item.caseRow, item.next)
@@ -2402,7 +2398,6 @@ export default function JusticeHandlingWorkbenchPage() {
                         isActiveSessionCase={
                           Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
                         }
-                        showMarkAcknowledged
                         compactNavigation
                         handledOpenTriageNoteVariant="inlineAck"
                         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
@@ -2457,7 +2452,6 @@ export default function JusticeHandlingWorkbenchPage() {
                         isActiveSessionCase={
                           Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
                         }
-                        showMarkAcknowledged={false}
                         acknowledging={false}
                         onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
@@ -2627,8 +2621,6 @@ export default function JusticeHandlingWorkbenchPage() {
                 <ul className="mt-3 space-y-3">
                   {followUpHandlingItems.map((item) => {
                     const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
-                    const showMarkAcknowledgedOnFollowUp =
-                      !item.next.handling_acknowledged_at?.trim();
                     return (
                       <HandlingWorkbenchCaseCard
                         key={`follow-up-${item.caseRow.id}`}
@@ -2636,7 +2628,6 @@ export default function JusticeHandlingWorkbenchPage() {
                         isActiveSessionCase={
                           Boolean(sessionCaseId) && sessionCaseId === item.caseRow.id
                         }
-                        showMarkAcknowledged={showMarkAcknowledgedOnFollowUp}
                         acknowledging={acknowledgingHandlingCaseId === item.caseRow.id}
                         onOpenJusticeWorkspace={() => openJusticeWorkspace(item.caseRow)}
                         onOpenPacket={() => openPacket(item.caseRow)}
@@ -2649,10 +2640,8 @@ export default function JusticeHandlingWorkbenchPage() {
                         persistingOpen={
                           persistingApprovedPacketOpenCaseId === item.caseRow.id
                         }
-                        onAcknowledge={
-                          showMarkAcknowledgedOnFollowUp
-                            ? () => void acknowledgeHandlingRequest(item.caseRow, item.next)
-                            : undefined
+                        onAcknowledge={() =>
+                          void acknowledgeHandlingRequest(item.caseRow, item.next)
                         }
                         markingHandled={
                           markingApprovedPacketHandledCaseId === item.caseRow.id
