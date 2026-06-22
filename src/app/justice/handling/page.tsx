@@ -56,6 +56,10 @@ import {
   mergeClientStateWithLastAssistedSubmissionAttempt,
   readLastAssistedSubmissionAttemptFromClientState,
 } from "@/lib/justice/submissionAttemptState";
+import {
+  deriveManualActionTrackingFilingsStateForApprovedAction,
+  isHandlingWorkbenchPostExternalConfirmationFollowUp,
+} from "@/lib/justice/handlingTrackingProgress";
 
 /** Must stay within `GET /api/justice/cases` `MAX_LIST_LIMIT`. */
 const CASES_FETCH_LIMIT = 50;
@@ -253,25 +257,16 @@ function deriveAwaitingHandoffTier(
   return "other";
 }
 
-function handlingCaseHasFilingRecord(savedFilings: JusticeCaseFilingRow[] | undefined): boolean {
-  return (savedFilings?.length ?? 0) > 0;
-}
-
-function handlingCaseHasConfirmationOnFile(savedFilings: JusticeCaseFilingRow[] | undefined): boolean {
-  return Boolean(savedFilings?.some((row) => row.confirmation_number?.trim()));
-}
-
 function isPostExternalConfirmationFollowUpItem(
   item: HandlingWorkbenchItem,
   savedFilings: JusticeCaseFilingRow[] | undefined,
   filingsReady: boolean
 ): boolean {
-  if (!filingsReady) return false;
-  const status = item.next.status;
-  if (status !== "started" && status !== "completed") return false;
-  const hasFilingRecord = handlingCaseHasFilingRecord(savedFilings);
-  const hasConfirmationOnFile = handlingCaseHasConfirmationOnFile(savedFilings);
-  return !hasFilingRecord || !hasConfirmationOnFile;
+  return isHandlingWorkbenchPostExternalConfirmationFollowUp(
+    item.next,
+    savedFilings,
+    filingsReady
+  );
 }
 
 function isoToDateInputValue(iso?: string): string {
@@ -520,11 +515,13 @@ function deriveHandlingManualActionNextStepForItem(
   const readyForExternalManualAction =
     readyForManualReview && (evidenceCount ?? 0) > 0;
   const actionOpened = next.status === "started" || next.status === "completed";
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], next);
   return deriveManualActionNextStep({
     readyForExternalManualAction,
     actionOpened,
-    hasFilingRecord: handlingCaseHasFilingRecord(savedFilings),
-    hasConfirmationOnFile: handlingCaseHasConfirmationOnFile(savedFilings),
+    hasFilingRecord,
+    hasConfirmationOnFile,
     status: next.status,
     outcomeNote: next.outcome_note,
     handlingRequestedAt: next.handling_requested_at,
@@ -701,10 +698,8 @@ function HandlingWorkbenchCaseCard({
       .slice(0, 3)
       .map((d) => d.label);
   }, [caseRow.intake]);
-  const hasFilingRecord = (savedFilings?.length ?? 0) > 0;
-  const hasConfirmationOnFile = Boolean(
-    savedFilings?.some((row) => row.confirmation_number?.trim())
-  );
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], next);
   const showPostExternalFilingNudge =
     next.status === "started" || next.status === "completed";
   const actionOpened = next.status === "started" || next.status === "completed";
@@ -1669,9 +1664,11 @@ export default function JusticeHandlingWorkbenchPage() {
       if (!isPostExternalConfirmationFollowUpItem(item, savedFilings, filingsReady)) {
         continue;
       }
-      if (!handlingCaseHasFilingRecord(savedFilings)) {
+      const { hasFilingRecord, hasConfirmationOnFile } =
+        deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], item.next);
+      if (!hasFilingRecord) {
         noFilingRecorded.push(item);
-      } else {
+      } else if (!hasConfirmationOnFile) {
         noConfirmationOnFile.push(item);
       }
     }

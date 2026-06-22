@@ -10,6 +10,7 @@ import {
   findApprovedActionFilingMissingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
+  isHandlingWorkbenchPostExternalConfirmationFollowUp,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
@@ -671,5 +672,73 @@ describe("canonicalFilingDestinationForApprovedActionHref", () => {
     expect(canonicalFilingDestinationForApprovedActionHref("/justice/cfpb")).toBeUndefined();
     expect(canonicalFilingDestinationForApprovedActionHref(undefined)).toBeUndefined();
     expect(canonicalFilingDestinationForApprovedActionHref("   ")).toBeUndefined();
+  });
+});
+
+describe("isHandlingWorkbenchPostExternalConfirmationFollowUp", () => {
+  const realBbbFilingConfirmed = {
+    destination: "Better Business Bureau",
+    confirmation_number: "BBB-REAL-123",
+  };
+  const demandLetterApprovedAction = {
+    href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+    label: "Small claims / demand letter",
+    status: "started" as const,
+  };
+
+  it("returns false when filings are not ready or the action is not opened", () => {
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        demandLetterApprovedAction,
+        [realBbbFilingConfirmed],
+        false
+      )
+    ).toBe(false);
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        { ...demandLetterApprovedAction, status: "approved" },
+        [realBbbFilingConfirmed],
+        true
+      )
+    ).toBe(false);
+  });
+
+  it("requires step-scoped filing and confirmation for mapped active actions", () => {
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        demandLetterApprovedAction,
+        [realBbbFilingConfirmed],
+        true
+      )
+    ).toBe(true);
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        demandLetterApprovedAction,
+        [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: "DL-REAL-321",
+          },
+        ],
+        true
+      )
+    ).toBe(false);
+  });
+
+  it("uses practice-filtered global filings for unknown hrefs", () => {
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        { href: "/justice/cfpb", label: "CFPB complaint prep", status: "started" },
+        [realBbbFilingConfirmed],
+        true
+      )
+    ).toBe(false);
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        { href: "/justice/cfpb", label: "CFPB complaint prep", status: "started" },
+        [],
+        true
+      )
+    ).toBe(true);
   });
 });
