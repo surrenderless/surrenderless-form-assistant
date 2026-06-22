@@ -1,4 +1,8 @@
-import { deriveManualActionTrackingFilingsStateForApprovedAction } from "@/lib/justice/handlingTrackingProgress";
+import {
+  deriveHandlingClosureStepAfterFilingConfirmation,
+  deriveManualActionTrackingFilingsStateForApprovedAction,
+  isApprovedActionOpenedForHandlingTracking,
+} from "@/lib/justice/handlingTrackingProgress";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
@@ -35,17 +39,13 @@ function derivePacketManualActionNextStep(input: {
   if (!input.hasConfirmationOnFile) {
     return "Add or edit the filing confirmation from the case packet after external submission.";
   }
-  if (input.status === "completed" && !input.outcomeNote?.trim()) {
-    return "Record the handling outcome.";
-  }
-  if (
-    input.status === "completed" &&
-    input.outcomeNote?.trim() &&
-    input.handlingRequestedAt?.trim() &&
-    !input.handlingAcknowledgedAt?.trim()
-  ) {
-    return "Mark the handling request acknowledged.";
-  }
+  const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+    status: input.status,
+    outcomeNote: input.outcomeNote,
+    handlingRequestedAt: input.handlingRequestedAt,
+    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+  });
+  if (closureStep) return closureStep;
   if (input.followUpNeeded === true) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
@@ -67,7 +67,7 @@ export function derivePacketHandlingTrackingLine(input: {
   });
   const readyForExternalManualAction =
     readyForManualReview && input.evidenceCount > 0;
-  const actionOpened = input.next.status === "started" || input.next.status === "completed";
+  const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
   return derivePacketManualActionNextStep({

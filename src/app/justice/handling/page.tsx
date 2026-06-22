@@ -57,7 +57,9 @@ import {
   readLastAssistedSubmissionAttemptFromClientState,
 } from "@/lib/justice/submissionAttemptState";
 import {
+  deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
+  isApprovedActionOpenedForHandlingTracking,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
 } from "@/lib/justice/handlingTrackingProgress";
 
@@ -486,17 +488,13 @@ function deriveManualActionNextStep(input: {
   if (!input.hasConfirmationOnFile) {
     return "Add or edit the filing confirmation from the case packet after external submission.";
   }
-  if (input.status === "completed" && !input.outcomeNote?.trim()) {
-    return "Record the handling outcome.";
-  }
-  if (
-    input.status === "completed" &&
-    input.outcomeNote?.trim() &&
-    input.handlingRequestedAt?.trim() &&
-    !input.handlingAcknowledgedAt?.trim()
-  ) {
-    return "Mark the handling request acknowledged.";
-  }
+  const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+    status: input.status,
+    outcomeNote: input.outcomeNote,
+    handlingRequestedAt: input.handlingRequestedAt,
+    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+  });
+  if (closureStep) return closureStep;
   if (input.followUpNeeded === true) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
@@ -514,7 +512,7 @@ function deriveHandlingManualActionNextStepForItem(
   const readyForManualReview = caseReadyForManualReview(caseRow);
   const readyForExternalManualAction =
     readyForManualReview && (evidenceCount ?? 0) > 0;
-  const actionOpened = next.status === "started" || next.status === "completed";
+  const actionOpened = isApprovedActionOpenedForHandlingTracking(next);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], next);
   return deriveManualActionNextStep({
@@ -702,7 +700,7 @@ function HandlingWorkbenchCaseCard({
     deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], next);
   const showPostExternalFilingNudge =
     next.status === "started" || next.status === "completed";
-  const actionOpened = next.status === "started" || next.status === "completed";
+  const actionOpened = isApprovedActionOpenedForHandlingTracking(next);
   const outcomeRecorded = Boolean(next.outcome_note?.trim());
   const handlingAcknowledged = Boolean(next.handling_acknowledged_at?.trim());
   const manualActionNextStep = filingsReady
