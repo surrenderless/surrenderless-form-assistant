@@ -206,7 +206,7 @@ function CaseApprovedNextActionTracking({
                 surface="cases"
                 basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
                 evidenceCount={progress.evidenceCount}
-                markAcknowledgedOnScreen={showAllCasesInlineAck}
+                markAcknowledgedOnScreen={showCasesAcknowledgment}
                 onNavigate={onHandlingTrackingNavigate}
                 tone="neutral"
               />
@@ -235,7 +235,7 @@ function CaseApprovedNextActionTracking({
           </Link>
         </p>
       ) : null}
-      {showAllCasesInlineAck && caseRow && next && onAcknowledgeHandling ? (
+      {showCasesAcknowledgment && caseRow && next && onAcknowledgeHandling ? (
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <button
             type="button"
