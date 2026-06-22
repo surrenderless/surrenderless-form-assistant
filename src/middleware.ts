@@ -11,6 +11,11 @@ const runClerk = clerkMiddleware();
 export function middleware(req: NextRequest, event: NextFetchEvent) {
   const url = new URL(req.url);
 
+  // Internal QA mock forms in CI: no Clerk session needed (e2e smoke tests, automation).
+  if (process.env.CI && url.pathname.startsWith("/mock/")) {
+    return NextResponse.next();
+  }
+
   // Skip gating for assets/health
   if (BYPASS.some((r) => r.test(url.pathname))) {
     return runClerk(req, event);
