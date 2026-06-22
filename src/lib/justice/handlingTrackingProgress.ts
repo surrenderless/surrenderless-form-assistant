@@ -45,6 +45,90 @@ export function deriveManualActionTrackingFilingsState(
   };
 }
 
+/** Approved-action href for real BBB manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF = "/justice/bbb";
+
+/** Approved-action href for real State AG manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF = "/justice/state-ag";
+
+/** Filing row destinations that count for real BBB manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS = [
+  "Better Business Bureau",
+] as const;
+
+/** Filing row destinations that count for real State AG manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_STATE_AG_FILING_DESTINATIONS = [
+  "State Attorney General (consumer)",
+  "State Attorney General",
+] as const;
+
+const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
+  Record<string, readonly string[]>
+> = {
+  [MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF]: MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF]:
+    MANUAL_ACTION_TRACKING_REAL_STATE_AG_FILING_DESTINATIONS,
+};
+
+function normalizedFilingDestination(destination: string | null | undefined): string {
+  return destination?.trim() ?? "";
+}
+
+function filingDestinationMatchesAllowedSet(
+  destination: string | null | undefined,
+  allowedDestinations: readonly string[]
+): boolean {
+  const normalized = normalizedFilingDestination(destination);
+  if (!normalized) return false;
+  return allowedDestinations.some((allowed) => allowed === normalized);
+}
+
+function allowedFilingDestinationsForApprovedAction(
+  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label">
+): readonly string[] | undefined {
+  const href = approvedAction.href?.trim();
+  if (href && href in MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF) {
+    return MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF[href];
+  }
+  return undefined;
+}
+
+/** Practice-filtered filings scoped to the active approved manual-action step. */
+export function filingsForApprovedActionManualTracking<T extends ManualActionTrackingFiling>(
+  filings: readonly T[],
+  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label">
+): T[] {
+  const trackingFilings = filingsForManualActionTracking(filings);
+  const allowedDestinations = allowedFilingDestinationsForApprovedAction(approvedAction);
+  if (allowedDestinations === undefined) {
+    return trackingFilings;
+  }
+  return trackingFilings.filter((f) =>
+    filingDestinationMatchesAllowedSet(f.destination, allowedDestinations)
+  );
+}
+
+/** Manual-action tracking gates scoped to the active approved action. */
+export function deriveManualActionTrackingFilingsStateForApprovedAction(
+  filings: readonly ManualActionTrackingFiling[],
+  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label">
+): { hasFilingRecord: boolean; hasConfirmationOnFile: boolean } {
+  const stepFilings = filingsForApprovedActionManualTracking(filings, approvedAction);
+  return {
+    hasFilingRecord: stepFilings.length > 0,
+    hasConfirmationOnFile: stepFilings.some((f) => Boolean(f.confirmation_number?.trim())),
+  };
+}
+
+/** First current-action filing row missing confirmation, if any. */
+export function findApprovedActionFilingMissingConfirmation<
+  T extends ManualActionTrackingFiling & { confirmation_number?: string | null },
+>(filings: readonly T[], approvedAction: Pick<JusticeApprovedNextAction, "href" | "label">): T | undefined {
+  return filingsForApprovedActionManualTracking(filings, approvedAction).find(
+    (row) => !row.confirmation_number?.trim()
+  );
+}
+
 /** Approved step opened by user action or by a Surrenderless handling request. */
 export function isApprovedActionOpenedForHandlingTracking(
   action: Pick<JusticeApprovedNextAction, "status" | "handling_requested_at">
