@@ -1172,7 +1172,9 @@ function HandlingWorkbenchCaseCard({
         handlingRequestedAt={handlingAt}
         handlingAcknowledgedAt={next.handling_acknowledged_at}
       />
-      {showHandledOpenHandlingTriageNote ? (
+      {(handledOpenTriageNoteVariant === "inlineAck"
+        ? showWorkbenchAcknowledgment
+        : showHandledOpenHandlingTriageNote) ? (
         <ApprovedNextActionHandlingHandledOpenTriageNote variant={handledOpenTriageNoteVariant} />
       ) : null}
       <ApprovedNextActionHandlingAcknowledgedReadOnly
