@@ -11,6 +11,7 @@ import {
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
@@ -413,5 +414,113 @@ describe("deriveManualActionTrackingFilingsStateForApprovedAction", () => {
     ]);
     expect(mixed).toHaveLength(3);
     expect(filingsForManualActionTracking(mixed)).toHaveLength(2);
+  });
+
+  const realDotFiling = {
+    destination: "USDOT / aviation consumer",
+    confirmation_number: null,
+  };
+  const realDotFilingConfirmed = {
+    destination: "USDOT / aviation consumer",
+    confirmation_number: "DOT-REAL-789",
+  };
+  const dotApprovedAction = {
+    href: MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
+    label: "USDOT / aviation consumer",
+  };
+
+  it("does not treat a real BBB filing as satisfying DOT filing gates", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed],
+        dotApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("does not treat a real State AG filing or confirmation as satisfying DOT gates", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realStateAgFilingConfirmed],
+        dotApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("treats a DOT filing as satisfying its filing gate", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realDotFiling],
+        dotApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("treats a DOT confirmation as satisfying its confirmation gate", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realDotFilingConfirmed],
+        dotApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("uses only DOT filings when BBB, State AG, practice, and DOT rows are mixed", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [
+          ftcPracticeFiling,
+          bbbPracticeFiling,
+          realBbbFilingConfirmed,
+          realStateAgFilingConfirmed,
+          realDotFiling,
+        ],
+        dotApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [
+          ftcPracticeFiling,
+          realBbbFilingConfirmed,
+          realStateAgFilingConfirmed,
+          realDotFilingConfirmed,
+        ],
+        dotApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("targets confirmation PATCH to the DOT row missing confirmation while DOT is active", () => {
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [realBbbFilingConfirmed, realStateAgFilingConfirmed, realDotFiling],
+        dotApprovedAction
+      )
+    ).toEqual(realDotFiling);
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [realBbbFiling, realStateAgFiling, realDotFilingConfirmed],
+        dotApprovedAction
+      )
+    ).toBeUndefined();
   });
 });
