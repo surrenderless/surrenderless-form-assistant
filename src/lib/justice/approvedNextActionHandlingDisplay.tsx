@@ -187,6 +187,7 @@ export function resolveHandlingTrackingContextualLink(input: {
   if (derivedStep === HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP) {
     if (input.surface === "plan") return null;
     if (input.surface === "chat-ai") return null;
+    if (input.surface === "packet") return null;
     return { href: "/justice/chat-ai", label: "Review follow-up in chat" };
   }
 
