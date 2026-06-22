@@ -35,6 +35,7 @@ import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
   deriveHandlingClosureStepAfterFilingConfirmation,
+  deriveManualActionTrackingFilingsStateForApprovedAction,
   handlingClosureAcknowledgmentVisible,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -153,8 +154,8 @@ function deriveHubHandlingTrackingLine(input: {
   const readyForExternalManualAction =
     readyForManualReview && input.evidenceCount > 0;
   const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
-  const hasFilingRecord = input.filings.length > 0;
-  const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
   return deriveHubManualActionNextStep({
     readyForExternalManualAction,
     actionOpened,
