@@ -63,6 +63,7 @@ import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readTimeline, applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import {
+  canonicalFilingDestinationForApprovedActionHref,
   chatOutcomeTrackingSaveAllowed,
   handlingClosureAcknowledgmentVisible,
   handlingWorkbenchOutcomeTrackingFormVisible,
@@ -693,6 +694,10 @@ export default function JusticePacketPage() {
         handlingAcknowledgedAt: approvedNextAction.handling_acknowledged_at,
       })
     : false;
+  const packetLockedFilingDestination = useMemo(
+    () => canonicalFilingDestinationForApprovedActionHref(approvedNextAction?.href),
+    [approvedNextAction?.href]
+  );
 
   async function persistApprovedNextAction(
     next: JusticeApprovedNextAction,
@@ -1501,7 +1506,10 @@ export default function JusticePacketPage() {
         </section>
 
         <div id="packet-filings">
-          <JusticeFilingRecords onFilingsChange={() => void loadFilings()} />
+          <JusticeFilingRecords
+            lockedDestination={packetLockedFilingDestination}
+            onFilingsChange={() => void loadFilings()}
+          />
         </div>
 
         <JusticeCaseTasks onCaseTimelineSynced={() => setTimelineTick((n) => n + 1)} />
