@@ -54,6 +54,9 @@ export const MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF = "/justice/state-ag
 /** Approved-action href for real DOT manual filing tracking. */
 export const MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF = "/justice/dot";
 
+/** Approved-action href for real demand-letter manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF = "/justice/demand-letter";
+
 /** Filing row destinations that count for real BBB manual-action tracking. */
 export const MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS = [
   "Better Business Bureau",
@@ -70,6 +73,11 @@ export const MANUAL_ACTION_TRACKING_REAL_DOT_FILING_DESTINATIONS = [
   "USDOT / aviation consumer",
 ] as const;
 
+/** Filing row destinations that count for real demand-letter manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_FILING_DESTINATIONS = [
+  "Small claims / demand letter",
+] as const;
+
 const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
   Record<string, readonly string[]>
 > = {
@@ -77,6 +85,8 @@ const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
   [MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF]:
     MANUAL_ACTION_TRACKING_REAL_STATE_AG_FILING_DESTINATIONS,
   [MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF]: MANUAL_ACTION_TRACKING_REAL_DOT_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF]:
+    MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_FILING_DESTINATIONS,
 };
 
 function normalizedFilingDestination(destination: string | null | undefined): string {
