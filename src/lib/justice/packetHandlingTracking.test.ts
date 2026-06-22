@@ -1,0 +1,79 @@
+import { describe, expect, it } from "vitest";
+import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
+import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
+
+describe("derivePacketHandlingTrackingLine", () => {
+  const readyPacketInput = {
+    basicsReady: true,
+    draftReviewed: true,
+    preparedPacketApproved: true,
+    evidenceCount: 1,
+  };
+  const demandLetterNextAction = {
+    href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+    label: "Small claims / demand letter",
+    status: "started" as const,
+  };
+  const priorBbbFilingConfirmed = {
+    destination: "Better Business Bureau",
+    confirmation_number: "BBB-REAL-123",
+  };
+  const demandLetterFiling = {
+    destination: "Small claims / demand letter",
+    confirmation_number: null,
+  };
+  const demandLetterFilingConfirmed = {
+    destination: "Small claims / demand letter",
+    confirmation_number: "DL-REAL-321",
+  };
+
+  it("does not treat a prior-step filing as satisfying a mapped active step", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [priorBbbFilingConfirmed],
+        next: demandLetterNextAction,
+      })
+    ).toBe("Add filing records from the case packet after external submission.");
+  });
+
+  it("requires active-step confirmation after the active-step filing is on file", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [priorBbbFilingConfirmed, demandLetterFiling],
+        next: demandLetterNextAction,
+      })
+    ).toBe(
+      "Add or edit the filing confirmation from the case packet after external submission."
+    );
+  });
+
+  it("advances past filing gates when the active-step filing and confirmation are on file", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [priorBbbFilingConfirmed, demandLetterFilingConfirmed],
+        next: { ...demandLetterNextAction, status: "completed" },
+      })
+    ).toBe("Record the handling outcome.");
+  });
+
+  it("uses practice-filtered global filings for unknown hrefs", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [{ destination: "Better Business Bureau", confirmation_number: null }],
+        next: {
+          href: "/justice/cfpb",
+          label: "CFPB complaint prep",
+          status: "started",
+        },
+      })
+    ).toBe(
+      "Add or edit the filing confirmation from the case packet after external submission."
+    );
+  });
+});
