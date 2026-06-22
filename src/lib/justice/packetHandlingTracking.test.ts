@@ -61,6 +61,35 @@ describe("derivePacketHandlingTrackingLine", () => {
     ).toBe("Record the handling outcome.");
   });
 
+  it("requires outcome when handling was requested, status is still approved, and filing gates are satisfied", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [demandLetterFilingConfirmed],
+        next: {
+          ...demandLetterNextAction,
+          status: "approved",
+          handling_requested_at: "2026-06-16T12:00:00.000Z",
+        },
+      })
+    ).toBe("Record the handling outcome.");
+  });
+
+  it("requires acknowledgement after outcome when handling was requested with status still approved", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [demandLetterFilingConfirmed],
+        next: {
+          ...demandLetterNextAction,
+          status: "approved",
+          handling_requested_at: "2026-06-16T12:00:00.000Z",
+          outcome_note: "Awaiting merchant response.",
+        },
+      })
+    ).toBe("Mark the handling request acknowledged.");
+  });
+
   it("uses practice-filtered global filings for unknown hrefs", () => {
     expect(
       derivePacketHandlingTrackingLine({
