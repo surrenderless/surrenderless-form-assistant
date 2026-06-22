@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { HANDLING_TRACKING_STEP_RECORD_OUTCOME } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import { handlingWorkbenchOutcomeTrackingFormVisible } from "@/lib/justice/handlingTrackingProgress";
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
 import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
@@ -88,6 +90,27 @@ describe("derivePacketHandlingTrackingLine", () => {
         },
       })
     ).toBe("Mark the handling request acknowledged.");
+  });
+
+  it("composes packet derived step with shared outcome-form visibility for handling-requested approved actions", () => {
+    const next = {
+      ...demandLetterNextAction,
+      status: "approved" as const,
+      handling_requested_at: "2026-06-16T12:00:00.000Z",
+    };
+    const derivedStep = derivePacketHandlingTrackingLine({
+      ...readyPacketInput,
+      filings: [demandLetterFilingConfirmed],
+      next,
+    });
+    expect(derivedStep).toBe(HANDLING_TRACKING_STEP_RECORD_OUTCOME);
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: derivedStep,
+        filingsReady: true,
+        action: next,
+      })
+    ).toBe(true);
   });
 
   it("uses practice-filtered global filings for unknown hrefs", () => {
