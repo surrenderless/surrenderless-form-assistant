@@ -33,6 +33,7 @@ import {
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import { handlingClosureAcknowledgmentVisible } from "@/lib/justice/handlingTrackingProgress";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, applyServerTimelineFromResponse, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
@@ -535,6 +536,24 @@ export default function JusticeHubWorkspaceBody() {
     evidenceCount !== null &&
     evidenceCount < 1;
 
+  const hubManualActionNextStep =
+    snapshot?.approvedNextAction && !hubReadinessLoading
+      ? deriveHubHandlingTrackingLine({
+          basicsReady,
+          draftReviewed: snapshot.reviewed,
+          preparedPacketApproved: snapshot.packetApproved,
+          evidenceCount: evidenceCount ?? 0,
+          filings,
+          next: snapshot.approvedNextAction,
+        })
+      : null;
+  const showHubAcknowledgment = snapshot?.approvedNextAction
+    ? handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: hubManualActionNextStep,
+        handlingAcknowledgedAt: snapshot.approvedNextAction.handling_acknowledged_at,
+      })
+    : false;
+
   const primaryHref = "/justice/chat-ai";
   const primaryLabel = "Continue in chat";
 
@@ -772,7 +791,7 @@ export default function JusticeHubWorkspaceBody() {
                     preparedPacketApproved={snapshot.packetApproved}
                     evidenceCount={evidenceCount ?? 0}
                     filings={filings}
-                    markAcknowledgedOnScreen={!snapshot.approvedNextAction.handling_acknowledged_at?.trim()}
+                    markAcknowledgedOnScreen={showHubAcknowledgment}
                   />
                   {snapshot.approvedNextAction.status === "completed" &&
                   !snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (
@@ -786,7 +805,7 @@ export default function JusticeHubWorkspaceBody() {
                       View in handling workbench
                     </Link>
                   </p>
-                  {!snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (
+                  {showHubAcknowledgment ? (
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                       <button
                         type="button"
