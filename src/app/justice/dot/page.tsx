@@ -12,6 +12,10 @@ import {
   DOT_AIR_CONSUMER_URL,
   dotDesiredResolutionPhrase,
 } from "@/lib/justice/buildDotAviationComplaintDraft";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const cardCls =
@@ -200,7 +204,11 @@ export default function JusticeDotAviationPrepPage() {
           </p>
         </div>
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF
+          )}
+        />
       </main>
     </>
   );
