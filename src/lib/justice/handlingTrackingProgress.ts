@@ -162,6 +162,24 @@ export function findApprovedActionFilingMissingConfirmation<
   );
 }
 
+/**
+ * Whether a handling-workbench row still needs filing or confirmation for the active approved action.
+ * Uses the same step-scoped gate rules as chat-ai.
+ */
+export function isHandlingWorkbenchPostExternalConfirmationFollowUp(
+  approvedAction: Pick<JusticeApprovedNextAction, "status" | "href" | "label">,
+  savedFilings: readonly ManualActionTrackingFiling[] | undefined,
+  filingsReady: boolean
+): boolean {
+  if (!filingsReady) return false;
+  if (approvedAction.status !== "started" && approvedAction.status !== "completed") {
+    return false;
+  }
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], approvedAction);
+  return !hasFilingRecord || !hasConfirmationOnFile;
+}
+
 /** Approved step opened by user action or by a Surrenderless handling request. */
 export function isApprovedActionOpenedForHandlingTracking(
   action: Pick<JusticeApprovedNextAction, "status" | "handling_requested_at">
