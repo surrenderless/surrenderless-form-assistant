@@ -57,6 +57,7 @@ import {
 } from "@/lib/justice/taskDueStatus";
 import {
   deriveHandlingClosureStepAfterFilingConfirmation,
+  deriveManualActionTrackingFilingsStateForApprovedAction,
   handlingClosureAcknowledgmentVisible,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -779,10 +780,20 @@ export default function JusticeCasesPage() {
               const evidenceCount = Array.isArray(evJson) ? evJson.length : 0;
               const filingRows = Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : [];
               const filingsCount = filingRows.length;
-              const hasFilingRecord = filingsCount > 0;
-              const hasConfirmationOnFile = Boolean(
+              const caseRow = cases?.find((c) => c.id === id);
+              const next = caseRow
+                ? parseApprovedNextActionFromClientState(caseRow.client_state)
+                : undefined;
+              const caseWideHasFilingRecord = filingsCount > 0;
+              const caseWideHasConfirmationOnFile = Boolean(
                 filingRows.some((f) => f.confirmation_number?.trim())
               );
+              const { hasFilingRecord, hasConfirmationOnFile } = next
+                ? deriveManualActionTrackingFilingsStateForApprovedAction(filingRows, next)
+                : {
+                    hasFilingRecord: caseWideHasFilingRecord,
+                    hasConfirmationOnFile: caseWideHasConfirmationOnFile,
+                  };
               const tasks = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
               const openTasksCount = tasks.filter((t) => !t.completed_at).length;
               const nextDue = soonestOpenTaskDueDate(tasks);
@@ -830,7 +841,7 @@ export default function JusticeCasesPage() {
     })();
 
     return () => ac.abort();
-  }, [isLoaded, isSignedIn, caseIdsKey]);
+  }, [isLoaded, isSignedIn, caseIdsKey, cases]);
 
   useEffect(() => {
     if (!cases) return;
