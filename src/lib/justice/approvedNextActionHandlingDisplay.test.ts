@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
+  HANDLING_TRACKING_STEP_ADD_FILING,
   HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
+  HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_OPEN_APPROVED,
+  HANDLING_TRACKING_STEP_RECORD_OUTCOME,
   HANDLING_TRACKING_STEP_REVIEW_PACKET,
+  PACKET_FILINGS_HASH,
   resolveHandlingTrackingContextualLink,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
@@ -247,6 +251,58 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toEqual({
       href: "/justice/packet#packet-filings",
       label: "Open filing records",
+    });
+  });
+
+  it("suppresses record-outcome link on packet when outcome capture is inline", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        surface: "packet",
+      })
+    ).toBeNull();
+  });
+
+  it("keeps chat-ai record-outcome contextual link suppressed", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        surface: "chat-ai",
+      })
+    ).toBeNull();
+  });
+
+  it("still offers record-outcome link on non-packet surfaces", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        surface: "cases",
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Record outcome in chat",
+    });
+  });
+
+  it("keeps other packet tracking contextual links unchanged", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_ADD_FILING,
+        surface: "packet",
+      })
+    ).toEqual({
+      href: PACKET_FILINGS_HASH,
+      label: "Open filing records",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+        surface: "packet",
+        markAcknowledgedOnScreen: false,
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Mark acknowledged in chat",
     });
   });
 });
