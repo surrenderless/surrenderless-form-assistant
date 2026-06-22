@@ -89,6 +89,22 @@ const dotManualDest: JusticeDestination = {
   internalRoute: "/justice/dot",
 };
 
+const demandLetterLaterDest: JusticeDestination = {
+  id: "small_claims",
+  label: "Small claims / demand letter",
+  rationale: "",
+  status: "later",
+  priority: 90,
+  internalRoute: "/justice/demand-letter",
+};
+
+function dotEligibleTravelIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
+  return failedContactPracticeIntake({
+    story: "My airline flight was canceled and baggage was lost at the airport.",
+    ...overrides,
+  });
+}
+
 function failedContactPracticeIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
   return {
     problem_category: "online_purchase",
@@ -375,6 +391,122 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     ).toEqual({
       detailHref: "/justice/state-ag",
       stepLabel: "State Attorney General (consumer)",
+    });
+  });
+
+  it("advances from State AG to DOT for DOT-eligible intake with computed destinations", () => {
+    const destinations = computeJusticeDestinations(dotEligibleTravelIntake(), {
+      manualFtc: false,
+    });
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations,
+        completedHref: "/justice/state-ag",
+      })
+    ).toEqual({
+      detailHref: "/justice/dot",
+      stepLabel: "USDOT / aviation consumer",
+    });
+  });
+
+  it("advances from State AG to DOT when it is the first eligible downstream manual destination", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, realBbbDest, stateAgDest, dotManualDest],
+        completedHref: "/justice/state-ag",
+      })
+    ).toEqual({
+      detailHref: "/justice/dot",
+      stepLabel: "USDOT / aviation consumer",
+    });
+  });
+
+  it("prefers a downstream recommended destination over manual after State AG completion", () => {
+    const downstreamRecommendedDest: JusticeDestination = {
+      id: "cfpb",
+      label: "CFPB complaint prep",
+      rationale: "",
+      status: "recommended",
+      priority: 55,
+      internalRoute: "/justice/cfpb",
+    };
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, stateAgDest, downstreamRecommendedDest, dotManualDest],
+        completedHref: "/justice/state-ag",
+      })
+    ).toEqual({
+      detailHref: "/justice/cfpb",
+      stepLabel: "CFPB complaint prep",
+    });
+  });
+
+  it("returns null after State AG when no downstream manual destination is eligible", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: computeJusticeDestinations(failedContactPracticeIntake(), {
+          manualFtc: false,
+        }),
+        completedHref: "/justice/state-ag",
+      })
+    ).toBeNull();
+  });
+
+  it("does not select later destinations after State AG completion", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, stateAgDest, demandLetterLaterDest],
+        completedHref: "/justice/state-ag",
+      })
+    ).toBeNull();
+  });
+
+  it("does not broadly select manual destinations after FTC practice completion", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, ftcDest, bbbPracticeDest, stateAgDest, dotManualDest],
+        completedHref: "/justice/ftc-review",
+      })
+    ).toEqual({
+      detailHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      stepLabel: "BBB mock practice",
+    });
+  });
+
+  it("preserves priority ordering among downstream manual destinations after State AG", () => {
+    const lowerPriorityManualDest: JusticeDestination = {
+      id: "small_claims",
+      label: "Other manual step",
+      rationale: "",
+      status: "manual",
+      priority: 85,
+      internalRoute: "/justice/other-manual",
+    };
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, stateAgDest, dotManualDest, lowerPriorityManualDest],
+        completedHref: "/justice/state-ag",
+      })
+    ).toEqual({
+      detailHref: "/justice/dot",
+      stepLabel: "USDOT / aviation consumer",
     });
   });
 });
