@@ -55,6 +55,7 @@ import {
   findApprovedActionFilingMissingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
   canonicalFilingDestinationForApprovedActionHref,
+  handlingClosureAcknowledgmentVisible,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   isJusticeEvidenceType,
@@ -3901,6 +3902,26 @@ export default function JusticeChatAiPage() {
     .filter(Boolean)
     .join(" · ");
   const activeCaseBasicsReady = isBasicCaseInfoReadyForEscalation(buildJusticeIntakeFromParts(parts));
+  const chatCanCaptureFilingInline =
+    Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn);
+  const chatManualActionNextStep =
+    approvedNextAction && !chatHandlingReadinessLoading
+      ? deriveChatHandlingTrackingLine({
+          basicsReady: activeCaseBasicsReady,
+          draftReviewed: activeCaseDraftReviewed,
+          preparedPacketApproved,
+          evidenceCount: savedEvidenceCount ?? 0,
+          filings: savedFilings,
+          next: approvedNextAction,
+          canCaptureFilingInline: chatCanCaptureFilingInline,
+        })
+      : null;
+  const showChatAcknowledgment = approvedNextAction
+    ? handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: chatManualActionNextStep,
+        handlingAcknowledgedAt: approvedNextAction.handling_acknowledged_at,
+      })
+    : false;
   const activeCaseEvidenceReady = showSavedEvidenceCount && (savedEvidenceCount ?? 0) >= 1;
   const activeCaseFocusLine =
     basicsMissing.length > 0
@@ -4748,7 +4769,7 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       tasks={savedTasks}
-                      markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
+                      markAcknowledgedOnScreen={showChatAcknowledgment}
                       prepInlineInChat={prepInlineInChat}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
@@ -4774,7 +4795,7 @@ export default function JusticeChatAiPage() {
                     !approvedNextAction.handling_acknowledged_at?.trim() ? (
                       <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                     ) : null}
-                    {!approvedNextAction.handling_acknowledged_at?.trim() ? (
+                    {showChatAcknowledgment ? (
                       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                         <button
                           type="button"
