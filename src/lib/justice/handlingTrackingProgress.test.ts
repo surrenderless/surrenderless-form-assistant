@@ -4,9 +4,14 @@ import {
   chatOutcomeTrackingSaveAllowed,
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsState,
+  deriveManualActionTrackingFilingsStateForApprovedAction,
+  filingsForApprovedActionManualTracking,
   filingsForManualActionTracking,
+  findApprovedActionFilingMissingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
@@ -222,5 +227,191 @@ describe("chatOutcomeTrackingSaveAllowed", () => {
   it("blocks save for approved actions without handling request", () => {
     expect(chatOutcomeTrackingSaveAllowed({ status: "approved" })).toBe(false);
     expect(chatOutcomeTrackingSaveAllowed({ status: "started" })).toBe(false);
+  });
+});
+
+describe("deriveManualActionTrackingFilingsStateForApprovedAction", () => {
+  const ftcPracticeFiling = {
+    destination: FTC_PRACTICE_FILING_DESTINATION,
+    confirmation_number: FTC_PRACTICE_FILING_CONFIRMATION,
+  };
+  const bbbPracticeFiling = {
+    destination: BBB_PRACTICE_FILING_DESTINATION,
+    confirmation_number: BBB_PRACTICE_FILING_CONFIRMATION,
+  };
+  const realBbbFiling = {
+    destination: "Better Business Bureau",
+    confirmation_number: null,
+  };
+  const realBbbFilingConfirmed = {
+    destination: "Better Business Bureau",
+    confirmation_number: "BBB-REAL-123",
+  };
+  const realStateAgFiling = {
+    destination: "State Attorney General (consumer)",
+    confirmation_number: null,
+  };
+  const realStateAgFilingConfirmed = {
+    destination: "State Attorney General (consumer)",
+    confirmation_number: "SAG-REAL-456",
+  };
+  const stateAgApprovedAction = {
+    href: MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+    label: "State Attorney General (consumer)",
+  };
+  const bbbApprovedAction = {
+    href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+    label: "Better Business Bureau",
+  };
+
+  it("does not treat a real BBB filing as satisfying State AG filing gates", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed],
+        stateAgApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("does not treat a real BBB confirmation as satisfying State AG confirmation", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed],
+        stateAgApprovedAction
+      ).hasConfirmationOnFile
+    ).toBe(false);
+  });
+
+  it("treats a State AG filing as satisfying its filing gate", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realStateAgFiling],
+        stateAgApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("treats a State AG confirmation as satisfying its confirmation gate", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realStateAgFilingConfirmed],
+        stateAgApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("uses only State AG filings when BBB and State AG rows are mixed", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed, realStateAgFiling],
+        stateAgApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed, realStateAgFilingConfirmed],
+        stateAgApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("still excludes practice rows for a mapped State AG step", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [ftcPracticeFiling, bbbPracticeFiling, realStateAgFiling],
+        stateAgApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("uses BBB filings correctly for the active BBB step", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed, realStateAgFilingConfirmed],
+        bbbApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realStateAgFilingConfirmed],
+        bbbApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("falls back to practice-filtered global gates for unknown routes", () => {
+    const unknownAction = {
+      href: "/justice/cfpb",
+      label: "CFPB complaint prep",
+    };
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed],
+        unknownAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [ftcPracticeFiling, realBbbFilingConfirmed],
+        unknownAction
+      )
+    ).toEqual(deriveManualActionTrackingFilingsState([ftcPracticeFiling, realBbbFilingConfirmed]));
+  });
+
+  it("targets confirmation PATCH rows only within the current action filing set", () => {
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [realBbbFilingConfirmed, realStateAgFiling],
+        stateAgApprovedAction
+      )
+    ).toEqual(realStateAgFiling);
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [realBbbFiling, realStateAgFilingConfirmed],
+        bbbApprovedAction
+      )
+    ).toEqual(realBbbFiling);
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [realBbbFilingConfirmed, realStateAgFiling],
+        stateAgApprovedAction
+      )?.destination
+    ).toBe("State Attorney General (consumer)");
+  });
+
+  it("preserves stored filings while scoping only gate inputs", () => {
+    const mixed = [ftcPracticeFiling, realBbbFilingConfirmed, realStateAgFiling];
+    expect(filingsForApprovedActionManualTracking(mixed, stateAgApprovedAction)).toEqual([
+      realStateAgFiling,
+    ]);
+    expect(mixed).toHaveLength(3);
+    expect(filingsForManualActionTracking(mixed)).toHaveLength(2);
   });
 });

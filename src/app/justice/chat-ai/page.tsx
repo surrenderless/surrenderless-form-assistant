@@ -51,7 +51,8 @@ import {
   chatOutcomeTrackingFormOpen,
   chatOutcomeTrackingSaveAllowed,
   deriveHandlingClosureStepAfterFilingConfirmation,
-  deriveManualActionTrackingFilingsState,
+  deriveManualActionTrackingFilingsStateForApprovedAction,
+  findApprovedActionFilingMissingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
@@ -1311,9 +1312,8 @@ function deriveChatHandlingTrackingLine(input: {
   const readyForExternalManualAction =
     readyForManualReview && input.evidenceCount > 0;
   const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
-  const { hasFilingRecord, hasConfirmationOnFile } = deriveManualActionTrackingFilingsState(
-    input.filings
-  );
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
   return deriveChatManualActionNextStep({
     readyForExternalManualAction,
     actionOpened,
@@ -1326,12 +1326,6 @@ function deriveChatHandlingTrackingLine(input: {
     followUpNeeded: input.next.follow_up_needed === true,
     canCaptureFilingInline: input.canCaptureFilingInline,
   });
-}
-
-function findChatFilingMissingConfirmation(
-  filings: JusticeCaseFilingRow[]
-): JusticeCaseFilingRow | undefined {
-  return filings.find((row) => !row.confirmation_number?.trim());
 }
 
 function ChatManualFilingCaptureForm({
@@ -1347,7 +1341,10 @@ function ChatManualFilingCaptureForm({
   filings: JusticeCaseFilingRow[];
   onSaved: () => void;
 }) {
-  const confirmationTarget = findChatFilingMissingConfirmation(filings);
+  const confirmationTarget = findApprovedActionFilingMissingConfirmation(
+    filings,
+    approvedNextAction
+  );
   const [destination, setDestination] = useState(() => approvedNextAction.label?.trim() ?? "");
   const [filedAt, setFiledAt] = useState("");
   const [confirmationNumber, setConfirmationNumber] = useState("");
