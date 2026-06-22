@@ -9,6 +9,7 @@ import {
   filingsForManualActionTracking,
   findApprovedActionFilingMissingConfirmation,
   handlingWorkbenchOutcomeTrackingFormVisible,
+  handlingClosureAcknowledgmentVisible,
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
@@ -181,6 +182,41 @@ describe("handlingWorkbenchOutcomeTrackingFormVisible", () => {
         manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
         filingsReady: false,
         action: handlingRequestedApproved,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("handlingClosureAcknowledgmentVisible", () => {
+  it("shows acknowledgment when the derived step requires it and none is on file", () => {
+    expect(
+      handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+      })
+    ).toBe(true);
+  });
+
+  it("hides acknowledgment when the derived step still requires outcome recording", () => {
+    expect(
+      handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+      })
+    ).toBe(false);
+  });
+
+  it("hides acknowledgment when acknowledgement is already on file", () => {
+    expect(
+      handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+        handlingAcknowledgedAt: "2026-06-16T13:00:00.000Z",
+      })
+    ).toBe(false);
+  });
+
+  it("hides acknowledgment when filing or confirmation gates are not yet satisfied", () => {
+    expect(
+      handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: "Add filing records from the case packet after external submission.",
       })
     ).toBe(false);
   });

@@ -64,6 +64,7 @@ import { readTimeline, applyServerTimelineFromResponse } from "@/lib/justice/tim
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import {
   chatOutcomeTrackingSaveAllowed,
+  handlingClosureAcknowledgmentVisible,
   handlingWorkbenchOutcomeTrackingFormVisible,
 } from "@/lib/justice/handlingTrackingProgress";
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
@@ -686,6 +687,12 @@ export default function JusticePacketPage() {
         action: approvedNextAction,
       })
     : false;
+  const showPacketAcknowledgment = approvedNextAction
+    ? handlingClosureAcknowledgmentVisible({
+        manualActionNextStep: packetManualActionNextStep,
+        handlingAcknowledgedAt: approvedNextAction.handling_acknowledged_at,
+      })
+    : false;
 
   async function persistApprovedNextAction(
     next: JusticeApprovedNextAction,
@@ -1083,7 +1090,7 @@ export default function JusticePacketPage() {
                     preparedPacketApproved={packetApproved}
                     evidenceCount={evidence.length}
                     filings={filings}
-                    markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
+                    markAcknowledgedOnScreen={showPacketAcknowledgment}
                   />
                   {approvedNextAction.status !== "completed" && showPacketOutcomeTrackingForm ? (
                     <ApprovedNextActionOutcomeTrackingForm
@@ -1108,7 +1115,7 @@ export default function JusticePacketPage() {
                       View in handling workbench
                     </Link>
                   </p>
-                  {!approvedNextAction.handling_acknowledged_at?.trim() ? (
+                  {showPacketAcknowledgment ? (
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                       <button
                         type="button"
