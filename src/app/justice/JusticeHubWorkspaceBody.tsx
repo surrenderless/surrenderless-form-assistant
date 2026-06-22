@@ -793,8 +793,7 @@ export default function JusticeHubWorkspaceBody() {
                     filings={filings}
                     markAcknowledgedOnScreen={showHubAcknowledgment}
                   />
-                  {snapshot.approvedNextAction.status === "completed" &&
-                  !snapshot.approvedNextAction.handling_acknowledged_at?.trim() ? (
+                  {showHubAcknowledgment ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
