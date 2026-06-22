@@ -449,7 +449,7 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     });
   });
 
-  it("returns null after State AG when no downstream manual destination is eligible", () => {
+  it("advances from State AG to demand letter for ordinary retail intake with computed destinations", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
@@ -459,16 +459,64 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         }),
         completedHref: "/justice/state-ag",
       })
-    ).toBeNull();
+    ).toEqual({
+      detailHref: "/justice/demand-letter",
+      stepLabel: "Small claims / demand letter",
+    });
   });
 
-  it("does not select later destinations after State AG completion", () => {
+  it("advances from State AG to demand letter when it is the only downstream later destination", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
         useCompanyContactLabels: false,
         destinations: [merchantDest, stateAgDest, demandLetterLaterDest],
         completedHref: "/justice/state-ag",
+      })
+    ).toEqual({
+      detailHref: "/justice/demand-letter",
+      stepLabel: "Small claims / demand letter",
+    });
+  });
+
+  it("does not select unrelated later destinations after State AG completion", () => {
+    const unrelatedLaterDest: JusticeDestination = {
+      id: "fcc",
+      label: "FCC prep later",
+      rationale: "",
+      status: "later",
+      priority: 70,
+      internalRoute: "/justice/fcc",
+    };
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, stateAgDest, unrelatedLaterDest],
+        completedHref: "/justice/state-ag",
+      })
+    ).toBeNull();
+  });
+
+  it("does not select demand letter after DOT completion", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, stateAgDest, dotManualDest, demandLetterLaterDest],
+        completedHref: "/justice/dot",
+      })
+    ).toBeNull();
+  });
+
+  it("does not select demand letter after unrelated completed hrefs", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, paymentDest, stateAgDest, demandLetterLaterDest],
+        completedHref: "/justice/payment-dispute",
       })
     ).toBeNull();
   });

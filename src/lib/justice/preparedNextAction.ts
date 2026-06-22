@@ -10,6 +10,9 @@ const REAL_BBB_COMPLAINT_PREP_HREF = "/justice/bbb";
 /** Real State AG complaint prep. */
 const REAL_STATE_AG_PREP_HREF = "/justice/state-ag";
 
+/** Demand letter prep route (small claims). */
+const DEMAND_LETTER_PREP_HREF = "/justice/demand-letter";
+
 type PickFirstRoutablePreparedActionOptions = {
   /** After BBB mock practice only: allow the real BBB manual destination. */
   allowRealBbbManualAfterMockPractice?: boolean;
@@ -17,6 +20,8 @@ type PickFirstRoutablePreparedActionOptions = {
   allowManualAfterRealBbbCompletion?: boolean;
   /** After State AG completion only: allow the first downstream manual destination. */
   allowManualAfterStateAgCompletion?: boolean;
+  /** After State AG completion only: allow the downstream demand-letter destination. */
+  allowDemandLetterAfterStateAgCompletion?: boolean;
 };
 
 export type PreparedNextActionPick = {
@@ -93,6 +98,21 @@ function pickFirstRoutablePreparedAction(
     }
   }
 
+  if (options.allowDemandLetterAfterStateAgCompletion) {
+    const demandLetterDest = destinations.find(
+      (d) =>
+        d.id === "small_claims" &&
+        d.internalRoute === DEMAND_LETTER_PREP_HREF &&
+        d.internalRoute !== skip
+    );
+    if (demandLetterDest?.internalRoute) {
+      return {
+        detailHref: demandLetterDest.internalRoute,
+        stepLabel: demandLetterDest.label,
+      };
+    }
+  }
+
   return {
     detailHref: null,
     stepLabel: "Prepared case review",
@@ -143,6 +163,7 @@ export function pickNextPreparedActionAfterCompleted(params: {
       completed === ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
     allowManualAfterRealBbbCompletion: completed === REAL_BBB_COMPLAINT_PREP_HREF,
     allowManualAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
+    allowDemandLetterAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
   };
 
   if (!contacted) {
