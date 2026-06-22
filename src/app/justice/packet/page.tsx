@@ -62,6 +62,10 @@ import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import { readTimeline, applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import {
+  chatOutcomeTrackingSaveAllowed,
+  handlingWorkbenchOutcomeTrackingFormVisible,
+} from "@/lib/justice/handlingTrackingProgress";
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
 
 /** Post-review prepared-packet framing gates (page-local; does not change rules). */
@@ -664,6 +668,24 @@ export default function JusticePacketPage() {
   const handlingTrackingBasicsReady = isBasicCaseInfoReadyForEscalation(intake);
   const handlingTrackingDraftReviewed = timeline.some((e) => e.type === "submission_draft_reviewed");
   const packetHandlingReadinessLoading = isSignedIn && (evidenceLoading || filingsLoading);
+  const packetManualActionNextStep =
+    approvedNextAction && !packetHandlingReadinessLoading
+      ? derivePacketHandlingTrackingLine({
+          basicsReady: handlingTrackingBasicsReady,
+          draftReviewed: handlingTrackingDraftReviewed,
+          preparedPacketApproved: packetApproved,
+          evidenceCount: evidence.length,
+          filings,
+          next: approvedNextAction,
+        })
+      : null;
+  const showPacketOutcomeTrackingForm = approvedNextAction
+    ? handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: packetManualActionNextStep,
+        filingsReady: !packetHandlingReadinessLoading,
+        action: approvedNextAction,
+      })
+    : false;
 
   async function persistApprovedNextAction(
     next: JusticeApprovedNextAction,
@@ -695,7 +717,7 @@ export default function JusticePacketPage() {
     follow_up_needed: boolean;
     follow_up_at: string;
   }) {
-    if (!approvedNextAction || approvedNextAction.status !== "completed") return;
+    if (!approvedNextAction || !chatOutcomeTrackingSaveAllowed(approvedNextAction)) return;
     const trimmedNote = draft.outcome_note.trim();
     const next: JusticeApprovedNextAction = { ...approvedNextAction };
     if (trimmedNote) next.outcome_note = trimmedNote;
@@ -1063,6 +1085,17 @@ export default function JusticePacketPage() {
                     filings={filings}
                     markAcknowledgedOnScreen={!approvedNextAction.handling_acknowledged_at?.trim()}
                   />
+                  {approvedNextAction.status !== "completed" && showPacketOutcomeTrackingForm ? (
+                    <ApprovedNextActionOutcomeTrackingForm
+                      action={approvedNextAction}
+                      onSave={handleSaveApprovedNextActionTracking}
+                    />
+                  ) : approvedNextAction.status !== "completed" &&
+                    approvedNextAction.outcome_note?.trim() ? (
+                    <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                      {approvedNextAction.outcome_note.trim()}
+                    </p>
+                  ) : null}
                   {approvedNextAction.status === "completed" &&
                   !approvedNextAction.handling_acknowledged_at?.trim() ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
@@ -1125,6 +1158,17 @@ export default function JusticePacketPage() {
                 evidenceCount={evidence.length}
                 filings={filings}
               />
+              {approvedNextAction.status !== "completed" && showPacketOutcomeTrackingForm ? (
+                <ApprovedNextActionOutcomeTrackingForm
+                  action={approvedNextAction}
+                  onSave={handleSaveApprovedNextActionTracking}
+                />
+              ) : approvedNextAction.status !== "completed" &&
+                approvedNextAction.outcome_note?.trim() ? (
+                <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
+                  {approvedNextAction.outcome_note.trim()}
+                </p>
+              ) : null}
               {approvedNextActionCompleted &&
               !approvedNextAction.handling_acknowledged_at?.trim() ? (
                 <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
@@ -1225,11 +1269,15 @@ export default function JusticePacketPage() {
                 ) : null}
                 {packetApproved && approvedNextActionCompleted && approvedNextAction ? (
                   <>
-                    <ApprovedNextActionTrackingSummary action={approvedNextAction} />
-                    <ApprovedNextActionOutcomeTrackingForm
-                      action={approvedNextAction}
-                      onSave={handleSaveApprovedNextActionTracking}
-                    />
+                    {!showPacketOutcomeTrackingForm ? (
+                      <ApprovedNextActionTrackingSummary action={approvedNextAction} />
+                    ) : null}
+                    {showPacketOutcomeTrackingForm ? (
+                      <ApprovedNextActionOutcomeTrackingForm
+                        action={approvedNextAction}
+                        onSave={handleSaveApprovedNextActionTracking}
+                      />
+                    ) : null}
                     {approvedNextAction.follow_up_needed === true ? (
                       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                         <button
