@@ -11,6 +11,10 @@ import {
   buildDemandLetterDraft,
   demandLetterDesiredResolutionPhrase,
 } from "@/lib/justice/buildDemandLetterDraft";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const cardCls =
@@ -180,7 +184,11 @@ export default function JusticeDemandLetterPrepPage() {
           </p>
         </div>
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+          )}
+        />
       </main>
     </>
   );

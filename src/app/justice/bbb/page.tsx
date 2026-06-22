@@ -16,6 +16,10 @@ import {
   syncCaseTimelineToServer,
 } from "@/lib/justice/timeline";
 import { bbbDesiredResolutionPhrase, buildBbbComplaintDraft } from "@/lib/justice/buildBbbComplaintDraft";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const cardCls =
@@ -227,7 +231,11 @@ export default function JusticeBbbPrepPage() {
           </div>
         </div>
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF
+          )}
+        />
       </main>
     </>
   );

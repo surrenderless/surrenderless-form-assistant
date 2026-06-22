@@ -21,6 +21,10 @@ import {
   stateNameFromCode,
   US_STATES,
 } from "@/lib/justice/buildStateAgComplaintDraft";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 
 const cardCls =
@@ -261,7 +265,11 @@ export default function JusticeStateAgPrepPage() {
           </div>
         </div>
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF
+          )}
+        />
       </main>
     </>
   );
