@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_CFPB_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
@@ -7,13 +8,21 @@ import {
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { isAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import {
+  MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS,
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
+import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
   ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
   buildMockBbbPracticeSubmissionUrl,
   buildMockFtcPracticeSubmissionUrl,
+  buildRealBbbComplaintSubmissionUrl,
   isRunnableAssistedSubmissionLane,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  REAL_BBB_ASSISTED_SUBMISSION_LANE,
+  REAL_BBB_COMPLAINT_SUBMISSION_URL,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
@@ -47,6 +56,23 @@ describe("assistedSubmissionLane", () => {
     });
   });
 
+  it("defines stable real BBB complaint lane constants", () => {
+    expect(REAL_BBB_ASSISTED_SUBMISSION_LANE).toEqual({
+      id: "bbb_complaint",
+      name: "BBB complaint",
+      prepHref: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+      submissionUrl: REAL_BBB_COMPLAINT_SUBMISSION_URL,
+      filingDestination: "Better Business Bureau",
+      filingConfirmation: "BBB complaint complete",
+    });
+    expect(ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF).toBe("/justice/bbb");
+    expect(ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF).toBe(MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF);
+    expect(REAL_BBB_ASSISTED_SUBMISSION_LANE.filingDestination).toBe(
+      MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS[0]
+    );
+    expect(buildRealBbbComplaintSubmissionUrl()).toBe("https://www.bbb.org");
+  });
+
   it("builds mock practice submission URL from origin", () => {
     expect(buildMockFtcPracticeSubmissionUrl("https://example.com")).toBe(
       "https://example.com/mock/ftc-complaint"
@@ -56,9 +82,10 @@ describe("assistedSubmissionLane", () => {
     );
   });
 
-  it("marks mock FTC and BBB practice lanes runnable", () => {
+  it("marks mock FTC and BBB practice lanes runnable but not real BBB", () => {
     expect(isRunnableAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
     expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
+    expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(false);
   });
 
   it("resolves FTC review href to mock FTC lane", () => {
@@ -84,6 +111,34 @@ describe("assistedSubmissionLane", () => {
         ` ${ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF} `
       )
     ).toBe(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE);
+  });
+
+  it("resolves real BBB prep href to real BBB lane", () => {
+    expect(resolveAssistedSubmissionLaneForApprovedHref(ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF)).toBe(
+      REAL_BBB_ASSISTED_SUBMISSION_LANE
+    );
+    expect(
+      resolveAssistedSubmissionLaneForApprovedHref(` ${ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF} `)
+    ).toBe(REAL_BBB_ASSISTED_SUBMISSION_LANE);
+    expect(resolveAssistedSubmissionLaneForApprovedHref(CHAT_INLINE_BBB_PREP_HREF)).toBe(
+      REAL_BBB_ASSISTED_SUBMISSION_LANE
+    );
+  });
+
+  it("keeps mock-assisted submission ineligible for real BBB prep", () => {
+    expect(
+      isAssistedMockSubmissionEligible({
+        isLoaded: true,
+        isSignedIn: true,
+        caseId: CASE_ID,
+        preparedPacketApproved: true,
+        approvedNextAction: {
+          label: "Better Business Bureau",
+          href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+          status: "approved",
+        },
+      })
+    ).toBe(false);
   });
 
   it("returns undefined for unknown or empty href", () => {
