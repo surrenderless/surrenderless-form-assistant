@@ -7,6 +7,7 @@ import {
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_OPEN_APPROVED,
   HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+  HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
   HANDLING_TRACKING_STEP_REVIEW_PACKET,
   resolveHandlingTrackingContextualLink,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -317,6 +318,36 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toEqual({
       href: "/justice/packet#packet-filings",
       label: "Open filing records",
+    });
+  });
+
+  it("suppresses follow-up link on packet because follow-up is on-page", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
+        surface: "packet",
+      })
+    ).toBeNull();
+  });
+
+  it("keeps follow-up link on non-packet surfaces", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
+        surface: "cases",
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Review follow-up in chat",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
+        surface: "hub",
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Review follow-up in chat",
     });
   });
 
