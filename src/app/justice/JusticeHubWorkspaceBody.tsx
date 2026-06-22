@@ -33,7 +33,11 @@ import {
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
-import { handlingClosureAcknowledgmentVisible } from "@/lib/justice/handlingTrackingProgress";
+import {
+  deriveHandlingClosureStepAfterFilingConfirmation,
+  handlingClosureAcknowledgmentVisible,
+  isApprovedActionOpenedForHandlingTracking,
+} from "@/lib/justice/handlingTrackingProgress";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { readTimeline, applyServerTimelineFromResponse, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
@@ -120,17 +124,13 @@ function deriveHubManualActionNextStep(input: {
   if (!input.hasConfirmationOnFile) {
     return "Add or edit the filing confirmation from the case packet after external submission.";
   }
-  if (input.status === "completed" && !input.outcomeNote?.trim()) {
-    return "Record the handling outcome.";
-  }
-  if (
-    input.status === "completed" &&
-    input.outcomeNote?.trim() &&
-    input.handlingRequestedAt?.trim() &&
-    !input.handlingAcknowledgedAt?.trim()
-  ) {
-    return "Mark the handling request acknowledged.";
-  }
+  const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+    status: input.status,
+    outcomeNote: input.outcomeNote,
+    handlingRequestedAt: input.handlingRequestedAt,
+    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+  });
+  if (closureStep) return closureStep;
   if (input.followUpNeeded === true) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
@@ -152,7 +152,7 @@ function deriveHubHandlingTrackingLine(input: {
   });
   const readyForExternalManualAction =
     readyForManualReview && input.evidenceCount > 0;
-  const actionOpened = input.next.status === "started" || input.next.status === "completed";
+  const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
   const hasFilingRecord = input.filings.length > 0;
   const hasConfirmationOnFile = input.filings.some((f) => f.confirmation_number?.trim());
   return deriveHubManualActionNextStep({
