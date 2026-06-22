@@ -14,6 +14,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  canonicalFilingDestinationForApprovedActionHref,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
@@ -647,5 +648,28 @@ describe("deriveManualActionTrackingFilingsStateForApprovedAction", () => {
         demandLetterApprovedAction
       )
     ).toBeUndefined();
+  });
+});
+
+describe("canonicalFilingDestinationForApprovedActionHref", () => {
+  it("returns the canonical destination for mapped manual-action hrefs", () => {
+    expect(canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF)).toBe(
+      "Better Business Bureau"
+    );
+    expect(
+      canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF)
+    ).toBe("State Attorney General (consumer)");
+    expect(canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF)).toBe(
+      "USDOT / aviation consumer"
+    );
+    expect(
+      canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF)
+    ).toBe("Small claims / demand letter");
+  });
+
+  it("returns undefined for unknown hrefs", () => {
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/cfpb")).toBeUndefined();
+    expect(canonicalFilingDestinationForApprovedActionHref(undefined)).toBeUndefined();
+    expect(canonicalFilingDestinationForApprovedActionHref("   ")).toBeUndefined();
   });
 });

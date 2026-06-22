@@ -112,6 +112,20 @@ function allowedFilingDestinationsForApprovedAction(
   return undefined;
 }
 
+/**
+ * Canonical filing destination for inline filing capture on a mapped manual-action step.
+ * Unknown hrefs return undefined so callers retain editable destination behavior.
+ */
+export function canonicalFilingDestinationForApprovedActionHref(
+  href: string | null | undefined
+): string | undefined {
+  const trimmed = href?.trim();
+  if (!trimmed || !(trimmed in MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF)) {
+    return undefined;
+  }
+  return MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF[trimmed][0];
+}
+
 /** Practice-filtered filings scoped to the active approved manual-action step. */
 export function filingsForApprovedActionManualTracking<T extends ManualActionTrackingFiling>(
   filings: readonly T[],
