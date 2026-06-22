@@ -2,15 +2,16 @@
   "name": "surrenderless-form-assistant",
   "version": "0.1.0",
   "private": true,
- "scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "next start",
-  "lint": "next lint",
-  "lint:ci": "next lint --file vitest.config.ts --file src/lib/justice/commitIntakeToSessionAndServer.test.ts --file src/lib/justice/preparedNextAction.test.ts --file src/lib/justice/recomputeApprovedNextActionAfterIntake.test.ts --file src/lib/justice/chatInlineApprovedPrep.test.ts --file src/lib/justice/approvedNextActionHandlingDisplay.test.ts",
-  "test": "vitest run",
-  "test:watch": "vitest"
-},
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "lint:ci": "next lint --file vitest.config.ts --file src/lib/justice/commitIntakeToSessionAndServer.test.ts --file src/lib/justice/preparedNextAction.test.ts --file src/lib/justice/recomputeApprovedNextActionAfterIntake.test.ts --file src/lib/justice/chatInlineApprovedPrep.test.ts --file src/lib/justice/approvedNextActionHandlingDisplay.test.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
+  },
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@clerk/nextjs": "^6.32.0",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/node": "^20",
     "@types/react": "^19",
