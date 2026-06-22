@@ -55,6 +55,7 @@ import {
   justiceTaskDueBadgeClass,
   justiceTaskDueKindLabel,
 } from "@/lib/justice/taskDueStatus";
+import { handlingClosureAcknowledgmentVisible } from "@/lib/justice/handlingTrackingProgress";
 
 type CaseRow = {
   id: string;
@@ -101,6 +102,13 @@ function CaseApprovedNextActionTracking({
   const showAllCasesInlineAck =
     showHandledOpenHandlingTriageNote &&
     Boolean(caseRow && next && onAcknowledgeHandling);
+  const showCasesAcknowledgment =
+    caseRow && next && progress
+      ? handlingClosureAcknowledgmentVisible({
+          manualActionNextStep: deriveCasesHandlingTrackingLine(caseRow, next, progress),
+          handlingAcknowledgedAt: next.handling_acknowledged_at,
+        })
+      : false;
   const showApprovedPacketActionWorkbench = Boolean(
     parseApprovedPacketActionWithoutHandlingRequest(clientState)
   );
@@ -204,7 +212,9 @@ function CaseApprovedNextActionTracking({
               />
             </>
           ) : null}
-          {showHandledOpenHandlingTriageNote ? (
+          {(showAllCasesInlineAck
+            ? showCasesAcknowledgment
+            : showHandledOpenHandlingTriageNote) ? (
             <ApprovedNextActionHandlingHandledOpenTriageNote
               variant={showAllCasesInlineAck ? "inlineAck" : "redirect"}
             />
