@@ -71,6 +71,24 @@ const stateAgDest: JusticeDestination = {
   internalRoute: "/justice/state-ag",
 };
 
+const fccDownstreamDest: JusticeDestination = {
+  id: "fcc",
+  label: "FCC complaint prep",
+  rationale: "",
+  status: "recommended",
+  priority: 45,
+  internalRoute: "/justice/fcc",
+};
+
+const dotManualDest: JusticeDestination = {
+  id: "dot",
+  label: "USDOT / aviation consumer",
+  rationale: "",
+  status: "manual",
+  priority: 80,
+  internalRoute: "/justice/dot",
+};
+
 function failedContactPracticeIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
   return {
     problem_category: "online_purchase",
@@ -266,6 +284,98 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         completedHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
       })
     ).toBeNull();
+  });
+
+  it("advances from real BBB to state AG when it is the first eligible downstream manual destination", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, ftcDest, bbbPracticeDest, realBbbDest, stateAgDest],
+        completedHref: "/justice/bbb",
+      })
+    ).toEqual({
+      detailHref: "/justice/state-ag",
+      stepLabel: "State Attorney General (consumer)",
+    });
+  });
+
+  it("advances from real BBB to state AG with full computed destinations", () => {
+    const destinations = computeJusticeDestinations(failedContactPracticeIntake(), {
+      manualFtc: false,
+    });
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations,
+        completedHref: "/justice/bbb",
+      })
+    ).toEqual({
+      detailHref: "/justice/state-ag",
+      stepLabel: "State Attorney General (consumer)",
+    });
+  });
+
+  it("prefers a downstream recommended destination over manual after real BBB completion", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [
+          merchantDest,
+          ftcDest,
+          bbbPracticeDest,
+          realBbbDest,
+          fccDownstreamDest,
+          stateAgDest,
+        ],
+        completedHref: "/justice/bbb",
+      })
+    ).toEqual({
+      detailHref: "/justice/fcc",
+      stepLabel: "FCC complaint prep",
+    });
+  });
+
+  it("returns null after real BBB when no downstream destination is eligible", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: computeJusticeDestinations(
+          failedContactPracticeIntake({ company_name: "" }),
+          { manualFtc: false }
+        ),
+        completedHref: "/justice/bbb",
+      })
+    ).toBeNull();
+  });
+
+  it("does not broadly select manual destinations after other completed hrefs", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, paymentDest, realBbbDest, stateAgDest],
+        completedHref: "/justice/payment-dispute",
+      })
+    ).toBeNull();
+  });
+
+  it("preserves priority ordering among downstream manual destinations after real BBB", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, realBbbDest, stateAgDest, dotManualDest],
+        completedHref: "/justice/bbb",
+      })
+    ).toEqual({
+      detailHref: "/justice/state-ag",
+      stepLabel: "State Attorney General (consumer)",
+    });
   });
 });
 
