@@ -11,6 +11,7 @@ import {
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -520,6 +521,130 @@ describe("deriveManualActionTrackingFilingsStateForApprovedAction", () => {
       findApprovedActionFilingMissingConfirmation(
         [realBbbFiling, realStateAgFiling, realDotFilingConfirmed],
         dotApprovedAction
+      )
+    ).toBeUndefined();
+  });
+
+  const realDemandLetterFiling = {
+    destination: "Small claims / demand letter",
+    confirmation_number: null,
+  };
+  const realDemandLetterFilingConfirmed = {
+    destination: "Small claims / demand letter",
+    confirmation_number: "DL-REAL-321",
+  };
+  const demandLetterApprovedAction = {
+    href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+    label: "Small claims / demand letter",
+  };
+
+  it("does not treat a real BBB filing as satisfying demand-letter filing gates", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("does not treat real State AG or DOT filings as satisfying demand-letter gates", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realStateAgFilingConfirmed],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realDotFilingConfirmed],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("treats a demand-letter filing as satisfying its filing gate", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realDemandLetterFiling],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+  });
+
+  it("treats a demand-letter confirmation as satisfying its confirmation gate", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realDemandLetterFilingConfirmed],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("uses only demand-letter filings when BBB, State AG, DOT, practice, and demand-letter rows are mixed", () => {
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [
+          ftcPracticeFiling,
+          bbbPracticeFiling,
+          realBbbFilingConfirmed,
+          realStateAgFilingConfirmed,
+          realDotFilingConfirmed,
+          realDemandLetterFiling,
+        ],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: false,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [
+          ftcPracticeFiling,
+          realBbbFilingConfirmed,
+          realStateAgFilingConfirmed,
+          realDotFilingConfirmed,
+          realDemandLetterFilingConfirmed,
+        ],
+        demandLetterApprovedAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("targets confirmation PATCH to the demand-letter row missing confirmation while demand letter is active", () => {
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [
+          realBbbFilingConfirmed,
+          realStateAgFilingConfirmed,
+          realDotFilingConfirmed,
+          realDemandLetterFiling,
+        ],
+        demandLetterApprovedAction
+      )
+    ).toEqual(realDemandLetterFiling);
+    expect(
+      findApprovedActionFilingMissingConfirmation(
+        [realBbbFiling, realStateAgFiling, realDotFiling, realDemandLetterFilingConfirmed],
+        demandLetterApprovedAction
       )
     ).toBeUndefined();
   });
