@@ -363,4 +363,21 @@ describe("resolveHandlingTrackingContextualLink", () => {
       label: "Mark acknowledged in chat",
     });
   });
+
+  it("suppresses mark-acknowledged link when acknowledgment is on screen", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+        surface: "cases",
+        markAcknowledgedOnScreen: true,
+      })
+    ).toBeNull();
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+        surface: "hub",
+        markAcknowledgedOnScreen: true,
+      })
+    ).toBeNull();
+  });
 });
