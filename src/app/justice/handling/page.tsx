@@ -59,6 +59,7 @@ import {
 import {
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
+  handlingWorkbenchOutcomeTrackingFormVisible,
   isApprovedActionOpenedForHandlingTracking,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -720,7 +721,11 @@ function HandlingWorkbenchCaseCard({
     !compactNavigation && Boolean(onOpenApprovedStep) && next.status === "approved";
   const showApprovedOpenTrackingCopy = showApprovedStep;
   const showRecordHandled = next.status === "started";
-  const showOutcomeTrackingForm = next.status === "completed";
+  const showOutcomeTrackingForm = handlingWorkbenchOutcomeTrackingFormVisible({
+    manualActionNextStep,
+    filingsReady: filingsReady === true,
+    action: next,
+  });
   const companyName = caseRow.intake.company_name.trim();
   const showHandoffCompany = Boolean(companyName && companyName !== title);
   const categoryRaw = caseRow.intake.problem_category?.trim() ?? "";
