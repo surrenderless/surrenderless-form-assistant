@@ -1108,8 +1108,7 @@ export default function JusticePacketPage() {
                       {approvedNextAction.outcome_note.trim()}
                     </p>
                   ) : null}
-                  {approvedNextAction.status === "completed" &&
-                  !approvedNextAction.handling_acknowledged_at?.trim() ? (
+                  {showPacketAcknowledgment ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">

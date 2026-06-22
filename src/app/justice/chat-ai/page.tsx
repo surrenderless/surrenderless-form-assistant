@@ -4791,8 +4791,7 @@ export default function JusticeChatAiPage() {
                         {approvedNextAction.outcome_note.trim()}
                       </p>
                     ) : null}
-                    {approvedNextAction.status === "completed" &&
-                    !approvedNextAction.handling_acknowledged_at?.trim() ? (
+                    {showChatAcknowledgment ? (
                       <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                     ) : null}
                     {showChatAcknowledgment ? (
