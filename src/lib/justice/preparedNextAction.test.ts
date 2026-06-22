@@ -499,7 +499,25 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     ).toBeNull();
   });
 
-  it("does not select demand letter after DOT completion", () => {
+  it("advances from DOT to demand letter for DOT-eligible intake with computed destinations", () => {
+    const destinations = computeJusticeDestinations(dotEligibleTravelIntake(), {
+      manualFtc: false,
+    });
+
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations,
+        completedHref: "/justice/dot",
+      })
+    ).toEqual({
+      detailHref: "/justice/demand-letter",
+      stepLabel: "Small claims / demand letter",
+    });
+  });
+
+  it("advances from DOT to demand letter when it is the only downstream later destination", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
@@ -507,7 +525,10 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         destinations: [merchantDest, stateAgDest, dotManualDest, demandLetterLaterDest],
         completedHref: "/justice/dot",
       })
-    ).toBeNull();
+    ).toEqual({
+      detailHref: "/justice/demand-letter",
+      stepLabel: "Small claims / demand letter",
+    });
   });
 
   it("does not select demand letter after unrelated completed hrefs", () => {

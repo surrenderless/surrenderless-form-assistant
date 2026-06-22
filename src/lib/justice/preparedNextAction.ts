@@ -10,6 +10,9 @@ const REAL_BBB_COMPLAINT_PREP_HREF = "/justice/bbb";
 /** Real State AG complaint prep. */
 const REAL_STATE_AG_PREP_HREF = "/justice/state-ag";
 
+/** Real DOT complaint prep. */
+const REAL_DOT_PREP_HREF = "/justice/dot";
+
 /** Demand letter prep route (small claims). */
 const DEMAND_LETTER_PREP_HREF = "/justice/demand-letter";
 
@@ -22,6 +25,8 @@ type PickFirstRoutablePreparedActionOptions = {
   allowManualAfterStateAgCompletion?: boolean;
   /** After State AG completion only: allow the downstream demand-letter destination. */
   allowDemandLetterAfterStateAgCompletion?: boolean;
+  /** After DOT completion only: allow the downstream demand-letter destination. */
+  allowDemandLetterAfterDotCompletion?: boolean;
 };
 
 export type PreparedNextActionPick = {
@@ -98,7 +103,10 @@ function pickFirstRoutablePreparedAction(
     }
   }
 
-  if (options.allowDemandLetterAfterStateAgCompletion) {
+  if (
+    options.allowDemandLetterAfterStateAgCompletion ||
+    options.allowDemandLetterAfterDotCompletion
+  ) {
     const demandLetterDest = destinations.find(
       (d) =>
         d.id === "small_claims" &&
@@ -164,6 +172,7 @@ export function pickNextPreparedActionAfterCompleted(params: {
     allowManualAfterRealBbbCompletion: completed === REAL_BBB_COMPLAINT_PREP_HREF,
     allowManualAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
     allowDemandLetterAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
+    allowDemandLetterAfterDotCompletion: completed === REAL_DOT_PREP_HREF,
   };
 
   if (!contacted) {
