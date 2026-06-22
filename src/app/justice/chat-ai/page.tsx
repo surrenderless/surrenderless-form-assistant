@@ -54,6 +54,7 @@ import {
   deriveManualActionTrackingFilingsStateForApprovedAction,
   findApprovedActionFilingMissingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
+  canonicalFilingDestinationForApprovedActionHref,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   isJusticeEvidenceType,
@@ -1345,7 +1346,12 @@ function ChatManualFilingCaptureForm({
     filings,
     approvedNextAction
   );
-  const [destination, setDestination] = useState(() => approvedNextAction.label?.trim() ?? "");
+  const canonicalFilingDestination = canonicalFilingDestinationForApprovedActionHref(
+    approvedNextAction.href
+  );
+  const [destination, setDestination] = useState(
+    () => canonicalFilingDestination ?? approvedNextAction.label?.trim() ?? ""
+  );
   const [filedAt, setFiledAt] = useState("");
   const [confirmationNumber, setConfirmationNumber] = useState("");
   const [notes, setNotes] = useState("");
@@ -1354,13 +1360,17 @@ function ChatManualFilingCaptureForm({
 
   useEffect(() => {
     if (mode !== "add_filing") return;
+    if (canonicalFilingDestination) {
+      setDestination(canonicalFilingDestination);
+      return;
+    }
     const label = approvedNextAction.label?.trim();
     if (label) setDestination(label);
-  }, [mode, approvedNextAction.label]);
+  }, [mode, approvedNextAction.label, canonicalFilingDestination]);
 
   async function handleAddFiling(e: FormEvent) {
     e.preventDefault();
-    const dest = destination.trim();
+    const dest = (canonicalFilingDestination ?? destination).trim();
     if (!dest) {
       setError("Destination is required.");
       return;
@@ -1473,7 +1483,10 @@ function ChatManualFilingCaptureForm({
             <input
               type="text"
               value={destination}
-              onChange={(e) => setDestination(e.target.value)}
+              readOnly={Boolean(canonicalFilingDestination)}
+              onChange={(e) => {
+                if (!canonicalFilingDestination) setDestination(e.target.value);
+              }}
               required
               placeholder="e.g. BBB complaint, bank dispute"
               className={CHAT_FILING_INPUT_CLS}
