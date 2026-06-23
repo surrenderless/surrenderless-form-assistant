@@ -1,6 +1,10 @@
 // src/app/api/submit-form/route.ts
 import { NextResponse, type NextRequest } from "next/server";
-import { evaluateAssistedSubmissionUrlPolicy } from "@/lib/justice/assistedSubmissionExternalUrl";
+import {
+  evaluateAssistedSubmissionUrlPolicy,
+  isAllowedExternalAssistedSubmissionUrl,
+} from "@/lib/justice/assistedSubmissionExternalUrl";
+import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
 
@@ -40,6 +44,28 @@ export async function POST(req: NextRequest) {
     };
     if (cookie) forwardedHeaders.cookie = cookie;
     if (basicAuth) forwardedHeaders.authorization = basicAuth;
+
+    if (isAllowedExternalAssistedSubmissionUrl(url)) {
+      const bounded = await runRealBbbBoundedSubmit({
+        url,
+        userData: userData ?? {},
+        base,
+        forwardedHeaders,
+      });
+      if (!bounded.ok) {
+        return NextResponse.json(
+          {
+            error: bounded.error,
+            stopReason: bounded.stopReason,
+            stepsExecuted: bounded.stepsExecuted,
+            fillResult: bounded.fillResult,
+            technicalDetails: bounded.technicalDetails,
+          },
+          { status: 422 }
+        );
+      }
+      return NextResponse.json({ result: "Success", fillResult: bounded.fillResult });
+    }
 
     // 1) analyze
     const analyzeRes = await fetch(`${base}/api/analyze-form`, {
