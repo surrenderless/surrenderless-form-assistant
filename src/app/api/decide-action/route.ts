@@ -17,7 +17,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const { pageData, userProfile } = await req.json();
+  const body = await req.json();
+  const { pageData, userProfile: userProfileField, userData } = body ?? {};
+  const userProfile = userProfileField ?? userData ?? {};
 
   const messages: ChatCompletionMessageParam[] = [
     {
