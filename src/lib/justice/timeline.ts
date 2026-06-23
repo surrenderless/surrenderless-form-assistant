@@ -195,6 +195,8 @@ export function labelForAnalyticsEventName(eventName: string): string | undefine
     ftc_mock_lane_completed: "FTC practice completed",
     bbb_mock_lane_started: "BBB practice started",
     bbb_mock_lane_completed: "BBB practice completed",
+    bbb_real_lane_started: "BBB complaint autofill started",
+    bbb_real_lane_completed: "BBB complaint autofill completed",
     bbb_prep_opened: "BBB prep opened",
     state_ag_prep_opened: "State AG prep opened",
     cfpb_prep_opened: "CFPB prep opened",
@@ -212,6 +214,8 @@ export function labelForTimelineEntryType(type: TimelineEntryType): string | und
   const labels: Partial<Record<TimelineEntryType, string>> = {
     bbb_practice_started: "BBB practice started",
     bbb_practice_completed: "BBB practice completed",
+    bbb_complaint_autofill_started: "BBB complaint autofill started",
+    bbb_complaint_autofill_completed: "BBB complaint autofill completed",
   };
   return labels[type];
 }
