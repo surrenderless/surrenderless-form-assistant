@@ -80,6 +80,8 @@ export type TimelineEntryType =
   | "ftc_practice_completed"
   | "bbb_practice_started"
   | "bbb_practice_completed"
+  | "bbb_complaint_autofill_started"
+  | "bbb_complaint_autofill_completed"
   | "bbb_prep_opened"
   | "state_ag_prep_opened"
   | "cfpb_prep_opened"
