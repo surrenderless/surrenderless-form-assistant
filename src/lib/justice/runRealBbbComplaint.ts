@@ -2,6 +2,10 @@ import {
   REAL_BBB_ASSISTED_SUBMISSION_LANE,
   resolveAssistedSubmissionFillUrl,
 } from "@/lib/justice/assistedSubmissionLane";
+import {
+  isRealBbbComplaintAutofillEnabled,
+  REAL_BBB_AUTOFILL_DISABLED_ERROR,
+} from "@/lib/justice/realBbbAutofillEnabled";
 import { intakeToMockBbbUserData } from "@/lib/justice/runBbbPractice";
 import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -66,7 +70,7 @@ export type RunRealBbbComplaintFailure = {
 
 export type RunRealBbbComplaintResult = RunRealBbbComplaintSuccess | RunRealBbbComplaintFailure;
 
-/** Run real BBB complaint autofill via internal submit-form (timeline + events only; not wired to chat yet). */
+/** Run real BBB complaint autofill via internal submit-form (chat-assisted lane). */
 export async function runRealBbbComplaint({
   intake,
   caseId,
@@ -76,6 +80,10 @@ export async function runRealBbbComplaint({
 }: RunRealBbbComplaintParams): Promise<RunRealBbbComplaintResult> {
   if (typeof window === "undefined") {
     return { ok: false, error: "Real BBB autofill is only available in the browser." };
+  }
+
+  if (!isRealBbbComplaintAutofillEnabled()) {
+    return { ok: false, error: REAL_BBB_AUTOFILL_DISABLED_ERROR };
   }
 
   const submissionUrl = resolveAssistedSubmissionFillUrl(
