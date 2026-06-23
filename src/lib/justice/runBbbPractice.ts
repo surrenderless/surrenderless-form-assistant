@@ -1,7 +1,7 @@
 import { intakeToMockFtcUserData } from "@/lib/justice/ftc-user-data";
 import {
-  buildMockBbbPracticeSubmissionUrl,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  resolveAssistedSubmissionFillUrl,
 } from "@/lib/justice/assistedSubmissionLane";
 import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -96,7 +96,10 @@ export async function runBbbPractice({
     return { ok: false, error: "Practice autofill is only available in the browser." };
   }
 
-  const mockUrl = buildMockBbbPracticeSubmissionUrl(window.location.origin);
+  const mockUrl = resolveAssistedSubmissionFillUrl(
+    MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
+    window.location.origin
+  );
   const userData = intakeToMockBbbUserData(intake);
 
   if (caseId) {

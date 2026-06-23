@@ -18,11 +18,14 @@ import {
   buildMockBbbPracticeSubmissionUrl,
   buildMockFtcPracticeSubmissionUrl,
   buildRealBbbComplaintSubmissionUrl,
+  isExternalAssistedSubmissionLane,
+  isMockAssistedSubmissionLane,
   isRunnableAssistedSubmissionLane,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
   REAL_BBB_ASSISTED_SUBMISSION_LANE,
   REAL_BBB_COMPLAINT_SUBMISSION_URL,
+  resolveAssistedSubmissionFillUrl,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
@@ -80,6 +83,27 @@ describe("assistedSubmissionLane", () => {
     expect(buildMockBbbPracticeSubmissionUrl("https://example.com")).toBe(
       "https://example.com/mock/bbb-complaint"
     );
+  });
+
+  it("classifies mock vs external assisted submission lanes", () => {
+    expect(isMockAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
+    expect(isMockAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
+    expect(isMockAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(false);
+    expect(isExternalAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(true);
+    expect(isExternalAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(false);
+  });
+
+  it("resolves assisted submission fill URLs from lane config", () => {
+    expect(resolveAssistedSubmissionFillUrl(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE, "https://example.com")).toBe(
+      "https://example.com/mock/ftc-complaint"
+    );
+    expect(resolveAssistedSubmissionFillUrl(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE, "https://example.com")).toBe(
+      "https://example.com/mock/bbb-complaint"
+    );
+    expect(resolveAssistedSubmissionFillUrl(REAL_BBB_ASSISTED_SUBMISSION_LANE, "https://example.com")).toBe(
+      REAL_BBB_COMPLAINT_SUBMISSION_URL
+    );
+    expect(buildRealBbbComplaintSubmissionUrl()).toBe(REAL_BBB_COMPLAINT_SUBMISSION_URL);
   });
 
   it("marks mock FTC and BBB practice lanes runnable but not real BBB", () => {
