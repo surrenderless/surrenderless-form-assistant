@@ -2,6 +2,7 @@ import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionSta
 import {
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  REAL_BBB_ASSISTED_SUBMISSION_LANE,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import type {
@@ -116,7 +117,8 @@ export function buildLastAssistedSubmissionAttemptFromSubmissionAttempt(
 function isAssistedPracticeSubmissionAttemptKind(kind: unknown): kind is SubmissionAttemptKind {
   return (
     kind === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
-    kind === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+    kind === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
+    kind === REAL_BBB_ASSISTED_SUBMISSION_LANE.id
   );
 }
 

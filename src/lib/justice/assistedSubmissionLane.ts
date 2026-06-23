@@ -23,7 +23,7 @@ export const MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE = {
   filingConfirmation: "BBB mock practice complete",
 } as const;
 
-/** Approved-action href for real BBB complaint assisted submission (registered, not runnable yet). */
+/** Approved-action href for real BBB complaint assisted submission. */
 export const ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF = "/justice/bbb";
 
 /** Canonical filing destination for real BBB (matches MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS). */
@@ -32,7 +32,7 @@ export const REAL_BBB_COMPLAINT_FILING_DESTINATION = "Better Business Bureau" as
 /** Official BBB.org entry point (same URL linked from /justice/bbb prep). */
 export const REAL_BBB_COMPLAINT_SUBMISSION_URL = "https://www.bbb.org";
 
-/** Real BBB complaint lane for future assisted submission after packet approval. */
+/** Real BBB complaint lane for assisted submission after packet approval. */
 export const REAL_BBB_ASSISTED_SUBMISSION_LANE = {
   id: "bbb_complaint",
   name: "BBB complaint",
@@ -90,11 +90,12 @@ export function resolveAssistedSubmissionFillUrl(lane: AssistedSubmissionLaneCon
   return lane.submissionUrl;
 }
 
-/** Lanes that may activate assisted mock submission eligibility/prep/run today. */
+/** Lanes that may activate assisted submission eligibility/prep/run in chat today. */
 export function isRunnableAssistedSubmissionLane(lane: AssistedSubmissionLaneConfig): boolean {
   return (
     lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
-    lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+    lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
+    lane.id === REAL_BBB_ASSISTED_SUBMISSION_LANE.id
   );
 }
 

@@ -8,6 +8,7 @@ import { buildMerchantMessage } from "@/lib/justice/buildMerchantContactMessage"
 import {
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  REAL_BBB_ASSISTED_SUBMISSION_LANE,
   isRunnableAssistedSubmissionLane,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
@@ -18,15 +19,17 @@ import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/typ
 
 export type AssistedPracticeSubmissionLaneId =
   | typeof MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id
-  | typeof MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id;
+  | typeof MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+  | typeof REAL_BBB_ASSISTED_SUBMISSION_LANE.id;
 
-/** Resolve mock assisted-practice lane id from an approved next-action href. */
+/** Resolve assisted-submission lane id from an approved next-action href. */
 export function resolveAssistedPracticeSubmissionLaneId(
   href: string | undefined
 ): AssistedPracticeSubmissionLaneId | undefined {
   const lane = resolveAssistedSubmissionLaneForApprovedHref(href);
   if (lane?.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return lane.id;
   if (lane?.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return lane.id;
+  if (lane?.id === REAL_BBB_ASSISTED_SUBMISSION_LANE.id) return lane.id;
   return undefined;
 }
 
@@ -151,6 +154,16 @@ export function shouldShowChatInlineBbbMockPracticePrep(
   return shouldShowChatInlineFtcPracticePrep(input);
 }
 
+/** Interactive real BBB complaint prep when href resolves to the real BBB assisted lane. */
+export function shouldShowChatInlineRealBbbComplaintPrep(
+  input: ChatInlineFtcPracticePrepGateInput
+): boolean {
+  if (resolveAssistedPracticeSubmissionLaneId(input.approvedNextAction?.href) !== "bbb_complaint") {
+    return false;
+  }
+  return shouldShowChatInlineFtcPracticePrep(input);
+}
+
 /** Read-only mock FTC practice summary when href resolves to the FTC assisted lane. */
 export function shouldShowChatInlineFtcMockReadOnlyPrep(
   input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
@@ -167,14 +180,24 @@ export function shouldShowChatInlineBbbMockReadOnlyPrep(
   return shouldShowChatInlineFtcReadOnlyPrep(input);
 }
 
-/** Summary lines for visible mock assisted-practice prep, keyed by approved-action href lane. */
+/** Read-only real BBB complaint summary when href resolves to the real BBB assisted lane. */
+export function shouldShowChatInlineRealBbbComplaintReadOnlyPrep(
+  input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }
+): boolean {
+  if (resolveAssistedPracticeSubmissionLaneId(input.href) !== "bbb_complaint") return false;
+  return shouldShowChatInlineFtcReadOnlyPrep(input);
+}
+
+/** Summary lines for visible assisted-submission prep, keyed by approved-action href lane. */
 export function buildChatInlineAssistedPracticeSummaryLines(
   intake: JusticeIntake,
   href: string | undefined
 ): string[] {
   const laneId = resolveAssistedPracticeSubmissionLaneId(href);
   if (laneId === "ftc_practice") return buildFtcPracticeSummaryLines(intake);
-  if (laneId === "bbb_practice") return buildBbbPracticeSummaryLines(intake);
+  if (laneId === "bbb_practice" || laneId === "bbb_complaint") {
+    return buildBbbPracticeSummaryLines(intake);
+  }
   return [];
 }
 

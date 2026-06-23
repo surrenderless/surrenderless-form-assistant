@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
   ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
 } from "@/lib/justice/assistedSubmissionLane";
 import {
   CHAT_INLINE_BBB_PREP_HREF,
@@ -29,6 +30,8 @@ import {
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
+  shouldShowChatInlineRealBbbComplaintPrep,
+  shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -477,6 +480,9 @@ describe("assisted mock practice lane prep and summary", () => {
     expect(resolveAssistedPracticeSubmissionLaneId(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF)).toBe(
       "bbb_practice"
     );
+    expect(resolveAssistedPracticeSubmissionLaneId(ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF)).toBe(
+      "bbb_complaint"
+    );
     expect(resolveAssistedPracticeSubmissionLaneId("/justice/cfpb")).toBeUndefined();
   });
 
@@ -566,6 +572,64 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(false);
   });
 
+  it("shows real BBB complaint prep when all gates pass", () => {
+    expect(
+      shouldShowChatInlineRealBbbComplaintPrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(true);
+    expect(
+      shouldShowChatInlineRealBbbComplaintReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(true);
+  });
+
+  it("keeps real BBB complaint prep hidden for other assisted lanes and failed gates", () => {
+    expect(
+      shouldShowChatInlineRealBbbComplaintPrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "BBB practice",
+            href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineRealBbbComplaintPrep(
+        practicePrepInput({
+          isSignedIn: false,
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      shouldShowChatInlineRealBbbComplaintReadOnlyPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "completed",
+        href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        handlingRequested: false,
+      })
+    ).toBe(false);
+  });
+
   it("builds lane-specific assisted practice summary lines", () => {
     const intake = baseIntake();
     const ftcSummary = buildChatInlineAssistedPracticeSummaryLines(
@@ -576,9 +640,14 @@ describe("assisted mock practice lane prep and summary", () => {
       intake,
       ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
     );
+    const realBbbSummary = buildChatInlineAssistedPracticeSummaryLines(
+      intake,
+      ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF
+    );
 
     expect(ftcSummary[0]).toContain("Company:");
     expect(bbbSummary[0]).toContain("Company:");
+    expect(realBbbSummary).toEqual(bbbSummary);
     expect(ftcSummary).toEqual(bbbSummary);
     expect(buildChatInlineAssistedPracticeSummaryLines(intake, "/justice/cfpb")).toEqual([]);
   });
@@ -710,6 +779,24 @@ describe("shouldResetAssistedPracticeRunUiState", () => {
     ).toBe(false);
   });
 
+  it("does not reset when remaining on the real BBB complaint lane", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+        ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF
+      )
+    ).toBe(false);
+  });
+
+  it("resets when advancing from BBB practice to real BBB complaint", () => {
+    expect(
+      shouldResetAssistedPracticeRunUiState(
+        ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+        ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF
+      )
+    ).toBe(true);
+  });
+
   it("resets when advancing from FTC practice to BBB practice", () => {
     expect(
       shouldResetAssistedPracticeRunUiState(
@@ -755,6 +842,9 @@ describe("shouldResetAssistedPracticeRunUiState", () => {
         undefined,
         ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
       )
+    ).toBe(false);
+    expect(
+      shouldResetAssistedPracticeRunUiState(undefined, ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF)
     ).toBe(false);
   });
 
