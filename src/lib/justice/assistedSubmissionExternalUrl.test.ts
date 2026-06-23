@@ -55,11 +55,27 @@ describe("assistedSubmissionExternalUrl", () => {
 
   it("rejects near-miss BBB URLs even when autofill is enabled", () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
+    expect(evaluateAssistedSubmissionUrlPolicy("https://www.bbb.org", ORIGIN)).toEqual({
+      allowed: false,
+      error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
+    });
+    expect(evaluateAssistedSubmissionUrlPolicy("https://www.bbb.org/complain", ORIGIN)).toEqual({
+      allowed: false,
+      error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
+    });
+    expect(evaluateAssistedSubmissionUrlPolicy("https://www.bbb.org/file-a-complaint", ORIGIN)).toEqual({
+      allowed: false,
+      error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
+    });
     expect(evaluateAssistedSubmissionUrlPolicy("https://www.bbb.org/complaint", ORIGIN)).toEqual({
       allowed: false,
       error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
     });
     expect(evaluateAssistedSubmissionUrlPolicy("https://bbb.org", ORIGIN)).toEqual({
+      allowed: false,
+      error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
+    });
+    expect(evaluateAssistedSubmissionUrlPolicy("https://bbb.org/complain/", ORIGIN)).toEqual({
       allowed: false,
       error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
     });

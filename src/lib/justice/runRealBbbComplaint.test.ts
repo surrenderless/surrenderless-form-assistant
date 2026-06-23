@@ -139,7 +139,7 @@ describe("runRealBbbComplaint", () => {
       url: string;
       userData: Record<string, string>;
     };
-    expect(body.url).toBe("https://www.bbb.org");
+    expect(body.url).toBe(REAL_BBB_COMPLAINT_SUBMISSION_URL);
     expect(body.userData.business_name).toBe("Acme");
     expect(body.userData.business_website).toBe("https://acme.example");
     expect(body.userData.issue_type).toBe("charge dispute");

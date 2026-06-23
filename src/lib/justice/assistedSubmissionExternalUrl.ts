@@ -34,7 +34,7 @@ export function isSameOriginMockAssistedSubmissionUrl(url: string, requestOrigin
   }
 }
 
-/** True when url is exactly the configured real BBB submission URL and autofill is enabled. */
+/** True when url is exactly REAL_BBB_COMPLAINT_SUBMISSION_URL and autofill is enabled. */
 export function isAllowedExternalAssistedSubmissionUrl(url: string): boolean {
   if (!isRealBbbComplaintAutofillEnabled()) {
     return false;
