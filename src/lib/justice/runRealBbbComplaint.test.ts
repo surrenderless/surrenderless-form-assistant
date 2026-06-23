@@ -140,10 +140,15 @@ describe("runRealBbbComplaint", () => {
       userData: Record<string, string>;
     };
     expect(body.url).toBe("https://www.bbb.org");
-    expect(body.userData.issue_type).toBe("billing");
-    expect(body.userData.company_name).toBe("Acme");
-    expect(body.userData.complaint_description).toContain("Charged twice");
+    expect(body.userData.business_name).toBe("Acme");
+    expect(body.userData.business_website).toBe("https://acme.example");
+    expect(body.userData.issue_type).toBe("charge dispute");
+    expect(body.userData.what_happened).toBe("Charged twice");
+    expect(body.userData.complaint_narrative).toContain("Charged twice");
+    expect(body.userData.desired_resolution).toContain("Reversal of the charge");
     expect(body.userData.contact_email).toBe("user@example.com");
+    expect(body.userData).not.toHaveProperty("company_name");
+    expect(body.userData).not.toHaveProperty("complaint_description");
 
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("bbb.org"))).toBe(true);
 
