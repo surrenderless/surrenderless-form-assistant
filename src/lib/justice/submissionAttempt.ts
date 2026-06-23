@@ -3,7 +3,7 @@ import {
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
 } from "@/lib/justice/assistedSubmissionLane";
 
-export type SubmissionAttemptKind = "ftc_practice" | "bbb_practice";
+export type SubmissionAttemptKind = "ftc_practice" | "bbb_practice" | "bbb_complaint";
 
 export type SubmissionAttemptStatus = "success" | "failed";
 

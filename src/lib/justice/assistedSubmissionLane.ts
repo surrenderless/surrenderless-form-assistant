@@ -67,6 +67,29 @@ export function buildRealBbbComplaintSubmissionUrl(): string {
   return REAL_BBB_ASSISTED_SUBMISSION_LANE.submissionUrl;
 }
 
+export function isMockAssistedSubmissionLane(
+  lane: AssistedSubmissionLaneConfig
+): lane is typeof MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE | typeof MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE {
+  return (
+    lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
+    lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id
+  );
+}
+
+export function isExternalAssistedSubmissionLane(
+  lane: AssistedSubmissionLaneConfig
+): lane is typeof REAL_BBB_ASSISTED_SUBMISSION_LANE {
+  return lane.id === REAL_BBB_ASSISTED_SUBMISSION_LANE.id;
+}
+
+/** Mock lanes use same-origin mock paths; external lanes use absolute submission URLs. */
+export function resolveAssistedSubmissionFillUrl(lane: AssistedSubmissionLaneConfig, origin: string): string {
+  if (isMockAssistedSubmissionLane(lane)) {
+    return `${origin}${lane.mockUrlPath}`;
+  }
+  return lane.submissionUrl;
+}
+
 /** Lanes that may activate assisted mock submission eligibility/prep/run today. */
 export function isRunnableAssistedSubmissionLane(lane: AssistedSubmissionLaneConfig): boolean {
   return (
