@@ -5,6 +5,7 @@ import {
   resolveAssistedSubmissionFillUrl,
 } from "@/lib/justice/assistedSubmissionLane";
 import { runRealBbbComplaint } from "@/lib/justice/runRealBbbComplaint";
+import { REAL_BBB_AUTOFILL_DISABLED_ERROR } from "@/lib/justice/realBbbAutofillEnabled";
 import { labelForTimelineEntryType, readTimeline } from "@/lib/justice/timeline";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_TIMELINE_V1 } from "@/lib/justice/types";
@@ -53,6 +54,7 @@ describe("runRealBbbComplaint", () => {
   let sessionStorageMock: ReturnType<typeof createSessionStorageMock>;
 
   beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     sessionStorageMock = createSessionStorageMock();
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { location: { origin: "https://example.com" } });
@@ -85,7 +87,22 @@ describe("runRealBbbComplaint", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
+  });
+
+  it("returns a clear error when real BBB autofill is disabled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
+
+    const result = await runRealBbbComplaint({
+      intake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+    });
+
+    expect(result).toEqual({ ok: false, error: REAL_BBB_AUTOFILL_DISABLED_ERROR });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("returns an error outside the browser", async () => {

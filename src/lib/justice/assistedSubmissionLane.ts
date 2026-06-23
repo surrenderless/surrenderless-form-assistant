@@ -1,3 +1,5 @@
+import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
+
 /** Approved-action href for mock FTC practice assisted submission. */
 export const ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF = "/justice/ftc-review";
 
@@ -92,11 +94,12 @@ export function resolveAssistedSubmissionFillUrl(lane: AssistedSubmissionLaneCon
 
 /** Lanes that may activate assisted submission eligibility/prep/run in chat today. */
 export function isRunnableAssistedSubmissionLane(lane: AssistedSubmissionLaneConfig): boolean {
-  return (
-    lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
-    lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id ||
-    lane.id === REAL_BBB_ASSISTED_SUBMISSION_LANE.id
-  );
+  if (lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return true;
+  if (lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return true;
+  if (lane.id === REAL_BBB_ASSISTED_SUBMISSION_LANE.id) {
+    return isRealBbbComplaintAutofillEnabled();
+  }
+  return false;
 }
 
 /** Map an approved next-action href to its assisted-submission lane, if any. */

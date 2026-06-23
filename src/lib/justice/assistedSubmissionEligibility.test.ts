@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isAssistedMockSubmissionEligible,
   isHandlingWorkbenchAssistedMockSubmissionEligible,
@@ -121,7 +121,8 @@ describe("isAssistedMockSubmissionEligible", () => {
     ).toBe(false);
   });
 
-  it("returns true for real BBB complaint lane href when all gates pass", () => {
+  it("returns true for real BBB complaint lane href when autofill is enabled and all gates pass", () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     expect(
       isAssistedMockSubmissionEligible(
         eligibleInput({
@@ -133,6 +134,20 @@ describe("isAssistedMockSubmissionEligible", () => {
         })
       )
     ).toBe(true);
+  });
+
+  it("returns false for real BBB complaint lane when autofill is disabled", () => {
+    expect(
+      isAssistedMockSubmissionEligible(
+        eligibleInput({
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
   });
 
   it("returns false for real BBB complaint lane when gates fail", () => {
@@ -148,6 +163,10 @@ describe("isAssistedMockSubmissionEligible", () => {
         })
       )
     ).toBe(false);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 });
 

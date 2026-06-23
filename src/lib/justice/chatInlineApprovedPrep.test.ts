@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
   ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
@@ -572,7 +572,8 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(false);
   });
 
-  it("shows real BBB complaint prep when all gates pass", () => {
+  it("shows real BBB complaint prep when autofill is enabled and all gates pass", () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     expect(
       shouldShowChatInlineRealBbbComplaintPrep(
         practicePrepInput({
@@ -591,6 +592,31 @@ describe("assisted mock practice lane prep and summary", () => {
         status: "completed",
         href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
         handlingRequested: false,
+      })
+    ).toBe(true);
+  });
+
+  it("keeps real BBB complaint prep hidden when autofill is disabled and copy-only prep remains available", () => {
+    expect(
+      shouldShowChatInlineRealBbbComplaintPrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+    expect(
+      getChatInlineApprovedPrepContent(ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF, baseIntake())?.kind
+    ).toBe("bbb_complaint");
+    expect(
+      shouldShowChatInlineReadOnlyApprovedPrep({
+        isActiveUuidCase: true,
+        preparedPacketApproved: true,
+        status: "approved",
+        hasPrepContent: true,
       })
     ).toBe(true);
   });
@@ -650,6 +676,10 @@ describe("assisted mock practice lane prep and summary", () => {
     expect(realBbbSummary).toEqual(bbbSummary);
     expect(ftcSummary).toEqual(bbbSummary);
     expect(buildChatInlineAssistedPracticeSummaryLines(intake, "/justice/cfpb")).toEqual([]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 });
 
