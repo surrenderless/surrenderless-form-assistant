@@ -6,7 +6,7 @@ import {
   isRealBbbComplaintAutofillEnabled,
   REAL_BBB_AUTOFILL_DISABLED_ERROR,
 } from "@/lib/justice/realBbbAutofillEnabled";
-import { intakeToMockBbbUserData } from "@/lib/justice/runBbbPractice";
+import { intakeToRealBbbUserData } from "@/lib/justice/realBbbUserData";
 import { appendTimelineEvent, readTimeline, replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
@@ -90,7 +90,7 @@ export async function runRealBbbComplaint({
     REAL_BBB_ASSISTED_SUBMISSION_LANE,
     window.location.origin
   );
-  const userData = intakeToMockBbbUserData(intake);
+  const userData = intakeToRealBbbUserData(intake);
 
   if (caseId) {
     appendTimelineEvent(caseId, {
