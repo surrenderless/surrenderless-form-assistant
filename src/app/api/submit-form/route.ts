@@ -1,7 +1,8 @@
 // src/app/api/submit-form/route.ts
 import { NextResponse, type NextRequest } from "next/server";
-import { rateLimit } from "@/utils/rateLimiter";
+import { evaluateAssistedSubmissionUrlPolicy } from "@/lib/justice/assistedSubmissionExternalUrl";
 import { getUserOr401 } from "@/server/requireUser";
+import { rateLimit } from "@/utils/rateLimiter";
 
 export async function POST(req: NextRequest) {
   // auth
@@ -19,9 +20,15 @@ export async function POST(req: NextRequest) {
 
   try {
     const { url, userData } = await req.json();
-    if (!url) return NextResponse.json({ error: "Missing url" }, { status: 400 });
-
     const base = new URL(req.url).origin;
+    const policy = evaluateAssistedSubmissionUrlPolicy(url, base);
+    if (!policy.allowed) {
+      return NextResponse.json(
+        { error: policy.error },
+        { status: policy.error === "Missing url" ? 400 : 403 }
+      );
+    }
+
     const cookie = req.headers.get("cookie");
     const deployPassword = process.env.DEPLOY_PASSWORD;
     const basicAuth =
