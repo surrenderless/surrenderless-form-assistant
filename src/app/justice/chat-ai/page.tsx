@@ -74,6 +74,7 @@ import {
   type PaymentMethodOption,
 } from "@/lib/justice/buildPaymentDisputeBankLetter";
 import {
+  CHAT_INLINE_BBB_PREP_HREF,
   CHAT_INLINE_FTC_REVIEW_PREP_HREF,
   CHAT_INLINE_PACKET_FALLBACK_PREP_HREF,
   CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF,
@@ -88,11 +89,14 @@ import {
   shouldShowChatInlinePacketFallbackReadOnlyPrep,
   shouldShowChatInlinePaymentDisputeReadOnlyPrep,
   shouldShowChatInlineReadOnlyApprovedPrep,
+  shouldShowChatInlineRealBbbComplaintPrep,
+  shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
 import {
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  REAL_BBB_ASSISTED_SUBMISSION_LANE,
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import {
@@ -107,6 +111,7 @@ import {
 } from "@/lib/justice/preparePaymentDisputeChecklist";
 import { executeAssistedBbbPracticeSubmission } from "@/lib/justice/executeAssistedBbbPracticeSubmission";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
+import { executeAssistedRealBbbComplaintSubmission } from "@/lib/justice/executeAssistedRealBbbComplaintSubmission";
 import { LastAssistedSubmissionAttemptSummaryReadOnly } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
 import {
   isLastAssistedSubmissionAttemptVisibleForApprovedHref,
@@ -1045,6 +1050,88 @@ function ChatInlineAssistedPracticeBlock({
           <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function ChatInlineRealBbbComplaintBlock({
+  summaryLines,
+  confirmed,
+  onConfirmedChange,
+  running,
+  complaintSuccess,
+  storageSkipped,
+  error,
+  lastAssistedSubmissionAttempt,
+  approvedHref,
+  onRunComplaint,
+}: {
+  summaryLines: string[];
+  confirmed: boolean;
+  onConfirmedChange: (confirmed: boolean) => void;
+  running: boolean;
+  complaintSuccess: boolean;
+  storageSkipped: boolean;
+  error: string | null;
+  lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
+  approvedHref: string | undefined;
+  onRunComplaint: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">BBB complaint</p>
+      <p className="rounded-md border border-amber-300/80 bg-amber-50/90 px-2 py-1.5 text-[11px] leading-relaxed text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100">
+        Runs assisted autofill on the official BBB.org complaint flow (
+        <code className="text-[10px]">{REAL_BBB_ASSISTED_SUBMISSION_LANE.submissionUrl}</code>
+        ). Verify the correct business profile before you submit. You remain responsible for the final submission.
+      </p>
+      <ul className="space-y-1 rounded-md border border-emerald-200/80 bg-white/70 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-800 dark:border-emerald-900/40 dark:bg-neutral-950/50 dark:text-neutral-100">
+        {summaryLines.map((line) => (
+          <li key={line.slice(0, 48)}>{line}</li>
+        ))}
+      </ul>
+      <label className="flex items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          onChange={(e) => onConfirmedChange(e.target.checked)}
+          className="mt-0.5"
+          disabled={running || complaintSuccess}
+        />
+        <span>I confirm this information is accurate to the best of my knowledge.</span>
+      </label>
+      <button
+        type="button"
+        disabled={!confirmed || running || complaintSuccess}
+        onClick={onRunComplaint}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {running ? "Running BBB autofill…" : complaintSuccess ? "BBB autofill completed" : "Run BBB autofill"}
+      </button>
+      {error ? (
+        <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
+      ) : null}
+      {complaintSuccess ? (
+        <p className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300">
+          BBB autofill completed.
+          {storageSkipped ? " Screenshot storage was skipped locally." : ""}
+        </p>
+      ) : null}
+      {isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+        lastAssistedSubmissionAttempt,
+        approvedHref
+      ) ? (
+        <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt!} />
+      ) : null}
+      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+        <Link
+          href={CHAT_INLINE_BBB_PREP_HREF}
+          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+        >
+          Open full BBB prep page
+        </Link>
+        <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence checklist)</span>
+      </p>
     </div>
   );
 }
@@ -2350,16 +2437,23 @@ export default function JusticeChatAiPage() {
     };
     if (
       (!shouldShowChatInlineFtcMockPracticePrep(assistedPracticePrepInput) &&
-        !shouldShowChatInlineBbbMockPracticePrep(assistedPracticePrepInput)) ||
+        !shouldShowChatInlineBbbMockPracticePrep(assistedPracticePrepInput) &&
+        !shouldShowChatInlineRealBbbComplaintPrep(assistedPracticePrepInput)) ||
       !approvedNextAction
     ) {
       return;
     }
 
     const assistedLaneId = resolveAssistedPracticeSubmissionLaneId(approvedNextAction.href);
-    if (assistedLaneId !== "ftc_practice" && assistedLaneId !== "bbb_practice") {
+    if (
+      assistedLaneId !== "ftc_practice" &&
+      assistedLaneId !== "bbb_practice" &&
+      assistedLaneId !== "bbb_complaint"
+    ) {
       return;
     }
+
+    const isRealBbbComplaint = assistedLaneId === "bbb_complaint";
 
     setFtcPracticeRunning(true);
     setFtcPracticeError(null);
@@ -2386,9 +2480,11 @@ export default function JusticeChatAiPage() {
         onAssistedSubmissionRecorded: requestSavedEvidencePreviewRefresh,
       };
       const result =
-        assistedLaneId === "bbb_practice"
-          ? await executeAssistedBbbPracticeSubmission(submissionParams)
-          : await executeAssistedFtcPracticeSubmission(submissionParams);
+        assistedLaneId === "bbb_complaint"
+          ? await executeAssistedRealBbbComplaintSubmission(submissionParams)
+          : assistedLaneId === "bbb_practice"
+            ? await executeAssistedBbbPracticeSubmission(submissionParams)
+            : await executeAssistedFtcPracticeSubmission(submissionParams);
       let ftcSnapshotFallback: LastAssistedSubmissionAttemptSnapshot | null = null;
       if (!result.ok) {
         setFtcPracticeError(result.error);
@@ -2400,8 +2496,12 @@ export default function JusticeChatAiPage() {
         const snapshotError = result.lastAssistedSubmissionAttempt?.error?.trim();
         setFtcPracticeError(
           snapshotError
-            ? `Practice completed, but assisted filing recording failed: ${snapshotError}. You can retry when ready.`
-            : "Practice completed, but assisted filing recording failed. You can retry when ready."
+            ? isRealBbbComplaint
+              ? `BBB autofill completed, but assisted filing recording failed: ${snapshotError}. You can retry when ready.`
+              : `Practice completed, but assisted filing recording failed: ${snapshotError}. You can retry when ready.`
+            : isRealBbbComplaint
+              ? "BBB autofill completed, but assisted filing recording failed. You can retry when ready."
+              : "Practice completed, but assisted filing recording failed. You can retry when ready."
         );
         if (result.lastAssistedSubmissionAttempt) {
           setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
@@ -3763,8 +3863,17 @@ export default function JusticeChatAiPage() {
       status: approvedNextAction?.status,
       hasPrepContent: Boolean(chatInlineApprovedPrepContent),
     });
+  const showInlineRealBbbComplaintPrep = shouldShowChatInlineRealBbbComplaintPrep({
+    isUpdatingExistingCase,
+    caseId: activeUuidCaseId,
+    isLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    preparedPacketApproved,
+    approvedNextAction,
+  });
+  const showInlineApprovedPrepVisible = showInlineApprovedPrep && !showInlineRealBbbComplaintPrep;
   const showInlineMerchantContactDocumentation =
-    showInlineApprovedPrep &&
+    showInlineApprovedPrepVisible &&
     chatInlineApprovedPrepContent?.kind === "merchant_message" &&
     parts.already_contacted !== "yes" &&
     !approvedNextAction?.handling_requested_at?.trim();
@@ -3830,21 +3939,34 @@ export default function JusticeChatAiPage() {
       href: approvedNextAction?.href,
       handlingRequested: handlingRequestedForApprovedPrep,
     });
+  const showInlineRealBbbReadOnlyPrep =
+    Boolean(approvedNextAction) &&
+    shouldShowChatInlineRealBbbComplaintReadOnlyPrep({
+      isActiveUuidCase: isActiveUuidCaseChat,
+      preparedPacketApproved,
+      status: approvedNextAction?.status,
+      href: approvedNextAction?.href,
+      handlingRequested: handlingRequestedForApprovedPrep,
+    });
   const prepInlineInChat =
-    showInlineApprovedPrep ||
+    showInlineApprovedPrepVisible ||
     showInlinePaymentDisputePrep ||
     showInlinePaymentDisputeReadOnlyPrep ||
     showInlineFtcPracticePrep ||
     showInlineBbbPracticePrep ||
+    showInlineRealBbbComplaintPrep ||
     showInlineFtcReadOnlyPrep ||
     showInlineBbbReadOnlyPrep ||
+    showInlineRealBbbReadOnlyPrep ||
     showInlinePacketFallbackPrep;
   const ftcPracticeSummaryLines = useMemo(() => {
     if (
       !showInlineFtcPracticePrep &&
       !showInlineFtcReadOnlyPrep &&
       !showInlineBbbPracticePrep &&
-      !showInlineBbbReadOnlyPrep
+      !showInlineBbbReadOnlyPrep &&
+      !showInlineRealBbbComplaintPrep &&
+      !showInlineRealBbbReadOnlyPrep
     ) {
       return [];
     }
@@ -3857,6 +3979,8 @@ export default function JusticeChatAiPage() {
     showInlineFtcReadOnlyPrep,
     showInlineBbbPracticePrep,
     showInlineBbbReadOnlyPrep,
+    showInlineRealBbbComplaintPrep,
+    showInlineRealBbbReadOnlyPrep,
     approvedNextAction?.href,
     parts,
   ]);
@@ -4155,7 +4279,7 @@ export default function JusticeChatAiPage() {
                 />
               </div>
             ) : null}
-            {showInlineApprovedPrep && chatInlineApprovedPrepContent ? (
+            {showInlineApprovedPrepVisible && chatInlineApprovedPrepContent ? (
               <ChatInlineApprovedPrepActionBlock
                 title={chatInlineApprovedPrepContent.title}
                 messageText={chatInlineApprovedPrepContent.messageText}
@@ -4347,6 +4471,43 @@ export default function JusticeChatAiPage() {
                 ) : null}
               </>
             ) : null}
+            {showInlineRealBbbReadOnlyPrep ? (
+              <>
+                <ChatInlineApprovedPrepActionBlock
+                  title={approvedNextAction?.label?.trim() || "BBB complaint"}
+                  messageText={ftcPracticeSummaryLines.join("\n")}
+                  helperText="Complaint summary from your case — copy for reference. Verify the correct business profile on BBB.org before submitting."
+                  copyButtonLabel="Copy summary"
+                  optionalPageHref={CHAT_INLINE_BBB_PREP_HREF}
+                  optionalPageLabel="Open full BBB prep page"
+                  optionalPageNote="optional — evidence checklist"
+                  expanded={prepMessageExpanded}
+                  onExpandedChange={setPrepMessageExpanded}
+                  copyHint={prepCopyHint}
+                  onCopy={() => {
+                    void (async () => {
+                      const text = ftcPracticeSummaryLines.join("\n");
+                      if (!text) return;
+                      try {
+                        await navigator.clipboard.writeText(text);
+                        setPrepCopyHint("Copied to clipboard.");
+                        window.setTimeout(() => setPrepCopyHint(null), 2500);
+                      } catch {
+                        setPrepCopyHint("Copy failed — select the text and copy manually.");
+                      }
+                    })();
+                  }}
+                />
+                {isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+                  ftcPracticeLastAssistedSubmissionAttempt,
+                  approvedNextAction?.href
+                ) ? (
+                  <LastAssistedSubmissionAttemptSummaryReadOnly
+                    snapshot={ftcPracticeLastAssistedSubmissionAttempt!}
+                  />
+                ) : null}
+              </>
+            ) : null}
             {showInlineFtcPracticePrep ? (
               <ChatInlineAssistedPracticeBlock
                 laneId={MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id}
@@ -4389,6 +4550,27 @@ export default function JusticeChatAiPage() {
                 }
                 approvedHref={approvedNextAction?.href}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
+              />
+            ) : null}
+            {showInlineRealBbbComplaintPrep ? (
+              <ChatInlineRealBbbComplaintBlock
+                summaryLines={ftcPracticeSummaryLines}
+                confirmed={ftcPracticeConfirmed}
+                onConfirmedChange={setFtcPracticeConfirmed}
+                running={ftcPracticeRunning}
+                complaintSuccess={ftcPracticeSuccess}
+                storageSkipped={ftcPracticeStorageSkipped}
+                error={ftcPracticeError}
+                lastAssistedSubmissionAttempt={
+                  isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+                    ftcPracticeLastAssistedSubmissionAttempt,
+                    approvedNextAction?.href
+                  )
+                    ? ftcPracticeLastAssistedSubmissionAttempt
+                    : null
+                }
+                approvedHref={approvedNextAction?.href}
+                onRunComplaint={() => void handleRunFtcPracticeFromChat()}
               />
             ) : null}
             {showInlinePacketFallbackPrep ? (

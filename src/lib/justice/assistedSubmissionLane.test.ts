@@ -106,10 +106,10 @@ describe("assistedSubmissionLane", () => {
     expect(buildRealBbbComplaintSubmissionUrl()).toBe(REAL_BBB_COMPLAINT_SUBMISSION_URL);
   });
 
-  it("marks mock FTC and BBB practice lanes runnable but not real BBB", () => {
+  it("marks mock FTC, BBB practice, and real BBB complaint lanes runnable", () => {
     expect(isRunnableAssistedSubmissionLane(MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
     expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
-    expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(false);
+    expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(true);
   });
 
   it("resolves FTC review href to mock FTC lane", () => {
@@ -149,7 +149,7 @@ describe("assistedSubmissionLane", () => {
     );
   });
 
-  it("keeps mock-assisted submission ineligible for real BBB prep", () => {
+  it("keeps real BBB prep eligible when all assisted submission gates pass", () => {
     expect(
       isAssistedMockSubmissionEligible({
         isLoaded: true,
@@ -162,7 +162,7 @@ describe("assistedSubmissionLane", () => {
           status: "approved",
         },
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("returns undefined for unknown or empty href", () => {

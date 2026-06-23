@@ -6,6 +6,7 @@ import {
 import { CHAT_INLINE_FTC_REVIEW_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
 import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
   isRunnableAssistedSubmissionLane,
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
@@ -113,6 +114,35 @@ describe("isAssistedMockSubmissionEligible", () => {
           approvedNextAction: {
             label: "BBB practice",
             href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(false);
+  });
+
+  it("returns true for real BBB complaint lane href when all gates pass", () => {
+    expect(
+      isAssistedMockSubmissionEligible(
+        eligibleInput({
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
+  it("returns false for real BBB complaint lane when gates fail", () => {
+    expect(
+      isAssistedMockSubmissionEligible(
+        eligibleInput({
+          isSignedIn: false,
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
             status: "approved",
           },
         })

@@ -6,6 +6,8 @@ import {
 import {
   ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
   ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF,
+  ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+  REAL_BBB_COMPLAINT_FILING_DESTINATION,
 } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildFailedLastAssistedSubmissionAttemptSnapshot,
@@ -249,6 +251,11 @@ describe("submissionAttemptState", () => {
       attemptedAt: "2026-06-16T12:00:00.000Z",
       filingDestination: BBB_PRACTICE_FILING_DESTINATION,
     };
+    const realBbbSnapshot = {
+      kind: "bbb_complaint" as const,
+      attemptedAt: "2026-06-16T12:00:00.000Z",
+      filingDestination: REAL_BBB_COMPLAINT_FILING_DESTINATION,
+    };
 
     it("shows FTC snapshot on FTC practice href", () => {
       expect(
@@ -286,13 +293,48 @@ describe("submissionAttemptState", () => {
       ).toBe(false);
     });
 
-    it("hides any snapshot on non-assisted href such as real BBB", () => {
+    it("hides mock BBB practice snapshot on real BBB complaint href", () => {
       expect(
-        isLastAssistedSubmissionAttemptVisibleForApprovedHref(ftcSnapshot, "/justice/bbb")
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          bbbSnapshot,
+          ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF
+        )
       ).toBe(false);
       expect(
-        isLastAssistedSubmissionAttemptVisibleForApprovedHref(bbbSnapshot, "/justice/bbb")
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          ftcSnapshot,
+          ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF
+        )
       ).toBe(false);
+    });
+
+    it("shows real BBB complaint snapshot on real BBB complaint href", () => {
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          realBbbSnapshot,
+          ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF
+        )
+      ).toBe(true);
+      expect(
+        isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+          realBbbSnapshot,
+          ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+        )
+      ).toBe(false);
+    });
+
+    it("parses real BBB complaint assisted submission snapshots", () => {
+      expect(
+        parseLastAssistedSubmissionAttempt({
+          kind: "bbb_complaint",
+          attemptedAt: "2026-06-16T12:00:00.000Z",
+          filingDestination: REAL_BBB_COMPLAINT_FILING_DESTINATION,
+        })
+      ).toEqual({
+        kind: "bbb_complaint",
+        attemptedAt: "2026-06-16T12:00:00.000Z",
+        filingDestination: REAL_BBB_COMPLAINT_FILING_DESTINATION,
+      });
     });
 
     it("hides when snapshot or active assisted lane is missing", () => {
