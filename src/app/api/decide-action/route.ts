@@ -1,6 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { getUserOr401 } from "@/server/requireUser";
+import { rateLimit } from "@/utils/rateLimiter";
 
 function getOpenAI(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -8,7 +10,19 @@ function getOpenAI(): OpenAI | null {
   return new OpenAI({ apiKey });
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  const userId = getUserOr401(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  try {
+    if (await rateLimit(userId)) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn("rateLimit failed, allowing:", message);
+  }
+
   const openai = getOpenAI();
   if (!openai) {
     return NextResponse.json(
