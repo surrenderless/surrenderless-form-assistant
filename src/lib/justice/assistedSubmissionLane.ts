@@ -31,8 +31,8 @@ export const ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF = "/justice/bbb";
 /** Canonical filing destination for real BBB (matches MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS). */
 export const REAL_BBB_COMPLAINT_FILING_DESTINATION = "Better Business Bureau" as const;
 
-/** Official BBB.org entry point (same URL linked from /justice/bbb prep). */
-export const REAL_BBB_COMPLAINT_SUBMISSION_URL = "https://www.bbb.org";
+/** Official BBB.org complaint filing entry (assisted autofill target). */
+export const REAL_BBB_COMPLAINT_SUBMISSION_URL = "https://www.bbb.org/complain/";
 
 /** Real BBB complaint lane for assisted submission after packet approval. */
 export const REAL_BBB_ASSISTED_SUBMISSION_LANE = {

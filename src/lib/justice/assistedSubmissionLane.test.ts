@@ -74,7 +74,7 @@ describe("assistedSubmissionLane", () => {
     expect(REAL_BBB_ASSISTED_SUBMISSION_LANE.filingDestination).toBe(
       MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS[0]
     );
-    expect(buildRealBbbComplaintSubmissionUrl()).toBe("https://www.bbb.org");
+    expect(buildRealBbbComplaintSubmissionUrl()).toBe("https://www.bbb.org/complain/");
   });
 
   it("builds mock practice submission URL from origin", () => {
