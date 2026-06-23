@@ -37,6 +37,28 @@ describe("assistedSubmissionExternalUrl", () => {
     });
   });
 
+  it("allows loopback mock URLs during Playwright E2E when localhost and 127.0.0.1 differ", () => {
+    vi.stubEnv("PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE", "1");
+    expect(
+      evaluateAssistedSubmissionUrlPolicy(
+        "http://127.0.0.1:3000/mock/ftc-complaint",
+        "http://localhost:3000"
+      )
+    ).toEqual({ allowed: true });
+  });
+
+  it("does not allow loopback mock URLs during Playwright E2E when the flag is off", () => {
+    expect(
+      evaluateAssistedSubmissionUrlPolicy(
+        "http://127.0.0.1:3000/mock/ftc-complaint",
+        "http://localhost:3000"
+      )
+    ).toEqual({
+      allowed: false,
+      error: ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR,
+    });
+  });
+
   it("rejects the real BBB submission URL when autofill is disabled", () => {
     expect(isAllowedExternalAssistedSubmissionUrl(REAL_BBB_COMPLAINT_SUBMISSION_URL)).toBe(false);
     expect(evaluateAssistedSubmissionUrlPolicy(REAL_BBB_COMPLAINT_SUBMISSION_URL, ORIGIN)).toEqual({

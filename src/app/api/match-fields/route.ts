@@ -2,6 +2,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { rateLimit } from '@/utils/rateLimiter';
 import { getUserOr401 } from '@/server/requireUser';
+import {
+  buildPlaywrightMockMatchFieldInstructions,
+  isPlaywrightMockAssistedSubmitPipelineEnabled,
+} from '@/lib/testing/playwrightMockAssistedSubmitPipeline';
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,14 +22,23 @@ export async function POST(req: NextRequest) {
       console.warn('rateLimit failed, allowing:', e?.message);
     }
 
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: 'OPENAI_API_KEY not configured' }, { status: 500 });
-    }
-
     const body = await req.json();
     const { fields, userData } = body || {};
     if (!Array.isArray(fields)) {
       return NextResponse.json({ error: 'Invalid "fields"' }, { status: 400 });
+    }
+
+    if (isPlaywrightMockAssistedSubmitPipelineEnabled()) {
+      return NextResponse.json({
+        instructions: buildPlaywrightMockMatchFieldInstructions(
+          fields,
+          (userData ?? {}) as Record<string, unknown>
+        ),
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: 'OPENAI_API_KEY not configured' }, { status: 500 });
     }
 
     const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {

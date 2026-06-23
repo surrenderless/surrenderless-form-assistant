@@ -10,6 +10,7 @@ import util from "util";
 
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
+import { isPlaywrightMockAssistedSubmitUrl } from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -67,8 +68,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing url or decision" }, { status: 400 });
     }
 
+    const requestOrigin = new URL(req.url).origin;
+    const playwrightMockFill = isPlaywrightMockAssistedSubmitUrl(url, requestOrigin);
     const supabase = getSupabaseAdmin();
-    if (!supabase) {
+    if (!supabase && !playwrightMockFill) {
       return NextResponse.json(
         { error: "Supabase is not configured on this server." },
         { status: 503 }
@@ -76,6 +79,7 @@ export async function POST(req: NextRequest) {
     }
 
     const storageConfigured = !!(
+      supabase &&
       process.env.SUPABASE_BUCKET &&
       process.env.SUPABASE_URL
     );
@@ -238,15 +242,17 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- persist submission ----
-    const { error: dbError } = await supabase.from("submissions").insert({
-      form_url: url,
-      submitted_data: fieldsToFill,
-      screenshot_url: screenshotUrl,
-      full_page_context: pageData,
-      // user_id: userId,            // uncomment if your table has this column
-      // profile_snapshot: profileData,
-    });
-    if (dbError) throw new Error("Database insert failed: " + dbError.message);
+    if (!playwrightMockFill && supabase) {
+      const { error: dbError } = await supabase.from("submissions").insert({
+        form_url: url,
+        submitted_data: fieldsToFill,
+        screenshot_url: screenshotUrl,
+        full_page_context: pageData,
+        // user_id: userId,            // uncomment if your table has this column
+        // profile_snapshot: profileData,
+      });
+      if (dbError) throw new Error("Database insert failed: " + dbError.message);
+    }
 
     return NextResponse.json({
       status: "success",
@@ -256,7 +262,9 @@ export async function POST(req: NextRequest) {
         ? {}
         : {
             storageSkipped: true,
-            storageReason: "Missing Supabase storage env vars",
+            storageReason: playwrightMockFill
+              ? "Playwright mock assisted submit pipeline (local E2E only)"
+              : "Missing Supabase storage env vars",
           }),
     });
   } catch (err: any) {
