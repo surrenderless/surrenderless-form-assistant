@@ -32,9 +32,57 @@ describe("realBbbBoundedSubmitLoop", () => {
         pageText: "File a complaint",
       })
     ).toBe(false);
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://www.bbb.org/complain/",
+        pageText: "Thank you for submitting your complaint. Confirmation number 12345",
+      })
+    ).toBe(false);
   });
 
-  it("detects terminal confirmation from URL and page text", () => {
+  it("rejects off-host URLs even when they contain success", () => {
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://example.com/success",
+        pageText: "Operation complete",
+      })
+    ).toBe(false);
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://evil.test/complain/confirmation",
+        pageText: "Thank you for submitting your complaint",
+      })
+    ).toBe(false);
+  });
+
+  it("rejects in-wizard BBB pages with incidental completion wording", () => {
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://www.bbb.org/complain/business-details",
+        pageText: "Please complete the form below before continuing.",
+      })
+    ).toBe(false);
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://www.bbb.org/complain/review",
+        pageText: "Review your information. Success depends on accurate details.",
+      })
+    ).toBe(false);
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://www.bbb.org/complain/success",
+        pageText: "Step complete. Continue to the next section.",
+      })
+    ).toBe(false);
+  });
+
+  it("detects terminal confirmation from confirmation-like URL and submission text", () => {
     expect(
       detectRealBbbTerminalConfirmation({
         ...basePage,
@@ -44,7 +92,21 @@ describe("realBbbBoundedSubmitLoop", () => {
     expect(
       detectRealBbbTerminalConfirmation({
         ...basePage,
+        url: "https://www.bbb.org/complain/thank-you",
+      })
+    ).toBe(true);
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://www.bbb.org/complain/review",
         pageText: "Thank you for submitting your complaint. Confirmation number 12345",
+      })
+    ).toBe(true);
+    expect(
+      detectRealBbbTerminalConfirmation({
+        ...basePage,
+        url: "https://www.bbb.org/complain/review",
+        pageText: "Your complaint has been received by BBB.",
       })
     ).toBe(true);
     expect(detectRealBbbTerminalConfirmation(basePage)).toBe(false);

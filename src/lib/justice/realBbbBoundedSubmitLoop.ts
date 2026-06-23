@@ -43,14 +43,12 @@ export type AssistedFormPageData = {
   pageText?: string;
 };
 
-const TERMINAL_URL_PATTERNS = [
-  /confirmation/i,
-  /thank[- ]?you/i,
-  /submitted/i,
-  /success/i,
-  /complete/i,
-];
+const BBB_TERMINAL_HOST = "www.bbb.org";
 
+/** Confirmation-like URL path segments; excludes generic words such as success/complete. */
+const TERMINAL_URL_PATH_PATTERNS = [/confirmation/i, /thank[-_ ]?you/i, /submitted/i];
+
+/** Strong BBB complaint submission confirmation phrases in page body text. */
 const TERMINAL_TEXT_PATTERNS = [
   /complaint.*submitted/i,
   /thank you for submitting/i,
@@ -58,6 +56,35 @@ const TERMINAL_TEXT_PATTERNS = [
   /successfully submitted/i,
   /your complaint has been/i,
 ];
+
+function isBbbOrgHost(url: string): boolean {
+  try {
+    return new URL(url).hostname === BBB_TERMINAL_HOST;
+  } catch {
+    return false;
+  }
+}
+
+function isBbbComplainEntryUrl(url: string): boolean {
+  try {
+    const normalized = new URL(url).pathname.replace(/\/$/, "") || "/";
+    return normalized === "/complain";
+  } catch {
+    return false;
+  }
+}
+
+function hasConfirmationLikeBbbUrlPath(url: string): boolean {
+  if (!isBbbOrgHost(url) || isBbbComplainEntryUrl(url)) {
+    return false;
+  }
+  return TERMINAL_URL_PATH_PATTERNS.some((pattern) => pattern.test(url));
+}
+
+function hasBbbSubmissionConfirmationText(pageText: string): boolean {
+  const text = pageText.slice(0, 12000);
+  return TERMINAL_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 export function hasReachedStepCap(stepsExecuted: number, maxSteps = REAL_BBB_MAX_SUBMIT_STEPS): boolean {
   return stepsExecuted >= maxSteps;
@@ -98,11 +125,13 @@ export function isEmptyFormDecision(decision: FormDecision): boolean {
 /** True when the page shows a BBB complaint submission confirmation state. */
 export function detectRealBbbTerminalConfirmation(pageData: AssistedFormPageData): boolean {
   const url = pageData.url ?? "";
-  if (TERMINAL_URL_PATTERNS.some((pattern) => pattern.test(url))) {
+  if (!isBbbOrgHost(url) || isBbbComplainEntryUrl(url)) {
+    return false;
+  }
+  if (hasConfirmationLikeBbbUrlPath(url)) {
     return true;
   }
-  const text = (pageData.pageText ?? "").slice(0, 12000);
-  return TERMINAL_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+  return hasBbbSubmissionConfirmationText(pageData.pageText ?? "");
 }
 
 export function buildRealBbbIncompleteError(
