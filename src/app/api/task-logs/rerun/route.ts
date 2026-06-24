@@ -1,6 +1,7 @@
 // src/app/api/task-logs/rerun/route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { evaluateAssistedSubmissionUrlPolicy } from "@/lib/justice/assistedSubmissionExternalUrl";
 import { runCrewBridge } from "@/server/CrewBridge";
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
@@ -79,6 +80,15 @@ export async function POST(req: NextRequest) {
 
     const userProfile = await getUserProfile(supabase, log.user_id);
     if (!userProfile) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+
+    const base = new URL(req.url).origin;
+    const policy = evaluateAssistedSubmissionUrlPolicy(log.url, base);
+    if (!policy.allowed) {
+      return NextResponse.json(
+        { error: policy.error },
+        { status: policy.error === "Missing url" ? 400 : 403 }
+      );
+    }
 
     await runCrewBridge({
       url: log.url,
