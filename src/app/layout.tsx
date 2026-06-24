@@ -3,6 +3,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { connection } from "next/server";
 import "./globals.css";
 import Providers from "./providers";
+import SiteFooter from "./components/SiteFooter";
 import { getClerkPublishableKey } from "@/lib/clerkConfigured";
 
 export const metadata: Metadata = {
@@ -20,7 +21,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const body = (
     <html lang="en">
       <body className="antialiased">
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <SiteFooter />
+        </Providers>
       </body>
     </html>
   );
