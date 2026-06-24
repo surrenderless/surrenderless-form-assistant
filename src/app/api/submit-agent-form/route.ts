@@ -1,5 +1,6 @@
 // src/app/api/submit-agent-form/route.ts
 import { NextResponse, type NextRequest } from 'next/server';
+import { evaluateAssistedSubmissionUrlPolicy } from '@/lib/justice/assistedSubmissionExternalUrl';
 import { runCrewBridge } from '@/server/CrewBridge';
 import { rateLimit } from '@/utils/rateLimiter';
 import { getUserOr401 } from '@/server/requireUser';
@@ -24,6 +25,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Missing required fields: url and userData' },
         { status: 400 }
+      );
+    }
+
+    const base = new URL(req.url).origin;
+    const policy = evaluateAssistedSubmissionUrlPolicy(url, base);
+    if (!policy.allowed) {
+      return NextResponse.json(
+        { error: policy.error },
+        { status: policy.error === 'Missing url' ? 400 : 403 }
       );
     }
 
