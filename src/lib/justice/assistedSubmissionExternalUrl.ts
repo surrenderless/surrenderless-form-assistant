@@ -4,6 +4,7 @@ import {
   REAL_BBB_COMPLAINT_SUBMISSION_URL,
 } from "@/lib/justice/assistedSubmissionLane";
 import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
+import { isPlaywrightLocalMockAssistedSubmissionUrl } from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
 
 export const ASSISTED_SUBMISSION_URL_FORBIDDEN_ERROR =
   "This submission URL is not allowed for assisted form fill.";
@@ -59,6 +60,9 @@ export function evaluateAssistedSubmissionUrlPolicy(
 
   const trimmed = url.trim();
   if (isSameOriginMockAssistedSubmissionUrl(trimmed, requestOrigin)) {
+    return { allowed: true };
+  }
+  if (isPlaywrightLocalMockAssistedSubmissionUrl(trimmed, requestOrigin)) {
     return { allowed: true };
   }
   if (isAllowedExternalAssistedSubmissionUrl(trimmed)) {

@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { loadEnvConfig } from "@next/env";
+import { CLERK_STORAGE_STATE_PATH } from "./e2e/helpers/clerk-e2e";
+
+loadEnvConfig(process.cwd());
 
 export default defineConfig({
   testDir: "./e2e",
@@ -12,14 +16,32 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "global setup",
+      testMatch: /global\.setup\.ts/,
+    },
+    {
       name: "chromium",
+      dependencies: ["global setup"],
       use: { ...devices["Desktop Chrome"] },
+      testIgnore: [/global\.setup\.ts/, /signed-in-mock-assisted-submit\.smoke\.spec\.ts/],
+    },
+    {
+      name: "authenticated",
+      testMatch: /signed-in-mock-assisted-submit\.smoke\.spec\.ts/,
+      dependencies: ["global setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: CLERK_STORAGE_STATE_PATH,
+      },
     },
   ],
   webServer: {
     command: process.env.CI ? "npm run start" : "npm run dev",
     url: "http://127.0.0.1:3000/mock/ftc-complaint",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
+    env: {
+      PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE: "1",
+    },
   },
 });
