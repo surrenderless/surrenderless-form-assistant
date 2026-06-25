@@ -5,9 +5,17 @@ import { mergeModelBuildJusticeIntakeParts } from "@/lib/justice/parseIntakeChat
 export const PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE =
   "Thanks — I've noted Acme Retail and the double charge. What email should we use for updates on this case?";
 
+/** Deterministic assistant copy returned for the second Playwright E2E user message. */
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE =
+  "Got it — I'll use Jordan Lee (e2e-chat@example.com) for case updates. Your basics look ready; you can save and continue in chat when you're ready.";
+
 /** Canonical signed-in chat round-trip message used in Playwright E2E. */
 export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE =
   "I ordered a widget from Acme Retail for $49.99. They charged me twice and never refunded.";
+
+/** Canonical second-turn message providing email and display name for Playwright E2E. */
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE =
+  "My email is e2e-chat@example.com and my name is Jordan Lee.";
 
 /** Enabled only when Playwright webServer sets PLAYWRIGHT_MOCK_INTAKE_CHAT_PIPELINE=1. */
 export function isPlaywrightMockIntakeChatPipelineEnabled(): boolean {
@@ -36,6 +44,50 @@ function extractMockMoneyAmount(userMessage: string): string {
   return match?.[0] ?? "";
 }
 
+function extractMockEmail(userMessage: string): string {
+  const match = userMessage.match(/[\w.+-]+@[\w.-]+\.\w+/);
+  return match?.[0] ?? "";
+}
+
+function extractMockDisplayName(userMessage: string): string {
+  if (userMessage.includes("Jordan Lee")) {
+    return "Jordan Lee";
+  }
+  const match = userMessage.match(/\bname is\s+([A-Za-z][A-Za-z\s'.-]{0,80})/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function isPlaywrightMockIntakeChatSecondTurnMessage(
+  userMessage: string,
+  baselineParts: BuildJusticeIntakeParts
+): boolean {
+  const trimmed = userMessage.trim();
+  if (trimmed === PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE) {
+    return true;
+  }
+  const email = extractMockEmail(trimmed);
+  const displayName = extractMockDisplayName(trimmed);
+  return Boolean(email && displayName && baselineParts.company_name.trim().length > 0);
+}
+
+function buildPlaywrightMockIntakeChatSecondTurnResponse(
+  userMessage: string,
+  baselineParts: BuildJusticeIntakeParts
+): { assistantMessage: string; parts: BuildJusticeIntakeParts } {
+  const reply_email = extractMockEmail(userMessage) || "e2e-chat@example.com";
+  const user_display_name = extractMockDisplayName(userMessage) || "Jordan Lee";
+
+  const parts = mergeModelBuildJusticeIntakeParts(baselineParts, {
+    reply_email,
+    user_display_name,
+  });
+
+  return {
+    assistantMessage: PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE,
+    parts,
+  };
+}
+
 /**
  * Deterministic intake-chat response for Playwright E2E.
  * Matches production route shape: `{ assistantMessage, parts }`.
@@ -45,6 +97,11 @@ export function buildPlaywrightMockIntakeChatResponse(
   baselineParts: BuildJusticeIntakeParts
 ): { assistantMessage: string; parts: BuildJusticeIntakeParts } {
   const trimmed = userMessage.trim();
+
+  if (isPlaywrightMockIntakeChatSecondTurnMessage(trimmed, baselineParts)) {
+    return buildPlaywrightMockIntakeChatSecondTurnResponse(trimmed, baselineParts);
+  }
+
   const company_name = extractMockCompanyName(trimmed);
   const money_amount = extractMockMoneyAmount(trimmed);
 
