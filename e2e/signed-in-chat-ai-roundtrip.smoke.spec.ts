@@ -17,9 +17,10 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through merchant step handling and reaches inline FTC practice prep in chat", async ({
+test("signed-in user completes intake through merchant step handling, FTC practice autofill, and filing confirmation in chat", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   await page.goto("/justice/chat-ai");
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
@@ -238,4 +239,23 @@ test("signed-in user completes intake through merchant step handling and reaches
     ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
   ).toBeDisabled();
   await expect(ftcPracticePrepBlock.getByRole("link", { name: "Open full FTC practice page" })).toBeVisible();
+
+  await ftcPracticePrepBlock
+    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
+    .check();
+  await ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(page.getByText("Practice autofill completed.", { exact: true })).toBeVisible({
+    timeout: 60_000,
+  });
+
+  const assistedSubmissionSnapshot = page
+    .locator("div.rounded-lg.border")
+    .filter({ has: page.getByText("Last assisted submission attempt", { exact: true }) });
+  await expect(assistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
+  await expect(assistedSubmissionSnapshot.getByText("FTC (practice)", { exact: true })).toBeVisible();
+  await expect(assistedSubmissionSnapshot).toContainText(
+    "Confirmation: FTC mock practice complete"
+  );
 });

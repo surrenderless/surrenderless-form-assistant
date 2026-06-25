@@ -11,6 +11,10 @@ import {
   isPlaywrightMockIntakeCaseHydrationPipelineEnabled,
   resetPlaywrightMockCaseHydrationSnapshotForCase,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+import {
+  isPlaywrightMockJusticeFilingsPipelineEnabled,
+  resetPlaywrightMockJusticeFilingsForCase,
+} from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -147,6 +151,9 @@ export async function POST(req: NextRequest) {
   if (isPlaywrightMockIntakeCaseCommitPipelineEnabled()) {
     if (isPlaywrightMockIntakeCaseHydrationPipelineEnabled()) {
       resetPlaywrightMockCaseHydrationSnapshotForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+    }
+    if (isPlaywrightMockJusticeFilingsPipelineEnabled()) {
+      resetPlaywrightMockJusticeFilingsForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
     }
     return NextResponse.json(
       buildPlaywrightMockCaseCreateResponse(b.intake, timeline, payment_dispute_draft, client_state)

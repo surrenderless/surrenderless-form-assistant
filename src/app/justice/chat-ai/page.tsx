@@ -115,6 +115,7 @@ import { executeAssistedRealBbbComplaintSubmission } from "@/lib/justice/execute
 import { LastAssistedSubmissionAttemptSummaryReadOnly } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
 import {
   isLastAssistedSubmissionAttemptVisibleForApprovedHref,
+  isLastAssistedSubmissionAttemptFailed,
   readLastAssistedSubmissionAttemptFromClientState,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
@@ -4586,6 +4587,22 @@ export default function JusticeChatAiPage() {
                 approvedHref={approvedNextAction?.href}
                 onRunComplaint={() => void handleRunFtcPracticeFromChat()}
               />
+            ) : null}
+            {ftcPracticeLastAssistedSubmissionAttempt &&
+            !isLastAssistedSubmissionAttemptVisibleForApprovedHref(
+              ftcPracticeLastAssistedSubmissionAttempt,
+              approvedNextAction?.href
+            ) ? (
+              <>
+                {!isLastAssistedSubmissionAttemptFailed(ftcPracticeLastAssistedSubmissionAttempt) ? (
+                  <p className="mt-3 text-[11px] font-medium text-emerald-800 dark:text-emerald-300">
+                    Practice autofill completed.
+                  </p>
+                ) : null}
+                <LastAssistedSubmissionAttemptSummaryReadOnly
+                  snapshot={ftcPracticeLastAssistedSubmissionAttempt}
+                />
+              </>
             ) : null}
             {showInlinePacketFallbackPrep ? (
               chatHandlingReadinessLoading ? (
