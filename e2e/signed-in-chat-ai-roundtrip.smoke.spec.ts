@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake, approves prepared packet, documents merchant contact, and reaches next inline preparation in chat", async ({
+test("signed-in user completes intake through merchant step handling and reaches inline FTC practice prep in chat", async ({
   page,
 }) => {
   await page.goto("/justice/chat-ai");
@@ -184,4 +184,58 @@ test("signed-in user completes intake, approves prepared packet, documents merch
     .filter({ has: page.getByRole("button", { name: "Copy message" }) });
   await expect(merchantContactPrepBlock).toBeVisible({ timeout: 15_000 });
   await expect(merchantContactPrepBlock.getByRole("button", { name: "Copy message" })).toBeVisible();
+
+  const actionTracking = page
+    .locator("div.mt-4.rounded-xl")
+    .filter({ has: page.getByText("Current action tracking", { exact: true }) });
+  await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+  await expect(actionTracking.getByText("Next step:")).toContainText("Merchant contact");
+  await expect(
+    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
+  ).toContainText("Approved");
+  const markStepOpenedButton = actionTracking.getByRole("button", { name: "Mark step opened" });
+  await expect(markStepOpenedButton).toBeVisible();
+  await expect(
+    actionTracking.getByRole("button", { name: "Record action handled for now" })
+  ).not.toBeVisible();
+
+  await markStepOpenedButton.click();
+
+  await expect(
+    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
+  ).toContainText("Started", { timeout: 15_000 });
+  await expect(actionTracking.getByText("Opened for next step.", { exact: true })).toBeVisible();
+  await expect(markStepOpenedButton).not.toBeVisible();
+  const recordHandledButton = actionTracking.getByRole("button", {
+    name: "Record action handled for now",
+  });
+  await expect(recordHandledButton).toBeVisible();
+
+  await recordHandledButton.click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(actionTracking.getByText("Next step:")).toContainText("FTC (consumer complaint)", {
+    timeout: 15_000,
+  });
+  await expect(
+    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
+  ).toContainText("Approved");
+  await expect(markStepOpenedButton).toBeVisible();
+  await expect(recordHandledButton).not.toBeVisible();
+  await expect(actionTracking.getByText("Opened for next step.", { exact: true })).not.toBeVisible();
+
+  const ftcPracticePrepBlock = page
+    .locator("div.mt-3.space-y-2.rounded-lg.border")
+    .filter({
+      has: page.locator("p.text-xs.font-medium").filter({ hasText: "FTC practice complaint" }),
+    })
+    .filter({ has: page.getByText("/mock/ftc-complaint") });
+  await expect(ftcPracticePrepBlock).toBeVisible({ timeout: 15_000 });
+  await expect(
+    ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
+  ).toBeVisible();
+  await expect(
+    ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
+  ).toBeDisabled();
+  await expect(ftcPracticePrepBlock.getByRole("link", { name: "Open full FTC practice page" })).toBeVisible();
 });
