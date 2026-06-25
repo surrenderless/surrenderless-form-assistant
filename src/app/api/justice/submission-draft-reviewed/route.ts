@@ -7,6 +7,10 @@ import {
 } from "@/lib/justice/timeline";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  buildPlaywrightMockSubmissionDraftReviewedResponse,
+  isPlaywrightMockSubmissionDraftReviewedPipelineEnabled,
+} from "@/lib/testing/playwrightMockSubmissionDraftReviewedPipeline";
 
 const MAX_DEST_LABEL = 300;
 
@@ -137,18 +141,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
   }
 
+  const destinationLabel =
+    typeof b.destination_label === "string" && b.destination_label.trim()
+      ? clampStr(b.destination_label.trim(), MAX_DEST_LABEL)
+      : undefined;
+  const usedAi = b.used_ai === true;
+
+  if (isPlaywrightMockSubmissionDraftReviewedPipelineEnabled()) {
+    return NextResponse.json(
+      buildPlaywrightMockSubmissionDraftReviewedResponse(caseId, {
+        destinationLabel,
+        usedAi,
+      })
+    );
+  }
+
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
   if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-
-  const destinationLabel =
-    typeof b.destination_label === "string" && b.destination_label.trim()
-      ? clampStr(b.destination_label.trim(), MAX_DEST_LABEL)
-      : undefined;
-  const usedAi = b.used_ai === true;
 
   const detail = buildSubmissionDraftReviewedDetail({
     destinationLabel,
