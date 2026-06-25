@@ -8,6 +8,10 @@ import {
 } from "@/lib/justice/parseIntakeChatAiResponse";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
+import {
+  buildPlaywrightMockIntakeChatResponse,
+  isPlaywrightMockIntakeChatPipelineEnabled,
+} from "@/lib/testing/playwrightMockIntakeChatPipeline";
 
 const MAX_RAW_BODY = 262_144;
 
@@ -30,10 +34,6 @@ export async function POST(req: NextRequest) {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn("rateLimit failed, allowing:", msg);
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 500 });
     }
 
     const cl = req.headers.get("content-length");
@@ -78,6 +78,18 @@ export async function POST(req: NextRequest) {
     }
 
     const conversation_history = parseIntakeChatConversationHistory(b.conversation_history);
+
+    if (isPlaywrightMockIntakeChatPipelineEnabled()) {
+      const mock = buildPlaywrightMockIntakeChatResponse(user_message, parts);
+      return NextResponse.json({
+        assistantMessage: mock.assistantMessage,
+        parts: mock.parts,
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 500 });
+    }
 
     const messages = buildIntakeChatAiMessages({
       userMessage: clampStr(user_message, MAX_INTAKE_CHAT_USER_MESSAGE),
