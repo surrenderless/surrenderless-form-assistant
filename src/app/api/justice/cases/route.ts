@@ -5,7 +5,12 @@ import { isJusticeIntakePayload, isTimelineArray } from "@/lib/justice/caseApiVa
 import {
   buildPlaywrightMockCaseCreateResponse,
   isPlaywrightMockIntakeCaseCommitPipelineEnabled,
+  PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
 } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import {
+  isPlaywrightMockIntakeCaseHydrationPipelineEnabled,
+  resetPlaywrightMockCaseHydrationSnapshotForCase,
+} from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -140,6 +145,9 @@ export async function POST(req: NextRequest) {
   const client_state = b.client_state !== undefined ? b.client_state : null;
 
   if (isPlaywrightMockIntakeCaseCommitPipelineEnabled()) {
+    if (isPlaywrightMockIntakeCaseHydrationPipelineEnabled()) {
+      resetPlaywrightMockCaseHydrationSnapshotForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+    }
     return NextResponse.json(
       buildPlaywrightMockCaseCreateResponse(b.intake, timeline, payment_dispute_draft, client_state)
     );

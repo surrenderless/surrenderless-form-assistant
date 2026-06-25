@@ -9,6 +9,9 @@ const PLAYWRIGHT_MOCK_CASE_HYDRATION_TIMESTAMP = "2026-06-21T00:00:00.000Z";
 const PLAYWRIGHT_MOCK_CASE_HYDRATION_UPDATED_TIMESTAMP = "2026-06-21T00:00:01.000Z";
 const PLAYWRIGHT_MOCK_CASE_STARTED_TIMELINE_ID = "playwright_e2e_case_started";
 
+/** In-process cumulative mock case snapshots for the fixed Playwright E2E case id only. */
+const playwrightMockCaseHydrationSnapshots = new Map<string, PlaywrightMockCaseCreateResponse>();
+
 export type PlaywrightMockCaseHydrationPatch = {
   intake?: unknown;
   timeline?: unknown;
@@ -33,6 +36,17 @@ export function isPlaywrightMockIntakeCaseHydrationPipelineEnabled(): boolean {
 /** True when GET/PATCH /api/justice/cases/[id] should use the deterministic Playwright mock. */
 export function isPlaywrightMockIntakeCaseHydrationCaseId(caseId: string): boolean {
   return caseId.trim() === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+}
+
+/** Clears cumulative mock snapshots — for unit tests only. */
+export function resetPlaywrightMockCaseHydrationSnapshotsForTests(): void {
+  playwrightMockCaseHydrationSnapshots.clear();
+}
+
+/** Clears cumulative mock snapshot for one case — used when Playwright E2E recommits the fixed case. */
+export function resetPlaywrightMockCaseHydrationSnapshotForCase(caseId: string): void {
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
+  playwrightMockCaseHydrationSnapshots.delete(caseId.trim());
 }
 
 /** Deterministic intake snapshot for the signed-in chat roundtrip E2E case. */
@@ -65,11 +79,7 @@ export function buildPlaywrightMockCaseStartedTimeline(caseId: string): Timeline
   ];
 }
 
-/**
- * Deterministic GET /api/justice/cases/[id] response for Playwright E2E.
- * Matches production route shape without Supabase persistence.
- */
-export function buildPlaywrightMockCaseGetResponse(caseId: string): PlaywrightMockCaseCreateResponse {
+function buildPlaywrightMockCaseBaseline(caseId: string): PlaywrightMockCaseCreateResponse {
   return {
     id: caseId,
     intake: buildPlaywrightMockE2eCaseIntake(),
@@ -83,18 +93,22 @@ export function buildPlaywrightMockCaseGetResponse(caseId: string): PlaywrightMo
   };
 }
 
-/**
- * Deterministic PATCH /api/justice/cases/[id] response for Playwright E2E.
- * Echoes validated patch fields onto the mock case snapshot.
- */
-export function buildPlaywrightMockCasePatchResponse(
-  caseId: string,
+function getOrCreatePlaywrightMockCaseSnapshot(caseId: string): PlaywrightMockCaseCreateResponse {
+  const existing = playwrightMockCaseHydrationSnapshots.get(caseId);
+  if (existing) {
+    return existing;
+  }
+  const baseline = buildPlaywrightMockCaseBaseline(caseId);
+  playwrightMockCaseHydrationSnapshots.set(caseId, baseline);
+  return baseline;
+}
+
+function applyPlaywrightMockCaseHydrationPatch(
+  current: PlaywrightMockCaseCreateResponse,
   patch: PlaywrightMockCaseHydrationPatch
 ): PlaywrightMockCaseCreateResponse {
-  const baseline = buildPlaywrightMockCaseGetResponse(caseId);
-
   return {
-    ...baseline,
+    ...current,
     ...(Object.prototype.hasOwnProperty.call(patch, "intake") ? { intake: patch.intake } : {}),
     ...(Object.prototype.hasOwnProperty.call(patch, "timeline") ? { timeline: patch.timeline } : {}),
     ...(Object.prototype.hasOwnProperty.call(patch, "payment_dispute_draft")
@@ -111,4 +125,27 @@ export function buildPlaywrightMockCasePatchResponse(
       : {}),
     updated_at: PLAYWRIGHT_MOCK_CASE_HYDRATION_UPDATED_TIMESTAMP,
   };
+}
+
+/**
+ * Deterministic GET /api/justice/cases/[id] response for Playwright E2E.
+ * Returns the cumulative in-process snapshot when present.
+ */
+export function buildPlaywrightMockCaseGetResponse(caseId: string): PlaywrightMockCaseCreateResponse {
+  const snapshot = getOrCreatePlaywrightMockCaseSnapshot(caseId);
+  return { ...snapshot };
+}
+
+/**
+ * Deterministic PATCH /api/justice/cases/[id] response for Playwright E2E.
+ * Merges validated patch fields onto the cumulative mock snapshot.
+ */
+export function buildPlaywrightMockCasePatchResponse(
+  caseId: string,
+  patch: PlaywrightMockCaseHydrationPatch
+): PlaywrightMockCaseCreateResponse {
+  const current = getOrCreatePlaywrightMockCaseSnapshot(caseId);
+  const merged = applyPlaywrightMockCaseHydrationPatch(current, patch);
+  playwrightMockCaseHydrationSnapshots.set(caseId, merged);
+  return { ...merged };
 }
