@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getUserOr401 } from "@/server/requireUser";
+import { isPlaywrightMockIntakeCaseCommitPipelineEnabled } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -32,6 +33,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const event_name = typeof body?.event_name === "string" ? body.event_name : "unknown";
     const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
+
+    if (
+      isPlaywrightMockIntakeCaseCommitPipelineEnabled() &&
+      event_name === "intake_completed"
+    ) {
+      return NextResponse.json({ ok: true, skipped: true });
+    }
 
     const { error } = await supabase.from("history").insert({
       user_id: userId,
