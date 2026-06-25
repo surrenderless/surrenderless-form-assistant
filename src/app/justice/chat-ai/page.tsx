@@ -3786,21 +3786,6 @@ export default function JusticeChatAiPage() {
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
-  if (!isLoaded) {
-    return (
-      <>
-        <Header />
-        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loadingâ€¦
-        </main>
-      </>
-    );
-  }
-
-  if (!isSignedIn) {
-    return <JusticeActionResumeSignInPrompt />;
-  }
-
   const basicsMissing = getPreviewBasicsMissing(parts);
   const stillNeededHint =
     basicsMissing.length > 0 ? stillNeededBeforePreviewMessage(basicsMissing) : null;
@@ -4081,6 +4066,21 @@ export default function JusticeChatAiPage() {
     chatFirstBreadcrumbContinuity || !isUpdatingExistingCase
       ? "Justice workspace"
       : activeCaseWorkLabel;
+
+  if (!isLoaded) {
+    return (
+      <>
+        <Header />
+        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
+          Loadingâ€¦
+        </main>
+      </>
+    );
+  }
+
+  if (!isSignedIn) {
+    return <JusticeActionResumeSignInPrompt />;
+  }
 
   return (
     <>
