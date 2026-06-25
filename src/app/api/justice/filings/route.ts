@@ -4,6 +4,12 @@ import { validate as isUuid } from "uuid";
 import { completeHandlingRequestTaskIfOpen } from "@/lib/justice/handlingRequestTask";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  buildPlaywrightMockJusticeFilingPostResponse,
+  buildPlaywrightMockJusticeFilingsGetResponse,
+  isPlaywrightMockJusticeFilingsCaseId,
+  isPlaywrightMockJusticeFilingsPipelineEnabled,
+} from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -141,6 +147,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
   }
 
+  if (
+    isPlaywrightMockJusticeFilingsPipelineEnabled() &&
+    isPlaywrightMockJusticeFilingsCaseId(caseId)
+  ) {
+    return NextResponse.json(buildPlaywrightMockJusticeFilingsGetResponse(caseId));
+  }
+
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
@@ -186,13 +199,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
   }
 
-  const supabase = getSupabaseAdmin();
-  if (!supabase) return supabaseUnavailableResponse();
-
-  if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   if (!nonEmptyString(b.destination)) {
     return NextResponse.json({ error: "destination is required" }, { status: 400 });
   }
@@ -221,6 +227,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid notes" }, { status: 400 });
   }
   const notesVal = notes != null ? clampLen(notes, MAX_NOTES) : notes;
+
+  if (
+    isPlaywrightMockJusticeFilingsPipelineEnabled() &&
+    isPlaywrightMockJusticeFilingsCaseId(caseId)
+  ) {
+    return NextResponse.json(
+      buildPlaywrightMockJusticeFilingPostResponse(caseId, userId, {
+        destination,
+        filed_at: filedAtVal,
+        confirmation_number: confirmationVal,
+        filing_url: filingUrlVal,
+        notes: notesVal,
+      })
+    );
+  }
+
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return supabaseUnavailableResponse();
+
+  if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const insertRow: Record<string, unknown> = {
     user_id: userId,
