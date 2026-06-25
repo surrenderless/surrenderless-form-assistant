@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes two chat turns, saves intake, and reviews draft in chat", async ({
+test("signed-in user completes intake, reviews draft, and reaches packet approval in chat", async ({
   page,
 }) => {
   await page.goto("/justice/chat-ai");
@@ -102,4 +102,35 @@ test("signed-in user completes two chat turns, saves intake, and reviews draft i
   expect(persisted?.company_name).toBe("Acme Retail");
   expect(persisted?.reply_email).toBe("e2e-chat@example.com");
   expect(persisted?.user_display_name).toBe("Jordan Lee");
+
+  const draftReviewBlock = page
+    .locator("div")
+    .filter({ hasText: "Review submission draft" })
+    .filter({ has: page.getByRole("button", { name: "Mark draft reviewed" }) });
+  await draftReviewBlock
+    .getByRole("checkbox", { name: "I reviewed the submission draft shown above." })
+    .check();
+  await draftReviewBlock.getByRole("button", { name: "Mark draft reviewed" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(page.getByText("Review submission draft")).not.toBeVisible({ timeout: 15_000 });
+
+  const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
+  await expect(packetApproval).toBeVisible({ timeout: 15_000 });
+  await expect(
+    packetApproval.locator("p.text-xs.font-medium").filter({ hasText: "Approve prepared packet" })
+  ).toBeVisible();
+  await expect(
+    packetApproval.locator("pre").filter({ hasText: "JUSTICE CASE PACKET" })
+  ).toBeVisible();
+  await expect(packetApproval.locator("pre")).toContainText("Acme Retail");
+  await expect(
+    packetApproval.getByRole("checkbox", { name: "I reviewed this prepared packet" })
+  ).toBeVisible();
+  await expect(
+    packetApproval.getByRole("button", { name: "Approve prepared packet" })
+  ).toBeVisible();
+  await expect(
+    packetApproval.getByRole("button", { name: "Approve prepared packet" })
+  ).toBeDisabled();
 });
