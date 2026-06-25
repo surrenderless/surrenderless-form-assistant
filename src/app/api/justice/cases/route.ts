@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getUserOr401 } from "@/server/requireUser";
 import { isJusticeIntakePayload, isTimelineArray } from "@/lib/justice/caseApiValidation";
+import {
+  buildPlaywrightMockCaseCreateResponse,
+  isPlaywrightMockIntakeCaseCommitPipelineEnabled,
+} from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -134,6 +138,12 @@ export async function POST(req: NextRequest) {
   const payment_dispute_draft =
     b.payment_dispute_draft !== undefined ? b.payment_dispute_draft : null;
   const client_state = b.client_state !== undefined ? b.client_state : null;
+
+  if (isPlaywrightMockIntakeCaseCommitPipelineEnabled()) {
+    return NextResponse.json(
+      buildPlaywrightMockCaseCreateResponse(b.intake, timeline, payment_dispute_draft, client_state)
+    );
+  }
 
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();

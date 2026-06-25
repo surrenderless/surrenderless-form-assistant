@@ -44,6 +44,7 @@ export default defineConfig({
     env: {
       PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE: "1",
       PLAYWRIGHT_MOCK_INTAKE_CHAT_PIPELINE: "1",
+      PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_PIPELINE: "1",
     },
   },
 });
