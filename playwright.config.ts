@@ -23,12 +23,13 @@ export default defineConfig({
       name: "chromium",
       dependencies: ["global setup"],
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: [/global\.setup\.ts/, /signed-in-mock-assisted-submit\.smoke\.spec\.ts/],
+      testIgnore: [/global\.setup\.ts/, /signed-in-.*\.smoke\.spec\.ts/],
     },
     {
       name: "authenticated",
-      testMatch: /signed-in-mock-assisted-submit\.smoke\.spec\.ts/,
+      testMatch: /signed-in-.*\.smoke\.spec\.ts/,
       dependencies: ["global setup"],
+      fullyParallel: false,
       use: {
         ...devices["Desktop Chrome"],
         storageState: CLERK_STORAGE_STATE_PATH,
