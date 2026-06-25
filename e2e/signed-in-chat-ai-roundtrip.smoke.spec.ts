@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake, approves prepared packet, and reaches first inline preparation in chat", async ({
+test("signed-in user completes intake, approves prepared packet, documents merchant contact, and reaches next inline preparation in chat", async ({
   page,
 }) => {
   await page.goto("/justice/chat-ai");
@@ -165,4 +165,23 @@ test("signed-in user completes intake, approves prepared packet, and reaches fir
   await expect(
     merchantContactPrep.getByRole("button", { name: "Save contact details" })
   ).toBeVisible();
+
+  await merchantContactPrep.locator("#chat-merchant-contact-date").fill("2026-01-15");
+  await merchantContactPrep.locator("select").nth(1).selectOption("refused_help");
+  await merchantContactPrep.locator("select").nth(2).selectOption("paste");
+  await merchantContactPrep.locator("#chat-merchant-contact-proof").fill(
+    "E2E: Acme Retail refused a refund by email on 2026-01-15."
+  );
+
+  await merchantContactPrep.getByRole("button", { name: "Save contact details" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(merchantContactPrep).not.toBeVisible({ timeout: 15_000 });
+
+  const merchantContactPrepBlock = page
+    .locator("div.mt-3.space-y-2.rounded-lg.border")
+    .filter({ has: page.locator("p.text-xs.font-medium").filter({ hasText: "Merchant contact & proof" }) })
+    .filter({ has: page.getByRole("button", { name: "Copy message" }) });
+  await expect(merchantContactPrepBlock).toBeVisible({ timeout: 15_000 });
+  await expect(merchantContactPrepBlock.getByRole("button", { name: "Copy message" })).toBeVisible();
 });
