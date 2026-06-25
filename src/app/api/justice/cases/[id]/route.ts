@@ -26,6 +26,12 @@ import {
 } from "@/lib/justice/caseArchiveTimeline";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
+import {
+  buildPlaywrightMockCaseGetResponse,
+  buildPlaywrightMockCasePatchResponse,
+  isPlaywrightMockIntakeCaseHydrationCaseId,
+  isPlaywrightMockIntakeCaseHydrationPipelineEnabled,
+} from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -83,6 +89,13 @@ export async function GET(req: NextRequest, context: RouteCtx) {
   const { id } = await context.params;
   if (!isUuid(id)) {
     return NextResponse.json({ error: "Invalid case id" }, { status: 400 });
+  }
+
+  if (
+    isPlaywrightMockIntakeCaseHydrationPipelineEnabled() &&
+    isPlaywrightMockIntakeCaseHydrationCaseId(id)
+  ) {
+    return NextResponse.json(buildPlaywrightMockCaseGetResponse(id));
   }
 
   const supabase = getSupabaseAdmin();
@@ -172,6 +185,13 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+  }
+
+  if (
+    isPlaywrightMockIntakeCaseHydrationPipelineEnabled() &&
+    isPlaywrightMockIntakeCaseHydrationCaseId(id)
+  ) {
+    return NextResponse.json(buildPlaywrightMockCasePatchResponse(id, patch));
   }
 
   const supabase = getSupabaseAdmin();
