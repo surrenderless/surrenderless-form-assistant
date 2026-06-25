@@ -434,6 +434,12 @@ function submissionDraftReviewedInTimeline(caseId: string): boolean {
 
 const CHAT_DRAFT_PREVIEW_TRUNCATE = 720;
 
+const CHAT_INLINE_SUBMISSION_DRAFT_REVIEWED_CHECKBOX_ID =
+  "chat-inline-submission-draft-reviewed-checkbox";
+
+const CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID =
+  "chat-inline-prepared-packet-reviewed-checkbox";
+
 function isChatPreviewSelectableDestination(d: JusticeDestination): boolean {
   return d.status === "recommended" || d.status === "available";
 }
@@ -506,16 +512,19 @@ function ChatInlineSubmissionDraftReviewBlock({
           text.
         </p>
       )}
-      <label className="flex cursor-pointer items-start gap-2 text-[11px] text-blue-900 dark:text-blue-100">
+      <div className="flex items-start gap-2 text-[11px] text-blue-900 dark:text-blue-100">
         <input
+          id={CHAT_INLINE_SUBMISSION_DRAFT_REVIEWED_CHECKBOX_ID}
           type="checkbox"
           checked={checked}
           onChange={(e) => onCheckedChange(e.target.checked)}
           disabled={!draftText}
-          className="mt-0.5"
+          className="mt-0.5 shrink-0"
         />
-        I reviewed the submission draft shown above.
-      </label>
+        <label htmlFor={CHAT_INLINE_SUBMISSION_DRAFT_REVIEWED_CHECKBOX_ID} className="cursor-pointer">
+          I reviewed the submission draft shown above.
+        </label>
+      </div>
       {error ? <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p> : null}
       <button
         type="button"
@@ -528,6 +537,7 @@ function ChatInlineSubmissionDraftReviewBlock({
       <p className="text-xs text-blue-800 dark:text-blue-200">
         <Link
           href="/justice/preview"
+          prefetch={false}
           className="font-medium underline underline-offset-2 hover:text-blue-950 dark:text-blue-300 dark:hover:text-blue-100"
         >
           Open full submission preview
@@ -593,16 +603,19 @@ function ChatInlinePreparedPacketApprovalBlock({
           Packet preview is not available yet. Use the full packet page to review your case packet.
         </p>
       )}
-      <label className="flex cursor-pointer items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+      <div className="flex items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
         <input
+          id={CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID}
           type="checkbox"
           checked={checked}
           onChange={(e) => onCheckedChange(e.target.checked)}
           disabled={!packetText}
-          className="mt-0.5"
+          className="mt-0.5 shrink-0"
         />
-        I reviewed this prepared packet
-      </label>
+        <label htmlFor={CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID} className="cursor-pointer">
+          I reviewed this prepared packet
+        </label>
+      </div>
       <button
         type="button"
         disabled={!checked || !packetText || approving}
@@ -614,6 +627,7 @@ function ChatInlinePreparedPacketApprovalBlock({
       <p className="text-xs text-emerald-800 dark:text-emerald-200">
         <Link
           href="/justice/packet"
+          prefetch={false}
           className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
         >
           Open full packet page

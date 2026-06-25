@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake, reviews draft, and reaches packet approval in chat", async ({
+test("signed-in user completes intake, approves prepared packet, and reaches first inline preparation in chat", async ({
   page,
 }) => {
   await page.goto("/justice/chat-ai");
@@ -27,10 +27,14 @@ test("signed-in user completes intake, reviews draft, and reaches packet approva
   const chatInput = page.locator("#chat-ai-input");
   await expect(chatInput).toBeVisible({ timeout: 30_000 });
 
+  const chatTranscript = page
+    .locator("div:has(> textarea#chat-ai-input)")
+    .locator("xpath=preceding-sibling::div[1]");
+
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(page.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE)).toBeVisible();
@@ -47,7 +51,7 @@ test("signed-in user completes intake, reviews draft, and reaches packet approva
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(page.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE)).toBeVisible({
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE)).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE)).toBeVisible();
@@ -103,26 +107,37 @@ test("signed-in user completes intake, reviews draft, and reaches packet approva
   expect(persisted?.reply_email).toBe("e2e-chat@example.com");
   expect(persisted?.user_display_name).toBe("Jordan Lee");
 
-  const draftReviewBlock = page
-    .locator("div")
-    .filter({ hasText: "Review submission draft" })
-    .filter({ has: page.getByRole("button", { name: "Mark draft reviewed" }) });
-  await draftReviewBlock
-    .getByRole("checkbox", { name: "I reviewed the submission draft shown above." })
-    .check();
-  await draftReviewBlock.getByRole("button", { name: "Mark draft reviewed" }).click();
+  const draftReviewBlock = page.locator("#chat-ai-inline-submission-draft-review");
+  await expect(draftReviewBlock).toBeVisible();
 
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(page.getByText("Review submission draft")).not.toBeVisible({ timeout: 15_000 });
+  const markDraftReviewedButton = draftReviewBlock.getByRole("button", {
+    name: "Mark draft reviewed",
+  });
+  await expect(markDraftReviewedButton).toBeDisabled();
+
+  await page
+    .locator("#chat-inline-submission-draft-reviewed-checkbox")
+    .evaluate((el) => (el as HTMLInputElement).click());
+
+  await expect(draftReviewBlock).toBeVisible();
+  await expect(
+    draftReviewBlock.getByRole("button", { name: "Mark draft reviewed" })
+  ).toBeEnabled();
 
   const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
+  await draftReviewBlock
+    .getByRole("button", { name: "Mark draft reviewed" })
+    .evaluate((el) => (el as HTMLButtonElement).click());
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(draftReviewBlock).not.toBeVisible({ timeout: 15_000 });
   await expect(packetApproval).toBeVisible({ timeout: 15_000 });
   await expect(
     packetApproval.locator("p.text-xs.font-medium").filter({ hasText: "Approve prepared packet" })
   ).toBeVisible();
   await expect(
     packetApproval.locator("pre").filter({ hasText: "JUSTICE CASE PACKET" })
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(packetApproval.locator("pre")).toContainText("Acme Retail");
   await expect(
     packetApproval.getByRole("checkbox", { name: "I reviewed this prepared packet" })
@@ -133,4 +148,21 @@ test("signed-in user completes intake, reviews draft, and reaches packet approva
   await expect(
     packetApproval.getByRole("button", { name: "Approve prepared packet" })
   ).toBeDisabled();
+
+  await packetApproval
+    .getByRole("checkbox", { name: "I reviewed this prepared packet" })
+    .check();
+  await packetApproval.getByRole("button", { name: "Approve prepared packet" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(packetApproval).not.toBeVisible({ timeout: 15_000 });
+
+  const merchantContactPrep = page.locator("form").filter({
+    has: page.locator("p.text-xs.font-medium").filter({ hasText: "After you contact them" }),
+  });
+  await expect(merchantContactPrep).toBeVisible({ timeout: 15_000 });
+  await expect(merchantContactPrep.getByLabel("Contact date")).toBeVisible();
+  await expect(
+    merchantContactPrep.getByRole("button", { name: "Save contact details" })
+  ).toBeVisible();
 });
