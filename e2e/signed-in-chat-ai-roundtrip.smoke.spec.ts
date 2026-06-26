@@ -341,4 +341,32 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(handlingTrackingLine).toContainText(
     "Open the approved step and prepare the manual action."
   );
+
+  await markStepOpenedButton.click();
+
+  await expect(
+    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
+  ).toContainText("Started", { timeout: 15_000 });
+  await expect(actionTracking.getByText("Opened for next step.", { exact: true })).toBeVisible();
+  await expect(handlingTrackingLine).toContainText(
+    "Add filing records in chat below after external submission.",
+    { timeout: 15_000 }
+  );
+
+  const manualFilingForm = page.getByRole("form", { name: "Record manual filing" });
+  await expect(manualFilingForm).toBeVisible({ timeout: 15_000 });
+  const destinationInput = manualFilingForm.getByLabel("Where you filed or acted (required)");
+  await expect(destinationInput).toHaveValue("Better Business Bureau");
+  await expect(destinationInput).toHaveAttribute("readonly", "");
+
+  await manualFilingForm.getByLabel("Confirmation number (optional)").fill("E2E-BBB-2026-001");
+  await manualFilingForm.getByRole("button", { name: "Save filing record" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
+    timeout: 15_000,
+  });
+  await expect(handlingTrackingLine).not.toContainText(
+    "Add filing records in chat below after external submission."
+  );
 });
