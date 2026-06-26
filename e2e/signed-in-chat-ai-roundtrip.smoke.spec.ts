@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through merchant step handling, FTC practice autofill, and filing confirmation in chat", async ({
+test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, and filing confirmation in chat", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -257,5 +257,47 @@ test("signed-in user completes intake through merchant step handling, FTC practi
   await expect(assistedSubmissionSnapshot.getByText("FTC (practice)", { exact: true })).toBeVisible();
   await expect(assistedSubmissionSnapshot).toContainText(
     "Confirmation: FTC mock practice complete"
+  );
+
+  await expect(actionTracking.getByText("Next step:")).toContainText("BBB mock practice", {
+    timeout: 15_000,
+  });
+  await expect(
+    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
+  ).toContainText("Approved");
+  await expect(markStepOpenedButton).toBeVisible();
+  await expect(recordHandledButton).not.toBeVisible();
+
+  const bbbPracticePrepBlock = page
+    .locator("div.mt-3.space-y-2.rounded-lg.border")
+    .filter({
+      has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB practice complaint" }),
+    })
+    .filter({ has: page.getByText("/mock/bbb-complaint") });
+  await expect(bbbPracticePrepBlock).toBeVisible({ timeout: 15_000 });
+  await expect(
+    bbbPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
+  ).toBeVisible();
+  await expect(
+    bbbPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
+  ).toBeDisabled();
+
+  await bbbPracticePrepBlock
+    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
+    .check();
+  await bbbPracticePrepBlock.getByRole("button", { name: "Run practice autofill" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(page.getByText("Practice autofill completed.", { exact: true })).toBeVisible({
+    timeout: 60_000,
+  });
+
+  const bbbAssistedSubmissionSnapshot = page
+    .locator("div.rounded-lg.border")
+    .filter({ has: page.getByText("Last assisted submission attempt", { exact: true }) });
+  await expect(bbbAssistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
+  await expect(bbbAssistedSubmissionSnapshot.getByText("BBB (practice)", { exact: true })).toBeVisible();
+  await expect(bbbAssistedSubmissionSnapshot).toContainText(
+    "Confirmation: BBB mock practice complete"
   );
 });
