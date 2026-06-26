@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, and filing confirmation in chat", async ({
+test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, real BBB copy-draft prep, and filing confirmation in chat", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -295,6 +295,36 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   const bbbAssistedSubmissionSnapshot = page
     .locator("div.rounded-lg.border")
     .filter({ has: page.getByText("Last assisted submission attempt", { exact: true }) });
+  await expect(bbbAssistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
+  await expect(bbbAssistedSubmissionSnapshot.getByText("BBB (practice)", { exact: true })).toBeVisible();
+  await expect(bbbAssistedSubmissionSnapshot).toContainText(
+    "Confirmation: BBB mock practice complete"
+  );
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
+    timeout: 15_000,
+  });
+  await expect(
+    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
+  ).toContainText("Approved");
+  await expect(markStepOpenedButton).toBeVisible();
+  await expect(recordHandledButton).not.toBeVisible();
+
+  const realBbbPrepBlock = page
+    .locator("div.mt-3.space-y-2.rounded-lg.border")
+    .filter({
+      has: page.locator("p.text-xs.font-medium").filter({ hasText: "Better Business Bureau" }),
+    })
+    .filter({ has: page.getByRole("button", { name: "Copy draft" }) });
+  await expect(realBbbPrepBlock).toBeVisible({ timeout: 15_000 });
+  await expect(realBbbPrepBlock.getByRole("button", { name: "Copy draft" })).toBeVisible();
+  await expect(realBbbPrepBlock.getByRole("link", { name: "Open full better business bureau page" })).toBeVisible();
+  await expect(realBbbPrepBlock.getByRole("link", { name: "Open full better business bureau page" })).toHaveAttribute(
+    "href",
+    "/justice/bbb"
+  );
+
   await expect(bbbAssistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
   await expect(bbbAssistedSubmissionSnapshot.getByText("BBB (practice)", { exact: true })).toBeVisible();
   await expect(bbbAssistedSubmissionSnapshot).toContainText(
