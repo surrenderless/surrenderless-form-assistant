@@ -4,6 +4,11 @@ import { validate as isUuid } from "uuid";
 import { isJusticeEvidenceType, JUSTICE_EVIDENCE_TYPE_LABELS } from "@/lib/justice/evidence";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  buildPlaywrightMockJusticeEvidenceGetResponse,
+  isPlaywrightMockJusticeEvidenceCaseId,
+  isPlaywrightMockJusticeEvidencePipelineEnabled,
+} from "@/lib/testing/playwrightMockJusticeEvidencePipeline";
 
 const EVIDENCE_SELECT =
   "id, user_id, case_id, title, evidence_type, evidence_date, description, source_url, storage_note, created_at, updated_at" as const;
@@ -139,6 +144,13 @@ export async function GET(req: NextRequest) {
   const caseId = req.nextUrl.searchParams.get("case_id") ?? "";
   if (!isUuid(caseId)) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
+  }
+
+  if (
+    isPlaywrightMockJusticeEvidencePipelineEnabled() &&
+    isPlaywrightMockJusticeEvidenceCaseId(caseId)
+  ) {
+    return NextResponse.json(buildPlaywrightMockJusticeEvidenceGetResponse(caseId, userId));
   }
 
   const supabase = getSupabaseAdmin();
