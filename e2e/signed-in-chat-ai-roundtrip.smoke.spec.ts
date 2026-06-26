@@ -330,4 +330,15 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(bbbAssistedSubmissionSnapshot).toContainText(
     "Confirmation: BBB mock practice complete"
   );
+
+  const handlingTrackingLine = page.locator("p").filter({
+    has: page.locator("span.font-medium").filter({ hasText: "Handling tracking:" }),
+  });
+  await expect(handlingTrackingLine).toBeVisible({ timeout: 15_000 });
+  await expect(handlingTrackingLine).not.toContainText(
+    "Review packet and saved proof before external manual action."
+  );
+  await expect(handlingTrackingLine).toContainText(
+    "Open the approved step and prepare the manual action."
+  );
 });
