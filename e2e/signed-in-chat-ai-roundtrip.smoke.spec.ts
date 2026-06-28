@@ -17,7 +17,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, real BBB copy-draft prep, and filing confirmation in chat", async ({
+test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, real BBB copy-draft prep, filing confirmation, and archive in chat", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -369,4 +369,16 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(handlingTrackingLine).not.toContainText(
     "Add filing records in chat below after external submission."
   );
+
+  const closeCaseBlock = page.locator("div").filter({ hasText: "Close this case" });
+  await expect(closeCaseBlock.getByText("Close this case", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  const archiveCaseButton = closeCaseBlock.getByRole("button", { name: "Archive case" });
+  await expect(archiveCaseButton).toBeVisible();
+  await archiveCaseButton.click();
+
+  await expect(page).toHaveURL(/\/justice\/?$/, { timeout: 15_000 });
+  const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);
+  expect(clearedCaseId).toBeNull();
 });
