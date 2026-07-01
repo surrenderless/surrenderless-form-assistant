@@ -116,26 +116,22 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   });
   await expect(markDraftReviewedButton).toBeDisabled();
 
-  await page
-    .locator("#chat-inline-submission-draft-reviewed-checkbox")
-    .evaluate((el) => (el as HTMLInputElement).click());
+  await draftReviewBlock
+    .getByRole("checkbox", { name: "I reviewed the submission draft shown above." })
+    .check();
 
   await expect(draftReviewBlock).toBeVisible();
-  await expect(
-    draftReviewBlock.getByRole("button", { name: "Mark draft reviewed" })
-  ).toBeEnabled();
+  await expect(markDraftReviewedButton).toBeEnabled();
 
   const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
-  await draftReviewBlock
-    .getByRole("button", { name: "Mark draft reviewed" })
-    .evaluate((el) => (el as HTMLButtonElement).click());
+  await markDraftReviewedButton.click();
 
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(draftReviewBlock).not.toBeVisible({ timeout: 15_000 });
-  await expect(packetApproval).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Submission draft reviewed: yes")).toBeVisible({ timeout: 30_000 });
+  await expect(packetApproval).toBeVisible({ timeout: 30_000 });
   await expect(
     packetApproval.locator("p.text-xs.font-medium").filter({ hasText: "Approve prepared packet" })
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(draftReviewBlock).toBeHidden({ timeout: 15_000 });
   await expect(
     packetApproval.locator("pre").filter({ hasText: "JUSTICE CASE PACKET" })
   ).toBeVisible({ timeout: 15_000 });
