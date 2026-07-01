@@ -377,4 +377,20 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(page).toHaveURL(/\/justice\/?$/, { timeout: 15_000 });
   const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);
   expect(clearedCaseId).toBeNull();
+
+  await page.goto("/justice/cases/archived");
+  await expect(page).toHaveURL(/\/justice\/cases\/archived\/?$/);
+  await expect(page.getByRole("heading", { name: "Archived cases" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Acme Retail", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("widget order")).toBeVisible();
+
+  const sessionAfterArchivedList = await page.evaluate(
+    ({ caseIdKey, intakeKey }) => ({
+      caseId: sessionStorage.getItem(caseIdKey),
+      intake: sessionStorage.getItem(intakeKey),
+    }),
+    { caseIdKey: STORAGE_CASE_ID, intakeKey: STORAGE_INTAKE }
+  );
+  expect(sessionAfterArchivedList.caseId).toBeNull();
+  expect(sessionAfterArchivedList.intake).toBeNull();
 });

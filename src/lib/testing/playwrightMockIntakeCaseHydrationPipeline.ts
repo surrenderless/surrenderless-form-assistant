@@ -8,9 +8,22 @@ import type { TimelineEntry } from "@/lib/justice/types";
 const PLAYWRIGHT_MOCK_CASE_HYDRATION_TIMESTAMP = "2026-06-21T00:00:00.000Z";
 const PLAYWRIGHT_MOCK_CASE_HYDRATION_UPDATED_TIMESTAMP = "2026-06-21T00:00:01.000Z";
 const PLAYWRIGHT_MOCK_CASE_STARTED_TIMELINE_ID = "playwright_e2e_case_started";
+const PLAYWRIGHT_MOCK_CASE_HYDRATION_SNAPSHOTS_GLOBAL_KEY =
+  "__playwrightMockCaseHydrationSnapshots__";
+
+type HydrationSnapshotMap = Map<string, PlaywrightMockCaseCreateResponse>;
+
+function getPlaywrightMockCaseHydrationSnapshots(): HydrationSnapshotMap {
+  const globalStore = globalThis as typeof globalThis & {
+    [PLAYWRIGHT_MOCK_CASE_HYDRATION_SNAPSHOTS_GLOBAL_KEY]?: HydrationSnapshotMap;
+  };
+  if (!globalStore[PLAYWRIGHT_MOCK_CASE_HYDRATION_SNAPSHOTS_GLOBAL_KEY]) {
+    globalStore[PLAYWRIGHT_MOCK_CASE_HYDRATION_SNAPSHOTS_GLOBAL_KEY] = new Map();
+  }
+  return globalStore[PLAYWRIGHT_MOCK_CASE_HYDRATION_SNAPSHOTS_GLOBAL_KEY]!;
+}
 
 /** In-process cumulative mock case snapshots for the fixed Playwright E2E case id only. */
-const playwrightMockCaseHydrationSnapshots = new Map<string, PlaywrightMockCaseCreateResponse>();
 
 export type PlaywrightMockCaseHydrationPatch = {
   intake?: unknown;
@@ -40,13 +53,13 @@ export function isPlaywrightMockIntakeCaseHydrationCaseId(caseId: string): boole
 
 /** Clears cumulative mock snapshots — for unit tests only. */
 export function resetPlaywrightMockCaseHydrationSnapshotsForTests(): void {
-  playwrightMockCaseHydrationSnapshots.clear();
+  getPlaywrightMockCaseHydrationSnapshots().clear();
 }
 
 /** Clears cumulative mock snapshot for one case — used when Playwright E2E recommits the fixed case. */
 export function resetPlaywrightMockCaseHydrationSnapshotForCase(caseId: string): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
-  playwrightMockCaseHydrationSnapshots.delete(caseId.trim());
+  getPlaywrightMockCaseHydrationSnapshots().delete(caseId.trim());
 }
 
 /** Deterministic intake snapshot for the signed-in chat roundtrip E2E case. */
@@ -94,12 +107,13 @@ function buildPlaywrightMockCaseBaseline(caseId: string): PlaywrightMockCaseCrea
 }
 
 function getOrCreatePlaywrightMockCaseSnapshot(caseId: string): PlaywrightMockCaseCreateResponse {
-  const existing = playwrightMockCaseHydrationSnapshots.get(caseId);
+  const snapshots = getPlaywrightMockCaseHydrationSnapshots();
+  const existing = snapshots.get(caseId);
   if (existing) {
     return existing;
   }
   const baseline = buildPlaywrightMockCaseBaseline(caseId);
-  playwrightMockCaseHydrationSnapshots.set(caseId, baseline);
+  snapshots.set(caseId, baseline);
   return baseline;
 }
 
@@ -146,6 +160,6 @@ export function buildPlaywrightMockCasePatchResponse(
 ): PlaywrightMockCaseCreateResponse {
   const current = getOrCreatePlaywrightMockCaseSnapshot(caseId);
   const merged = applyPlaywrightMockCaseHydrationPatch(current, patch);
-  playwrightMockCaseHydrationSnapshots.set(caseId, merged);
+  getPlaywrightMockCaseHydrationSnapshots().set(caseId, merged);
   return { ...merged };
 }
