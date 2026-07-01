@@ -19,6 +19,10 @@ import {
   isPlaywrightMockJusticeFilingsPipelineEnabled,
   resetPlaywrightMockJusticeFilingsForCase,
 } from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
+import {
+  buildPlaywrightMockArchivedCasesListResponse,
+  isPlaywrightMockJusticeArchivedCasesListPipelineEnabled,
+} from "@/lib/testing/playwrightMockJusticeArchivedCasesListPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -82,6 +86,11 @@ export async function GET(req: NextRequest) {
 
   const archivedOnly = req.nextUrl.searchParams.get("archived") === "1";
   const { limit, offset } = parseListLimitOffset(req.nextUrl.searchParams);
+
+  if (archivedOnly && isPlaywrightMockJusticeArchivedCasesListPipelineEnabled()) {
+    return NextResponse.json(buildPlaywrightMockArchivedCasesListResponse(limit, offset));
+  }
+
   const fetchWindow = limit + 1;
   const rangeEnd = offset + fetchWindow - 1;
 
