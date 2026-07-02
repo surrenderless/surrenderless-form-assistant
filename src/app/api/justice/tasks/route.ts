@@ -3,6 +3,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  buildPlaywrightMockJusticeTasksGetResponse,
+  isPlaywrightMockJusticeTasksCaseId,
+  isPlaywrightMockJusticeTasksPipelineEnabled,
+} from "@/lib/testing/playwrightMockJusticeTasksPipeline";
 
 const MAX_TITLE = 500;
 const MAX_DUE = 200;
@@ -133,6 +138,13 @@ export async function GET(req: NextRequest) {
   const caseId = req.nextUrl.searchParams.get("case_id") ?? "";
   if (!isUuid(caseId)) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
+  }
+
+  if (
+    isPlaywrightMockJusticeTasksPipelineEnabled() &&
+    isPlaywrightMockJusticeTasksCaseId(caseId)
+  ) {
+    return NextResponse.json(buildPlaywrightMockJusticeTasksGetResponse(caseId, userId));
   }
 
   const supabase = getSupabaseAdmin();

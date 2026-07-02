@@ -20,6 +20,10 @@ import {
   resetPlaywrightMockJusticeFilingsForCase,
 } from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
 import {
+  isPlaywrightMockJusticeTasksPipelineEnabled,
+  resetPlaywrightMockJusticeTasksForCase,
+} from "@/lib/testing/playwrightMockJusticeTasksPipeline";
+import {
   buildPlaywrightMockArchivedCasesListResponse,
   isPlaywrightMockJusticeArchivedCasesListPipelineEnabled,
 } from "@/lib/testing/playwrightMockJusticeArchivedCasesListPipeline";
@@ -178,6 +182,9 @@ export async function POST(req: NextRequest) {
     }
     if (isPlaywrightMockJusticeEvidencePipelineEnabled()) {
       resetPlaywrightMockJusticeEvidenceForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+    }
+    if (isPlaywrightMockJusticeTasksPipelineEnabled()) {
+      resetPlaywrightMockJusticeTasksForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
     }
     return NextResponse.json(
       buildPlaywrightMockCaseCreateResponse(b.intake, timeline, payment_dispute_draft, client_state)
