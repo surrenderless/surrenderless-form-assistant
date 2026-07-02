@@ -127,11 +127,12 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   const draftReviewedResponse = page.waitForResponse(
     (res) =>
       res.request().method() === "POST" &&
-      res.url().includes("/api/justice/submission-draft-reviewed") &&
-      res.ok()
+      res.url().includes("/api/justice/submission-draft-reviewed"),
+    { timeout: 30_000 }
   );
   await markDraftReviewedButton.click();
-  await draftReviewedResponse;
+  const response = await draftReviewedResponse;
+  expect(response.ok()).toBeTruthy();
 
   await expect(page.getByText("Submission draft reviewed: yes")).toBeVisible({ timeout: 30_000 });
   await expect(packetApproval).toBeVisible({ timeout: 30_000 });
