@@ -21,6 +21,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 
+  if (isPlaywrightMockIntakeCaseCommitPipelineEnabled()) {
+    return NextResponse.json({ ok: true, skipped: true });
+  }
+
   const supabase = getSupabaseAdmin();
   if (!supabase) {
     return NextResponse.json(
@@ -33,13 +37,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const event_name = typeof body?.event_name === "string" ? body.event_name : "unknown";
     const payload = body?.payload && typeof body.payload === "object" ? body.payload : {};
-
-    if (
-      isPlaywrightMockIntakeCaseCommitPipelineEnabled() &&
-      event_name === "intake_completed"
-    ) {
-      return NextResponse.json({ ok: true, skipped: true });
-    }
 
     const { error } = await supabase.from("history").insert({
       user_id: userId,
