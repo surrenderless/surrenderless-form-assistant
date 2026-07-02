@@ -124,7 +124,14 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(markDraftReviewedButton).toBeEnabled();
 
   const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
+  const draftReviewedResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" &&
+      res.url().includes("/api/justice/submission-draft-reviewed") &&
+      res.ok()
+  );
   await markDraftReviewedButton.click();
+  await draftReviewedResponse;
 
   await expect(page.getByText("Submission draft reviewed: yes")).toBeVisible({ timeout: 30_000 });
   await expect(packetApproval).toBeVisible({ timeout: 30_000 });
