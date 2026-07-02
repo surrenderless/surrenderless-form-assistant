@@ -123,3 +123,25 @@ export function buildPlaywrightMockFillFormResult(pageData: unknown = null) {
     storageReason: "Playwright mock assisted submit pipeline (local E2E only)",
   };
 }
+
+export type PlaywrightMockProfileGetResponse = {
+  profile: {
+    email: string;
+    name: string;
+    address: string | null;
+    phone: string | null;
+  };
+};
+
+/** Deterministic POST /api/profile/get response for Playwright assisted-submit E2E. */
+export function buildPlaywrightMockProfileGetResponse(email: string): PlaywrightMockProfileGetResponse {
+  const trimmedEmail = email.trim();
+  return {
+    profile: {
+      email: trimmedEmail,
+      name: "E2E Playwright User",
+      address: null,
+      phone: null,
+    },
+  };
+}
