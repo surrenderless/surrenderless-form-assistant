@@ -147,10 +147,15 @@ export async function POST(req: NextRequest) {
     // ---- fill fields ----
     for (const field of fieldsToFill) {
       try {
-        await page.fill(
-          `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`,
-          String(field.value ?? "")
-        );
+        const fieldSelector = `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`;
+        const fieldValue = String(field.value ?? "");
+        const locator = page.locator(fieldSelector);
+        const tagName = await locator.evaluate((el: Element) => el.tagName);
+        if (tagName === "SELECT") {
+          await locator.selectOption(fieldValue);
+        } else {
+          await locator.fill(fieldValue);
+        }
         console.log(`✅ Filled ${field.selector} with "${field.value}"`);
       } catch (err: any) {
         console.warn(`⚠️ Could not fill "${field.selector}":`, err?.message);
