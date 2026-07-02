@@ -39,7 +39,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: process.env.CI ? "npm run start" : "npm run dev",
+    // Production server for E2E — avoids Next dev compile/contention. Override via PLAYWRIGHT_WEB_SERVER_COMMAND.
+    command: process.env.PLAYWRIGHT_WEB_SERVER_COMMAND?.trim() || "npm run start",
     url: "http://127.0.0.1:3000/mock/ftc-complaint",
     reuseExistingServer: false,
     timeout: 120_000,
