@@ -386,23 +386,36 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   });
 
   const outcomeNote = "E2E: BBB filing recorded; merchant has not responded yet.";
+  const followUpDate = "2026-08-15";
   await outcomeTrackingForm.getByPlaceholder(
     "What happened, or what should Surrenderless track next?"
   ).fill(outcomeNote);
+  await outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" }).check();
+  await outcomeTrackingForm.getByLabel("Follow-up date (optional, your pace)").fill(followUpDate);
   await outcomeTrackingForm.getByRole("button", { name: "Save tracking note" }).click();
 
-  await expect(outcomeTrackingForm).not.toBeVisible({ timeout: 15_000 });
+  await expect(outcomeTrackingForm).toBeVisible({ timeout: 15_000 });
+  await expect(outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" })).toBeChecked();
+  await expect(outcomeTrackingForm.getByLabel("Follow-up date (optional, your pace)")).toHaveValue(
+    followUpDate
+  );
+  await expect(
+    outcomeTrackingForm.getByPlaceholder("What happened, or what should Surrenderless track next?")
+  ).toHaveValue(outcomeNote);
   await expect(actionTracking.getByText(`Outcome: ${outcomeNote}`)).toBeVisible({
     timeout: 15_000,
   });
+  await expect(actionTracking.getByText(/Follow-up: flagged/)).toBeVisible({ timeout: 15_000 });
+  await expect(actionTracking.getByText(/due /)).toBeVisible({ timeout: 15_000 });
   await expect(handlingTrackingLine).toContainText("Mark the handling request acknowledged.", {
     timeout: 15_000,
   });
 
   await actionTracking.getByRole("button", { name: "Mark acknowledged" }).click();
-  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
-    timeout: 15_000,
-  });
+  await expect(handlingTrackingLine).toContainText(
+    "Review follow-up timing and mark follow-up handled when complete.",
+    { timeout: 15_000 }
+  );
 
   await actionTracking.getByRole("link", { name: "Handling workbench" }).click();
   await expect(page).toHaveURL(/\/justice\/handling\/?$/, { timeout: 15_000 });
@@ -422,9 +435,23 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(acknowledgedHandlingSection.getByText("widget order")).toBeVisible();
   await expect(acknowledgedHandlingSection.getByText(outcomeNote)).toBeVisible();
 
+  const followUpTrackingSection = page.locator("section[aria-labelledby='handling-follow-up-heading']");
+  await expect(followUpTrackingSection.getByRole("heading", { name: /^Follow-up tracking/ })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(followUpTrackingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(followUpTrackingSection.getByText("Follow-up needed", { exact: true })).toBeVisible();
+
   await page.goto("/justice/chat-ai");
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+
+  await actionTracking.getByRole("button", { name: "Mark follow-up handled" }).click();
+  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
+    timeout: 15_000,
+  });
 
   const closeCaseBlock = page.locator("div").filter({ hasText: "Close this case" });
   await expect(closeCaseBlock.getByText("Close this case", { exact: true })).toBeVisible({
