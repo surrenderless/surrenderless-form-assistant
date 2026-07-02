@@ -3,6 +3,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  buildPlaywrightMockProfileGetResponse,
+  isPlaywrightMockAssistedSubmitPipelineEnabled,
+} from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -38,6 +42,10 @@ export async function POST(req: NextRequest) {
     const { email } = await req.json();
     if (!email || typeof email !== "string") {
       return NextResponse.json({ error: "Missing or invalid email" }, { status: 400 });
+    }
+
+    if (isPlaywrightMockAssistedSubmitPipelineEnabled()) {
+      return NextResponse.json(buildPlaywrightMockProfileGetResponse(email));
     }
 
     const supabase = getSupabaseAdmin();
