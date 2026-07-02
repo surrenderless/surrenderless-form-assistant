@@ -374,6 +374,36 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
     "Add filing records in chat below after external submission."
   );
 
+  await page.getByRole("button", { name: "Request Surrenderless handling" }).click();
+
+  const outcomeTrackingForm = page.getByRole("form", {
+    name: "Outcome and follow-up tracking",
+  });
+  await expect(outcomeTrackingForm).toBeVisible({ timeout: 15_000 });
+  await expect(outcomeTrackingForm.getByText("Record outcome / follow-up")).toBeVisible();
+  await expect(handlingTrackingLine).toContainText("Record the handling outcome.", {
+    timeout: 15_000,
+  });
+
+  const outcomeNote = "E2E: BBB filing recorded; merchant has not responded yet.";
+  await outcomeTrackingForm.getByPlaceholder(
+    "What happened, or what should Surrenderless track next?"
+  ).fill(outcomeNote);
+  await outcomeTrackingForm.getByRole("button", { name: "Save tracking note" }).click();
+
+  await expect(outcomeTrackingForm).not.toBeVisible({ timeout: 15_000 });
+  await expect(actionTracking.getByText(`Outcome: ${outcomeNote}`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(handlingTrackingLine).toContainText("Mark the handling request acknowledged.", {
+    timeout: 15_000,
+  });
+
+  await actionTracking.getByRole("button", { name: "Mark acknowledged" }).click();
+  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
+    timeout: 15_000,
+  });
+
   const closeCaseBlock = page.locator("div").filter({ hasText: "Close this case" });
   await expect(closeCaseBlock.getByText("Close this case", { exact: true })).toBeVisible({
     timeout: 15_000,
