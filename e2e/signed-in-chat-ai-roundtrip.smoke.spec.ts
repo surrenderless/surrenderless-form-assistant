@@ -404,6 +404,28 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
     timeout: 15_000,
   });
 
+  await actionTracking.getByRole("link", { name: "Handling workbench" }).click();
+  await expect(page).toHaveURL(/\/justice\/handling\/?$/, { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Handling workbench" })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const acknowledgedHandlingSection = page.locator(
+    "section[aria-labelledby='handling-acknowledged-heading']"
+  );
+  await expect(acknowledgedHandlingSection.getByRole("heading", { name: /^Acknowledged/ })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(acknowledgedHandlingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(acknowledgedHandlingSection.getByText("widget order")).toBeVisible();
+  await expect(acknowledgedHandlingSection.getByText(outcomeNote)).toBeVisible();
+
+  await page.goto("/justice/chat-ai");
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+
   const closeCaseBlock = page.locator("div").filter({ hasText: "Close this case" });
   await expect(closeCaseBlock.getByText("Close this case", { exact: true })).toBeVisible({
     timeout: 15_000,
