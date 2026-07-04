@@ -213,6 +213,23 @@ describe("POST /api/submit-form", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("runs runRealBbbBoundedSubmit when Playwright mock bounded submit loop is enabled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
+    vi.stubEnv("PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE", "1");
+    vi.stubEnv("PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP", "1");
+
+    const res = await POST(
+      buildRequest(
+        { url: REAL_BBB_COMPLAINT_SUBMISSION_URL, userData: { email: "bbb@example.com" } },
+        "session=bbb"
+      )
+    );
+
+    expect(res.status).toBe(200);
+    expect(runRealBbbBoundedSubmit).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("does not short-circuit real BBB bounded submit on deployed production", async () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     vi.stubEnv("PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE", "1");

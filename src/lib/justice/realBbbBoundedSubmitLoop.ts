@@ -86,6 +86,11 @@ function hasBbbSubmissionConfirmationText(pageText: string): boolean {
   return TERMINAL_TEXT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+/** Exported for Playwright mock real-BBB terminal page assertions. */
+export function hasBbbSubmissionConfirmationBodyText(pageText: string): boolean {
+  return hasBbbSubmissionConfirmationText(pageText);
+}
+
 export function hasReachedStepCap(stepsExecuted: number, maxSteps = REAL_BBB_MAX_SUBMIT_STEPS): boolean {
   return stepsExecuted >= maxSteps;
 }

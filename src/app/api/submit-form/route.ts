@@ -9,6 +9,7 @@ import {
   buildPlaywrightMockRealBbbBoundedSubmitFillResult,
   isPlaywrightMockAssistedSubmitPipelineEnabled,
 } from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
+import { isPlaywrightMockRealBbbBoundedSubmitLoopEnabled } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
 
@@ -50,7 +51,10 @@ export async function POST(req: NextRequest) {
     if (basicAuth) forwardedHeaders.authorization = basicAuth;
 
     if (isAllowedExternalAssistedSubmissionUrl(url)) {
-      if (isPlaywrightMockAssistedSubmitPipelineEnabled()) {
+      if (
+        isPlaywrightMockAssistedSubmitPipelineEnabled() &&
+        !isPlaywrightMockRealBbbBoundedSubmitLoopEnabled()
+      ) {
         return NextResponse.json({
           result: "Success",
           fillResult: buildPlaywrightMockRealBbbBoundedSubmitFillResult(url),

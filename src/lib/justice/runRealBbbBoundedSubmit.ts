@@ -8,7 +8,6 @@ import {
   REAL_BBB_MAX_SUBMIT_STEPS,
   buildButtonSelector,
   buildRealBbbIncompleteError,
-  detectRealBbbTerminalConfirmation,
   hasReachedStepCap,
   isEmptyFormDecision,
   normalizeFormDecision,
@@ -16,6 +15,11 @@ import {
   type FormDecision,
   type RealBbbSubmitStopReason,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import {
+  detectBoundedSubmitTerminalConfirmation,
+  isPlaywrightMockRealBbbBoundedSubmitLoopEnabled,
+  resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl,
+} from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 
 export type RealBbbBoundedSubmitFillResult = {
   status: "success";
@@ -279,12 +283,14 @@ export async function runRealBbbBoundedSubmit(
   params: RunRealBbbBoundedSubmitParams
 ): Promise<RealBbbBoundedSubmitResult> {
   const { url, userData, base, forwardedHeaders } = params;
+  const playwrightMockLoop = isPlaywrightMockRealBbbBoundedSubmitLoopEnabled();
   const supabase = getSupabaseAdmin();
-  if (!supabase) {
+  if (!supabase && !playwrightMockLoop) {
     throw new Error("Supabase is not configured on this server.");
   }
 
-  const storageConfigured = !!(process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL);
+  const storageConfigured =
+    !playwrightMockLoop && !!(process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL);
   const stepLog: RealBbbBoundedSubmitStepLogEntry[] = [];
   let stepsExecuted = 0;
   let browser: Browser | null = null;
@@ -300,26 +306,29 @@ export async function runRealBbbBoundedSubmit(
 
     const context = await browser.newContext(contextOptions());
     page = await context.newPage();
-    await page.goto(url, { timeout: 60000 });
+    const navigationUrl = resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl(url, base);
+    await page.goto(navigationUrl, { timeout: 60000 });
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(2000);
 
     while (!hasReachedStepCap(stepsExecuted)) {
       const pageData = await collectPageData(page);
-      if (detectRealBbbTerminalConfirmation(pageData)) {
+      if (detectBoundedSubmitTerminalConfirmation(pageData)) {
         stepLog.push({
           step: stepsExecuted,
           url: pageData.url,
           action: "terminal_detected",
         });
         const capture = await captureScreenshot(page, supabase, storageConfigured);
-        await persistSuccessfulSubmission(
-          supabase,
-          url,
-          pageData,
-          capture.screenshot,
-          stepLog
-        );
+        if (supabase && !playwrightMockLoop) {
+          await persistSuccessfulSubmission(
+            supabase,
+            url,
+            pageData,
+            capture.screenshot,
+            stepLog
+          );
+        }
         return {
           ok: true,
           fillResult: {
@@ -329,8 +338,13 @@ export async function runRealBbbBoundedSubmit(
             stepsExecuted,
             stopReason: "terminal_confirmation",
             stepLog,
-            ...(capture.storageSkipped
-              ? { storageSkipped: true, storageReason: capture.storageReason }
+            ...(capture.storageSkipped || playwrightMockLoop
+              ? {
+                  storageSkipped: true,
+                  storageReason:
+                    capture.storageReason ??
+                    "Playwright mock real BBB bounded submit loop (local E2E only)",
+                }
               : {}),
           },
         };
@@ -386,20 +400,22 @@ export async function runRealBbbBoundedSubmit(
     }
 
     const finalPageData = await collectPageData(page);
-    if (detectRealBbbTerminalConfirmation(finalPageData)) {
+    if (detectBoundedSubmitTerminalConfirmation(finalPageData)) {
       stepLog.push({
         step: stepsExecuted,
         url: finalPageData.url,
         action: "terminal_detected",
       });
       const capture = await captureScreenshot(page, supabase, storageConfigured);
-      await persistSuccessfulSubmission(
-        supabase,
-        url,
-        finalPageData,
-        capture.screenshot,
-        stepLog
-      );
+      if (supabase && !playwrightMockLoop) {
+        await persistSuccessfulSubmission(
+          supabase,
+          url,
+          finalPageData,
+          capture.screenshot,
+          stepLog
+        );
+      }
       return {
         ok: true,
         fillResult: {
@@ -409,8 +425,13 @@ export async function runRealBbbBoundedSubmit(
           stepsExecuted,
           stopReason: "terminal_confirmation",
           stepLog,
-          ...(capture.storageSkipped
-            ? { storageSkipped: true, storageReason: capture.storageReason }
+          ...(capture.storageSkipped || playwrightMockLoop
+            ? {
+                storageSkipped: true,
+                storageReason:
+                  capture.storageReason ??
+                  "Playwright mock real BBB bounded submit loop (local E2E only)",
+              }
             : {}),
         },
       };
