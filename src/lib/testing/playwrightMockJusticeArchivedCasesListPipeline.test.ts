@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import {
+  buildPlaywrightMockCaseCreateResponse,
+  PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+} from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
   buildPlaywrightMockCasePatchResponse,
   resetPlaywrightMockCaseHydrationSnapshotsForTests,
+  seedPlaywrightMockCaseHydrationFromCreate,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 import {
   buildPlaywrightMockArchivedCasesListResponse,
@@ -66,5 +70,22 @@ describe("playwrightMockJusticeArchivedCasesListPipeline", () => {
     expect(result.cases[0]?.archived_at).toBe("2026-06-21T00:00:02.000Z");
     expect(result.cases[0]?.intake).toMatchObject({ company_name: "Acme Retail" });
     expect(result.has_more).toBe(false);
+  });
+
+  it("returns the fixed E2E case after POST create seed and archive PATCH (roundtrip flow)", () => {
+    const created = buildPlaywrightMockCaseCreateResponse(
+      { company_name: "Acme Retail", problem_category: "online_purchase", purchase_or_signup: "widget order" },
+      [{ id: "playwright_e2e_case_started", case_id: caseId, type: "case_started", label: "Case started", ts: "2026-06-21T00:00:00.000Z" }]
+    );
+    seedPlaywrightMockCaseHydrationFromCreate(created);
+    buildPlaywrightMockCasePatchResponse(caseId, {
+      archived_at: "2026-06-21T00:00:03.000Z",
+    });
+
+    const result = buildPlaywrightMockArchivedCasesListResponse(10, 0);
+
+    expect(result.cases).toHaveLength(1);
+    expect(result.cases[0]?.intake).toMatchObject({ company_name: "Acme Retail" });
+    expect(result.cases[0]?.archived_at).toBe("2026-06-21T00:00:03.000Z");
   });
 });

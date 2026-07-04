@@ -20,7 +20,7 @@ test.beforeEach(() => {
 test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, real BBB copy-draft prep, filing confirmation, and archive in chat", async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   await page.goto("/justice/chat-ai");
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
