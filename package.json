@@ -9,6 +9,7 @@
     "lint": "next lint",
     "lint:ci": "next lint --file vitest.config.ts --file src/lib/justice/commitIntakeToSessionAndServer.test.ts --file src/lib/justice/preparedNextAction.test.ts --file src/lib/justice/recomputeApprovedNextActionAfterIntake.test.ts --file src/lib/justice/chatInlineApprovedPrep.test.ts --file src/lib/justice/approvedNextActionHandlingDisplay.test.ts",
     "test": "vitest run",
+    "test:justice-supabase-smoke": "vitest run src/lib/testing/justiceSupabaseSmoke.test.ts",
     "test:watch": "vitest",
     "pretest:e2e": "node scripts/e2e-pretest-build.mjs",
     "test:e2e": "playwright test"

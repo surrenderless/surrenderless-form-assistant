@@ -1,0 +1,29 @@
+name: Justice Supabase Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  justice-supabase-smoke:
+    runs-on: ubuntu-latest
+    env:
+      JUSTICE_SUPABASE_SMOKE_ENABLED: "1"
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.JUSTICE_SUPABASE_SMOKE_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.JUSTICE_SUPABASE_SMOKE_SERVICE_ROLE_KEY }}
+      JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF: ${{ secrets.JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF }}
+      JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF: ${{ secrets.JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      E2E_CLERK_USER_EMAIL: ${{ secrets.E2E_CLERK_USER_EMAIL }}
+      JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID: ${{ secrets.JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run opt-in justice Supabase persistence smoke
+        run: npm run test:justice-supabase-smoke
