@@ -7,8 +7,21 @@ export const JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV =
   "JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF";
 export const JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV =
   "JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF";
+export const JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV = "JUSTICE_SUPABASE_SMOKE_STRICT_RUN";
 
 const SUPABASE_HOST_SUFFIX = ".supabase.co";
+
+/** True when the dedicated smoke command requires a real integration run. */
+export function isJusticeSupabaseSmokeStrictRun(): boolean {
+  return process.env[JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV]?.trim() === "1";
+}
+
+/** Non-null when the dedicated smoke command must exit before running tests. */
+export function getJusticeSupabaseSmokeStrictRunFailureReason(): string | null {
+  if (!isJusticeSupabaseSmokeStrictRun()) return null;
+  if (isJusticeSupabaseSmokeConfigured()) return null;
+  return getJusticeSupabaseSmokeSkipReason();
+}
 
 /** True when the opt-in Supabase justice persistence smoke may run. */
 export function isJusticeSupabaseSmokeConfigured(): boolean {
@@ -226,6 +239,94 @@ export function createJusticeSupabaseSmokeAdminClient(): SupabaseClient | null {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch },
   });
+}
+
+export type JusticeSupabaseSmokePreflightResult =
+  | { ok: true; projectRef: string }
+  | { ok: false; error: string };
+
+/** Sync allowlist / production guards for the configured Supabase URL. */
+export function validateJusticeSupabaseSmokeProjectRefAllowlist(): JusticeSupabaseSmokePreflightResult {
+  if (isDeployedProduction()) {
+    return {
+      ok: false,
+      error: "Refused: justice Supabase smoke cannot run when VERCEL_ENV=production.",
+    };
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
+  const projectRef = extractSupabaseProjectRef(supabaseUrl);
+  if (!projectRef) {
+    return {
+      ok: false,
+      error: "Invalid NEXT_PUBLIC_SUPABASE_URL — expected https://<ref>.supabase.co",
+    };
+  }
+
+  if (isSupabaseProjectRefBlockedForSmoke(projectRef)) {
+    return {
+      ok: false,
+      error: `Refused: Supabase project ref "${projectRef}" is blocked by ${JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV}.`,
+    };
+  }
+
+  const allowedRef = getJusticeSupabaseSmokeAllowedProjectRef();
+  if (!allowedRef) {
+    return {
+      ok: false,
+      error: `Missing ${JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV} (staging/test Supabase project ref).`,
+    };
+  }
+
+  if (projectRef !== allowedRef) {
+    return {
+      ok: false,
+      error: `Refused: Supabase project ref "${projectRef}" does not match required staging ref "${allowedRef}" (${JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV}).`,
+    };
+  }
+
+  return { ok: true, projectRef };
+}
+
+type JusticeSupabaseSmokePreflightClient = Pick<SupabaseClient, "from">;
+
+/**
+ * Minimal read/query preflight against real Supabase before lifecycle writes.
+ * Injectable client factory supports unit tests without network I/O.
+ */
+export async function runJusticeSupabaseSmokeConnectivityPreflight(
+  createClientForPreflight: () => JusticeSupabaseSmokePreflightClient | null = createJusticeSupabaseSmokeAdminClient
+): Promise<JusticeSupabaseSmokePreflightResult> {
+  const allowlist = validateJusticeSupabaseSmokeProjectRefAllowlist();
+  if (!allowlist.ok) return allowlist;
+
+  const supabase = createClientForPreflight();
+  if (!supabase) {
+    return {
+      ok: false,
+      error: "Supabase admin client unavailable for smoke preflight.",
+    };
+  }
+
+  const { error } = await supabase.from("justice_cases").select("id").limit(1);
+  if (error) {
+    return {
+      ok: false,
+      error: `Supabase justice_cases preflight query failed: ${error.message}`,
+    };
+  }
+
+  return { ok: true, projectRef: allowlist.projectRef };
+}
+
+/** Throws when connectivity/auth/schema preflight fails. */
+export async function assertJusticeSupabaseSmokeConnectivityPreflight(
+  createClientForPreflight: () => JusticeSupabaseSmokePreflightClient | null = createJusticeSupabaseSmokeAdminClient
+): Promise<void> {
+  const result = await runJusticeSupabaseSmokeConnectivityPreflight(createClientForPreflight);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
 }
 
 /** Service-role cleanup only — not part of the user-facing API lifecycle under test. */

@@ -21,6 +21,7 @@ import { GET as listCases, POST as createCase } from "@/app/api/justice/cases/ro
 import { GET as getCase, PATCH as patchCase } from "@/app/api/justice/cases/[id]/route";
 import { getUserOr401 } from "@/server/requireUser";
 import {
+  assertJusticeSupabaseSmokeConnectivityPreflight,
   buildJusticeSupabaseSmokeCaseStartedTimeline,
   buildJusticeSupabaseSmokeClientState,
   buildJusticeSupabaseSmokeIntake,
@@ -30,15 +31,20 @@ import {
   disablePlaywrightJusticeMockEnvForSmoke,
   extractSupabaseProjectRef,
   getJusticeSupabaseSmokeSkipReason,
+  getJusticeSupabaseSmokeStrictRunFailureReason,
   isDeployedProduction,
   isJusticeSupabaseSmokeConfigured,
+  isJusticeSupabaseSmokeStrictRun,
   isSupabaseProjectRefAllowedForSmoke,
   isSupabaseProjectRefBlockedForSmoke,
   JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV,
   JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV,
   JUSTICE_SUPABASE_SMOKE_ENABLED_ENV,
   JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV,
+  JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV,
   resolveJusticeSupabaseSmokeClerkUserId,
+  runJusticeSupabaseSmokeConnectivityPreflight,
+  validateJusticeSupabaseSmokeProjectRefAllowlist,
 } from "@/lib/testing/justiceSupabaseSmoke";
 
 const STAGING_PROJECT_REF = "staging-smoke-ref";
@@ -178,6 +184,71 @@ describe("justiceSupabaseSmoke gates", () => {
 
     await expect(resolveJusticeSupabaseSmokeClerkUserId()).resolves.toBeNull();
   });
+
+  it("returns a strict-run failure reason when dedicated mode is enabled but smoke is not configured", () => {
+    vi.stubEnv(JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV, "1");
+    expect(isJusticeSupabaseSmokeStrictRun()).toBe(true);
+    expect(isJusticeSupabaseSmokeConfigured()).toBe(false);
+    expect(getJusticeSupabaseSmokeStrictRunFailureReason()).toMatch(/Skipped:|Refused:/);
+  });
+
+  it("does not require strict-run configuration during default unit test runs", () => {
+    expect(isJusticeSupabaseSmokeStrictRun()).toBe(false);
+    expect(getJusticeSupabaseSmokeStrictRunFailureReason()).toBeNull();
+    expect(isJusticeSupabaseSmokeConfigured()).toBe(false);
+  });
+
+  it("validates allowlist preflight success and mismatch failure", () => {
+    stubJusticeSupabaseSmokeBaseEnv();
+    expect(validateJusticeSupabaseSmokeProjectRefAllowlist()).toEqual({
+      ok: true,
+      projectRef: STAGING_PROJECT_REF,
+    });
+
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://other-ref.supabase.co");
+    expect(validateJusticeSupabaseSmokeProjectRefAllowlist()).toEqual({
+      ok: false,
+      error: expect.stringMatching(/does not match required staging ref/i),
+    });
+  });
+
+  it("preflight succeeds when allowlist matches and justice_cases query succeeds", async () => {
+    stubJusticeSupabaseSmokeBaseEnv();
+    const mockLimit = vi.fn().mockResolvedValue({ error: null, data: [] });
+    const mockSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ select: mockSelect });
+
+    const result = await runJusticeSupabaseSmokeConnectivityPreflight(() => ({
+      from: mockFrom,
+    }));
+
+    expect(result).toEqual({ ok: true, projectRef: STAGING_PROJECT_REF });
+    expect(mockFrom).toHaveBeenCalledWith("justice_cases");
+    expect(mockSelect).toHaveBeenCalledWith("id");
+    expect(mockLimit).toHaveBeenCalledWith(1);
+  });
+
+  it("preflight fails before lifecycle writes when justice_cases query fails", async () => {
+    stubJusticeSupabaseSmokeBaseEnv();
+    const mockLimit = vi.fn().mockResolvedValue({ error: { message: "permission denied" }, data: null });
+    const mockSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ select: mockSelect });
+
+    const result = await runJusticeSupabaseSmokeConnectivityPreflight(() => ({
+      from: mockFrom,
+    }));
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Supabase justice_cases preflight query failed: permission denied",
+    });
+
+    await expect(
+      assertJusticeSupabaseSmokeConnectivityPreflight(() => ({
+        from: mockFrom,
+      }))
+    ).rejects.toThrow(/preflight query failed: permission denied/);
+  });
 });
 
 describe.skipIf(!isJusticeSupabaseSmokeConfigured())("justice Supabase persistence smoke", () => {
@@ -185,6 +256,7 @@ describe.skipIf(!isJusticeSupabaseSmokeConfigured())("justice Supabase persisten
 
   beforeAll(async () => {
     disablePlaywrightJusticeMockEnvForSmoke();
+    await assertJusticeSupabaseSmokeConnectivityPreflight();
     const resolved = await resolveJusticeSupabaseSmokeClerkUserId();
     if (!resolved) {
       throw new Error(
