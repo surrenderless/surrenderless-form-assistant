@@ -30,6 +30,9 @@ import {
   HANDLING_TRACKING_STEP_ADD_FILING,
   HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
   HANDLING_TRACKING_STEP_COMPLETE,
+  HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+  HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+  HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
   isHandlingTrackingAddFilingStep,
   isHandlingTrackingFilingCaptureStep,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -1396,6 +1399,28 @@ function deriveChatManualActionNextStep(input: {
   followUpNeeded?: boolean;
   canCaptureFilingInline?: boolean;
 }): string {
+  const handlingRequested = Boolean(input.handlingRequestedAt?.trim());
+  if (handlingRequested) {
+    const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+      status: input.status,
+      outcomeNote: input.outcomeNote,
+      handlingRequestedAt: input.handlingRequestedAt,
+      handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+    });
+    if (closureStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
+      return closureStep;
+    }
+    if (closureStep === HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
+      return closureStep;
+    }
+    if (input.handlingAcknowledgedAt?.trim()) {
+      if (input.followUpNeeded === true) {
+        return HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP;
+      }
+      return HANDLING_TRACKING_STEP_COMPLETE;
+    }
+  }
+
   if (!input.readyForExternalManualAction) {
     return "Review packet and saved proof before external manual action.";
   }

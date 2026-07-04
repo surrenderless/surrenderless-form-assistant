@@ -3,6 +3,7 @@ import {
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
+  waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
 import {
   PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE,
@@ -27,6 +28,7 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
 
   const chatInput = page.locator("#chat-ai-input");
   await expect(chatInput).toBeVisible({ timeout: 30_000 });
+  await waitForClerkBrowserApiSession(page);
 
   const chatTranscript = page
     .locator("div:has(> textarea#chat-ai-input)")
@@ -446,7 +448,16 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
 
   await page.goto("/justice/chat-ai");
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await waitForClerkBrowserApiSession(page);
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+  await expect(handlingTrackingLine).toContainText("Mark the handling request acknowledged.", {
+    timeout: 30_000,
+  });
+  await expect(actionTracking.getByRole("button", { name: "Mark acknowledged" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   await actionTracking.getByRole("button", { name: "Mark acknowledged" }).click();
   await expect(handlingTrackingLine).toContainText(
@@ -483,7 +494,17 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
 
   await page.goto("/justice/chat-ai");
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await waitForClerkBrowserApiSession(page);
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+  await expect(handlingTrackingLine).toContainText(
+    "Review follow-up timing and mark follow-up handled when complete.",
+    { timeout: 30_000 }
+  );
+  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toBeVisible({
+    timeout: 15_000,
+  });
 
   await actionTracking.getByRole("button", { name: "Mark follow-up handled" }).click();
   await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
@@ -502,10 +523,13 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);
   expect(clearedCaseId).toBeNull();
 
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
   await page.goto("/justice/cases/archived");
   await expect(page).toHaveURL(/\/justice\/cases\/archived\/?$/);
-  await expect(page.getByRole("heading", { name: "Archived cases" })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("Acme Retail", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Archived cases" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Could not load archived cases.")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Acme Retail", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("widget order")).toBeVisible();
 
   const acmeArchivedRow = page.locator("main li").filter({ hasText: "Acme Retail" });
@@ -516,9 +540,13 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(page.getByText("Acme Retail", { exact: true })).not.toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("No archived cases.", { exact: true })).toBeVisible({ timeout: 15_000 });
 
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
   await page.goto("/justice/cases");
   await expect(page).toHaveURL(/\/justice\/cases\/?$/);
-  await expect(page.getByRole("heading", { name: "Saved cases" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Saved cases" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Could not load cases.")).not.toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Acme Retail", { exact: true })).toBeVisible({ timeout: 30_000 });
   const allCasesList = page.locator("section[aria-labelledby='case-list-heading'] ~ ul");
   const acmeSavedCaseRow = allCasesList.locator("li").filter({ hasText: "Acme Retail" });
   await expect(acmeSavedCaseRow).toBeVisible({ timeout: 15_000 });
