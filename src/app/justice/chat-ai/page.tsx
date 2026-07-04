@@ -130,6 +130,7 @@ import {
 import {
   applyServerTimelineFromResponse,
   appendSubmissionDraftReviewedOnce,
+  mergeServerTimelinePreservingLocalEntries,
   readTimeline,
   replaceTimelineForCase,
   SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID,
@@ -273,6 +274,7 @@ function enrichContactProofPartsAfterChatTurn(
 const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
 
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+const STORAGE_SUBMISSION_DRAFT_REVIEWED_V1 = "justice_submission_draft_reviewed_v1";
 
 function readSessionPreparedPacketApproved(caseId: string): boolean {
   if (typeof window === "undefined" || !caseId) return false;
@@ -293,6 +295,30 @@ function writePreparedPacketApproved(caseId: string): void {
     const map: Record<string, boolean> = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
     map[caseId] = true;
     sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
+  }
+}
+
+function readSessionSubmissionDraftReviewed(caseId: string): boolean {
+  if (typeof window === "undefined" || !caseId) return false;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_SUBMISSION_DRAFT_REVIEWED_V1);
+    if (!raw) return false;
+    const map = JSON.parse(raw) as Record<string, boolean>;
+    return map[caseId] === true;
+  } catch {
+    return false;
+  }
+}
+
+function writeSessionSubmissionDraftReviewed(caseId: string): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_SUBMISSION_DRAFT_REVIEWED_V1);
+    const map: Record<string, boolean> = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+    map[caseId] = true;
+    sessionStorage.setItem(STORAGE_SUBMISSION_DRAFT_REVIEWED_V1, JSON.stringify(map));
   } catch {
     // ignore corrupt session data
   }
@@ -2233,6 +2259,7 @@ export default function JusticeChatAiPage() {
         });
       }
 
+      writeSessionSubmissionDraftReviewed(caseId);
       setSubmissionDraftReviewOverride(true);
       setSubmissionDraftReviewChecked(false);
       setDraftPreviewExpanded(false);
@@ -3072,7 +3099,14 @@ export default function JusticeChatAiPage() {
         const data = (await res.json()) as { client_state?: unknown; timeline?: unknown };
         if (options?.signal?.aborted) return;
         if (Array.isArray(data.timeline)) {
-          replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+          const localTimeline = readTimeline(caseId);
+          replaceTimelineForCase(
+            caseId,
+            mergeServerTimelinePreservingLocalEntries(
+              localTimeline,
+              data.timeline as TimelineEntry[]
+            )
+          );
         }
         const hydrated =
           hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
@@ -3830,6 +3864,7 @@ export default function JusticeChatAiPage() {
     typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
   const activeCaseDraftReviewed = activeCaseSessionCaseId
     ? submissionDraftReviewOverride ||
+      readSessionSubmissionDraftReviewed(activeCaseSessionCaseId) ||
       submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
     : false;
   const showInlineSubmissionDraftReview =
@@ -4028,6 +4063,9 @@ export default function JusticeChatAiPage() {
   const activeCaseBasicsReady = isBasicCaseInfoReadyForEscalation(buildJusticeIntakeFromParts(parts));
   const chatCanCaptureFilingInline =
     Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn);
+  const chatHandlingTrackingContextLoading =
+    chatHandlingReadinessLoading ||
+    (Boolean(activeUuidCaseId) && savedEvidenceCount === null);
   const chatManualActionNextStep =
     approvedNextAction && !chatHandlingReadinessLoading
       ? deriveChatHandlingTrackingLine({
@@ -4913,7 +4951,7 @@ export default function JusticeChatAiPage() {
                       Request handling below when you want internal triage tracking.
                     </p>
                     <ChatHandlingTrackingStatusReadOnly
-                      readinessLoading={chatHandlingReadinessLoading}
+                      readinessLoading={chatHandlingTrackingContextLoading}
                       approvedNextAction={approvedNextAction}
                       basicsReady={activeCaseBasicsReady}
                       draftReviewed={activeCaseDraftReviewed}
@@ -4974,7 +5012,7 @@ export default function JusticeChatAiPage() {
                       className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
                     />
                     <ChatHandlingTrackingStatusReadOnly
-                      readinessLoading={chatHandlingReadinessLoading}
+                      readinessLoading={chatHandlingTrackingContextLoading}
                       approvedNextAction={approvedNextAction}
                       basicsReady={activeCaseBasicsReady}
                       draftReviewed={activeCaseDraftReviewed}

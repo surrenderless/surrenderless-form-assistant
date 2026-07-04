@@ -163,3 +163,24 @@ export function buildPlaywrightMockCasePatchResponse(
   getPlaywrightMockCaseHydrationSnapshots().set(caseId, merged);
   return { ...merged };
 }
+
+/**
+ * Seeds the cumulative hydration snapshot from POST /api/justice/cases create.
+ * Call after resetPlaywrightMockCaseHydrationSnapshotForCase so archived/saved list
+ * mocks read the committed case (including archive PATCH state) in E2E.
+ */
+export function seedPlaywrightMockCaseHydrationFromCreate(
+  created: PlaywrightMockCaseCreateResponse
+): PlaywrightMockCaseCreateResponse {
+  const caseId = created.id.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return created;
+  }
+  const snapshot: PlaywrightMockCaseCreateResponse = {
+    ...created,
+    archived_at: created.archived_at ?? null,
+    case_label: created.case_label ?? null,
+  };
+  getPlaywrightMockCaseHydrationSnapshots().set(caseId, snapshot);
+  return { ...snapshot };
+}

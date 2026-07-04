@@ -93,6 +93,16 @@ export function replaceTimelineForCase(
   saveStore(store);
 }
 
+/** Keep local milestone entries when a stale server GET omits them (same browser session). */
+export function mergeServerTimelinePreservingLocalEntries(
+  localEntries: readonly TimelineEntry[],
+  serverEntries: readonly TimelineEntry[]
+): TimelineEntry[] {
+  const serverIds = new Set(serverEntries.map((entry) => entry.id));
+  const preservedLocal = localEntries.filter((entry) => !serverIds.has(entry.id));
+  return [...serverEntries, ...preservedLocal].sort((a, b) => a.ts.localeCompare(b.ts));
+}
+
 const EXT_FILING_MARKED_DETAIL = "User marked external filing complete.";
 
 /** PATCH timeline to server and replace local store with response (signed-in flow). */
