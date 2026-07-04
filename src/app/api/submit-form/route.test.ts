@@ -213,6 +213,20 @@ describe("POST /api/submit-form", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("does not short-circuit real BBB bounded submit on deployed production", async () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
+    vi.stubEnv("PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE", "1");
+    vi.stubEnv("VERCEL_ENV", "production");
+
+    const res = await POST(
+      buildRequest({ url: REAL_BBB_COMPLAINT_SUBMISSION_URL, userData: { email: "bbb@example.com" } })
+    );
+
+    expect(res.status).toBe(200);
+    expect(runRealBbbBoundedSubmit).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("preserves incomplete real BBB status and body from the bounded runner", async () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     const incomplete = {
