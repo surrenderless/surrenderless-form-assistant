@@ -30,7 +30,18 @@ export default defineConfig({
     {
       name: "authenticated",
       testMatch: /signed-in-.*\.smoke\.spec\.ts/,
+      testIgnore: /signed-in-chat-ai-roundtrip\.smoke\.spec\.ts/,
       dependencies: ["global setup"],
+      fullyParallel: false,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: CLERK_STORAGE_STATE_PATH,
+      },
+    },
+    {
+      name: "authenticated roundtrip",
+      testMatch: /signed-in-chat-ai-roundtrip\.smoke\.spec\.ts/,
+      dependencies: ["authenticated"],
       fullyParallel: false,
       use: {
         ...devices["Desktop Chrome"],
