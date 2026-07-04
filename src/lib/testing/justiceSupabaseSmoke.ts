@@ -3,6 +3,8 @@ import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
 export const JUSTICE_SUPABASE_SMOKE_ENABLED_ENV = "JUSTICE_SUPABASE_SMOKE_ENABLED";
 export const JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV = "JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID";
+export const JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV =
+  "JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF";
 export const JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV =
   "JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF";
 
@@ -23,6 +25,11 @@ export function getJusticeSupabaseSmokeSkipReason(): string {
   const projectRef = extractSupabaseProjectRef(supabaseUrl);
   if (projectRef && isSupabaseProjectRefBlockedForSmoke(projectRef)) {
     return `Refused: Supabase project ref "${projectRef}" is blocked by ${JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV}.`;
+  }
+
+  const allowedRef = getJusticeSupabaseSmokeAllowedProjectRef();
+  if (projectRef && allowedRef && projectRef !== allowedRef) {
+    return `Refused: Supabase project ref "${projectRef}" does not match required staging ref "${allowedRef}" (${JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV}).`;
   }
 
   const missing = getJusticeSupabaseSmokeMissingEnvVars();
@@ -51,11 +58,46 @@ export function extractSupabaseProjectRef(supabaseUrl: string): string | null {
   }
 }
 
+export function getJusticeSupabaseSmokeAllowedProjectRef(): string | null {
+  const allowed = process.env[JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV]?.trim();
+  return allowed && allowed.length > 0 ? allowed : null;
+}
+
+/** True when the URL project ref matches the required staging allowlist. */
+export function isSupabaseProjectRefAllowedForSmoke(projectRef: string): boolean {
+  const allowed = getJusticeSupabaseSmokeAllowedProjectRef();
+  if (!allowed) return false;
+  return projectRef.trim() === allowed;
+}
+
 /** Block smoke against an explicit production project ref when configured. */
 export function isSupabaseProjectRefBlockedForSmoke(projectRef: string): boolean {
   const forbidden = process.env[JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV]?.trim();
   if (!forbidden) return false;
   return projectRef.trim() === forbidden;
+}
+
+function isRealClerkSecretKey(value: string | undefined): boolean {
+  const key = value?.trim();
+  if (!key) return false;
+  if (/placeholder/i.test(key)) return false;
+  if (!/^sk_(test|live)_/.test(key)) return false;
+  return key.replace(/^sk_(test|live)_/, "").length >= 20;
+}
+
+function getClerkE2eUserEmailForSmokeResolution(): string | null {
+  const email =
+    process.env.E2E_CLERK_USER_EMAIL?.trim() || process.env.E2E_CLERK_USER_USERNAME?.trim() || "";
+  return email.length > 0 ? email : null;
+}
+
+/** True when Clerk user id can be resolved without JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID. */
+export function canResolveJusticeSupabaseSmokeClerkUserIdFromE2eCredentials(): boolean {
+  return isRealClerkSecretKey(process.env.CLERK_SECRET_KEY) && getClerkE2eUserEmailForSmokeResolution() !== null;
+}
+
+function hasExplicitJusticeSupabaseSmokeClerkUserId(): boolean {
+  return Boolean(process.env[JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV]?.trim());
 }
 
 function isJusticeSupabaseSmokeBlocked(): boolean {
@@ -65,6 +107,7 @@ function isJusticeSupabaseSmokeBlocked(): boolean {
   const projectRef = extractSupabaseProjectRef(supabaseUrl);
   if (!projectRef) return true;
   if (isSupabaseProjectRefBlockedForSmoke(projectRef)) return true;
+  if (!isSupabaseProjectRefAllowedForSmoke(projectRef)) return true;
 
   return false;
 }
@@ -75,6 +118,10 @@ export function getJusticeSupabaseSmokeMissingEnvVars(): string[] {
 
   if (process.env[JUSTICE_SUPABASE_SMOKE_ENABLED_ENV]?.trim() !== "1") {
     missing.push(`${JUSTICE_SUPABASE_SMOKE_ENABLED_ENV}=1`);
+  }
+
+  if (!getJusticeSupabaseSmokeAllowedProjectRef()) {
+    missing.push(`${JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF_ENV} (staging/test Supabase project ref)`);
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
@@ -88,12 +135,37 @@ export function getJusticeSupabaseSmokeMissingEnvVars(): string[] {
     missing.push("SUPABASE_SERVICE_ROLE_KEY");
   }
 
-  const clerkUserId = process.env[JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV]?.trim() ?? "";
-  if (!clerkUserId) {
-    missing.push(`${JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV} (Clerk user id owning test rows)`);
+  if (
+    !hasExplicitJusticeSupabaseSmokeClerkUserId() &&
+    !canResolveJusticeSupabaseSmokeClerkUserIdFromE2eCredentials()
+  ) {
+    missing.push(
+      `${JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV} or (CLERK_SECRET_KEY + E2E_CLERK_USER_EMAIL)`
+    );
   }
 
   return missing;
+}
+
+/**
+ * Resolve the Clerk user id for smoke rows: explicit env first, else Clerk E2E email lookup.
+ * Returns null when resolution credentials are missing or Clerk lookup finds no user.
+ */
+export async function resolveJusticeSupabaseSmokeClerkUserId(): Promise<string | null> {
+  const explicit = process.env[JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV]?.trim();
+  if (explicit) return explicit;
+
+  if (!canResolveJusticeSupabaseSmokeClerkUserIdFromE2eCredentials()) {
+    return null;
+  }
+
+  const email = getClerkE2eUserEmailForSmokeResolution();
+  if (!email) return null;
+
+  const { clerkClient } = await import("@clerk/clerk-sdk-node");
+  const users = await clerkClient.users.getUserList({ emailAddress: [email], limit: 1 });
+  const userId = users[0]?.id?.trim();
+  return userId && userId.length > 0 ? userId : null;
 }
 
 export function buildJusticeSupabaseSmokeRunId(): string {
