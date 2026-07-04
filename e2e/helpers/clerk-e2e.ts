@@ -5,6 +5,9 @@ export const CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "user.
 
 export const MOCK_FTC_PRACTICE_SUBMIT_URL = "http://127.0.0.1:3000/mock/ftc-complaint";
 
+/** Official BBB.org complaint entry URL (assisted autofill lane; mocked in Playwright E2E). */
+export const REAL_BBB_COMPLAINT_SUBMIT_URL = "https://www.bbb.org/complain/";
+
 function isRealClerkKey(value: string | undefined, prefix: "pk" | "sk"): boolean {
   const key = value?.trim();
   if (!key) return false;

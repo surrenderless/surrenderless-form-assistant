@@ -188,6 +188,31 @@ describe("POST /api/submit-form", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("short-circuits real BBB bounded submit during Playwright mock assisted-submit E2E", async () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
+    vi.stubEnv("PLAYWRIGHT_MOCK_ASSISTED_SUBMIT_PIPELINE", "1");
+
+    const res = await POST(
+      buildRequest(
+        { url: REAL_BBB_COMPLAINT_SUBMISSION_URL, userData: { email: "bbb@example.com" } },
+        "session=bbb"
+      )
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      result: "Success",
+      fillResult: expect.objectContaining({
+        status: "success",
+        stopReason: "terminal_confirmation",
+        storageSkipped: true,
+        stepsExecuted: 0,
+      }),
+    });
+    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("preserves incomplete real BBB status and body from the bounded runner", async () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     const incomplete = {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPlaywrightMockMatchFieldInstructions,
+  buildPlaywrightMockRealBbbBoundedSubmitFillResult,
   isPlaywrightLocalMockAssistedSubmissionUrl,
   isPlaywrightMockAssistedSubmitPipelineEnabled,
 } from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
@@ -86,5 +87,27 @@ describe("playwrightMockAssistedSubmitPipeline", () => {
       { selector: "contact_email", value: "e2e@example.com" },
       { selector: "complaint_description", value: "Practice complaint for E2E." },
     ]);
+  });
+
+  it("builds deterministic bounded real-BBB success for Playwright E2E", () => {
+    const fillResult = buildPlaywrightMockRealBbbBoundedSubmitFillResult(
+      "https://www.bbb.org/complain/"
+    );
+
+    expect(fillResult).toEqual(
+      expect.objectContaining({
+        status: "success",
+        stopReason: "terminal_confirmation",
+        storageSkipped: true,
+        stepsExecuted: 0,
+        stepLog: [
+          expect.objectContaining({
+            action: "terminal_detected",
+            url: "https://www.bbb.org/complain/",
+          }),
+        ],
+      })
+    );
+    expect(fillResult.pageData?.pageText).toContain("successfully submitted");
   });
 });
