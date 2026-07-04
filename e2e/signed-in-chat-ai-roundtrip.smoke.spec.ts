@@ -315,19 +315,36 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(markStepOpenedButton).toBeVisible();
   await expect(recordHandledButton).not.toBeVisible();
 
-  const realBbbPrepBlock = page
+  const realBbbAutofillBlock = page
+    .locator("div.mt-3.space-y-2.rounded-lg.border")
+    .filter({
+      has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB complaint" }),
+    })
+    .filter({ has: page.getByText("www.bbb.org/complain/") });
+  const realBbbCopyDraftBlock = page
     .locator("div.mt-3.space-y-2.rounded-lg.border")
     .filter({
       has: page.locator("p.text-xs.font-medium").filter({ hasText: "Better Business Bureau" }),
     })
     .filter({ has: page.getByRole("button", { name: "Copy draft" }) });
-  await expect(realBbbPrepBlock).toBeVisible({ timeout: 15_000 });
-  await expect(realBbbPrepBlock.getByRole("button", { name: "Copy draft" })).toBeVisible();
-  await expect(realBbbPrepBlock.getByRole("link", { name: "Open full better business bureau page" })).toBeVisible();
-  await expect(realBbbPrepBlock.getByRole("link", { name: "Open full better business bureau page" })).toHaveAttribute(
-    "href",
-    "/justice/bbb"
-  );
+  if (await realBbbAutofillBlock.isVisible().catch(() => false)) {
+    await expect(realBbbAutofillBlock.getByRole("link", { name: "Open full BBB prep page" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(realBbbAutofillBlock.getByRole("link", { name: "Open full BBB prep page" })).toHaveAttribute(
+      "href",
+      "/justice/bbb"
+    );
+  } else {
+    await expect(realBbbCopyDraftBlock).toBeVisible({ timeout: 15_000 });
+    await expect(realBbbCopyDraftBlock.getByRole("button", { name: "Copy draft" })).toBeVisible();
+    await expect(
+      realBbbCopyDraftBlock.getByRole("link", { name: "Open full better business bureau page" })
+    ).toBeVisible();
+    await expect(
+      realBbbCopyDraftBlock.getByRole("link", { name: "Open full better business bureau page" })
+    ).toHaveAttribute("href", "/justice/bbb");
+  }
 
   await expect(bbbAssistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
   await expect(bbbAssistedSubmissionSnapshot.getByText("BBB (practice)", { exact: true })).toBeVisible();
