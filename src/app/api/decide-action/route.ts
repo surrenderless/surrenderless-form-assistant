@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import {
+  buildPlaywrightMockRealBbbDecideActionDecision,
+  isPlaywrightMockRealBbbBoundedSubmitLoopEnabled,
+} from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
 
@@ -23,6 +27,17 @@ export async function POST(req: NextRequest) {
     console.warn("rateLimit failed, allowing:", message);
   }
 
+  const body = await req.json();
+  const { pageData, userProfile: userProfileField, userData } = body ?? {};
+  const userProfile = userProfileField ?? userData ?? {};
+
+  if (isPlaywrightMockRealBbbBoundedSubmitLoopEnabled() && pageData) {
+    const mockDecision = buildPlaywrightMockRealBbbDecideActionDecision(pageData, userProfile);
+    if (mockDecision !== null) {
+      return NextResponse.json({ decision: mockDecision });
+    }
+  }
+
   const openai = getOpenAI();
   if (!openai) {
     return NextResponse.json(
@@ -30,10 +45,6 @@ export async function POST(req: NextRequest) {
       { status: 503 }
     );
   }
-
-  const body = await req.json();
-  const { pageData, userProfile: userProfileField, userData } = body ?? {};
-  const userProfile = userProfileField ?? userData ?? {};
 
   const messages: ChatCompletionMessageParam[] = [
     {
