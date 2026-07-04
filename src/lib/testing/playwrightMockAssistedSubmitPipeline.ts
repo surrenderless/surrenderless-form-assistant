@@ -1,7 +1,9 @@
 import {
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
+  REAL_BBB_COMPLAINT_SUBMISSION_URL,
 } from "@/lib/justice/assistedSubmissionLane";
+import type { RealBbbBoundedSubmitFillResult } from "@/lib/justice/runRealBbbBoundedSubmit";
 
 const PLAYWRIGHT_MOCK_ASSISTED_SUBMISSION_PATHS = new Set<string>([
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
@@ -121,6 +123,33 @@ export function buildPlaywrightMockFillFormResult(pageData: unknown = null) {
     pageData,
     storageSkipped: true,
     storageReason: "Playwright mock assisted submit pipeline (local E2E only)",
+  };
+}
+
+/** Deterministic bounded real-BBB success for Playwright E2E (no live bbb.org navigation). */
+export function buildPlaywrightMockRealBbbBoundedSubmitFillResult(
+  submissionUrl: string = REAL_BBB_COMPLAINT_SUBMISSION_URL
+): RealBbbBoundedSubmitFillResult {
+  return {
+    status: "success",
+    screenshot: null,
+    pageData: {
+      fields: [],
+      buttons: [],
+      url: submissionUrl.replace(/\/complain\/?$/, "/complain/confirmation"),
+      pageText: "Thank you for submitting your complaint. Your complaint has been successfully submitted.",
+    },
+    storageSkipped: true,
+    storageReason: "Playwright mock real BBB bounded submit (local E2E only)",
+    stepsExecuted: 0,
+    stopReason: "terminal_confirmation",
+    stepLog: [
+      {
+        step: 0,
+        url: submissionUrl,
+        action: "terminal_detected",
+      },
+    ],
   };
 }
 
