@@ -1,3 +1,4 @@
+import { expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
@@ -72,3 +73,30 @@ export function clerkE2eSkipReason(): string {
 
 export const CLERK_E2E_SKIP_REASON =
   "Skipped: set real Clerk test credentials — NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, E2E_CLERK_USER_EMAIL (or E2E_CLERK_USER_USERNAME), and E2E_CLERK_USER_PASSWORD — then re-run Playwright global setup.";
+
+/** Wait until Clerk UI and browser `fetch` share an authenticated API session. */
+export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Open user menu" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async () => {
+          const res = await fetch("/api/justice/intake-chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              user_message: "E2E browser auth probe.",
+              parts: {},
+              conversation_history: [],
+            }),
+          });
+          return res.status;
+        }),
+      { timeout: 30_000 }
+    )
+    .toBe(200);
+}

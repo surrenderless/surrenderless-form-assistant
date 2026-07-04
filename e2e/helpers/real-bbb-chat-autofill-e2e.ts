@@ -1,4 +1,4 @@
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import { STORAGE_APPROVED_NEXT_ACTION_V1 } from "@/lib/justice/approvedNextActionState";
 import { REAL_BBB_COMPLAINT_FILING_CONFIRMATION } from "@/lib/justice/recordRealBbbComplaintFiling";
@@ -9,6 +9,7 @@ import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/pl
 import { buildPlaywrightMockE2eCaseIntake } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
+const STORAGE_SUBMISSION_DRAFT_REVIEWED_V1 = "justice_submission_draft_reviewed_v1";
 const PLAYWRIGHT_MOCK_CASE_STARTED_TIMELINE_ID = "playwright_e2e_case_started";
 const PLAYWRIGHT_MOCK_SUBMISSION_DRAFT_REVIEWED_TS = "2026-06-21T00:00:05.000Z";
 
@@ -53,11 +54,9 @@ function buildRealBbbChatAutofillE2eTimeline(caseId: string): TimelineEntry[] {
 }
 
 /** Reset cumulative Playwright mock justice state for the fixed E2E case id. */
-export async function resetPlaywrightMockCaseForRealBbbChatAutofill(
-  request: APIRequestContext
-): Promise<void> {
+export async function resetPlaywrightMockCaseForRealBbbChatAutofill(page: Page): Promise<void> {
   const intake = buildPlaywrightMockE2eCaseIntake();
-  const resetRes = await request.post("/api/justice/cases", {
+  const resetRes = await page.request.post("/api/justice/cases", {
     data: { intake, timeline: [] },
   });
   if (!resetRes.ok()) {
@@ -69,14 +68,14 @@ export async function resetPlaywrightMockCaseForRealBbbChatAutofill(
 
 /** Seed the Playwright mock case snapshot to the real BBB approved-action state. */
 export async function seedPlaywrightMockCaseForRealBbbChatAutofill(
-  request: APIRequestContext
+  page: Page
 ): Promise<{ caseId: string; intake: ReturnType<typeof buildPlaywrightMockE2eCaseIntake> }> {
   const caseId = REAL_BBB_CHAT_AUTOFILL_E2E_CASE_ID;
   const intake = buildPlaywrightMockE2eCaseIntake();
 
-  await resetPlaywrightMockCaseForRealBbbChatAutofill(request);
+  await resetPlaywrightMockCaseForRealBbbChatAutofill(page);
 
-  const patchRes = await request.patch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+  const patchRes = await page.request.patch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
     data: {
       intake,
       timeline: buildRealBbbChatAutofillE2eTimeline(caseId),
@@ -111,11 +110,13 @@ export async function hydrateChatAiSessionForRealBbbAutofill(
       storageCaseIdKey,
       storageIntakeKey,
       preparedPacketKey,
+      submissionDraftReviewedKey,
       approvedActionKey,
     }) => {
       sessionStorage.setItem(storageCaseIdKey, caseId);
       sessionStorage.setItem(storageIntakeKey, JSON.stringify(intake));
       sessionStorage.setItem(preparedPacketKey, JSON.stringify({ [caseId]: true }));
+      sessionStorage.setItem(submissionDraftReviewedKey, JSON.stringify({ [caseId]: true }));
       sessionStorage.setItem(approvedActionKey, JSON.stringify({ [caseId]: approvedAction }));
     },
     {
@@ -125,8 +126,13 @@ export async function hydrateChatAiSessionForRealBbbAutofill(
       storageCaseIdKey: STORAGE_CASE_ID,
       storageIntakeKey: STORAGE_INTAKE,
       preparedPacketKey: STORAGE_PREPARED_PACKET_APPROVED_V1,
+      submissionDraftReviewedKey: STORAGE_SUBMISSION_DRAFT_REVIEWED_V1,
       approvedActionKey: STORAGE_APPROVED_NEXT_ACTION_V1,
     }
   );
   await page.reload();
+  await page.getByRole("button", { name: "Open user menu" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
 }

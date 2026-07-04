@@ -629,11 +629,17 @@ export default function JusticeCasesPage() {
 
   const loadCases = useCallback(async (signal: AbortSignal, listLimit = CASES_PAGE_LIMIT) => {
     try {
-      const res = await fetch(
-        `/api/justice/cases?limit=${listLimit}&offset=0`,
-        { signal }
-      );
-      if (!res.ok) {
+      const deadline = Date.now() + 30_000;
+      let res: Response | null = null;
+      while (Date.now() < deadline && !signal.aborted) {
+        res = await fetch(`/api/justice/cases?limit=${listLimit}&offset=0`, {
+          credentials: "include",
+          signal,
+        });
+        if (res.ok || res.status !== 401) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!res || !res.ok) {
         setLoadError("Could not load cases.");
         setCases([]);
         setHasMoreCases(false);

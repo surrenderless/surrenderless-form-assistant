@@ -48,8 +48,17 @@ export default function JusticeArchivedCasesPage() {
     const ac = new AbortController();
     void (async () => {
       try {
-        const res = await fetch(`/api/justice/cases?archived=1&limit=10&offset=0`, { signal: ac.signal });
-        if (!res.ok) {
+        const deadline = Date.now() + 30_000;
+        let res: Response | null = null;
+        while (Date.now() < deadline && !ac.signal.aborted) {
+          res = await fetch(`/api/justice/cases?archived=1&limit=10&offset=0`, {
+            credentials: "include",
+            signal: ac.signal,
+          });
+          if (res.ok || res.status !== 401) break;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        if (!res || !res.ok) {
           setLoadError("Could not load archived cases.");
           setCases([]);
           return;
