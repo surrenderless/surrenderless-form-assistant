@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildApprovedNextActionTarget,
+  isMockPracticePreparedActionDestination,
   pickNextPreparedActionAfterCompleted,
   pickPreparedNextAction,
 } from "@/lib/justice/preparedNextAction";
@@ -151,7 +152,7 @@ describe("pickPreparedNextAction", () => {
     ).toBe("Company contact");
   });
 
-  it("picks first routable destination when already contacted", () => {
+  it("picks first real routable destination when already contacted", () => {
     expect(
       pickPreparedNextAction({
         contacted: true,
@@ -159,9 +160,67 @@ describe("pickPreparedNextAction", () => {
         destinations: [merchantDest, paymentDest, cfpbDest],
       })
     ).toEqual({
-      detailHref: "/justice/merchant",
-      stepLabel: "Merchant contact & proof",
+      detailHref: "/justice/payment-dispute",
+      stepLabel: "Payment dispute (bank/card)",
     });
+  });
+
+  it("prefers real BBB over mock practice for failed-contact retail intake", () => {
+    const destinations = computeJusticeDestinations(failedContactPracticeIntake(), {
+      manualFtc: false,
+    });
+
+    expect(
+      pickPreparedNextAction({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations,
+      })
+    ).toEqual({
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
+    });
+  });
+
+  it("prefers CFPB over mock practice for financial intake", () => {
+    const intake = failedContactPracticeIntake({
+      problem_category: "charge_dispute",
+      company_name: "Acme Bank",
+      story: "Unauthorized charge on my credit card billing statement",
+      purchase_or_signup: "credit card account",
+      money_involved: "",
+      pay_or_order_date: "",
+    });
+    const destinations = computeJusticeDestinations(intake, { manualFtc: false });
+
+    expect(
+      pickPreparedNextAction({
+        contacted: true,
+        useCompanyContactLabels: true,
+        destinations,
+      })
+    ).toEqual({
+      detailHref: "/justice/cfpb",
+      stepLabel: "CFPB",
+    });
+  });
+
+  it("identifies mock practice destinations without removing them from rules output", () => {
+    const destinations = computeJusticeDestinations(failedContactPracticeIntake(), {
+      manualFtc: false,
+    });
+
+    expect(destinations.find((d) => d.id === "bbb_practice")).toMatchObject({
+      internalRoute: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      status: "recommended",
+    });
+    expect(destinations.find((d) => d.id === "ftc")).toMatchObject({
+      internalRoute: "/justice/ftc-review",
+      status: "recommended",
+    });
+    expect(isMockPracticePreparedActionDestination(ftcDest)).toBe(true);
+    expect(isMockPracticePreparedActionDestination(bbbPracticeDest)).toBe(true);
+    expect(isMockPracticePreparedActionDestination(realBbbDest)).toBe(false);
   });
 });
 
@@ -215,8 +274,8 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     ).toBeNull();
   });
 
-  it("advances from FTC practice to BBB mock practice without re-picking earlier steps", () => {
-    const practiceDestinations = [merchantDest, paymentDest, ftcDest, bbbPracticeDest, cfpbDest];
+  it("advances from FTC practice to real BBB without routing through BBB mock practice", () => {
+    const practiceDestinations = [merchantDest, paymentDest, ftcDest, bbbPracticeDest, realBbbDest, cfpbDest];
 
     expect(
       pickNextPreparedActionAfterCompleted({
@@ -226,8 +285,8 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         completedHref: "/justice/ftc-review",
       })
     ).toEqual({
-      detailHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
-      stepLabel: "BBB mock practice",
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
     });
   });
 
@@ -263,7 +322,7 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     });
   });
 
-  it("does not allow real BBB manual selection except after BBB mock practice", () => {
+  it("allows real BBB after FTC practice without requiring BBB mock practice first", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
@@ -272,8 +331,8 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         completedHref: "/justice/ftc-review",
       })
     ).toEqual({
-      detailHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
-      stepLabel: "BBB mock practice",
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
     });
   });
 
@@ -369,7 +428,7 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     ).toBeNull();
   });
 
-  it("does not broadly select manual destinations after other completed hrefs", () => {
+  it("advances to the next real action after payment dispute when manual prep exists", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
@@ -377,7 +436,10 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         destinations: [merchantDest, paymentDest, realBbbDest, stateAgDest],
         completedHref: "/justice/payment-dispute",
       })
-    ).toBeNull();
+    ).toEqual({
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
+    });
   });
 
   it("preserves priority ordering among downstream manual destinations after real BBB", () => {
@@ -531,7 +593,7 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     });
   });
 
-  it("does not select demand letter after unrelated completed hrefs", () => {
+  it("advances to the next real manual action after payment dispute when present", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
@@ -539,20 +601,37 @@ describe("pickNextPreparedActionAfterCompleted", () => {
         destinations: [merchantDest, paymentDest, stateAgDest, demandLetterLaterDest],
         completedHref: "/justice/payment-dispute",
       })
-    ).toBeNull();
+    ).toEqual({
+      detailHref: "/justice/state-ag",
+      stepLabel: "State Attorney General (consumer)",
+    });
   });
 
-  it("does not broadly select manual destinations after FTC practice completion", () => {
+  it("still advances from explicitly completed BBB mock practice to real BBB", () => {
     expect(
       pickNextPreparedActionAfterCompleted({
         contacted: true,
         useCompanyContactLabels: false,
-        destinations: [merchantDest, ftcDest, bbbPracticeDest, stateAgDest, dotManualDest],
+        destinations: [merchantDest, ftcDest, bbbPracticeDest, realBbbDest, stateAgDest],
+        completedHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
+      })
+    ).toEqual({
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
+    });
+  });
+
+  it("advances from FTC practice completion to real BBB instead of BBB mock practice", () => {
+    expect(
+      pickNextPreparedActionAfterCompleted({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, ftcDest, bbbPracticeDest, stateAgDest, dotManualDest, realBbbDest],
         completedHref: "/justice/ftc-review",
       })
     ).toEqual({
-      detailHref: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
-      stepLabel: "BBB mock practice",
+      detailHref: "/justice/bbb",
+      stepLabel: "Better Business Bureau",
     });
   });
 

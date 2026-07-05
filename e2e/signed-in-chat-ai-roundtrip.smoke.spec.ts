@@ -18,7 +18,7 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through merchant step handling, FTC and BBB practice autofill, real BBB copy-draft prep, filing confirmation, and archive in chat", async ({
+test("signed-in user completes intake through merchant step handling, real BBB copy-draft prep, filing confirmation, and archive in chat", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -185,18 +185,13 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(merchantContactPrep).not.toBeVisible({ timeout: 15_000 });
 
-  const merchantContactPrepBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({ has: page.locator("p.text-xs.font-medium").filter({ hasText: "Merchant contact & proof" }) })
-    .filter({ has: page.getByRole("button", { name: "Copy message" }) });
-  await expect(merchantContactPrepBlock).toBeVisible({ timeout: 15_000 });
-  await expect(merchantContactPrepBlock.getByRole("button", { name: "Copy message" })).toBeVisible();
-
   const actionTracking = page
     .locator("div.mt-4.rounded-xl")
     .filter({ has: page.getByText("Current action tracking", { exact: true }) });
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
-  await expect(actionTracking.getByText("Next step:")).toContainText("Merchant contact");
+  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
+    timeout: 15_000,
+  });
   await expect(
     actionTracking.locator("p").filter({ hasText: "Approved next action:" })
   ).toContainText("Approved");
@@ -205,117 +200,6 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
   await expect(
     actionTracking.getByRole("button", { name: "Record action handled for now" })
   ).not.toBeVisible();
-
-  await markStepOpenedButton.click();
-
-  await expect(
-    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
-  ).toContainText("Started", { timeout: 15_000 });
-  await expect(actionTracking.getByText("Opened for next step.", { exact: true })).toBeVisible();
-  await expect(markStepOpenedButton).not.toBeVisible();
-  const recordHandledButton = actionTracking.getByRole("button", {
-    name: "Record action handled for now",
-  });
-  await expect(recordHandledButton).toBeVisible();
-
-  await recordHandledButton.click();
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(actionTracking.getByText("Next step:")).toContainText("FTC (consumer complaint)", {
-    timeout: 15_000,
-  });
-  await expect(
-    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
-  ).toContainText("Approved");
-  await expect(markStepOpenedButton).toBeVisible();
-  await expect(recordHandledButton).not.toBeVisible();
-  await expect(actionTracking.getByText("Opened for next step.", { exact: true })).not.toBeVisible();
-
-  const ftcPracticePrepBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "FTC practice complaint" }),
-    })
-    .filter({ has: page.getByText("/mock/ftc-complaint") });
-  await expect(ftcPracticePrepBlock).toBeVisible({ timeout: 15_000 });
-  await expect(
-    ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
-  ).toBeVisible();
-  await expect(
-    ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
-  ).toBeDisabled();
-  await expect(ftcPracticePrepBlock.getByRole("link", { name: "Open full FTC practice page" })).toBeVisible();
-
-  await ftcPracticePrepBlock
-    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
-    .check();
-  await ftcPracticePrepBlock.getByRole("button", { name: "Run practice autofill" }).click();
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(page.getByText("Practice autofill completed.", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
-
-  const assistedSubmissionSnapshot = page
-    .locator("div.rounded-lg.border")
-    .filter({ has: page.getByText("Last assisted submission attempt", { exact: true }) });
-  await expect(assistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
-  await expect(assistedSubmissionSnapshot.getByText("FTC (practice)", { exact: true })).toBeVisible();
-  await expect(assistedSubmissionSnapshot).toContainText(
-    "Confirmation: FTC mock practice complete"
-  );
-
-  await expect(actionTracking.getByText("Next step:")).toContainText("BBB mock practice", {
-    timeout: 15_000,
-  });
-  await expect(
-    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
-  ).toContainText("Approved");
-  await expect(markStepOpenedButton).toBeVisible();
-  await expect(recordHandledButton).not.toBeVisible();
-
-  const bbbPracticePrepBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB practice complaint" }),
-    })
-    .filter({ has: page.getByText("/mock/bbb-complaint") });
-  await expect(bbbPracticePrepBlock).toBeVisible({ timeout: 15_000 });
-  await expect(
-    bbbPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
-  ).toBeVisible();
-  await expect(
-    bbbPracticePrepBlock.getByRole("button", { name: "Run practice autofill" })
-  ).toBeDisabled();
-
-  await bbbPracticePrepBlock
-    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
-    .check();
-  await bbbPracticePrepBlock.getByRole("button", { name: "Run practice autofill" }).click();
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(page.getByText("Practice autofill completed.", { exact: true })).toBeVisible({
-    timeout: 60_000,
-  });
-
-  const bbbAssistedSubmissionSnapshot = page
-    .locator("div.rounded-lg.border")
-    .filter({ has: page.getByText("Last assisted submission attempt", { exact: true }) });
-  await expect(bbbAssistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
-  await expect(bbbAssistedSubmissionSnapshot.getByText("BBB (practice)", { exact: true })).toBeVisible();
-  await expect(bbbAssistedSubmissionSnapshot).toContainText(
-    "Confirmation: BBB mock practice complete"
-  );
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
-    timeout: 15_000,
-  });
-  await expect(
-    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
-  ).toContainText("Approved");
-  await expect(markStepOpenedButton).toBeVisible();
-  await expect(recordHandledButton).not.toBeVisible();
 
   const realBbbAutofillBlock = page
     .locator("div.mt-3.space-y-2.rounded-lg.border")
@@ -347,12 +231,6 @@ test("signed-in user completes intake through merchant step handling, FTC and BB
       realBbbCopyDraftBlock.getByRole("link", { name: "Open full better business bureau page" })
     ).toHaveAttribute("href", "/justice/bbb");
   }
-
-  await expect(bbbAssistedSubmissionSnapshot).toBeVisible({ timeout: 15_000 });
-  await expect(bbbAssistedSubmissionSnapshot.getByText("BBB (practice)", { exact: true })).toBeVisible();
-  await expect(bbbAssistedSubmissionSnapshot).toContainText(
-    "Confirmation: BBB mock practice complete"
-  );
 
   const handlingTrackingLine = page.locator("p").filter({
     has: page.locator("span.font-medium").filter({ hasText: "Handling tracking:" }),
