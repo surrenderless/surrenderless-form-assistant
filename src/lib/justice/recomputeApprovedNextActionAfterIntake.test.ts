@@ -66,7 +66,7 @@ describe("advanceApprovedNextActionAfterCompleted", () => {
     expect(advanceApprovedNextActionAfterCompleted(contactedIntake, "  ")).toBeNull();
   });
 
-  it("advances from FTC practice to BBB mock practice after FTC is handled", () => {
+  it("advances from merchant to real BBB after merchant is handled for failed-contact retail intake", () => {
     const practiceIntake = baseIntake({
       problem_category: "online_purchase",
       company_name: "Acme Retail",
@@ -84,11 +84,11 @@ describe("advanceApprovedNextActionAfterCompleted", () => {
 
     expect(
       advanceApprovedNextActionAfterCompleted(practiceIntake, "/justice/merchant")?.href
-    ).toBe("/justice/ftc-review");
+    ).toBe("/justice/bbb");
 
     expect(
       advanceApprovedNextActionAfterCompleted(practiceIntake, "/justice/ftc-review")?.href
-    ).toBe(ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF);
+    ).toBe("/justice/bbb");
   });
 });
 

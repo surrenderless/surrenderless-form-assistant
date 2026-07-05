@@ -4,6 +4,26 @@ import {
 } from "@/lib/justice/assistedSubmissionLane";
 import type { JusticeApprovedNextAction, JusticeDestination } from "@/lib/justice/types";
 
+/** Mock assisted-submission prep excluded from normal chat-first prepared routing. */
+export function isMockPracticePreparedActionDestination(dest: JusticeDestination): boolean {
+  return (
+    dest.id === "bbb_practice" ||
+    (dest.id === "ftc" && dest.internalRoute === ASSISTED_SUBMISSION_FTC_MOCK_PRACTICE_PREP_HREF)
+  );
+}
+
+function isNormalChatFirstRoutableDestination(
+  dest: JusticeDestination,
+  skip?: string,
+  options: { excludeMerchantWhenContacted?: boolean } = {}
+): boolean {
+  const route = dest.internalRoute?.trim();
+  if (!route || route === skip?.trim()) return false;
+  if (options.excludeMerchantWhenContacted && dest.id === "merchant_resolution") return false;
+  if (isMockPracticePreparedActionDestination(dest)) return false;
+  return dest.status === "recommended" || dest.status === "available" || dest.status === "manual";
+}
+
 /** Real BBB complaint prep (distinct from mock practice assisted lane). */
 const REAL_BBB_COMPLAINT_PREP_HREF = "/justice/bbb";
 
@@ -27,6 +47,8 @@ type PickFirstRoutablePreparedActionOptions = {
   allowDemandLetterAfterStateAgCompletion?: boolean;
   /** After DOT completion only: allow the downstream demand-letter destination. */
   allowDemandLetterAfterDotCompletion?: boolean;
+  /** Skip merchant contact when the user already reported contact. */
+  excludeMerchantWhenContacted?: boolean;
 };
 
 export type PreparedNextActionPick = {
@@ -49,7 +71,9 @@ export function pickPreparedNextAction(params: {
     };
   }
 
-  return pickFirstRoutablePreparedAction(destinations);
+  return pickFirstRoutablePreparedAction(destinations, undefined, {
+    excludeMerchantWhenContacted: true,
+  });
 }
 
 function pickFirstRoutablePreparedAction(
@@ -58,12 +82,15 @@ function pickFirstRoutablePreparedAction(
   options: PickFirstRoutablePreparedActionOptions = {}
 ): PreparedNextActionPick {
   const skip = skipHref?.trim();
-  const firstRoutableDest = destinations.find(
-    (d) =>
-      d.internalRoute &&
-      d.internalRoute !== skip &&
-      (d.status === "recommended" || d.status === "available")
+  const routableDestinations = destinations.filter((d) =>
+    isNormalChatFirstRoutableDestination(d, skip, options)
   );
+  const firstRoutableDest =
+    routableDestinations.length > 0
+      ? routableDestinations.reduce((best, candidate) =>
+          candidate.priority < best.priority ? candidate : best
+        )
+      : undefined;
 
   if (firstRoutableDest?.internalRoute) {
     return {
@@ -173,6 +200,7 @@ export function pickNextPreparedActionAfterCompleted(params: {
     allowManualAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
     allowDemandLetterAfterStateAgCompletion: completed === REAL_STATE_AG_PREP_HREF,
     allowDemandLetterAfterDotCompletion: completed === REAL_DOT_PREP_HREF,
+    excludeMerchantWhenContacted: contacted,
   };
 
   if (!contacted) {

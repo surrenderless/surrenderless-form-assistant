@@ -142,7 +142,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     ).toBe(true);
   });
 
-  it("advances to BBB mock practice after successful FTC assisted submission when queue allows", async () => {
+  it("advances to real BBB after successful FTC assisted submission when queue allows", async () => {
     const onApprovedNextActionCompleted = vi.fn();
 
     const result = await executeAssistedFtcPracticeSubmission({
@@ -164,8 +164,8 @@ describe("executeAssistedFtcPracticeSubmission", () => {
     expect(result.assistedSubmissionRecorded).toBe(true);
     expect(result.approvedNextActionForSubmission).toMatchObject({
       status: "approved",
-      href: ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF,
-      label: "BBB mock practice",
+      href: "/justice/bbb",
+      label: "Better Business Bureau",
     });
     expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -181,8 +181,7 @@ describe("executeAssistedFtcPracticeSubmission", () => {
         };
         return (
           body.client_state?.approved_next_action?.status === "approved" &&
-          body.client_state?.approved_next_action?.href ===
-            ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF
+          body.client_state?.approved_next_action?.href === "/justice/bbb"
         );
       })
     ).toBe(true);
