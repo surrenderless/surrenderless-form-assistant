@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
@@ -9,7 +12,70 @@ export const JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV =
   "JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF";
 export const JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV = "JUSTICE_SUPABASE_SMOKE_STRICT_RUN";
 
+/** Vitest describe block for the real signed-in Supabase lifecycle integration smoke. */
+export const JUSTICE_SUPABASE_SMOKE_INTEGRATION_DESCRIBE_NAME = "justice Supabase persistence smoke";
+
+/** Vitest name for the real signed-in Supabase lifecycle integration test. */
+export const JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME =
+  "runs signed-in case create → hydrate → archive → restore via /api/justice/cases";
+
 const SUPABASE_HOST_SUFFIX = ".supabase.co";
+const DEFAULT_INTEGRATION_EXECUTION_MARKER_PATH = path.join(
+  os.tmpdir(),
+  "justice-supabase-smoke-integration-lifecycle-executed"
+);
+
+let integrationExecutionMarkerPath = DEFAULT_INTEGRATION_EXECUTION_MARKER_PATH;
+
+/** Test-only override for the cross-process integration execution marker file. */
+export function setJusticeSupabaseSmokeIntegrationExecutionMarkerPath(markerPath: string): void {
+  integrationExecutionMarkerPath = markerPath;
+}
+
+export function resetJusticeSupabaseSmokeIntegrationExecutionMarkerPath(): void {
+  integrationExecutionMarkerPath = DEFAULT_INTEGRATION_EXECUTION_MARKER_PATH;
+}
+
+function getIntegrationExecutionMarkerPath(): string {
+  return integrationExecutionMarkerPath;
+}
+
+/** Clears the strict-run integration execution marker before dedicated smoke starts. */
+export function resetJusticeSupabaseSmokeIntegrationExecutionMarker(): void {
+  try {
+    fs.unlinkSync(getIntegrationExecutionMarkerPath());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+/** Records that the real integration lifecycle test body executed. */
+export function markJusticeSupabaseSmokeIntegrationLifecycleExecuted(): void {
+  fs.writeFileSync(getIntegrationExecutionMarkerPath(), String(Date.now()), "utf8");
+}
+
+/** True when the real integration lifecycle test body executed in this strict run. */
+export function wasJusticeSupabaseSmokeIntegrationLifecycleExecuted(): boolean {
+  return fs.existsSync(getIntegrationExecutionMarkerPath());
+}
+
+/** Non-null when strict run is configured but zero integration lifecycle tests executed. */
+export function getJusticeSupabaseSmokeStrictRunIntegrationFailureReason(): string | null {
+  if (!isJusticeSupabaseSmokeStrictRun()) return null;
+  if (!isJusticeSupabaseSmokeConfigured()) return null;
+  if (wasJusticeSupabaseSmokeIntegrationLifecycleExecuted()) return null;
+  return `Justice Supabase smoke strict run refused: configured but zero "${JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME}" integration lifecycle tests executed.`;
+}
+
+/** Throws when strict run completed without executing the real integration lifecycle test. */
+export function assertJusticeSupabaseSmokeStrictRunIntegrationExecuted(): void {
+  const reason = getJusticeSupabaseSmokeStrictRunIntegrationFailureReason();
+  if (reason) {
+    throw new Error(reason);
+  }
+}
 
 /** True when the dedicated smoke command requires a real integration run. */
 export function isJusticeSupabaseSmokeStrictRun(): boolean {

@@ -1,4 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { NextRequest } from "next/server";
 
 const { mockGetUserList } = vi.hoisted(() => ({
@@ -22,6 +25,7 @@ import { GET as getCase, PATCH as patchCase } from "@/app/api/justice/cases/[id]
 import { getUserOr401 } from "@/server/requireUser";
 import {
   assertJusticeSupabaseSmokeConnectivityPreflight,
+  assertJusticeSupabaseSmokeStrictRunIntegrationExecuted,
   buildJusticeSupabaseSmokeCaseStartedTimeline,
   buildJusticeSupabaseSmokeClientState,
   buildJusticeSupabaseSmokeIntake,
@@ -32,6 +36,7 @@ import {
   extractSupabaseProjectRef,
   getJusticeSupabaseSmokeSkipReason,
   getJusticeSupabaseSmokeStrictRunFailureReason,
+  getJusticeSupabaseSmokeStrictRunIntegrationFailureReason,
   isDeployedProduction,
   isJusticeSupabaseSmokeConfigured,
   isJusticeSupabaseSmokeStrictRun,
@@ -41,10 +46,17 @@ import {
   JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV,
   JUSTICE_SUPABASE_SMOKE_ENABLED_ENV,
   JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV,
+  JUSTICE_SUPABASE_SMOKE_INTEGRATION_DESCRIBE_NAME,
+  JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME,
   JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV,
+  markJusticeSupabaseSmokeIntegrationLifecycleExecuted,
+  resetJusticeSupabaseSmokeIntegrationExecutionMarker,
+  resetJusticeSupabaseSmokeIntegrationExecutionMarkerPath,
   resolveJusticeSupabaseSmokeClerkUserId,
   runJusticeSupabaseSmokeConnectivityPreflight,
+  setJusticeSupabaseSmokeIntegrationExecutionMarkerPath,
   validateJusticeSupabaseSmokeProjectRefAllowlist,
+  wasJusticeSupabaseSmokeIntegrationLifecycleExecuted,
 } from "@/lib/testing/justiceSupabaseSmoke";
 
 const STAGING_PROJECT_REF = "staging-smoke-ref";
@@ -52,6 +64,26 @@ const STAGING_SUPABASE_URL = `https://${STAGING_PROJECT_REF}.supabase.co`;
 const SMOKE_USER_ID = "user_justice_supabase_smoke_test";
 const REAL_CLERK_SECRET_KEY = "sk_test_0123456789012345678901234567890";
 const E2E_EMAIL = "e2e-signed-in@example.com";
+
+function withTemporaryIntegrationExecutionMarker<T>(run: () => T): T {
+  const markerPath = path.join(
+    os.tmpdir(),
+    `justice-supabase-smoke-marker-${process.pid}-${Date.now()}.tmp`
+  );
+  setJusticeSupabaseSmokeIntegrationExecutionMarkerPath(markerPath);
+  resetJusticeSupabaseSmokeIntegrationExecutionMarker();
+  try {
+    return run();
+  } finally {
+    resetJusticeSupabaseSmokeIntegrationExecutionMarker();
+    resetJusticeSupabaseSmokeIntegrationExecutionMarkerPath();
+    try {
+      fs.unlinkSync(markerPath);
+    } catch {
+      /* ignore missing marker file */
+    }
+  }
+}
 
 function stubJusticeSupabaseSmokeBaseEnv(): void {
   vi.stubEnv(JUSTICE_SUPABASE_SMOKE_ENABLED_ENV, "1");
@@ -195,7 +227,39 @@ describe("justiceSupabaseSmoke gates", () => {
   it("does not require strict-run configuration during default unit test runs", () => {
     expect(isJusticeSupabaseSmokeStrictRun()).toBe(false);
     expect(getJusticeSupabaseSmokeStrictRunFailureReason()).toBeNull();
+    expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toBeNull();
     expect(isJusticeSupabaseSmokeConfigured()).toBe(false);
+  });
+
+  it("requires strict run to record the real integration lifecycle test execution", () => {
+    withTemporaryIntegrationExecutionMarker(() => {
+      stubJusticeSupabaseSmokeBaseEnv();
+      vi.stubEnv(JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV, "1");
+      vi.stubEnv(JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV, SMOKE_USER_ID);
+
+      expect(wasJusticeSupabaseSmokeIntegrationLifecycleExecuted()).toBe(false);
+      expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toMatch(
+        /zero "runs signed-in case create → hydrate → archive → restore via \/api\/justice\/cases" integration lifecycle tests executed/i
+      );
+      expect(() => assertJusticeSupabaseSmokeStrictRunIntegrationExecuted()).toThrow(
+        /integration lifecycle tests executed/i
+      );
+
+      markJusticeSupabaseSmokeIntegrationLifecycleExecuted();
+      expect(wasJusticeSupabaseSmokeIntegrationLifecycleExecuted()).toBe(true);
+      expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toBeNull();
+      expect(() => assertJusticeSupabaseSmokeStrictRunIntegrationExecuted()).not.toThrow();
+    });
+  });
+
+  it("does not enforce integration execution outside strict dedicated smoke runs", () => {
+    withTemporaryIntegrationExecutionMarker(() => {
+      stubJusticeSupabaseSmokeBaseEnv();
+      vi.stubEnv(JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV, SMOKE_USER_ID);
+
+      expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toBeNull();
+      expect(() => assertJusticeSupabaseSmokeStrictRunIntegrationExecuted()).not.toThrow();
+    });
   });
 
   it("validates allowlist preflight success and mismatch failure", () => {
@@ -251,7 +315,7 @@ describe("justiceSupabaseSmoke gates", () => {
   });
 });
 
-describe.skipIf(!isJusticeSupabaseSmokeConfigured())("justice Supabase persistence smoke", () => {
+describe.skipIf(!isJusticeSupabaseSmokeConfigured())(JUSTICE_SUPABASE_SMOKE_INTEGRATION_DESCRIBE_NAME, () => {
   let clerkUserId = "";
 
   beforeAll(async () => {
@@ -275,7 +339,9 @@ describe.skipIf(!isJusticeSupabaseSmokeConfigured())("justice Supabase persisten
     vi.clearAllMocks();
   });
 
-  it("runs signed-in case create → hydrate → archive → restore via /api/justice/cases", async () => {
+  it(JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME, async () => {
+    markJusticeSupabaseSmokeIntegrationLifecycleExecuted();
+
     const runId = buildJusticeSupabaseSmokeRunId();
     const intake = buildJusticeSupabaseSmokeIntake(runId);
     let caseId: string | null = null;
