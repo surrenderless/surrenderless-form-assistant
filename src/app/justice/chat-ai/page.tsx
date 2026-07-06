@@ -195,6 +195,7 @@ import {
 } from "@/lib/justice/parseIntakeChatAiResponse";
 import {
   findOpenStateAgFilingTask,
+  hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
 } from "@/lib/justice/stateAgFilingTask";
 
@@ -4055,6 +4056,11 @@ export default function JusticeChatAiPage() {
     Boolean(activeUuidCaseId) &&
     isApprovedStateAgFilingAction(approvedNextAction) &&
     Boolean(findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? ""));
+  const showStateAgFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedStateAgFilingAction(approvedNextAction) &&
+    !findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasStateAgFilingWithConfirmation(savedFilings);
   const showInlineApprovedPrepVisible = showInlineApprovedPrep && !showInlineRealBbbComplaintPrep;
   const showInlineMerchantContactConfirmation =
     needsMerchantContactDocumentation && Boolean(chatCapturedMerchantContactInput);
@@ -5046,6 +5052,13 @@ export default function JusticeChatAiPage() {
                         (operator queue)
                       </span>
                     </span>
+                  </p>
+                ) : null}
+                {showStateAgFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">State AG filed.</span> Surrenderless recorded your
+                    State Attorney General complaint filing with confirmation on file. Your case will
+                    advance to the next approved step when tracking updates.
                   </p>
                 ) : null}
                 {showMarkStepOpenedForApprovedAction ? (
