@@ -199,6 +199,10 @@ import {
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
 } from "@/lib/justice/stateAgFilingTask";
+import {
+  findOpenDemandLetterFilingTask,
+  isApprovedDemandLetterFilingAction,
+} from "@/lib/justice/demandLetterFilingTask";
 
 type UiMessage = {
   id: string;
@@ -4063,6 +4067,10 @@ export default function JusticeChatAiPage() {
     Boolean(activeUuidCaseId) &&
     isApprovedStateAgFilingAction(approvedNextAction) &&
     Boolean(findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? ""));
+  const showDemandLetterQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedDemandLetterFilingAction(approvedNextAction) &&
+    Boolean(findOpenDemandLetterFilingTask(savedTasks, activeUuidCaseId ?? ""));
   const showStateAgFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedStateAgFilingAction(approvedNextAction) &&
@@ -5059,6 +5067,25 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">State AG filing queued.</span> Surrenderless has
                     queued your State Attorney General complaint for operator filing using your case
                     draft. Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      <Link
+                        href="/justice/handling"
+                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        Handling workbench
+                      </Link>
+                      <span className="text-emerald-900/80 dark:text-emerald-100/80">
+                        {" "}
+                        (operator queue)
+                      </span>
+                    </span>
+                  </p>
+                ) : null}
+                {showDemandLetterQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">Demand letter queued with Surrenderless.</span>{" "}
+                    Surrenderless has queued your demand letter for operator fulfillment using your
+                    case draft. Nothing has been sent yet.
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
                       <Link
                         href="/justice/handling"
