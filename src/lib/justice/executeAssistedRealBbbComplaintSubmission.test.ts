@@ -104,6 +104,10 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
     if (!result.ok) return;
     expect(result.assistedSubmissionRecorded).toBe(true);
     expect(result.approvedNextActionForSubmission?.status).toBe("completed");
+    expect(result.approvedNextActionForSubmission?.handling_requested_at?.trim()).toBeTruthy();
+    expect(result.approvedNextActionForSubmission?.handling_request_note?.trim()).toContain(
+      "BBB complaint filed for Acme"
+    );
     expect(runComplaint).toHaveBeenCalledOnce();
     expect(recordFiling).toHaveBeenCalledWith(
       CASE_ID,
@@ -151,6 +155,7 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
       href: "/justice/state-ag",
       label: "State Attorney General (consumer)",
     });
+    expect(result.approvedNextActionForSubmission?.handling_requested_at?.trim()).toBeTruthy();
     expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "completed",
@@ -167,6 +172,14 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
           body.client_state?.approved_next_action?.status === "approved" &&
           body.client_state?.approved_next_action?.href === "/justice/state-ag"
         );
+      })
+    ).toBe(true);
+    expect(
+      patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: { approved_next_action?: { handling_requested_at?: string } };
+        };
+        return Boolean(body.client_state?.approved_next_action?.handling_requested_at?.trim());
       })
     ).toBe(true);
   });
@@ -272,6 +285,15 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
       }),
     });
     expect(recordFiling).not.toHaveBeenCalled();
+    const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(
+      patchCalls.every(([, init]) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          client_state?: { approved_next_action?: { handling_requested_at?: string } };
+        };
+        return !body.client_state?.approved_next_action?.handling_requested_at?.trim();
+      })
+    ).toBe(true);
   });
 
   it("does not complete when filing record fails but persists failed filing snapshot", async () => {
@@ -305,6 +327,44 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
       })
     );
     expect(onApprovedNextActionCompleted).not.toHaveBeenCalled();
+    const patchCalls = fetchFn.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(
+      patchCalls.every(([, init]) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          client_state?: { approved_next_action?: { handling_requested_at?: string } };
+        };
+        return !body.client_state?.approved_next_action?.handling_requested_at?.trim();
+      })
+    ).toBe(true);
+  });
+
+  it("does not duplicate handling request when already requested before autofill", async () => {
+    const existingNote = "Prior handling request note";
+    const existingRequestedAt = "2026-06-10T08:00:00.000Z";
+
+    const result = await executeAssistedRealBbbComplaintSubmission({
+      intake: failedContactPracticeIntake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: {
+        ...realBbbApprovedNextAction,
+        handling_requested_at: existingRequestedAt,
+        handling_request_note: existingNote,
+      },
+      fetchFn,
+      runComplaint,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approvedNextActionForSubmission?.handling_requested_at).toBe(existingRequestedAt);
+    expect(result.approvedNextActionForSubmission?.handling_request_note ?? "").not.toContain(
+      "BBB complaint filed for"
+    );
   });
 
   it("rejects unrelated approved action href without running complaint autofill", async () => {

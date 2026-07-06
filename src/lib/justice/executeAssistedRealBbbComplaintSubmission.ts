@@ -23,6 +23,7 @@ import {
   mergeClientStateWithLastAssistedSubmissionAttempt,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
+import { autoRequestHandlingAfterSuccessfulRealBbbAutofill } from "@/lib/justice/autoHandlingRequestAfterRealBbbAutofill";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
@@ -425,12 +426,20 @@ export async function executeAssistedRealBbbComplaintSubmission(
     assistedSubmissionRecorded = artifacts.recorded;
     lastAssistedSubmissionAttempt = artifacts.snapshot;
     if (artifacts.recorded && approvedNextActionForSubmission) {
-      approvedNextActionAfterSubmission = await completeApprovedNextActionAfterAssistedRecording(
+      const afterAdvance = await completeApprovedNextActionAfterAssistedRecording(
         params,
         approvedNextActionForSubmission,
         fetchFn,
         logLabel
       );
+      approvedNextActionAfterSubmission = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
+        caseId: params.caseId,
+        intake: params.intake,
+        actionAfterAdvance: afterAdvance,
+        logLabel,
+        fetchFn,
+        applyTimeline,
+      });
     }
   }
 

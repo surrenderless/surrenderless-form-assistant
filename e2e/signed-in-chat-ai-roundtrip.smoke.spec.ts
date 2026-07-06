@@ -240,13 +240,14 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
     "Add filing records in chat below after external submission."
   );
 
-  await page.getByRole("button", { name: "Request Surrenderless handling" }).click();
-
   const outcomeTrackingForm = page.getByRole("form", {
     name: "Outcome and follow-up tracking",
   });
   await expect(outcomeTrackingForm).toBeVisible({ timeout: 15_000 });
   await expect(outcomeTrackingForm.getByText("Record outcome / follow-up")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Request Surrenderless handling" })
+  ).not.toBeVisible();
   await expect(handlingTrackingLine).toContainText("Record the handling outcome.", {
     timeout: 15_000,
   });
@@ -290,7 +291,7 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
   await expect(awaitingHandlingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(awaitingHandlingSection.getByText("widget order")).toBeVisible();
+  await expect(awaitingHandlingSection.getByText("widget order", { exact: true })).toBeVisible();
   await expect(awaitingHandlingSection.getByText(outcomeNote)).toBeVisible();
 
   await page.goto("/justice/chat-ai");
@@ -327,7 +328,7 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
   await expect(acknowledgedHandlingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(acknowledgedHandlingSection.getByText("widget order")).toBeVisible();
+  await expect(acknowledgedHandlingSection.getByText("widget order", { exact: true })).toBeVisible();
   await expect(acknowledgedHandlingSection.getByText(outcomeNote)).toBeVisible();
 
   const followUpTrackingSection = page.locator("section[aria-labelledby='handling-follow-up-heading']");
@@ -397,7 +398,7 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
   const allCasesList = page.locator("section[aria-labelledby='case-list-heading'] ~ ul");
   const acmeSavedCaseRow = allCasesList.locator("li").filter({ hasText: "Acme Retail" });
   await expect(acmeSavedCaseRow).toBeVisible({ timeout: 15_000 });
-  await expect(acmeSavedCaseRow.getByText("widget order")).toBeVisible();
+  await expect(acmeSavedCaseRow.getByText("widget order", { exact: true })).toBeVisible();
 
   const sessionAfterArchivedList = await page.evaluate(
     ({ caseIdKey, intakeKey }) => ({
