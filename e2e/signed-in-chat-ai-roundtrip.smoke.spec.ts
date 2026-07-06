@@ -248,70 +248,22 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
   await expect(
     page.getByRole("button", { name: "Request Surrenderless handling" })
   ).not.toBeVisible();
-  await expect(handlingTrackingLine).toContainText("Record the handling outcome.", {
-    timeout: 15_000,
-  });
 
-  const outcomeNote = "E2E: BBB filing recorded; merchant has not responded yet.";
-  const followUpDate = "2026-08-15";
-  await outcomeTrackingForm.getByPlaceholder(
-    "What happened, or what should Surrenderless track next?"
-  ).fill(outcomeNote);
-  await outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" }).check();
-  await outcomeTrackingForm.getByLabel("Follow-up date (optional, your pace)").fill(followUpDate);
-  await outcomeTrackingForm.getByRole("button", { name: "Save tracking note" }).click();
-
-  await expect(outcomeTrackingForm).toBeVisible({ timeout: 15_000 });
-  await expect(outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" })).toBeChecked();
-  await expect(outcomeTrackingForm.getByLabel("Follow-up date (optional, your pace)")).toHaveValue(
-    followUpDate
-  );
-  await expect(
-    outcomeTrackingForm.getByPlaceholder("What happened, or what should Surrenderless track next?")
-  ).toHaveValue(outcomeNote);
-  await expect(actionTracking.getByText(`Outcome: ${outcomeNote}`)).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(actionTracking.getByText(/Follow-up: flagged/)).toBeVisible({ timeout: 15_000 });
-  await expect(actionTracking.getByText(/due /)).toBeVisible({ timeout: 15_000 });
-  await expect(handlingTrackingLine).toContainText("Mark the handling request acknowledged.", {
-    timeout: 15_000,
-  });
-
-  await actionTracking.getByRole("link", { name: "Handling workbench" }).click();
-  await expect(page).toHaveURL(/\/justice\/handling\/?$/, { timeout: 15_000 });
-  await expect(page.getByRole("heading", { name: "Handling workbench" })).toBeVisible({
-    timeout: 15_000,
-  });
-
-  const awaitingHandlingSection = page.locator("section[aria-labelledby='handling-awaiting-heading']");
-  await expect(
-    awaitingHandlingSection.getByRole("heading", { name: /^Awaiting internal triage/ })
-  ).toBeVisible({ timeout: 15_000 });
-  await expect(awaitingHandlingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(awaitingHandlingSection.getByText("widget order", { exact: true })).toBeVisible();
-  await expect(awaitingHandlingSection.getByText(outcomeNote)).toBeVisible();
-
-  await page.goto("/justice/chat-ai");
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await waitForClerkBrowserApiSession(page);
-  await page.reload();
-  await waitForClerkBrowserApiSession(page);
-  await expect(actionTracking).toBeVisible({ timeout: 15_000 });
-  await expect(handlingTrackingLine).toContainText("Mark the handling request acknowledged.", {
-    timeout: 30_000,
-  });
-  await expect(actionTracking.getByRole("button", { name: "Mark acknowledged" })).toBeVisible({
-    timeout: 15_000,
-  });
-
-  await actionTracking.getByRole("button", { name: "Mark acknowledged" }).click();
+  const expectedOutcomeNote =
+    "BBB filing recorded for Acme Retail (widget order). Confirmation on file. Awaiting BBB/merchant response.";
   await expect(handlingTrackingLine).toContainText(
     "Review follow-up timing and mark follow-up handled when complete.",
     { timeout: 15_000 }
   );
+  await expect(actionTracking.getByRole("button", { name: "Mark acknowledged" })).not.toBeVisible();
+  await expect(actionTracking.getByText(`Outcome: ${expectedOutcomeNote}`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(actionTracking.getByText(/Follow-up: flagged/)).toBeVisible({ timeout: 15_000 });
+  await expect(
+    outcomeTrackingForm.getByPlaceholder("What happened, or what should Surrenderless track next?")
+  ).toHaveValue(expectedOutcomeNote);
+  await expect(outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" })).toBeChecked();
 
   await actionTracking.getByRole("link", { name: "Handling workbench" }).click();
   await expect(page).toHaveURL(/\/justice\/handling\/?$/, { timeout: 15_000 });
@@ -329,7 +281,7 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
     timeout: 15_000,
   });
   await expect(acknowledgedHandlingSection.getByText("widget order", { exact: true })).toBeVisible();
-  await expect(acknowledgedHandlingSection.getByText(outcomeNote)).toBeVisible();
+  await expect(acknowledgedHandlingSection.getByText(expectedOutcomeNote)).toBeVisible();
 
   const followUpTrackingSection = page.locator("section[aria-labelledby='handling-follow-up-heading']");
   await expect(followUpTrackingSection.getByRole("heading", { name: /^Follow-up tracking/ })).toBeVisible({
@@ -350,6 +302,7 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
     "Review follow-up timing and mark follow-up handled when complete.",
     { timeout: 30_000 }
   );
+  await expect(actionTracking.getByRole("button", { name: "Mark acknowledged" })).not.toBeVisible();
   await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toBeVisible({
     timeout: 15_000,
   });

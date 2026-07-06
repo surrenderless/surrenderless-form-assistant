@@ -10,6 +10,7 @@ import {
 } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildRealBbbComplaintSubmissionAttempt,
+  REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
   recordRealBbbComplaintFiling,
 } from "@/lib/justice/recordRealBbbComplaintFiling";
 import {
@@ -24,6 +25,7 @@ import {
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
 import { autoRequestHandlingAfterSuccessfulRealBbbAutofill } from "@/lib/justice/autoHandlingRequestAfterRealBbbAutofill";
+import { autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill } from "@/lib/justice/autoOutcomeTrackingAfterRealBbbAutofill";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
@@ -432,7 +434,7 @@ export async function executeAssistedRealBbbComplaintSubmission(
         fetchFn,
         logLabel
       );
-      approvedNextActionAfterSubmission = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
+      const afterHandling = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
         caseId: params.caseId,
         intake: params.intake,
         actionAfterAdvance: afterAdvance,
@@ -440,6 +442,17 @@ export async function executeAssistedRealBbbComplaintSubmission(
         fetchFn,
         applyTimeline,
       });
+      approvedNextActionAfterSubmission =
+        await autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill({
+          caseId: params.caseId,
+          intake: params.intake,
+          actionAfterHandling: afterHandling,
+          confirmationNumber: REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
+          filedAt: lastAssistedSubmissionAttempt?.attemptedAt,
+          logLabel,
+          fetchFn,
+          applyTimeline,
+        });
     }
   }
 
