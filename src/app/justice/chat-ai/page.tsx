@@ -4951,10 +4951,10 @@ export default function JusticeChatAiPage() {
                       undefined ? (
                       <p className="mt-1.5 text-xs text-emerald-800 dark:text-emerald-200">
                         <Link
-                          href={approvedNextAction.href.trim()}
+                          href={(approvedNextAction.href ?? "").trim()}
                           className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                         >
-                          Open {approvedNextAction.label.trim()} (optional)
+                          Open {(approvedNextAction.label ?? "").trim()} (optional)
                         </Link>
                       </p>
                     ) : null}
