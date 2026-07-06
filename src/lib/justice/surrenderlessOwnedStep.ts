@@ -1,7 +1,9 @@
 import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
+import { findOpenDemandLetterFilingTask } from "@/lib/justice/demandLetterFilingTask";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
@@ -27,6 +29,17 @@ function isStateAgStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckPa
   return false;
 }
 
+function isDemandLetterStepOwnedBySurrenderless(
+  params: SurrenderlessOwnedStepCheckParams
+): boolean {
+  if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF) {
+    return false;
+  }
+  const caseId = params.caseId.trim();
+  if (!caseId) return false;
+  return Boolean(findOpenDemandLetterFilingTask(params.tasks, caseId));
+}
+
 /**
  * True when Surrenderless owns the active approved step (human-fulfillment queue or confirmed filing).
  * Suppresses conflicting copy/paste prep and manual filing capture in chat for that step.
@@ -34,5 +47,7 @@ function isStateAgStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckPa
 export function shouldSuppressChatManualActionForSurrenderlessOwnedStep(
   params: SurrenderlessOwnedStepCheckParams
 ): boolean {
-  return isStateAgStepOwnedBySurrenderless(params);
+  return (
+    isStateAgStepOwnedBySurrenderless(params) || isDemandLetterStepOwnedBySurrenderless(params)
+  );
 }

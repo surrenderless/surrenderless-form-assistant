@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
+import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -11,6 +15,11 @@ const stateAgAction = {
   label: "State Attorney General (consumer)",
 } as const;
 
+const demandLetterAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  label: "Small claims / demand letter",
+} as const;
+
 function openStateAgTask(): JusticeCaseTaskRow {
   const marker = stateAgFilingTaskNotesMarker(CASE_ID);
   return {
@@ -18,6 +27,21 @@ function openStateAgTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "State AG filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openDemandLetterTask(): JusticeCaseTaskRow {
+  const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-demand-letter",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "Demand letter: Acme Retail",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -92,6 +116,39 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
         approvedAction: stateAgAction,
         caseId: CASE_ID,
         tasks: [{ ...openStateAgTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
+        filings: [],
+      })
+    ).toBe(false);
+  });
+
+  it("suppresses when an open demand letter human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: demandLetterAction,
+        caseId: CASE_ID,
+        tasks: [openDemandLetterTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("does not suppress demand letter when task is completed", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: demandLetterAction,
+        caseId: CASE_ID,
+        tasks: [{ ...openDemandLetterTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
+        filings: [],
+      })
+    ).toBe(false);
+  });
+
+  it("does not suppress demand letter for other approved actions", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { href: "/justice/bbb", label: "Better Business Bureau" },
+        caseId: CASE_ID,
+        tasks: [openDemandLetterTask()],
         filings: [],
       })
     ).toBe(false);

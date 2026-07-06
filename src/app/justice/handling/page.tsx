@@ -57,6 +57,11 @@ import {
   shouldQueueStateAgFilingTask,
 } from "@/lib/justice/stateAgFilingTask";
 import {
+  findOpenDemandLetterFilingTask,
+  parseDemandLetterFilingTaskDraft,
+  shouldQueueDemandLetterFilingTask,
+} from "@/lib/justice/demandLetterFilingTask";
+import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -99,6 +104,11 @@ type StateAgOperatorFilingItem = {
   task: JusticeCaseTaskRow;
 };
 
+type DemandLetterOperatorFilingItem = {
+  caseRow: CaseRow;
+  task: JusticeCaseTaskRow;
+};
+
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]";
 
@@ -116,6 +126,7 @@ const HANDLING_FILING_NOTES_PREVIEW_MAX = 120;
 const HANDLING_FILING_CONFIRM_PREVIEW_MAX = 48;
 const HANDLING_HANDOFF_STORY_PREVIEW_MAX = 200;
 const STATE_AG_OPERATOR_DRAFT_PREVIEW_MAX = 200;
+const DEMAND_LETTER_OPERATOR_DRAFT_PREVIEW_MAX = 200;
 
 function truncateHandlingFilingSnippet(text: string | null | undefined, max: number): string {
   if (!text?.trim()) return "";
@@ -1771,10 +1782,14 @@ export default function JusticeHandlingWorkbenchPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn, handlingCaseIdsKey, cases]);
 
-  const stateAgQueueCaseIdsKey = useMemo(() => {
+  const humanFulfillmentQueueCaseIdsKey = useMemo(() => {
     if (!cases) return "";
     const ids = cases
-      .filter((c) => shouldQueueStateAgFilingTask(c.client_state))
+      .filter(
+        (c) =>
+          shouldQueueStateAgFilingTask(c.client_state) ||
+          shouldQueueDemandLetterFilingTask(c.client_state)
+      )
       .map((c) => c.id)
       .sort();
     return ids.join(",");
@@ -1786,13 +1801,13 @@ export default function JusticeHandlingWorkbenchPage() {
       setTasksLoading(false);
       return;
     }
-    if (!stateAgQueueCaseIdsKey) {
+    if (!humanFulfillmentQueueCaseIdsKey) {
       setTasksByCaseId({});
       setTasksLoading(false);
       return;
     }
 
-    const ids = stateAgQueueCaseIdsKey.split(",").filter(Boolean);
+    const ids = humanFulfillmentQueueCaseIdsKey.split(",").filter(Boolean);
     tasksAbortRef.current?.abort();
     const ac = new AbortController();
     tasksAbortRef.current = ac;
@@ -1832,11 +1847,11 @@ export default function JusticeHandlingWorkbenchPage() {
     })();
 
     return () => ac.abort();
-  }, [isLoaded, isSignedIn, stateAgQueueCaseIdsKey, cases]);
+  }, [isLoaded, isSignedIn, humanFulfillmentQueueCaseIdsKey, cases]);
 
   const stateAgOperatorFilingItems = useMemo(() => {
-    if (!cases || !stateAgQueueCaseIdsKey) return [];
-    const ids = stateAgQueueCaseIdsKey.split(",").filter(Boolean);
+    if (!cases || !humanFulfillmentQueueCaseIdsKey) return [];
+    const ids = humanFulfillmentQueueCaseIdsKey.split(",").filter(Boolean);
     const items: StateAgOperatorFilingItem[] = [];
     for (const id of ids) {
       const caseRow = cases.find((c) => c.id === id);
@@ -1849,10 +1864,27 @@ export default function JusticeHandlingWorkbenchPage() {
       (a, b) =>
         new Date(b.task.created_at).getTime() - new Date(a.task.created_at).getTime()
     );
-  }, [cases, stateAgQueueCaseIdsKey, tasksByCaseId]);
+  }, [cases, humanFulfillmentQueueCaseIdsKey, tasksByCaseId]);
+
+  const demandLetterOperatorFilingItems = useMemo(() => {
+    if (!cases || !humanFulfillmentQueueCaseIdsKey) return [];
+    const ids = humanFulfillmentQueueCaseIdsKey.split(",").filter(Boolean);
+    const items: DemandLetterOperatorFilingItem[] = [];
+    for (const id of ids) {
+      const caseRow = cases.find((c) => c.id === id);
+      const task = findOpenDemandLetterFilingTask(tasksByCaseId[id] ?? [], id);
+      if (caseRow && task) {
+        items.push({ caseRow, task });
+      }
+    }
+    return items.sort(
+      (a, b) =>
+        new Date(b.task.created_at).getTime() - new Date(a.task.created_at).getTime()
+    );
+  }, [cases, humanFulfillmentQueueCaseIdsKey, tasksByCaseId]);
 
   const filingsReady = !filingsLoading && cases !== null;
-  const stateAgOperatorFilingReady = !tasksLoading && cases !== null;
+  const humanFulfillmentQueueReady = !tasksLoading && cases !== null;
 
   const awaitingHandoffTiers = useMemo(() => {
     if (!filingsReady) return null;
@@ -2360,6 +2392,43 @@ export default function JusticeHandlingWorkbenchPage() {
     );
   }
 
+  function renderDemandLetterOperatorFilingCaseCard(item: DemandLetterOperatorFilingItem) {
+    const { caseRow, task } = item;
+    const draftExcerpt = truncateHandlingFilingSnippet(
+      parseDemandLetterFilingTaskDraft(task.notes),
+      DEMAND_LETTER_OPERATOR_DRAFT_PREVIEW_MAX
+    );
+    return (
+      <li key={task.id} className={`${cardCls} list-none`}>
+        <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+          {caseDisplayTitle(caseRow)}
+        </p>
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium text-neutral-700 dark:text-neutral-300">Task:</span>{" "}
+          {task.title.trim() || "Demand letter"}
+        </p>
+        {draftExcerpt ? (
+          <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+            <span className="font-medium text-neutral-800 dark:text-neutral-200">Draft excerpt:</span>{" "}
+            {draftExcerpt}
+          </p>
+        ) : null}
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+          Queued for Surrenderless operator fulfillment. Nothing has been sent yet — an operator
+          will send the demand letter and record confirmation when complete.
+        </p>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <button type="button" onClick={() => openChat(caseRow)} className={navButtonPrimaryCls}>
+            Open chat
+          </button>
+          <button type="button" onClick={() => openPacket(caseRow)} className={navButtonSecondaryCls}>
+            Open case packet
+          </button>
+        </div>
+      </li>
+    );
+  }
+
   function renderHandlingWorkbenchCaseCard(item: HandlingWorkbenchItem, keyPrefix: string) {
     const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
     return (
@@ -2394,9 +2463,14 @@ export default function JusticeHandlingWorkbenchPage() {
   const hasAnyHandling = allHandlingItems.length > 0;
   const hasApprovedPacketActions = approvedPacketActionItems.length > 0;
   const hasStateAgOperatorFiling =
-    stateAgOperatorFilingReady && stateAgOperatorFilingItems.length > 0;
+    humanFulfillmentQueueReady && stateAgOperatorFilingItems.length > 0;
+  const hasDemandLetterOperatorFiling =
+    humanFulfillmentQueueReady && demandLetterOperatorFilingItems.length > 0;
   const hasAnyWorkbenchContent =
-    hasApprovedPacketActions || hasAnyHandling || hasStateAgOperatorFiling;
+    hasApprovedPacketActions ||
+    hasAnyHandling ||
+    hasStateAgOperatorFiling ||
+    hasDemandLetterOperatorFiling;
 
   const assistedMockSubmissionEligibleItems = useMemo(() => {
     if (!isLoaded || !isSignedIn) return [];
@@ -2606,6 +2680,29 @@ export default function JusticeHandlingWorkbenchPage() {
                 </p>
                 <ul className="mt-3 space-y-3">
                   {stateAgOperatorFilingItems.map((item) => renderStateAgOperatorFilingCaseCard(item))}
+                </ul>
+              </section>
+            ) : null}
+
+            {hasDemandLetterOperatorFiling ? (
+              <section aria-labelledby="demand-letter-operator-filing-heading">
+                <h2
+                  id="demand-letter-operator-filing-heading"
+                  className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+                >
+                  Awaiting demand letter fulfillment
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({demandLetterOperatorFilingItems.length})
+                  </span>
+                </h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                  Demand letters queued for Surrenderless operator fulfillment. Draft text comes from
+                  the case — nothing is sent until an operator completes fulfillment.
+                </p>
+                <ul className="mt-3 space-y-3">
+                  {demandLetterOperatorFilingItems.map((item) =>
+                    renderDemandLetterOperatorFilingCaseCard(item)
+                  )}
                 </ul>
               </section>
             ) : null}
