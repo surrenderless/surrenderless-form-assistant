@@ -159,6 +159,7 @@ import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
   JusticeDestination,
+  JusticeIntake,
   TimelineEntry,
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
@@ -192,7 +193,10 @@ import {
   defaultBuildJusticeIntakeParts,
   MAX_INTAKE_CHAT_USER_MESSAGE,
 } from "@/lib/justice/parseIntakeChatAiResponse";
-import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  findOpenStateAgFilingTask,
+  isApprovedStateAgFilingAction,
+} from "@/lib/justice/stateAgFilingTask";
 
 type UiMessage = {
   id: string;
@@ -4047,6 +4051,10 @@ export default function JusticeChatAiPage() {
     preparedPacketApproved &&
     !merchantContactDocumentedInTimeline &&
     !approvedNextAction?.handling_requested_at?.trim();
+  const showStateAgFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedStateAgFilingAction(approvedNextAction) &&
+    Boolean(findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? ""));
   const showInlineApprovedPrepVisible = showInlineApprovedPrep && !showInlineRealBbbComplaintPrep;
   const showInlineMerchantContactConfirmation =
     needsMerchantContactDocumentation && Boolean(chatCapturedMerchantContactInput);
@@ -5019,6 +5027,25 @@ export default function JusticeChatAiPage() {
                       Approved next action:
                     </span>{" "}
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
+                  </p>
+                ) : null}
+                {showStateAgFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">State AG filing queued.</span> Surrenderless has
+                    queued your State Attorney General complaint for operator filing using your case
+                    draft. Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      <Link
+                        href="/justice/handling"
+                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+                      >
+                        Handling workbench
+                      </Link>
+                      <span className="text-emerald-900/80 dark:text-emerald-100/80">
+                        {" "}
+                        (operator queue)
+                      </span>
+                    </span>
                   </p>
                 ) : null}
                 {showMarkStepOpenedForApprovedAction ? (
