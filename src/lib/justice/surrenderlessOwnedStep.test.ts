@@ -153,4 +153,36 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
       })
     ).toBe(false);
   });
+
+  it("suppresses when a confirmed demand letter filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: demandLetterAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: "cm-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("does not suppress demand letter when filing exists without confirmation", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: demandLetterAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: null,
+          },
+        ],
+      })
+    ).toBe(false);
+  });
 });

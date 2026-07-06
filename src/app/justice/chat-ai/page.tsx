@@ -201,6 +201,7 @@ import {
 } from "@/lib/justice/stateAgFilingTask";
 import {
   findOpenDemandLetterFilingTask,
+  hasDemandLetterFilingWithConfirmation,
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
 
@@ -4071,6 +4072,11 @@ export default function JusticeChatAiPage() {
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
     Boolean(findOpenDemandLetterFilingTask(savedTasks, activeUuidCaseId ?? ""));
+  const showDemandLetterSentNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedDemandLetterFilingAction(approvedNextAction) &&
+    !findOpenDemandLetterFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasDemandLetterFilingWithConfirmation(savedFilings);
   const showStateAgFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedStateAgFilingAction(approvedNextAction) &&
@@ -5098,6 +5104,13 @@ export default function JusticeChatAiPage() {
                         (operator queue)
                       </span>
                     </span>
+                  </p>
+                ) : null}
+                {showDemandLetterSentNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
+                    your demand letter with confirmation on file. Your case will advance to the next
+                    approved step when tracking updates.
                   </p>
                 ) : null}
                 {showStateAgFilingFiledNotice ? (

@@ -58,11 +58,13 @@ import {
 } from "@/lib/justice/stateAgFilingTask";
 import {
   findOpenDemandLetterFilingTask,
+  hasDemandLetterFilingRecord,
   parseDemandLetterFilingTaskDraft,
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
   canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -611,6 +613,127 @@ function StateAgOperatorFilingRecordForm({
         className={`${navButtonPrimaryCls} disabled:opacity-60`}
       >
         {saving ? "Saving…" : "Record filing and complete task"}
+      </button>
+    </form>
+  );
+}
+
+function DemandLetterOperatorFilingRecordForm({
+  caseId,
+  taskId,
+  existingFilings,
+  saving,
+  onSubmit,
+}: {
+  caseId: string;
+  taskId: string;
+  existingFilings: JusticeCaseFilingRow[];
+  saving: boolean;
+  onSubmit: (input: {
+    destination: string;
+    filedAt: string;
+    confirmationNumber: string;
+    notes: string;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const canonicalDestination =
+    canonicalFilingDestinationForApprovedActionHref(
+      MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+    ) ?? "Small claims / demand letter";
+  const alreadyFiled = hasDemandLetterFilingRecord(existingFilings);
+  const [filedAt, setFiledAt] = useState("");
+  const [confirmationNumber, setConfirmationNumber] = useState("");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (alreadyFiled) {
+      setError("A demand letter record already exists for this case.");
+      return;
+    }
+    const fa = filedAt.trim();
+    const cn = confirmationNumber.trim();
+    if (!fa) {
+      setError("Sent date is required.");
+      return;
+    }
+    if (!cn) {
+      setError("Confirmation or delivery reference is required before marking this step complete.");
+      return;
+    }
+    setError(null);
+    const result = await onSubmit({
+      destination: canonicalDestination,
+      filedAt: fa,
+      confirmationNumber: cn,
+      notes: notes.trim(),
+    });
+    if (!result.ok) {
+      setError(result.error);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void handleSubmit(e)} className="mt-3 space-y-2 rounded-lg border border-neutral-200/90 bg-neutral-50/80 p-3 dark:border-neutral-600 dark:bg-neutral-950/40">
+      <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+        Record demand letter sent
+      </p>
+      <p className="text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Enter details after the operator sends the demand letter. The consumer is not notified as
+        sent until confirmation is saved.
+      </p>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Destination
+        <input
+          type="text"
+          readOnly
+          value={canonicalDestination}
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+      </label>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Sent date
+        <input
+          type="date"
+          required
+          disabled={saving || alreadyFiled}
+          value={filedAt}
+          onChange={(e) => setFiledAt(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+        />
+      </label>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Confirmation or delivery reference
+        <input
+          type="text"
+          required
+          disabled={saving || alreadyFiled}
+          value={confirmationNumber}
+          onChange={(e) => setConfirmationNumber(e.target.value)}
+          placeholder="Certified mail number, email read receipt, or reference"
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+        />
+      </label>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Notes (optional)
+        <textarea
+          rows={2}
+          disabled={saving || alreadyFiled}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+        />
+      </label>
+      {error ? (
+        <p className="text-xs font-medium text-red-700 dark:text-red-400">{error}</p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving || alreadyFiled}
+        className={`${navButtonPrimaryCls} disabled:opacity-60`}
+      >
+        {saving ? "Saving…" : "Record sending and complete task"}
       </button>
     </form>
   );
@@ -1603,6 +1726,9 @@ export default function JusticeHandlingWorkbenchPage() {
   const [recordingStateAgFilingTaskId, setRecordingStateAgFilingTaskId] = useState<string | null>(
     null
   );
+  const [recordingDemandLetterFilingTaskId, setRecordingDemandLetterFilingTaskId] = useState<
+    string | null
+  >(null);
   const refetchAbortRef = useRef<AbortController | null>(null);
   const filingsAbortRef = useRef<AbortController | null>(null);
   const tasksAbortRef = useRef<AbortController | null>(null);
@@ -2154,6 +2280,77 @@ export default function JusticeHandlingWorkbenchPage() {
     }
   }
 
+  async function recordDemandLetterOperatorFiling(
+    caseRow: CaseRow,
+    task: JusticeCaseTaskRow,
+    input: {
+      destination: string;
+      filedAt: string;
+      confirmationNumber: string;
+      notes: string;
+    }
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!isLoaded || !isSignedIn || !isUuid(caseRow.id)) {
+      return { ok: false, error: "Sign in required." };
+    }
+    setRecordingDemandLetterFilingTaskId(task.id);
+    try {
+      const res = await fetch("/api/justice/demand-letter-filing/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: caseRow.id,
+          task_id: task.id,
+          destination: input.destination,
+          filed_at: input.filedAt,
+          confirmation_number: input.confirmationNumber,
+          notes: input.notes || null,
+        }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        return { ok: false, error: err.error ?? "Could not record demand letter sending." };
+      }
+      const data = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+        client_state?: unknown;
+        timeline?: unknown;
+        filing?: JusticeCaseFilingRow;
+      };
+      if (data.filing) {
+        setFilingsByCaseId((prev) => ({
+          ...prev,
+          [caseRow.id]: [data.filing!, ...(prev[caseRow.id] ?? [])],
+        }));
+      }
+      if (data.client_state !== undefined) {
+        const mergedClientState = data.client_state as JusticeCaseClientState;
+        setCases(
+          (prev) =>
+            prev?.map((c) =>
+              c.id === caseRow.id
+                ? {
+                    ...c,
+                    client_state: mergedClientState,
+                    ...(Array.isArray(data.timeline) ? { timeline: data.timeline } : {}),
+                  }
+                : c
+            ) ?? prev
+        );
+        const parsed = parseApprovedNextAction(mergedClientState.approved_next_action);
+        if (parsed) writeSessionApprovedNextAction(caseRow.id, parsed);
+      }
+      await refreshStateAgOperatorTasksForCase(caseRow.id);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not record demand letter sending." };
+    } finally {
+      setRecordingDemandLetterFilingTaskId(null);
+    }
+  }
+
   function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
     applyApprovedNextActionToCaseRow(caseId, mergedClientState);
   }
@@ -2398,6 +2595,8 @@ export default function JusticeHandlingWorkbenchPage() {
       parseDemandLetterFilingTaskDraft(task.notes),
       DEMAND_LETTER_OPERATOR_DRAFT_PREVIEW_MAX
     );
+    const caseFilings = filingsByCaseId[caseRow.id] ?? [];
+    const saving = recordingDemandLetterFilingTaskId === task.id;
     return (
       <li key={task.id} className={`${cardCls} list-none`}>
         <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
@@ -2414,9 +2613,16 @@ export default function JusticeHandlingWorkbenchPage() {
           </p>
         ) : null}
         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-          Queued for Surrenderless operator fulfillment. Nothing has been sent yet — an operator
-          will send the demand letter and record confirmation when complete.
+          Queued for Surrenderless operator fulfillment. Nothing has been sent yet — operator must
+          send the demand letter and record confirmation below.
         </p>
+        <DemandLetterOperatorFilingRecordForm
+          caseId={caseRow.id}
+          taskId={task.id}
+          existingFilings={caseFilings}
+          saving={saving}
+          onSubmit={(input) => recordDemandLetterOperatorFiling(caseRow, task, input)}
+        />
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <button type="button" onClick={() => openChat(caseRow)} className={navButtonPrimaryCls}>
             Open chat

@@ -1,7 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
 import { buildDemandLetterDraft } from "@/lib/justice/buildDemandLetterDraft";
-import { MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  filingsForApprovedActionManualTracking,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  type ManualActionTrackingFiling,
+} from "@/lib/justice/handlingTrackingProgress";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -84,6 +89,122 @@ export function isApprovedDemandLetterFilingAction(
 ): next is JusticeApprovedNextAction {
   if (!next) return false;
   return next.href?.trim() === MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF;
+}
+
+const DEMAND_LETTER_APPROVED_ACTION_FOR_FILING_TRACKING = {
+  href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  label: "Small claims / demand letter",
+} as const;
+
+export function demandLetterFilingsForManualTracking<T extends ManualActionTrackingFiling>(
+  filings: readonly T[]
+): T[] {
+  return filingsForApprovedActionManualTracking(
+    filings,
+    DEMAND_LETTER_APPROVED_ACTION_FOR_FILING_TRACKING
+  );
+}
+
+export function hasDemandLetterFilingRecord(filings: readonly ManualActionTrackingFiling[]): boolean {
+  return demandLetterFilingsForManualTracking(filings).length > 0;
+}
+
+export function hasDemandLetterFilingWithConfirmation(
+  filings: readonly ManualActionTrackingFiling[]
+): boolean {
+  return demandLetterFilingsForManualTracking(filings).some((f) =>
+    Boolean(f.confirmation_number?.trim())
+  );
+}
+
+export function findDemandLetterFilingWithConfirmation(
+  filings: readonly JusticeCaseFilingRow[]
+): JusticeCaseFilingRow | undefined {
+  return demandLetterFilingsForManualTracking(filings).find((f) =>
+    Boolean(f.confirmation_number?.trim())
+  );
+}
+
+/** Stable idempotent timeline id when a demand-letter operator fulfillment task is completed. */
+export function demandLetterFilingTaskCompletedTimelineId(taskId: string): string {
+  return `demand_letter_filing_task_done:${taskId}`;
+}
+
+export type CompleteDemandLetterFilingTaskResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: TimelineEntry[] | null;
+  completed: boolean;
+};
+
+/**
+ * Completes the demand-letter operator fulfillment task when sending is recorded.
+ * Idempotent: no-op when task is missing or already completed.
+ */
+export async function completeDemandLetterFilingTaskIfOpen(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  taskId?: string
+): Promise<CompleteDemandLetterFilingTaskResult> {
+  const marker = demandLetterFilingTaskNotesMarker(caseId);
+
+  let query = supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .limit(1);
+
+  if (taskId?.trim()) {
+    query = supabase
+      .from("justice_case_tasks")
+      .select(TASK_SELECT)
+      .eq("user_id", userId)
+      .eq("case_id", caseId)
+      .eq("id", taskId.trim())
+      .limit(1);
+  }
+
+  const { data: existingRows, error: existingErr } = await query;
+
+  if (existingErr) {
+    console.warn("justice demand letter filing task: select for complete", existingErr.message);
+    return { task: null, timeline: null, completed: false };
+  }
+
+  const task = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  if (!task || !taskNotesMatchDemandLetterFilingMarker(task.notes, caseId)) {
+    return { task: null, timeline: null, completed: false };
+  }
+  if (task.completed_at?.trim()) {
+    return { task, timeline: null, completed: false };
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: completedAt })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn("justice demand letter filing task: complete update", error?.message ?? "not found");
+    return { task, timeline: null, completed: false };
+  }
+
+  const updated = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: demandLetterFilingTaskCompletedTimelineId(task.id),
+    type: "task_completed",
+    label: "Demand letter sent",
+    detail: updated.title.trim(),
+    ts: completedAt,
+  });
+
+  return { task: updated, timeline, completed: true };
 }
 
 export type EnsureDemandLetterFilingTaskResult = {
