@@ -119,6 +119,8 @@ export function resolveHandlingTrackingContextualLink(input: {
   markAcknowledgedOnScreen?: boolean;
   /** When approved prep is embedded in chat-ai, suppress redundant open-step link. */
   prepInlineInChat?: boolean;
+  /** When Surrenderless owns the step, suppress open-step navigation links. */
+  suppressOwnedStepManualNavigation?: boolean;
   /** When filing capture form is shown in chat-ai, suppress packet filing link. */
   inlineFilingCaptureInChat?: boolean;
 }): HandlingTrackingContextualLink | null {
@@ -146,6 +148,9 @@ export function resolveHandlingTrackingContextualLink(input: {
     if (input.surface === "packet" && href.startsWith("/justice/packet")) return null;
     if (input.surface === "chat-ai") {
       if (resolveAssistedSubmissionLaneForApprovedHref(href) !== undefined) {
+        return null;
+      }
+      if (input.suppressOwnedStepManualNavigation) {
         return null;
       }
       if (input.prepInlineInChat && isChatInlinePrepHref(href)) {
@@ -208,6 +213,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   evidenceCount,
   markAcknowledgedOnScreen = false,
   prepInlineInChat = false,
+  suppressOwnedStepManualNavigation = false,
   inlineFilingCaptureInChat = false,
   onNavigate,
   tone = "emerald",
@@ -220,6 +226,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   evidenceCount?: number;
   markAcknowledgedOnScreen?: boolean;
   prepInlineInChat?: boolean;
+  suppressOwnedStepManualNavigation?: boolean;
   inlineFilingCaptureInChat?: boolean;
   onNavigate?: (href: string) => void;
   tone?: "emerald" | "neutral";
@@ -233,6 +240,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
     evidenceCount,
     markAcknowledgedOnScreen,
     prepInlineInChat,
+    suppressOwnedStepManualNavigation,
     inlineFilingCaptureInChat,
   });
   if (!link) return null;
