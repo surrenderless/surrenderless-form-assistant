@@ -61,6 +61,7 @@ import {
   handlingClosureAcknowledgmentVisible,
   shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
 } from "@/lib/justice/handlingTrackingProgress";
+import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
   isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
@@ -1976,6 +1977,12 @@ function ChatHandlingTrackingStatusReadOnly({
     isHandlingTrackingFilingCaptureStep(derivedStep) &&
     !shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
       approvedAction: approvedNextAction,
+      filings,
+    }) &&
+    !shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+      approvedAction: approvedNextAction,
+      caseId,
+      tasks,
       filings,
     });
   const inlineFilingMode =
@@ -4061,7 +4068,19 @@ export default function JusticeChatAiPage() {
     isApprovedStateAgFilingAction(approvedNextAction) &&
     !findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasStateAgFilingWithConfirmation(savedFilings);
-  const showInlineApprovedPrepVisible = showInlineApprovedPrep && !showInlineRealBbbComplaintPrep;
+  const suppressSurrenderlessOwnedManualUi =
+    Boolean(activeUuidCaseId) &&
+    Boolean(approvedNextAction) &&
+    shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+      approvedAction: approvedNextAction!,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
+  const showInlineApprovedPrepVisible =
+    showInlineApprovedPrep &&
+    !showInlineRealBbbComplaintPrep &&
+    !suppressSurrenderlessOwnedManualUi;
   const showInlineMerchantContactConfirmation =
     needsMerchantContactDocumentation && Boolean(chatCapturedMerchantContactInput);
   const showInlineMerchantContactDocumentation =
