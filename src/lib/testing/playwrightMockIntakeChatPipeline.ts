@@ -13,9 +13,9 @@ export const PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE =
 export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE =
   "I ordered a widget from Acme Retail for $49.99. They charged me twice and never refunded.";
 
-/** Canonical second-turn message providing email and display name for Playwright E2E. */
+/** Canonical second-turn message providing email, display name, and merchant contact for Playwright E2E. */
 export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE =
-  "My email is e2e-chat@example.com and my name is Jordan Lee.";
+  "My email is e2e-chat@example.com and my name is Jordan Lee. I emailed Acme Retail on 2026-01-15 and they refused a refund.";
 
 /** Enabled only when Playwright webServer sets PLAYWRIGHT_MOCK_INTAKE_CHAT_PIPELINE=1. */
 export function isPlaywrightMockIntakeChatPipelineEnabled(): boolean {
@@ -70,6 +70,60 @@ function isPlaywrightMockIntakeChatSecondTurnMessage(
   return Boolean(email && displayName && baselineParts.company_name.trim().length > 0);
 }
 
+function extractMockIsoContactDate(userMessage: string): string {
+  const iso = userMessage.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  return iso?.[1] ?? "";
+}
+
+function extractMockMerchantContactProofText(userMessage: string, companyName: string): string {
+  const company = companyName.trim() || "the merchant";
+  const isoDate = extractMockIsoContactDate(userMessage);
+  if (/\brefused\b/i.test(userMessage) && isoDate) {
+    return `E2E: ${company} refused a refund by email on ${isoDate}.`;
+  }
+  const trimmed = userMessage.trim();
+  return trimmed.length > 0 ? trimmed : "";
+}
+
+function mergeMockMerchantContactFromUserMessage(
+  parts: BuildJusticeIntakeParts,
+  userMessage: string
+): BuildJusticeIntakeParts {
+  const contacted =
+    /\b(?:emailed|called|contacted|reached out|messaged|chatted)\b/i.test(userMessage) ||
+    /\brefused\b/i.test(userMessage);
+  if (!contacted) return parts;
+
+  const contactDate = extractMockIsoContactDate(userMessage);
+  const proofText = extractMockMerchantContactProofText(userMessage, parts.company_name);
+  if (!contactDate || !proofText) return parts;
+
+  let merchantResponseType = parts.merchant_response_type;
+  if (/\brefused\b/i.test(userMessage)) {
+    merchantResponseType = "refused_help";
+  } else if (/\bno response\b/i.test(userMessage)) {
+    merchantResponseType = "no_response";
+  }
+
+  let contactMethod = parts.contact_method;
+  if (/\bemailed\b/i.test(userMessage)) {
+    contactMethod = "email";
+  } else if (/\bcalled\b/i.test(userMessage)) {
+    contactMethod = "phone";
+  } else if (/\bchatted?\b/i.test(userMessage)) {
+    contactMethod = "chat";
+  }
+
+  return mergeModelBuildJusticeIntakeParts(parts, {
+    already_contacted: "yes",
+    contact_method: contactMethod,
+    contact_date: contactDate,
+    merchant_response_type: merchantResponseType,
+    contact_proof_type: "paste",
+    contact_proof_text: proofText,
+  });
+}
+
 function buildPlaywrightMockIntakeChatSecondTurnResponse(
   userMessage: string,
   baselineParts: BuildJusticeIntakeParts
@@ -84,7 +138,7 @@ function buildPlaywrightMockIntakeChatSecondTurnResponse(
 
   return {
     assistantMessage: PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE,
-    parts,
+    parts: mergeMockMerchantContactFromUserMessage(parts, userMessage),
   };
 }
 
