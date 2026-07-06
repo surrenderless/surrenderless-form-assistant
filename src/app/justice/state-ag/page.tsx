@@ -26,12 +26,17 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
 export default function JusticeStateAgPrepPage() {
   const { isSignedIn, isLoaded } = useAuth();
+  const ownedPrepPage = useSurrenderlessOwnedHumanFulfillmentPrepPage(
+    MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF
+  );
   const { status: hydrationStatus, intake: hydratedIntake } = useJusticeActionPageHydration();
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
@@ -61,8 +66,8 @@ export default function JusticeStateAgPrepPage() {
     if (!intake) return;
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) {
-      const { consumer_us_state: _, ...rest } = intake;
-      const next = { ...rest } as JusticeIntake;
+      const next = { ...intake };
+      delete next.consumer_us_state;
       sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(next));
       setIntake(next);
       return;
@@ -92,9 +97,15 @@ export default function JusticeStateAgPrepPage() {
     }
   }
 
+
+  if (ownedPrepPage.status === "owned") {
+    return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
+  }
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
+
 
   if (hydrationStatus !== "ready" || !intake) {
     return (

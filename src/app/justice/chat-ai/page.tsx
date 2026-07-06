@@ -1933,6 +1933,7 @@ function ChatHandlingTrackingStatusReadOnly({
   tasks,
   markAcknowledgedOnScreen = false,
   prepInlineInChat = false,
+  suppressOwnedStepManualNavigation = false,
   canCaptureFiling = false,
   caseId = "",
   onFilingsSaved,
@@ -1951,6 +1952,7 @@ function ChatHandlingTrackingStatusReadOnly({
   tasks: JusticeCaseTaskRow[];
   markAcknowledgedOnScreen?: boolean;
   prepInlineInChat?: boolean;
+  suppressOwnedStepManualNavigation?: boolean;
   canCaptureFiling?: boolean;
   caseId?: string;
   onFilingsSaved?: () => void;
@@ -2027,6 +2029,7 @@ function ChatHandlingTrackingStatusReadOnly({
           evidenceCount={evidenceCount}
           markAcknowledgedOnScreen={markAcknowledgedOnScreen}
           prepInlineInChat={prepInlineInChat}
+          suppressOwnedStepManualNavigation={suppressOwnedStepManualNavigation}
           inlineFilingCaptureInChat={showInlineFilingCapture}
         />
       ) : null}
@@ -2869,6 +2872,19 @@ export default function JusticeChatAiPage() {
 
   async function handleMarkApprovedNextActionHandled() {
     if (!approvedNextAction || approvedNextAction.status !== "started") return;
+    const caseIdForOwnedCheckMarkHandled =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (
+      caseIdForOwnedCheckMarkHandled &&
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: approvedNextAction,
+        caseId: caseIdForOwnedCheckMarkHandled,
+        tasks: savedTasks,
+        filings: savedFilings,
+      })
+    ) {
+      return;
+    }
 
     const completedHref = approvedNextAction.href?.trim() ?? "";
     const completed: JusticeApprovedNextAction = {
@@ -2935,6 +2951,19 @@ export default function JusticeChatAiPage() {
 
   async function handleApprovedNextActionOpen() {
     if (!approvedNextAction) return;
+    const caseIdForOwnedCheck =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (
+      caseIdForOwnedCheck &&
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: approvedNextAction,
+        caseId: caseIdForOwnedCheck,
+        tasks: savedTasks,
+        filings: savedFilings,
+      })
+    ) {
+      return;
+    }
     const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
     if (approvedNextAction.status === "completed") {
       router.push(targetHref);
@@ -4048,6 +4077,17 @@ export default function JusticeChatAiPage() {
     label: approvedNextAction?.label,
     showInlineRealBbbComplaintPrep,
   });
+  const suppressSurrenderlessOwnedManualUiEarly =
+    Boolean(activeUuidCaseId) &&
+    Boolean(approvedNextAction) &&
+    shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+      approvedAction: approvedNextAction!,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
+  const showMarkStepOpenedVisible =
+    showMarkStepOpenedForApprovedAction && !suppressSurrenderlessOwnedManualUiEarly;
   const chatCapturedMerchantContactInput = useMemo(
     () => buildMerchantContactDocumentationInputFromIntakeParts(parts),
     [parts]
@@ -4082,15 +4122,7 @@ export default function JusticeChatAiPage() {
     isApprovedStateAgFilingAction(approvedNextAction) &&
     !findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasStateAgFilingWithConfirmation(savedFilings);
-  const suppressSurrenderlessOwnedManualUi =
-    Boolean(activeUuidCaseId) &&
-    Boolean(approvedNextAction) &&
-    shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-      approvedAction: approvedNextAction!,
-      caseId: activeUuidCaseId ?? "",
-      tasks: savedTasks,
-      filings: savedFilings,
-    });
+  const suppressSurrenderlessOwnedManualUi = suppressSurrenderlessOwnedManualUiEarly;
   const showInlineApprovedPrepVisible =
     showInlineApprovedPrep &&
     !showInlineRealBbbComplaintPrep &&
@@ -5120,7 +5152,7 @@ export default function JusticeChatAiPage() {
                     advance to the next approved step when tracking updates.
                   </p>
                 ) : null}
-                {showMarkStepOpenedForApprovedAction ? (
+                {showMarkStepOpenedVisible ? (
                   <>
                     <p className="mt-1.5 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
                       Records this step as opened in Surrenderless. It does not submit, file, or
@@ -5151,7 +5183,7 @@ export default function JusticeChatAiPage() {
                     ) : null}
                   </>
                 ) : null}
-                {approvedNextAction.status === "started" ? (
+                {approvedNextAction.status === "started" && !suppressSurrenderlessOwnedManualUi ? (
                   <>
                     <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                       Opened for next step.
@@ -5232,6 +5264,7 @@ export default function JusticeChatAiPage() {
                       tasks={savedTasks}
                       markAcknowledgedOnScreen={false}
                       prepInlineInChat={prepInlineInChat}
+                      suppressOwnedStepManualNavigation={suppressSurrenderlessOwnedManualUi}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
@@ -5293,6 +5326,7 @@ export default function JusticeChatAiPage() {
                       tasks={savedTasks}
                       markAcknowledgedOnScreen={showChatAcknowledgment}
                       prepInlineInChat={prepInlineInChat}
+                      suppressOwnedStepManualNavigation={suppressSurrenderlessOwnedManualUi}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}

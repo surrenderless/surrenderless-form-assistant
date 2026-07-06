@@ -6,7 +6,6 @@ import Header from "@/app/components/Header";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
-import type { JusticeIntake } from "@/lib/justice/types";
 import {
   buildDemandLetterDraft,
   demandLetterDesiredResolutionPhrase,
@@ -16,11 +15,16 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
 export default function JusticeDemandLetterPrepPage() {
+  const ownedPrepPage = useSurrenderlessOwnedHumanFulfillmentPrepPage(
+    MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+  );
   const { status: hydrationStatus, intake } = useJusticeActionPageHydration();
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
@@ -36,9 +40,15 @@ export default function JusticeDemandLetterPrepPage() {
     }
   }
 
+
+  if (ownedPrepPage.status === "owned") {
+    return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
+  }
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
+
 
   if (hydrationStatus !== "ready" || !intake) {
     return (

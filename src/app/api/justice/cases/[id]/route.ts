@@ -29,6 +29,8 @@ import {
   ensureDemandLetterFilingTask,
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
+import { rejectManualOwnedStepClientStatePatch } from "@/lib/justice/rejectManualOwnedStepClientStatePatch";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -225,6 +227,41 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     }
     existingClientState = existingRow.client_state;
     existingArchivedAt = existingRow.archived_at as string | null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+    const { data: taskRows, error: tasksErr } = await supabase
+      .from("justice_case_tasks")
+      .select("id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at")
+      .eq("case_id", id)
+      .eq("user_id", userId);
+
+    if (tasksErr) {
+      console.warn("justice_cases select tasks before patch:", tasksErr.message);
+      return NextResponse.json({ error: tasksErr.message }, { status: 500 });
+    }
+
+    const { data: filingRows, error: filingsErr } = await supabase
+      .from("justice_case_filings")
+      .select("destination, confirmation_number")
+      .eq("case_id", id)
+      .eq("user_id", userId);
+
+    if (filingsErr) {
+      console.warn("justice_cases select filings before patch:", filingsErr.message);
+      return NextResponse.json({ error: filingsErr.message }, { status: 500 });
+    }
+
+    const ownedStepReject = rejectManualOwnedStepClientStatePatch({
+      caseId: id,
+      existingClientState,
+      incomingClientState: patch.client_state,
+      tasks: (taskRows ?? []) as JusticeCaseTaskRow[],
+      filings: filingRows ?? [],
+    });
+    if (ownedStepReject) {
+      return NextResponse.json({ error: ownedStepReject }, { status: 409 });
+    }
   }
 
   const { data, error } = await supabase
