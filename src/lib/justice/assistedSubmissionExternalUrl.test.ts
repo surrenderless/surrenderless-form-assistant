@@ -59,7 +59,8 @@ describe("assistedSubmissionExternalUrl", () => {
     });
   });
 
-  it("rejects the real BBB submission URL when autofill is disabled", () => {
+  it("rejects the real BBB submission URL when autofill is explicitly disabled", () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
     expect(isAllowedExternalAssistedSubmissionUrl(REAL_BBB_COMPLAINT_SUBMISSION_URL)).toBe(false);
     expect(evaluateAssistedSubmissionUrlPolicy(REAL_BBB_COMPLAINT_SUBMISSION_URL, ORIGIN)).toEqual({
       allowed: false,
