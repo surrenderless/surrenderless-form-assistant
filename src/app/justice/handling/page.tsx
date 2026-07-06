@@ -52,9 +52,14 @@ import type {
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import {
   findOpenStateAgFilingTask,
+  hasStateAgFilingRecord,
   parseStateAgFilingTaskDraft,
   shouldQueueStateAgFilingTask,
 } from "@/lib/justice/stateAgFilingTask";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import { LastAssistedSubmissionAttemptSummaryReadOnlyFromClientState } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
@@ -479,6 +484,126 @@ const navButtonPrimaryCls =
 
 const navButtonSecondaryCls =
   "w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto";
+
+function StateAgOperatorFilingRecordForm({
+  caseId,
+  taskId,
+  existingFilings,
+  saving,
+  onSubmit,
+}: {
+  caseId: string;
+  taskId: string;
+  existingFilings: JusticeCaseFilingRow[];
+  saving: boolean;
+  onSubmit: (input: {
+    destination: string;
+    filedAt: string;
+    confirmationNumber: string;
+    notes: string;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const canonicalDestination =
+    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF) ??
+    "State Attorney General (consumer)";
+  const alreadyFiled = hasStateAgFilingRecord(existingFilings);
+  const [filedAt, setFiledAt] = useState("");
+  const [confirmationNumber, setConfirmationNumber] = useState("");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (alreadyFiled) {
+      setError("A State AG filing record already exists for this case.");
+      return;
+    }
+    const fa = filedAt.trim();
+    const cn = confirmationNumber.trim();
+    if (!fa) {
+      setError("Filed date is required.");
+      return;
+    }
+    if (!cn) {
+      setError("Confirmation number is required before marking this filing complete.");
+      return;
+    }
+    setError(null);
+    const result = await onSubmit({
+      destination: canonicalDestination,
+      filedAt: fa,
+      confirmationNumber: cn,
+      notes: notes.trim(),
+    });
+    if (!result.ok) {
+      setError(result.error);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void handleSubmit(e)} className="mt-3 space-y-2 rounded-lg border border-neutral-200/90 bg-neutral-50/80 p-3 dark:border-neutral-600 dark:bg-neutral-950/40">
+      <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+        Record State AG filing
+      </p>
+      <p className="text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+        Enter details from the state portal after manual submission. The consumer is not notified as
+        filed until confirmation is saved.
+      </p>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Destination
+        <input
+          type="text"
+          readOnly
+          value={canonicalDestination}
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+      </label>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Filed date
+        <input
+          type="date"
+          required
+          disabled={saving || alreadyFiled}
+          value={filedAt}
+          onChange={(e) => setFiledAt(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+        />
+      </label>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Confirmation number
+        <input
+          type="text"
+          required
+          disabled={saving || alreadyFiled}
+          value={confirmationNumber}
+          onChange={(e) => setConfirmationNumber(e.target.value)}
+          placeholder="Portal confirmation or reference number"
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+        />
+      </label>
+      <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+        Notes (optional)
+        <textarea
+          rows={2}
+          disabled={saving || alreadyFiled}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+        />
+      </label>
+      {error ? (
+        <p className="text-xs font-medium text-red-700 dark:text-red-400">{error}</p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving || alreadyFiled}
+        className={`${navButtonPrimaryCls} disabled:opacity-60`}
+      >
+        {saving ? "Saving…" : "Record filing and complete task"}
+      </button>
+    </form>
+  );
+}
 
 function deriveManualActionNextStep(input: {
   readyForExternalManualAction: boolean;
@@ -1464,6 +1589,9 @@ export default function JusticeHandlingWorkbenchPage() {
   const [filingsLoading, setFilingsLoading] = useState(false);
   const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [tasksLoading, setTasksLoading] = useState(false);
+  const [recordingStateAgFilingTaskId, setRecordingStateAgFilingTaskId] = useState<string | null>(
+    null
+  );
   const refetchAbortRef = useRef<AbortController | null>(null);
   const filingsAbortRef = useRef<AbortController | null>(null);
   const tasksAbortRef = useRef<AbortController | null>(null);
@@ -1910,6 +2038,90 @@ export default function JusticeHandlingWorkbenchPage() {
     }
   }, []);
 
+  const refreshStateAgOperatorTasksForCase = useCallback(async (caseId: string) => {
+    if (!isUuid(caseId)) return;
+    try {
+      const taskRes = await fetch(`/api/justice/tasks?case_id=${encodeURIComponent(caseId)}`);
+      if (!taskRes.ok) return;
+      const taskJson: unknown = await taskRes.json();
+      const rows = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
+      setTasksByCaseId((prev) => ({ ...prev, [caseId]: rows }));
+    } catch (e) {
+      console.warn("justice handling: refresh state ag operator tasks error", e);
+    }
+  }, []);
+
+  async function recordStateAgOperatorFiling(
+    caseRow: CaseRow,
+    task: JusticeCaseTaskRow,
+    input: {
+      destination: string;
+      filedAt: string;
+      confirmationNumber: string;
+      notes: string;
+    }
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!isLoaded || !isSignedIn || !isUuid(caseRow.id)) {
+      return { ok: false, error: "Sign in required." };
+    }
+    setRecordingStateAgFilingTaskId(task.id);
+    try {
+      const res = await fetch("/api/justice/state-ag-filing/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: caseRow.id,
+          task_id: task.id,
+          destination: input.destination,
+          filed_at: input.filedAt,
+          confirmation_number: input.confirmationNumber,
+          notes: input.notes || null,
+        }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        return { ok: false, error: err.error ?? "Could not record State AG filing." };
+      }
+      const data = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+        client_state?: unknown;
+        timeline?: unknown;
+        filing?: JusticeCaseFilingRow;
+      };
+      if (data.filing) {
+        setFilingsByCaseId((prev) => ({
+          ...prev,
+          [caseRow.id]: [data.filing!, ...(prev[caseRow.id] ?? [])],
+        }));
+      }
+      if (data.client_state !== undefined) {
+        const mergedClientState = data.client_state as JusticeCaseClientState;
+        setCases(
+          (prev) =>
+            prev?.map((c) =>
+              c.id === caseRow.id
+                ? {
+                    ...c,
+                    client_state: mergedClientState,
+                    ...(Array.isArray(data.timeline) ? { timeline: data.timeline } : {}),
+                  }
+                : c
+            ) ?? prev
+        );
+        const parsed = parseApprovedNextAction(mergedClientState.approved_next_action);
+        if (parsed) writeSessionApprovedNextAction(caseRow.id, parsed);
+      }
+      await refreshStateAgOperatorTasksForCase(caseRow.id);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not record State AG filing." };
+    } finally {
+      setRecordingStateAgFilingTaskId(null);
+    }
+  }
+
   function applyAcknowledgedHandlingToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
     applyApprovedNextActionToCaseRow(caseId, mergedClientState);
   }
@@ -2101,6 +2313,8 @@ export default function JusticeHandlingWorkbenchPage() {
       parseStateAgFilingTaskDraft(task.notes),
       STATE_AG_OPERATOR_DRAFT_PREVIEW_MAX
     );
+    const caseFilings = filingsByCaseId[caseRow.id] ?? [];
+    const saving = recordingStateAgFilingTaskId === task.id;
     return (
       <li
         key={task.id}
@@ -2125,8 +2339,15 @@ export default function JusticeHandlingWorkbenchPage() {
         ) : null}
         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
           Queued for Surrenderless operator filing on the correct state portal. Nothing has been
-          filed yet — operator must submit manually and record confirmation separately.
+          filed yet — operator must submit manually and record confirmation below.
         </p>
+        <StateAgOperatorFilingRecordForm
+          caseId={caseRow.id}
+          taskId={task.id}
+          existingFilings={caseFilings}
+          saving={saving}
+          onSubmit={(input) => recordStateAgOperatorFiling(caseRow, task, input)}
+        />
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <button type="button" onClick={() => openChat(caseRow)} className={navButtonPrimaryCls}>
             Open chat

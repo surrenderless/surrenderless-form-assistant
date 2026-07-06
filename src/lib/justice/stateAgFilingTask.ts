@@ -1,7 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
 import { buildStateAgComplaintDraft } from "@/lib/justice/buildStateAgComplaintDraft";
-import { MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  filingsForApprovedActionManualTracking,
+  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  type ManualActionTrackingFiling,
+} from "@/lib/justice/handlingTrackingProgress";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -85,6 +90,119 @@ export function isApprovedStateAgFilingAction(
 ): next is JusticeApprovedNextAction {
   if (!next) return false;
   return next.href?.trim() === MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF;
+}
+
+const STATE_AG_APPROVED_ACTION_FOR_FILING_TRACKING = {
+  href: MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  label: "State Attorney General (consumer)",
+} as const;
+
+export function stateAgFilingsForManualTracking<T extends ManualActionTrackingFiling>(
+  filings: readonly T[]
+): T[] {
+  return filingsForApprovedActionManualTracking(filings, STATE_AG_APPROVED_ACTION_FOR_FILING_TRACKING);
+}
+
+export function hasStateAgFilingRecord(filings: readonly ManualActionTrackingFiling[]): boolean {
+  return stateAgFilingsForManualTracking(filings).length > 0;
+}
+
+export function hasStateAgFilingWithConfirmation(
+  filings: readonly ManualActionTrackingFiling[]
+): boolean {
+  return stateAgFilingsForManualTracking(filings).some((f) =>
+    Boolean(f.confirmation_number?.trim())
+  );
+}
+
+export function findStateAgFilingWithConfirmation(
+  filings: readonly JusticeCaseFilingRow[]
+): JusticeCaseFilingRow | undefined {
+  return stateAgFilingsForManualTracking(filings).find((f) =>
+    Boolean(f.confirmation_number?.trim())
+  );
+}
+
+/** Stable idempotent timeline id when a State AG operator filing task is completed. */
+export function stateAgFilingTaskCompletedTimelineId(taskId: string): string {
+  return `state_ag_filing_task_done:${taskId}`;
+}
+
+export type CompleteStateAgFilingTaskResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: TimelineEntry[] | null;
+  completed: boolean;
+};
+
+/**
+ * Completes the State AG operator filing task when filing is recorded.
+ * Idempotent: no-op when task is missing or already completed.
+ */
+export async function completeStateAgFilingTaskIfOpen(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  taskId?: string
+): Promise<CompleteStateAgFilingTaskResult> {
+  const marker = stateAgFilingTaskNotesMarker(caseId);
+
+  let query = supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .limit(1);
+
+  if (taskId?.trim()) {
+    query = supabase
+      .from("justice_case_tasks")
+      .select(TASK_SELECT)
+      .eq("user_id", userId)
+      .eq("case_id", caseId)
+      .eq("id", taskId.trim())
+      .limit(1);
+  }
+
+  const { data: existingRows, error: existingErr } = await query;
+
+  if (existingErr) {
+    console.warn("justice state ag filing task: select for complete", existingErr.message);
+    return { task: null, timeline: null, completed: false };
+  }
+
+  const task = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  if (!task || !taskNotesMatchStateAgFilingMarker(task.notes, caseId)) {
+    return { task: null, timeline: null, completed: false };
+  }
+  if (task.completed_at?.trim()) {
+    return { task, timeline: null, completed: false };
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: completedAt })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn("justice state ag filing task: complete update", error?.message ?? "not found");
+    return { task, timeline: null, completed: false };
+  }
+
+  const updated = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: stateAgFilingTaskCompletedTimelineId(task.id),
+    type: "task_completed",
+    label: "State AG filing completed",
+    detail: updated.title.trim(),
+    ts: completedAt,
+  });
+
+  return { task: updated, timeline, completed: true };
 }
 
 export type EnsureStateAgFilingTaskResult = {

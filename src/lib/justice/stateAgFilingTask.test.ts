@@ -5,11 +5,15 @@ import {
   buildStateAgFilingTaskNotes,
   buildStateAgFilingTaskTitle,
   findOpenStateAgFilingTask,
+  hasStateAgFilingRecord,
+  hasStateAgFilingWithConfirmation,
   parseStateAgFilingTaskDraft,
   shouldQueueStateAgFilingTask,
+  stateAgFilingTaskCompletedTimelineId,
   stateAgFilingTaskNotesMarker,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -38,6 +42,46 @@ describe("stateAgFilingTask", () => {
 
   it("builds title from company name", () => {
     expect(buildStateAgFilingTaskTitle(baseIntake())).toBe("State AG filing: Acme Retail");
+  });
+
+  it("builds stable completed timeline id", () => {
+    expect(stateAgFilingTaskCompletedTimelineId("task-1")).toBe("state_ag_filing_task_done:task-1");
+  });
+
+  it("detects State AG filing records and confirmation", () => {
+    const filings: JusticeCaseFilingRow[] = [
+      {
+        id: "fil-1",
+        user_id: "user",
+        case_id: CASE_ID,
+        destination: "Better Business Bureau",
+        filed_at: "2026-01-01",
+        confirmation_number: "bbb-1",
+        filing_url: null,
+        notes: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "fil-2",
+        user_id: "user",
+        case_id: CASE_ID,
+        destination: "State Attorney General (consumer)",
+        filed_at: "2026-01-02",
+        confirmation_number: null,
+        filing_url: null,
+        notes: null,
+        created_at: "2026-01-02T00:00:00.000Z",
+        updated_at: "2026-01-02T00:00:00.000Z",
+      },
+    ];
+    expect(hasStateAgFilingRecord(filings)).toBe(true);
+    expect(hasStateAgFilingWithConfirmation(filings)).toBe(false);
+    expect(
+      hasStateAgFilingWithConfirmation([
+        { ...filings[1]!, confirmation_number: "ag-123" },
+      ])
+    ).toBe(true);
   });
 
   it("builds notes with case id, state, company, and draft only", () => {
