@@ -24,6 +24,8 @@ import {
   buildCaseArchivedTimelineEntry,
   isFirstArchiveTransition,
 } from "@/lib/justice/caseArchiveTimeline";
+import { ensureStateAgFilingTask, shouldQueueStateAgFilingTask } from "@/lib/justice/stateAgFilingTask";
+import type { JusticeIntake } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import {
@@ -307,6 +309,24 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       });
       if (timeline) {
         responseData = { ...responseData, timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    shouldQueueStateAgFilingTask(patch.client_state)
+  ) {
+    const intakePayload = data.intake;
+    if (isJusticeIntakePayload(intakePayload)) {
+      const taskResult = await ensureStateAgFilingTask(
+        supabase,
+        userId,
+        id,
+        intakePayload as JusticeIntake
+      );
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
       }
     }
   }

@@ -38,6 +38,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import { stateNameFromCode } from "@/lib/justice/buildStateAgComplaintDraft";
 import { isHandlingWorkbenchAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
@@ -49,6 +50,12 @@ import type {
   TimelineEntry,
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
+import {
+  findOpenStateAgFilingTask,
+  parseStateAgFilingTaskDraft,
+  shouldQueueStateAgFilingTask,
+} from "@/lib/justice/stateAgFilingTask";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import { replaceTimelineForCase, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import { LastAssistedSubmissionAttemptSummaryReadOnlyFromClientState } from "@/lib/justice/LastAssistedSubmissionAttemptSummaryReadOnly";
 import {
@@ -82,6 +89,11 @@ type HandlingWorkbenchItem = {
   next: JusticeApprovedNextAction;
 };
 
+type StateAgOperatorFilingItem = {
+  caseRow: CaseRow;
+  task: JusticeCaseTaskRow;
+};
+
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06]";
 
@@ -98,6 +110,7 @@ function truncateAttentionNote(text: string, maxLen: number): string {
 const HANDLING_FILING_NOTES_PREVIEW_MAX = 120;
 const HANDLING_FILING_CONFIRM_PREVIEW_MAX = 48;
 const HANDLING_HANDOFF_STORY_PREVIEW_MAX = 200;
+const STATE_AG_OPERATOR_DRAFT_PREVIEW_MAX = 200;
 
 function truncateHandlingFilingSnippet(text: string | null | undefined, max: number): string {
   if (!text?.trim()) return "";
@@ -1449,8 +1462,11 @@ export default function JusticeHandlingWorkbenchPage() {
     {}
   );
   const [filingsLoading, setFilingsLoading] = useState(false);
+  const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
+  const [tasksLoading, setTasksLoading] = useState(false);
   const refetchAbortRef = useRef<AbortController | null>(null);
   const filingsAbortRef = useRef<AbortController | null>(null);
+  const tasksAbortRef = useRef<AbortController | null>(null);
 
   function refreshSessionCaseIdFromStorage() {
     if (typeof window === "undefined") return;
@@ -1627,7 +1643,88 @@ export default function JusticeHandlingWorkbenchPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn, handlingCaseIdsKey, cases]);
 
+  const stateAgQueueCaseIdsKey = useMemo(() => {
+    if (!cases) return "";
+    const ids = cases
+      .filter((c) => shouldQueueStateAgFilingTask(c.client_state))
+      .map((c) => c.id)
+      .sort();
+    return ids.join(",");
+  }, [cases]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || cases === null) {
+      setTasksByCaseId({});
+      setTasksLoading(false);
+      return;
+    }
+    if (!stateAgQueueCaseIdsKey) {
+      setTasksByCaseId({});
+      setTasksLoading(false);
+      return;
+    }
+
+    const ids = stateAgQueueCaseIdsKey.split(",").filter(Boolean);
+    tasksAbortRef.current?.abort();
+    const ac = new AbortController();
+    tasksAbortRef.current = ac;
+    setTasksLoading(true);
+
+    void (async () => {
+      try {
+        const entries = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const taskRes = await fetch(`/api/justice/tasks?case_id=${encodeURIComponent(id)}`, {
+                signal: ac.signal,
+              });
+              if (ac.signal.aborted) {
+                return [id, [] as JusticeCaseTaskRow[]] as const;
+              }
+              const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
+              const rows = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
+              return [id, rows] as const;
+            } catch {
+              if (ac.signal.aborted) {
+                return [id, [] as JusticeCaseTaskRow[]] as const;
+              }
+              return [id, [] as JusticeCaseTaskRow[]] as const;
+            }
+          })
+        );
+        if (ac.signal.aborted) return;
+        const nextTasks: Record<string, JusticeCaseTaskRow[]> = {};
+        for (const [id, rows] of entries) {
+          nextTasks[id] = rows;
+        }
+        setTasksByCaseId(nextTasks);
+      } finally {
+        if (!ac.signal.aborted) setTasksLoading(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [isLoaded, isSignedIn, stateAgQueueCaseIdsKey, cases]);
+
+  const stateAgOperatorFilingItems = useMemo(() => {
+    if (!cases || !stateAgQueueCaseIdsKey) return [];
+    const ids = stateAgQueueCaseIdsKey.split(",").filter(Boolean);
+    const items: StateAgOperatorFilingItem[] = [];
+    for (const id of ids) {
+      const caseRow = cases.find((c) => c.id === id);
+      const task = findOpenStateAgFilingTask(tasksByCaseId[id] ?? [], id);
+      if (caseRow && task) {
+        items.push({ caseRow, task });
+      }
+    }
+    return items.sort(
+      (a, b) =>
+        new Date(b.task.created_at).getTime() - new Date(a.task.created_at).getTime()
+    );
+  }, [cases, stateAgQueueCaseIdsKey, tasksByCaseId]);
+
   const filingsReady = !filingsLoading && cases !== null;
+  const stateAgOperatorFilingReady = !tasksLoading && cases !== null;
 
   const awaitingHandoffTiers = useMemo(() => {
     if (!filingsReady) return null;
@@ -1994,6 +2091,54 @@ export default function JusticeHandlingWorkbenchPage() {
     );
   }
 
+  function renderStateAgOperatorFilingCaseCard(item: StateAgOperatorFilingItem) {
+    const { caseRow, task } = item;
+    const stateCode = caseRow.intake.consumer_us_state?.trim().toUpperCase() ?? "";
+    const stateLabel = stateCode
+      ? `${stateNameFromCode(stateCode)} (${stateCode})`
+      : "(state not set)";
+    const draftExcerpt = truncateHandlingFilingSnippet(
+      parseStateAgFilingTaskDraft(task.notes),
+      STATE_AG_OPERATOR_DRAFT_PREVIEW_MAX
+    );
+    return (
+      <li
+        key={task.id}
+        className={`${cardCls} list-none`}
+      >
+        <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+          {caseDisplayTitle(caseRow)}
+        </p>
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium text-neutral-700 dark:text-neutral-300">Consumer state:</span>{" "}
+          {stateLabel}
+        </p>
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          <span className="font-medium text-neutral-700 dark:text-neutral-300">Task:</span>{" "}
+          {task.title.trim() || "State AG filing"}
+        </p>
+        {draftExcerpt ? (
+          <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+            <span className="font-medium text-neutral-800 dark:text-neutral-200">Draft excerpt:</span>{" "}
+            {draftExcerpt}
+          </p>
+        ) : null}
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+          Queued for Surrenderless operator filing on the correct state portal. Nothing has been
+          filed yet — operator must submit manually and record confirmation separately.
+        </p>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <button type="button" onClick={() => openChat(caseRow)} className={navButtonPrimaryCls}>
+            Open chat
+          </button>
+          <button type="button" onClick={() => openPacket(caseRow)} className={navButtonSecondaryCls}>
+            Open case packet
+          </button>
+        </div>
+      </li>
+    );
+  }
+
   function renderHandlingWorkbenchCaseCard(item: HandlingWorkbenchItem, keyPrefix: string) {
     const approvedStepHref = resolveWorkbenchApprovedStepHref(item.next);
     return (
@@ -2027,7 +2172,10 @@ export default function JusticeHandlingWorkbenchPage() {
 
   const hasAnyHandling = allHandlingItems.length > 0;
   const hasApprovedPacketActions = approvedPacketActionItems.length > 0;
-  const hasAnyWorkbenchContent = hasApprovedPacketActions || hasAnyHandling;
+  const hasStateAgOperatorFiling =
+    stateAgOperatorFilingReady && stateAgOperatorFilingItems.length > 0;
+  const hasAnyWorkbenchContent =
+    hasApprovedPacketActions || hasAnyHandling || hasStateAgOperatorFiling;
 
   const assistedMockSubmissionEligibleItems = useMemo(() => {
     if (!isLoaded || !isSignedIn) return [];
@@ -2219,6 +2367,28 @@ export default function JusticeHandlingWorkbenchPage() {
               </p>
             ) : (
               <>
+            {hasStateAgOperatorFiling ? (
+              <section aria-labelledby="state-ag-operator-filing-heading">
+                <h2
+                  id="state-ag-operator-filing-heading"
+                  className="text-lg font-semibold text-neutral-900 dark:text-neutral-100"
+                >
+                  Awaiting operator filing
+                  <span className="ml-2 text-base font-normal text-neutral-500 dark:text-neutral-400">
+                    ({stateAgOperatorFilingItems.length})
+                  </span>
+                </h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
+                  State Attorney General complaints queued for Surrenderless operator filing. Draft
+                  text comes from the case — nothing is submitted until an operator files on the
+                  state portal.
+                </p>
+                <ul className="mt-3 space-y-3">
+                  {stateAgOperatorFilingItems.map((item) => renderStateAgOperatorFilingCaseCard(item))}
+                </ul>
+              </section>
+            ) : null}
+
             {hasApprovedPacketActions ? (
               <section aria-labelledby="approved-packet-actions-heading">
                 <h2
