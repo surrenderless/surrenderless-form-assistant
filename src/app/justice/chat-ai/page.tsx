@@ -95,6 +95,7 @@ import {
   shouldShowChatInlineReadOnlyApprovedPrep,
   shouldShowChatInlineRealBbbComplaintPrep,
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
+  shouldShowMarkStepOpenedForApprovedAction,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
 import {
@@ -3960,6 +3961,12 @@ export default function JusticeChatAiPage() {
     preparedPacketApproved,
     approvedNextAction,
   });
+  const showMarkStepOpenedForApprovedAction = shouldShowMarkStepOpenedForApprovedAction({
+    status: approvedNextAction?.status,
+    href: approvedNextAction?.href,
+    label: approvedNextAction?.label,
+    showInlineRealBbbComplaintPrep,
+  });
   const showInlineApprovedPrepVisible = showInlineApprovedPrep && !showInlineRealBbbComplaintPrep;
   const showInlineMerchantContactDocumentation =
     showInlineApprovedPrepVisible &&
@@ -4922,9 +4929,7 @@ export default function JusticeChatAiPage() {
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
                 ) : null}
-                {approvedNextAction.status === "approved" &&
-                approvedNextAction.href?.trim() &&
-                approvedNextAction.label?.trim() ? (
+                {showMarkStepOpenedForApprovedAction ? (
                   <>
                     <p className="mt-1.5 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
                       Records this step as opened in Surrenderless. It does not submit, file, or

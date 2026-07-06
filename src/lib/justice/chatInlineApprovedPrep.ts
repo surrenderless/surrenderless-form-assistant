@@ -164,6 +164,22 @@ export function shouldShowChatInlineRealBbbComplaintPrep(
   return shouldShowChatInlineFtcPracticePrep(input);
 }
 
+/**
+ * Separate "Mark step opened" is redundant when real BBB autofill is inline —
+ * Run BBB autofill promotes approved → started.
+ */
+export function shouldShowMarkStepOpenedForApprovedAction(input: {
+  status?: JusticeApprovedNextAction["status"];
+  href?: string;
+  label?: string;
+  showInlineRealBbbComplaintPrep: boolean;
+}): boolean {
+  if (input.status !== "approved") return false;
+  if (!input.href?.trim() || !input.label?.trim()) return false;
+  if (input.showInlineRealBbbComplaintPrep) return false;
+  return true;
+}
+
 /** Read-only mock FTC practice summary when href resolves to the FTC assisted lane. */
 export function shouldShowChatInlineFtcMockReadOnlyPrep(
   input: ChatInlineReadOnlyPrepGateInput & { href?: string; handlingRequested: boolean }

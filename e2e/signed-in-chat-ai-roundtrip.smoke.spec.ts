@@ -198,8 +198,9 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
   await expect(
     actionTracking.locator("p").filter({ hasText: "Approved next action:" })
   ).toContainText("Approved");
-  const markStepOpenedButton = actionTracking.getByRole("button", { name: "Mark step opened" });
-  await expect(markStepOpenedButton).toBeVisible();
+  await expect(
+    actionTracking.getByRole("button", { name: "Mark step opened" })
+  ).not.toBeVisible();
   await expect(
     actionTracking.getByRole("button", { name: "Record action handled for now" })
   ).not.toBeVisible();

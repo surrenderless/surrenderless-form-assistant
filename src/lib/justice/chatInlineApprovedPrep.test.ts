@@ -32,6 +32,7 @@ import {
   shouldShowChatInlineReadOnlyApprovedPrep,
   shouldShowChatInlineRealBbbComplaintPrep,
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
+  shouldShowMarkStepOpenedForApprovedAction,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -583,6 +584,28 @@ describe("assisted mock practice lane prep and summary", () => {
           },
         })
       )
+    ).toBe(true);
+  });
+
+  it("hides Mark step opened when inline real BBB autofill prep is available", () => {
+    expect(
+      shouldShowMarkStepOpenedForApprovedAction({
+        status: "approved",
+        href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+        label: "Better Business Bureau",
+        showInlineRealBbbComplaintPrep: true,
+      })
+    ).toBe(false);
+  });
+
+  it("shows Mark step opened for approved non-inline-BBB steps", () => {
+    expect(
+      shouldShowMarkStepOpenedForApprovedAction({
+        status: "approved",
+        href: CHAT_INLINE_STATE_AG_PREP_HREF,
+        label: "State Attorney General (consumer)",
+        showInlineRealBbbComplaintPrep: false,
+      })
     ).toBe(true);
   });
 
