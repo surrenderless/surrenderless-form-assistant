@@ -3,7 +3,10 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
-import { findOpenDemandLetterFilingTask } from "@/lib/justice/demandLetterFilingTask";
+import {
+  findOpenDemandLetterFilingTask,
+  hasDemandLetterFilingWithConfirmation,
+} from "@/lib/justice/demandLetterFilingTask";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
@@ -37,7 +40,9 @@ function isDemandLetterStepOwnedBySurrenderless(
   }
   const caseId = params.caseId.trim();
   if (!caseId) return false;
-  return Boolean(findOpenDemandLetterFilingTask(params.tasks, caseId));
+  if (findOpenDemandLetterFilingTask(params.tasks, caseId)) return true;
+  if (hasDemandLetterFilingWithConfirmation(params.filings)) return true;
+  return false;
 }
 
 /**

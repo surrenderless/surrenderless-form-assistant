@@ -7,21 +7,17 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
+  completeDemandLetterFilingTaskIfOpen,
+  demandLetterFilingsForManualTracking,
+  hasDemandLetterFilingWithConfirmation,
+  taskNotesMatchDemandLetterFilingMarker,
+} from "@/lib/justice/demandLetterFilingTask";
+import {
   canonicalFilingDestinationForApprovedActionHref,
-  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
-import {
-  ensureDemandLetterFilingTask,
-  shouldQueueDemandLetterFilingTask,
-} from "@/lib/justice/demandLetterFilingTask";
-import {
-  completeStateAgFilingTaskIfOpen,
-  hasStateAgFilingWithConfirmation,
-  stateAgFilingsForManualTracking,
-  taskNotesMatchStateAgFilingMarker,
-} from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -61,7 +57,7 @@ function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNex
   return { withTracking, local };
 }
 
-export type CompleteStateAgOperatorFilingInput = {
+export type CompleteDemandLetterOperatorFilingInput = {
   caseId: string;
   taskId: string;
   destination: string;
@@ -70,7 +66,7 @@ export type CompleteStateAgOperatorFilingInput = {
   notes?: string | null;
 };
 
-export type CompleteStateAgOperatorFilingResult =
+export type CompleteDemandLetterOperatorFilingResult =
   | {
       ok: true;
       filing: JusticeCaseFilingRow;
@@ -82,11 +78,11 @@ export type CompleteStateAgOperatorFilingResult =
     }
   | { ok: false; error: string; status: number };
 
-export async function completeStateAgOperatorFiling(
+export async function completeDemandLetterOperatorFiling(
   supabase: SupabaseClient,
   userId: string,
-  input: CompleteStateAgOperatorFilingInput
-): Promise<CompleteStateAgOperatorFilingResult> {
+  input: CompleteDemandLetterOperatorFilingInput
+): Promise<CompleteDemandLetterOperatorFilingResult> {
   const caseId = input.caseId.trim();
   const taskId = input.taskId.trim();
   const destination = clampLen(input.destination.trim(), MAX_DEST);
@@ -105,10 +101,11 @@ export async function completeStateAgOperatorFiling(
   }
 
   const canonicalDestination =
-    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF) ??
-    destination;
+    canonicalFilingDestinationForApprovedActionHref(
+      MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+    ) ?? destination;
   if (destination !== canonicalDestination) {
-    return { ok: false, error: "Invalid State AG filing destination", status: 400 };
+    return { ok: false, error: "Invalid demand letter filing destination", status: 400 };
   }
 
   const { data: caseRow, error: caseErr } = await supabase
@@ -136,12 +133,12 @@ export async function completeStateAgOperatorFiling(
     .maybeSingle();
 
   if (taskErr || !taskRow) {
-    return { ok: false, error: "State AG operator task not found", status: 404 };
+    return { ok: false, error: "Demand letter operator task not found", status: 404 };
   }
 
   const task = taskRow as JusticeCaseTaskRow;
-  if (!taskNotesMatchStateAgFilingMarker(task.notes, caseId)) {
-    return { ok: false, error: "Task is not a State AG operator filing task", status: 400 };
+  if (!taskNotesMatchDemandLetterFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "Task is not a demand letter operator fulfillment task", status: 400 };
   }
 
   const { data: existingFilings, error: filingsErr } = await supabase
@@ -151,18 +148,18 @@ export async function completeStateAgOperatorFiling(
     .eq("user_id", userId);
 
   if (filingsErr) {
-    console.warn("justice state ag operator filing: list filings", filingsErr.message);
+    console.warn("justice demand letter operator filing: list filings", filingsErr.message);
     return { ok: false, error: filingsErr.message, status: 500 };
   }
 
-  const stateAgFilings = stateAgFilingsForManualTracking(
+  const demandLetterFilings = demandLetterFilingsForManualTracking(
     (existingFilings ?? []) as JusticeCaseFilingRow[]
   );
-  if (stateAgFilings.length > 0) {
-    if (!hasStateAgFilingWithConfirmation(stateAgFilings)) {
+  if (demandLetterFilings.length > 0) {
+    if (!hasDemandLetterFilingWithConfirmation(demandLetterFilings)) {
       return {
         ok: false,
-        error: "A State AG filing record already exists for this case without confirmation",
+        error: "A demand letter filing record already exists for this case without confirmation",
         status: 409,
       };
     }
@@ -172,11 +169,11 @@ export async function completeStateAgOperatorFiling(
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (stateAgFilings.length > 0 && task.completed_at?.trim()) {
+  if (demandLetterFilings.length > 0 && task.completed_at?.trim()) {
     idempotent = true;
-    filing = stateAgFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (stateAgFilings.length > 0) {
-    filing = stateAgFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+    filing = demandLetterFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+  } else if (demandLetterFilings.length > 0) {
+    filing = demandLetterFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
     idempotent = true;
   } else {
     const insertRow: Record<string, unknown> = {
@@ -195,32 +192,32 @@ export async function completeStateAgOperatorFiling(
       .single();
 
     if (insertErr || !inserted) {
-      console.warn("justice state ag operator filing: insert", insertErr?.message ?? "failed");
+      console.warn("justice demand letter operator filing: insert", insertErr?.message ?? "failed");
       return { ok: false, error: insertErr?.message ?? "Could not save filing record", status: 500 };
     }
 
     filing = inserted as JusticeCaseFilingRow;
-    const detail = `${filing.destination} filed — ${confirmationNumber}`;
+    const detail = `${filing.destination} sent — ${confirmationNumber}`;
     timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
       id: `justice_fil:${filing.id}`,
       type: "filing_recorded",
-      label: "Filing recorded",
+      label: "Demand letter sent",
       detail,
     });
   }
 
-  const taskResult = await completeStateAgFilingTaskIfOpen(supabase, userId, caseId, taskId);
+  const taskResult = await completeDemandLetterFilingTaskIfOpen(supabase, userId, caseId, taskId);
   if (!taskResult.task) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the State AG operator task",
+      error: "Filing saved but could not complete the demand letter operator task",
       status: 500,
     };
   }
   if (!taskResult.task.completed_at?.trim()) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the State AG operator task",
+      error: "Filing saved but could not complete the demand letter operator task",
       status: 500,
     };
   }
@@ -234,7 +231,7 @@ export async function completeStateAgOperatorFiling(
   let nextApprovedNext: JusticeApprovedNextAction | undefined;
 
   if (
-    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF &&
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF &&
     approvedNext.status !== "completed"
   ) {
     const completedHref = approvedNext.href.trim();
@@ -266,19 +263,12 @@ export async function completeStateAgOperatorFiling(
       .eq("user_id", userId);
 
     if (patchErr) {
-      console.warn("justice state ag operator filing: patch client_state", patchErr.message);
+      console.warn("justice demand letter operator filing: patch client_state", patchErr.message);
       return {
         ok: false,
         error: "Filing recorded but could not advance the approved next action",
         status: 500,
       };
-    }
-
-    if (shouldQueueDemandLetterFilingTask(clientState)) {
-      const queueResult = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
     }
   }
 

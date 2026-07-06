@@ -4,12 +4,16 @@ import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
 import {
   buildDemandLetterFilingTaskNotes,
   buildDemandLetterFilingTaskTitle,
+  demandLetterFilingTaskCompletedTimelineId,
   demandLetterFilingTaskNotesMarker,
   findOpenDemandLetterFilingTask,
+  hasDemandLetterFilingRecord,
+  hasDemandLetterFilingWithConfirmation,
   parseDemandLetterFilingTaskDraft,
   shouldQueueDemandLetterFilingTask,
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -39,6 +43,36 @@ describe("demandLetterFilingTask", () => {
 
   it("builds title from company name", () => {
     expect(buildDemandLetterFilingTaskTitle(baseIntake())).toBe("Demand letter: Acme Retail");
+  });
+
+  it("builds stable completed timeline id", () => {
+    expect(demandLetterFilingTaskCompletedTimelineId("task-dl-1")).toBe(
+      "demand_letter_filing_task_done:task-dl-1"
+    );
+  });
+
+  it("detects demand letter filing records and confirmation", () => {
+    const filings: JusticeCaseFilingRow[] = [
+      {
+        id: "fil-dl-1",
+        user_id: "user",
+        case_id: CASE_ID,
+        destination: "Small claims / demand letter",
+        filed_at: "2026-01-03",
+        confirmation_number: null,
+        filing_url: null,
+        notes: null,
+        created_at: "2026-01-03T00:00:00.000Z",
+        updated_at: "2026-01-03T00:00:00.000Z",
+      },
+    ];
+    expect(hasDemandLetterFilingRecord(filings)).toBe(true);
+    expect(hasDemandLetterFilingWithConfirmation(filings)).toBe(false);
+    expect(
+      hasDemandLetterFilingWithConfirmation([
+        { ...filings[0]!, confirmation_number: "cm-12345" },
+      ])
+    ).toBe(true);
   });
 
   it("builds notes with case id, company, and draft only", () => {
