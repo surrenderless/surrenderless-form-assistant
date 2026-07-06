@@ -4,6 +4,7 @@ import {
   ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
 } from "@/lib/justice/assistedSubmissionLane";
 import { executeAssistedRealBbbComplaintSubmission } from "@/lib/justice/executeAssistedRealBbbComplaintSubmission";
+import { buildDefaultOutcomeNoteAfterRealBbbAutofill } from "@/lib/justice/autoOutcomeTrackingAfterRealBbbAutofill";
 import { REAL_BBB_COMPLAINT_FILING_DESTINATION } from "@/lib/justice/recordRealBbbComplaintFiling";
 import type { RunRealBbbComplaintSuccess } from "@/lib/justice/runRealBbbComplaint";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
@@ -108,6 +109,11 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
     expect(result.approvedNextActionForSubmission?.handling_request_note?.trim()).toContain(
       "BBB complaint filed for Acme"
     );
+    expect(result.approvedNextActionForSubmission?.outcome_note).toBe(
+      buildDefaultOutcomeNoteAfterRealBbbAutofill(intake)
+    );
+    expect(result.approvedNextActionForSubmission?.follow_up_needed).toBe(true);
+    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at?.trim()).toBeTruthy();
     expect(runComplaint).toHaveBeenCalledOnce();
     expect(recordFiling).toHaveBeenCalledWith(
       CASE_ID,
@@ -156,6 +162,11 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
       label: "State Attorney General (consumer)",
     });
     expect(result.approvedNextActionForSubmission?.handling_requested_at?.trim()).toBeTruthy();
+    expect(result.approvedNextActionForSubmission?.outcome_note).toBe(
+      buildDefaultOutcomeNoteAfterRealBbbAutofill(failedContactPracticeIntake)
+    );
+    expect(result.approvedNextActionForSubmission?.follow_up_needed).toBe(true);
+    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at?.trim()).toBeTruthy();
     expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "completed",
@@ -180,6 +191,23 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
           client_state?: { approved_next_action?: { handling_requested_at?: string } };
         };
         return Boolean(body.client_state?.approved_next_action?.handling_requested_at?.trim());
+      })
+    ).toBe(true);
+    expect(
+      patchCalls.some(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as {
+          client_state?: {
+            approved_next_action?: {
+              outcome_note?: string;
+              handling_acknowledged_at?: string;
+            };
+          };
+        };
+        const action = body.client_state?.approved_next_action;
+        return (
+          Boolean(action?.outcome_note?.trim()) &&
+          Boolean(action?.handling_acknowledged_at?.trim())
+        );
       })
     ).toBe(true);
   });
@@ -289,9 +317,20 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
     expect(
       patchCalls.every(([, init]) => {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
-          client_state?: { approved_next_action?: { handling_requested_at?: string } };
+          client_state?: {
+            approved_next_action?: {
+              handling_requested_at?: string;
+              outcome_note?: string;
+              handling_acknowledged_at?: string;
+            };
+          };
         };
-        return !body.client_state?.approved_next_action?.handling_requested_at?.trim();
+        const action = body.client_state?.approved_next_action;
+        return (
+          !action?.handling_requested_at?.trim() &&
+          !action?.outcome_note?.trim() &&
+          !action?.handling_acknowledged_at?.trim()
+        );
       })
     ).toBe(true);
   });
@@ -331,9 +370,20 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
     expect(
       patchCalls.every(([, init]) => {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
-          client_state?: { approved_next_action?: { handling_requested_at?: string } };
+          client_state?: {
+            approved_next_action?: {
+              handling_requested_at?: string;
+              outcome_note?: string;
+              handling_acknowledged_at?: string;
+            };
+          };
         };
-        return !body.client_state?.approved_next_action?.handling_requested_at?.trim();
+        const action = body.client_state?.approved_next_action;
+        return (
+          !action?.handling_requested_at?.trim() &&
+          !action?.outcome_note?.trim() &&
+          !action?.handling_acknowledged_at?.trim()
+        );
       })
     ).toBe(true);
   });
@@ -364,6 +414,38 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
     expect(result.approvedNextActionForSubmission?.handling_requested_at).toBe(existingRequestedAt);
     expect(result.approvedNextActionForSubmission?.handling_request_note ?? "").not.toContain(
       "BBB complaint filed for"
+    );
+  });
+
+  it("does not duplicate outcome tracking when already recorded before autofill", async () => {
+    const existingOutcome = "Prior user outcome note";
+    const existingAck = "2026-06-10T09:00:00.000Z";
+
+    const result = await executeAssistedRealBbbComplaintSubmission({
+      intake: failedContactPracticeIntake,
+      caseId: CASE_ID,
+      isLoaded: true,
+      isSignedIn: true,
+      preparedPacketApproved: true,
+      approvedNextAction: {
+        ...realBbbApprovedNextAction,
+        handling_requested_at: "2026-06-10T08:00:00.000Z",
+        outcome_note: existingOutcome,
+        follow_up_needed: true,
+        handling_acknowledged_at: existingAck,
+      },
+      fetchFn,
+      runComplaint,
+      recordFiling,
+      applyTimeline,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.approvedNextActionForSubmission?.outcome_note).toBe(existingOutcome);
+    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at).toBe(existingAck);
+    expect(result.approvedNextActionForSubmission?.outcome_note ?? "").not.toContain(
+      "BBB filing recorded for"
     );
   });
 

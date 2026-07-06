@@ -200,7 +200,7 @@ export function readHandlingAcknowledgedAtFromClientState(clientState: unknown):
   return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
 }
 
-/** Preserves handling_requested_at / handling_acknowledged_at when a persist patch omits them. */
+/** Preserves handling and outcome tracking fields when a persist patch omits them. */
 export function mergeApprovedNextActionTrackingFields(
   base: JusticeApprovedNextAction | undefined,
   incoming: JusticeApprovedNextAction
@@ -215,6 +215,28 @@ export function mergeApprovedNextActionTrackingFields(
   else delete merged.handling_requested_at;
   if (acknowledged) merged.handling_acknowledged_at = acknowledged;
   else delete merged.handling_acknowledged_at;
+  const outcomeNote =
+    incoming.outcome_note?.trim() ||
+    (!("outcome_note" in incoming) ? base?.outcome_note?.trim() : undefined);
+  if (outcomeNote) merged.outcome_note = outcomeNote;
+  else delete merged.outcome_note;
+  if (incoming.follow_up_needed === true) {
+    merged.follow_up_needed = true;
+  } else if (incoming.follow_up_needed === false) {
+    delete merged.follow_up_needed;
+    delete merged.follow_up_at;
+  } else if (base?.follow_up_needed === true) {
+    merged.follow_up_needed = true;
+  } else {
+    delete merged.follow_up_needed;
+  }
+  if (incoming.follow_up_needed !== false) {
+    const followUpAt =
+      pickTrimmedIsoField(incoming.follow_up_at) ||
+      (!("follow_up_at" in incoming) ? base?.follow_up_at?.trim() : undefined);
+    if (followUpAt) merged.follow_up_at = followUpAt;
+    else delete merged.follow_up_at;
+  }
   if ("handling_operator_note" in incoming) {
     const operatorNote = incoming.handling_operator_note?.trim();
     if (operatorNote) merged.handling_operator_note = operatorNote;
@@ -279,12 +301,12 @@ export function mergeClientStateWithAcknowledgedHandling(
   return merged;
 }
 
-/** Removes follow_up_needed; preserves outcome_note, follow_up_at, handling_*, status, href, label, timestamps, etc. */
+/** Removes follow_up_needed; preserves outcome_note, handling_*, status, href, label, timestamps, etc. */
 export function clearFollowUpFromApprovedNextAction(
   next: JusticeApprovedNextAction
 ): JusticeApprovedNextAction {
-  const cleared: JusticeApprovedNextAction = { ...next };
-  delete cleared.follow_up_needed;
+  const cleared: JusticeApprovedNextAction = { ...next, follow_up_needed: false };
+  delete cleared.follow_up_at;
   return cleared;
 }
 
@@ -511,9 +533,13 @@ export function mergeClientStateWithApprovedNextAction(
         ...(prev.started_at && !approvedNext.started_at ? { started_at: prev.started_at } : {}),
         ...(prev.completed_at && !approvedNext.completed_at ? { completed_at: prev.completed_at } : {}),
         ...(prev.outcome_note && !approvedNext.outcome_note ? { outcome_note: prev.outcome_note } : {}),
-        ...(prev.follow_up_needed === true && approvedNext.follow_up_needed !== true
+        ...(approvedNext.follow_up_needed === true
           ? { follow_up_needed: true }
-          : {}),
+          : approvedNext.follow_up_needed === false
+            ? {}
+            : prev.follow_up_needed === true
+              ? { follow_up_needed: true }
+              : {}),
         ...(prev.follow_up_at && !approvedNext.follow_up_at ? { follow_up_at: prev.follow_up_at } : {}),
         ...(prev.handling_requested_at && !approvedNext.handling_requested_at
           ? { handling_requested_at: prev.handling_requested_at }
