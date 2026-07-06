@@ -167,26 +167,35 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(packetApproval).not.toBeVisible({ timeout: 15_000 });
 
-  const merchantContactPrep = page.locator("form").filter({
-    has: page.locator("p.text-xs.font-medium").filter({ hasText: "After you contact them" }),
-  });
-  await expect(merchantContactPrep).toBeVisible({ timeout: 15_000 });
-  await expect(merchantContactPrep.getByLabel("Contact date")).toBeVisible();
+  const merchantContactConfirmation = page
+    .locator("div.mt-3.space-y-2.rounded-lg.border")
+    .filter({
+      has: page.locator("p.text-xs.font-medium").filter({ hasText: "Confirm merchant contact" }),
+    });
+  await expect(merchantContactConfirmation).toBeVisible({ timeout: 15_000 });
+  await expect(merchantContactConfirmation.getByText("Contact method: Email")).toBeVisible();
+  await expect(merchantContactConfirmation.getByText("Contact date: 2026-01-15")).toBeVisible();
   await expect(
-    merchantContactPrep.getByRole("button", { name: "Save contact details" })
+    merchantContactConfirmation.getByText("Response: Refused a refund or real help")
   ).toBeVisible();
+  await expect(
+    merchantContactConfirmation.getByText(
+      "Proof: E2E: Acme Retail refused a refund by email on 2026-01-15."
+    )
+  ).toBeVisible();
+  await expect(
+    merchantContactConfirmation.getByRole("button", { name: "Confirm contact details" })
+  ).toBeVisible();
+  await expect(
+    page.locator("form").filter({
+      has: page.locator("p.text-xs.font-medium").filter({ hasText: "After you contact them" }),
+    })
+  ).not.toBeVisible();
 
-  await merchantContactPrep.locator("#chat-merchant-contact-date").fill("2026-01-15");
-  await merchantContactPrep.locator("select").nth(1).selectOption("refused_help");
-  await merchantContactPrep.locator("select").nth(2).selectOption("paste");
-  await merchantContactPrep.locator("#chat-merchant-contact-proof").fill(
-    "E2E: Acme Retail refused a refund by email on 2026-01-15."
-  );
-
-  await merchantContactPrep.getByRole("button", { name: "Save contact details" }).click();
+  await merchantContactConfirmation.getByRole("button", { name: "Confirm contact details" }).click();
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(merchantContactPrep).not.toBeVisible({ timeout: 15_000 });
+  await expect(merchantContactConfirmation).not.toBeVisible({ timeout: 15_000 });
 
   const actionTracking = page
     .locator("div.mt-4.rounded-xl")

@@ -97,7 +97,12 @@ import {
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
   shouldShowMarkStepOpenedForApprovedAction,
 } from "@/lib/justice/chatInlineApprovedPrep";
-import { documentMerchantContact } from "@/lib/justice/documentMerchantContact";
+import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
+import {
+  buildChatCapturedMerchantContactSummaryLines,
+  buildMerchantContactDocumentationInputFromIntakeParts,
+  isMerchantContactDocumentedInTimeline,
+} from "@/lib/justice/deriveChatCapturedMerchantContact";
 import {
   MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE,
   MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE,
@@ -1372,6 +1377,42 @@ function ChatInlineMerchantContactDocumentationBlock({
   );
 }
 
+function ChatInlineMerchantContactConfirmationBlock({
+  useCompanyContactLabels,
+  summaryLines,
+  saving,
+  onConfirm,
+}: {
+  useCompanyContactLabels: boolean;
+  summaryLines: string[];
+  saving: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
+      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">
+        {useCompanyContactLabels ? "Confirm company contact" : "Confirm merchant contact"}
+      </p>
+      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+        Surrenderless captured this from your chat. Confirm to save it to your case and continue.
+      </p>
+      <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-emerald-900 dark:text-emerald-100">
+        {summaryLines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        disabled={saving}
+        onClick={onConfirm}
+        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+      >
+        {saving ? "Saving…" : "Confirm contact details"}
+      </button>
+    </div>
+  );
+}
+
 const CHAT_FILING_INPUT_CLS =
   "mt-1 w-full rounded-md border border-emerald-300/80 bg-white px-2 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 dark:border-emerald-700 dark:bg-neutral-950 dark:text-neutral-100";
 
@@ -2415,73 +2456,96 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleSaveMerchantContactDocumentationFromChat(e: FormEvent) {
-    e.preventDefault();
-    if (!isLoaded) return;
+  async function persistMerchantContactDocumentationFromChat(
+    input: MerchantContactDocumentationInput
+  ): Promise<
+    | { ok: true; updatedIntake: JusticeIntake }
+    | { ok: false; contactDateError?: string; contactProofError?: string }
+  > {
+    if (!isLoaded) return { ok: false };
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    const intake = buildJusticeIntakeFromParts(parts);
+    const result = await documentMerchantContact({
+      intake,
+      input,
+      caseId: caseId || null,
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      logLabel: "justice chat-ai",
+    });
+    if (!result.ok) {
+      return result;
+    }
 
+    const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(result.updatedIntake);
+    setParts(hydratedParts);
+    sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
+
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const nextAction = recomputeApprovedNextActionAfterIntake(result.updatedIntake, {
+      existing: approvedNextAction,
+      manualFtc,
+    });
+    setApprovedNextAction(nextAction);
+    if (caseId) {
+      writeSessionApprovedNextAction(caseId, nextAction);
+    }
+
+    if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+        if (!getRes.ok) {
+          console.warn("justice chat-ai: GET before contact doc next action failed", getRes.status);
+          return { ok: true, updatedIntake: result.updatedIntake };
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextAction);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (!patchRes.ok) {
+          console.warn("justice chat-ai: PATCH contact doc next action failed", patchRes.status);
+        }
+      } catch (err) {
+        console.warn("justice chat-ai: contact doc next action error", err);
+      }
+    }
+
+    return { ok: true, updatedIntake: result.updatedIntake };
+  }
+
+  async function handleSaveMerchantContactDocumentationFromChat(e: FormEvent) {
+    e.preventDefault();
     setSavingMerchantContactDocumentation(true);
     setMerchantDocContactDateError(null);
     setMerchantDocContactProofError(null);
     try {
-      const intake = buildJusticeIntakeFromParts(parts);
-      const result = await documentMerchantContact({
-        intake,
-        input: {
-          contactMethod: merchantDocContactMethod,
-          contactDate: merchantDocContactDate,
-          merchantResponseType: merchantDocMerchantResponseType,
-          contactProofType: merchantDocContactProofType,
-          contactProofText: merchantDocContactProofText,
-        },
-        caseId: caseId || null,
-        isLoaded,
-        isSignedIn: Boolean(isSignedIn),
-        logLabel: "justice chat-ai",
+      const result = await persistMerchantContactDocumentationFromChat({
+        contactMethod: merchantDocContactMethod,
+        contactDate: merchantDocContactDate,
+        merchantResponseType: merchantDocMerchantResponseType,
+        contactProofType: merchantDocContactProofType,
+        contactProofText: merchantDocContactProofText,
       });
       if (!result.ok) {
         setMerchantDocContactDateError(result.contactDateError ?? null);
         setMerchantDocContactProofError(result.contactProofError ?? null);
-        return;
       }
+    } finally {
+      setSavingMerchantContactDocumentation(false);
+    }
+  }
 
-      const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(result.updatedIntake);
-      setParts(hydratedParts);
-      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
-
-      const manualFtc =
-        typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
-      const nextAction = recomputeApprovedNextActionAfterIntake(result.updatedIntake, {
-        existing: approvedNextAction,
-        manualFtc,
-      });
-      setApprovedNextAction(nextAction);
-      if (caseId) {
-        writeSessionApprovedNextAction(caseId, nextAction);
-      }
-
-      if (isLoaded && isSignedIn && caseId && isUuid(caseId)) {
-        try {
-          const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-          if (!getRes.ok) {
-            console.warn("justice chat-ai: GET before contact doc next action failed", getRes.status);
-            return;
-          }
-          const existing = (await getRes.json()) as { client_state?: unknown };
-          const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextAction);
-          const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ client_state: merged }),
-          });
-          if (!patchRes.ok) {
-            console.warn("justice chat-ai: PATCH contact doc next action failed", patchRes.status);
-          }
-        } catch (err) {
-          console.warn("justice chat-ai: contact doc next action error", err);
-        }
-      }
+  async function handleConfirmMerchantContactFromChat() {
+    const captured = buildMerchantContactDocumentationInputFromIntakeParts(parts);
+    if (!captured) return;
+    setSavingMerchantContactDocumentation(true);
+    try {
+      await persistMerchantContactDocumentationFromChat(captured);
     } finally {
       setSavingMerchantContactDocumentation(false);
     }
@@ -3967,12 +4031,30 @@ export default function JusticeChatAiPage() {
     label: approvedNextAction?.label,
     showInlineRealBbbComplaintPrep,
   });
+  const chatCapturedMerchantContactInput = useMemo(
+    () => buildMerchantContactDocumentationInputFromIntakeParts(parts),
+    [parts]
+  );
+  const merchantContactDocumentedInTimeline = useMemo(() => {
+    if (!activeUuidCaseId) return false;
+    return isMerchantContactDocumentedInTimeline(readTimeline(activeUuidCaseId));
+  }, [activeUuidCaseId, parts, savingMerchantContactDocumentation]);
+  const needsMerchantContactDocumentation =
+    Boolean(isUpdatingExistingCase) &&
+    isLoaded &&
+    Boolean(isSignedIn) &&
+    Boolean(activeUuidCaseId) &&
+    preparedPacketApproved &&
+    !merchantContactDocumentedInTimeline &&
+    !approvedNextAction?.handling_requested_at?.trim();
   const showInlineApprovedPrepVisible = showInlineApprovedPrep && !showInlineRealBbbComplaintPrep;
+  const showInlineMerchantContactConfirmation =
+    needsMerchantContactDocumentation && Boolean(chatCapturedMerchantContactInput);
   const showInlineMerchantContactDocumentation =
     showInlineApprovedPrepVisible &&
     chatInlineApprovedPrepContent?.kind === "merchant_message" &&
-    parts.already_contacted !== "yes" &&
-    !approvedNextAction?.handling_requested_at?.trim();
+    needsMerchantContactDocumentation &&
+    !chatCapturedMerchantContactInput;
   const showInlinePaymentDisputePrep =
     isUpdatingExistingCase &&
     isLoaded &&
@@ -4418,6 +4500,16 @@ export default function JusticeChatAiPage() {
                     }
                   })();
                 }}
+              />
+            ) : null}
+            {showInlineMerchantContactConfirmation && chatCapturedMerchantContactInput ? (
+              <ChatInlineMerchantContactConfirmationBlock
+                useCompanyContactLabels={merchantDocUseCompanyContactLabels}
+                summaryLines={buildChatCapturedMerchantContactSummaryLines(
+                  chatCapturedMerchantContactInput
+                )}
+                saving={savingMerchantContactDocumentation}
+                onConfirm={() => void handleConfirmMerchantContactFromChat()}
               />
             ) : null}
             {showInlineMerchantContactDocumentation ? (
