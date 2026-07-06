@@ -153,6 +153,22 @@ export function deriveManualActionTrackingFilingsStateForApprovedAction(
   };
 }
 
+/** Skip duplicate chat filing capture when assisted real BBB already recorded this step. */
+export function shouldSuppressChatInlineFilingCaptureForAssistedRealBbb(params: {
+  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label">;
+  filings: readonly ManualActionTrackingFiling[];
+}): boolean {
+  if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF) {
+    return false;
+  }
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(
+      params.filings,
+      params.approvedAction
+    );
+  return hasFilingRecord && hasConfirmationOnFile;
+}
+
 /** First current-action filing row missing confirmation, if any. */
 export function findApprovedActionFilingMissingConfirmation<
   T extends ManualActionTrackingFiling & { confirmation_number?: string | null },

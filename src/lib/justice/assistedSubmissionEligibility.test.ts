@@ -121,6 +121,20 @@ describe("isAssistedMockSubmissionEligible", () => {
     ).toBe(false);
   });
 
+  it("returns true for real BBB complaint lane href by default when all gates pass", () => {
+    expect(
+      isAssistedMockSubmissionEligible(
+        eligibleInput({
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
   it("returns true for real BBB complaint lane href when autofill is enabled and all gates pass", () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     expect(
@@ -136,7 +150,8 @@ describe("isAssistedMockSubmissionEligible", () => {
     ).toBe(true);
   });
 
-  it("returns false for real BBB complaint lane when autofill is disabled", () => {
+  it("returns false for real BBB complaint lane when autofill is explicitly disabled", () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
     expect(
       isAssistedMockSubmissionEligible(
         eligibleInput({

@@ -13,10 +13,12 @@ import {
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
+  MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
   canonicalFilingDestinationForApprovedActionHref,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
@@ -835,12 +837,47 @@ describe("isHandlingWorkbenchPostExternalConfirmationFollowUp", () => {
         true
       )
     ).toBe(false);
+  });
+});
+
+describe("shouldSuppressChatInlineFilingCaptureForAssistedRealBbb", () => {
+  it("suppresses duplicate chat filing capture when real BBB filing and confirmation exist", () => {
     expect(
-      isHandlingWorkbenchPostExternalConfirmationFollowUp(
-        { href: "/justice/cfpb", label: "CFPB complaint prep", status: "started" },
-        [],
-        true
-      )
+      shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
+        approvedAction: {
+          href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+          label: "Better Business Bureau",
+        },
+        filings: [
+          {
+            destination: MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS[0],
+            confirmation_number: "BBB complaint complete",
+          },
+        ],
+      })
     ).toBe(true);
+  });
+
+  it("does not suppress when confirmation is missing or href is not real BBB", () => {
+    expect(
+      shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
+        approvedAction: {
+          href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+          label: "Better Business Bureau",
+        },
+        filings: [{ destination: MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS[0] }],
+      })
+    ).toBe(false);
+    expect(
+      shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
+        approvedAction: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
+        filings: [
+          {
+            destination: MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS[0],
+            confirmation_number: "BBB complaint complete",
+          },
+        ],
+      })
+    ).toBe(false);
   });
 });

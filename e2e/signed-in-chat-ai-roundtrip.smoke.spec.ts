@@ -18,10 +18,13 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through merchant step handling, real BBB copy-draft prep, filing confirmation, and archive in chat", async ({
+test("signed-in user completes intake through real BBB autofill, handling, follow-up, and archive in chat", async ({
   page,
 }) => {
   test.setTimeout(240_000);
+  await page.route("**://www.bbb.org/**", () => {
+    throw new Error("Live BBB navigation must not occur during Playwright E2E.");
+  });
   await page.goto("/justice/chat-ai");
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
@@ -207,66 +210,32 @@ test("signed-in user completes intake through merchant step handling, real BBB c
       has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB complaint" }),
     })
     .filter({ has: page.getByText("www.bbb.org/complain/") });
-  const realBbbCopyDraftBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "Better Business Bureau" }),
-    })
-    .filter({ has: page.getByRole("button", { name: "Copy draft" }) });
-  if (await realBbbAutofillBlock.isVisible().catch(() => false)) {
-    await expect(realBbbAutofillBlock.getByRole("link", { name: "Open full BBB prep page" })).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(realBbbAutofillBlock.getByRole("link", { name: "Open full BBB prep page" })).toHaveAttribute(
-      "href",
-      "/justice/bbb"
-    );
-  } else {
-    await expect(realBbbCopyDraftBlock).toBeVisible({ timeout: 15_000 });
-    await expect(realBbbCopyDraftBlock.getByRole("button", { name: "Copy draft" })).toBeVisible();
-    await expect(
-      realBbbCopyDraftBlock.getByRole("link", { name: "Open full better business bureau page" })
-    ).toBeVisible();
-    await expect(
-      realBbbCopyDraftBlock.getByRole("link", { name: "Open full better business bureau page" })
-    ).toHaveAttribute("href", "/justice/bbb");
-  }
+  await expect(realBbbAutofillBlock).toBeVisible({ timeout: 15_000 });
+  await expect(realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" })).toBeVisible();
+  await expect(realBbbAutofillBlock.getByRole("button", { name: "Copy draft instead" })).toBeVisible();
+
+  await realBbbAutofillBlock
+    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
+    .check();
+  await realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" }).click();
+
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+
+  await expect(actionTracking.getByText("Next step:")).toContainText("State Attorney General", {
+    timeout: 60_000,
+  });
+  await expect(page.getByText("Filing: 1 filing record · confirmation on file")).toBeVisible({
+    timeout: 15_000,
+  });
+
+  await expect(page.getByRole("form", { name: "Record manual filing" })).not.toBeVisible({
+    timeout: 15_000,
+  });
 
   const handlingTrackingLine = page.locator("p").filter({
     has: page.locator("span.font-medium").filter({ hasText: "Handling tracking:" }),
   });
   await expect(handlingTrackingLine).toBeVisible({ timeout: 15_000 });
-  await expect(handlingTrackingLine).not.toContainText(
-    "Review packet and saved proof before external manual action."
-  );
-  await expect(handlingTrackingLine).toContainText(
-    "Open the approved step and prepare the manual action."
-  );
-
-  await markStepOpenedButton.click();
-
-  await expect(
-    actionTracking.locator("p").filter({ hasText: "Approved next action:" })
-  ).toContainText("Started", { timeout: 15_000 });
-  await expect(actionTracking.getByText("Opened for next step.", { exact: true })).toBeVisible();
-  await expect(handlingTrackingLine).toContainText(
-    "Add filing records in chat below after external submission.",
-    { timeout: 15_000 }
-  );
-
-  const manualFilingForm = page.getByRole("form", { name: "Record manual filing" });
-  await expect(manualFilingForm).toBeVisible({ timeout: 15_000 });
-  const destinationInput = manualFilingForm.getByLabel("Where you filed or acted (required)");
-  await expect(destinationInput).toHaveValue("Better Business Bureau");
-  await expect(destinationInput).toHaveAttribute("readonly", "");
-
-  await manualFilingForm.getByLabel("Confirmation number (optional)").fill("E2E-BBB-2026-001");
-  await manualFilingForm.getByRole("button", { name: "Save filing record" }).click();
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
-    timeout: 15_000,
-  });
   await expect(handlingTrackingLine).not.toContainText(
     "Add filing records in chat below after external submission."
   );

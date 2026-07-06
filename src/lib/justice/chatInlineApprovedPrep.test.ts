@@ -572,6 +572,20 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(false);
   });
 
+  it("shows real BBB complaint prep by default when all gates pass", () => {
+    expect(
+      shouldShowChatInlineRealBbbComplaintPrep(
+        practicePrepInput({
+          approvedNextAction: {
+            label: "Better Business Bureau",
+            href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+            status: "approved",
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
   it("shows real BBB complaint prep when autofill is enabled and all gates pass", () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     expect(
@@ -596,7 +610,8 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(true);
   });
 
-  it("keeps real BBB complaint prep hidden when autofill is disabled and copy-only prep remains available", () => {
+  it("keeps real BBB complaint prep hidden when autofill is explicitly disabled and copy-only prep remains available", () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
     expect(
       shouldShowChatInlineRealBbbComplaintPrep(
         practicePrepInput({

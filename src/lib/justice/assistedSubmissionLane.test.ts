@@ -112,9 +112,7 @@ describe("assistedSubmissionLane", () => {
     expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
   });
 
-  it("marks real BBB complaint lane runnable only when autofill env is enabled", () => {
-    expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(false);
-    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
+  it("marks real BBB complaint lane runnable by default and only disabled when env is false", () => {
     expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(true);
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
     expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(false);
@@ -157,7 +155,24 @@ describe("assistedSubmissionLane", () => {
     );
   });
 
-  it("keeps real BBB prep ineligible when autofill is disabled", () => {
+  it("keeps real BBB prep eligible by default when gates pass", () => {
+    expect(
+      isAssistedMockSubmissionEligible({
+        isLoaded: true,
+        isSignedIn: true,
+        caseId: CASE_ID,
+        preparedPacketApproved: true,
+        approvedNextAction: {
+          label: "Better Business Bureau",
+          href: ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF,
+          status: "approved",
+        },
+      })
+    ).toBe(true);
+  });
+
+  it("keeps real BBB prep ineligible when autofill is explicitly disabled", () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
     expect(isRealBbbComplaintAutofillEnabled()).toBe(false);
     expect(
       isAssistedMockSubmissionEligible({

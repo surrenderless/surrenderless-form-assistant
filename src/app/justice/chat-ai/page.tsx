@@ -59,6 +59,7 @@ import {
   isApprovedActionOpenedForHandlingTracking,
   canonicalFilingDestinationForApprovedActionHref,
   handlingClosureAcknowledgmentVisible,
+  shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   isJusticeEvidenceType,
@@ -1109,6 +1110,7 @@ function ChatInlineRealBbbComplaintBlock({
   lastAssistedSubmissionAttempt,
   approvedHref,
   onRunComplaint,
+  copyDraftFallback,
 }: {
   summaryLines: string[];
   confirmed: boolean;
@@ -1120,6 +1122,11 @@ function ChatInlineRealBbbComplaintBlock({
   lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
   approvedHref: string | undefined;
   onRunComplaint: () => void;
+  copyDraftFallback?: {
+    messageText: string;
+    onCopy: () => void;
+    copyHint: string | null;
+  };
 }) {
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
@@ -1166,6 +1173,24 @@ function ChatInlineRealBbbComplaintBlock({
         approvedHref
       ) ? (
         <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt!} />
+      ) : null}
+      {copyDraftFallback ? (
+        <div className="space-y-1 border-t border-emerald-200/80 pt-2 dark:border-emerald-900/40">
+          <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
+            Prefer manual filing? Copy the draft below and paste it into BBB.org yourself.
+          </p>
+          <button
+            type="button"
+            disabled={running}
+            onClick={copyDraftFallback.onCopy}
+            className="inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
+          >
+            Copy draft instead
+          </button>
+          {copyDraftFallback.copyHint ? (
+            <p className="text-[11px] text-emerald-800 dark:text-emerald-200">{copyDraftFallback.copyHint}</p>
+          ) : null}
+        </div>
       ) : null}
       <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
         <Link
@@ -1901,7 +1926,11 @@ function ChatHandlingTrackingStatusReadOnly({
     !readinessLoading &&
     canCaptureFilingInline &&
     derivedStep !== null &&
-    isHandlingTrackingFilingCaptureStep(derivedStep);
+    isHandlingTrackingFilingCaptureStep(derivedStep) &&
+    !shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
+      approvedAction: approvedNextAction,
+      filings,
+    });
   const inlineFilingMode =
     derivedStep !== null && isHandlingTrackingAddFilingStep(derivedStep)
       ? "add_filing"
@@ -4649,6 +4678,27 @@ export default function JusticeChatAiPage() {
                 }
                 approvedHref={approvedNextAction?.href}
                 onRunComplaint={() => void handleRunFtcPracticeFromChat()}
+                copyDraftFallback={
+                  chatInlineApprovedPrepContent?.kind === "bbb_complaint"
+                    ? {
+                        messageText: chatInlineApprovedPrepContent.messageText,
+                        copyHint: prepCopyHint,
+                        onCopy: () => {
+                          void (async () => {
+                            const text = chatInlineApprovedPrepContent.messageText;
+                            if (!text) return;
+                            try {
+                              await navigator.clipboard.writeText(text);
+                              setPrepCopyHint("Copied to clipboard.");
+                              window.setTimeout(() => setPrepCopyHint(null), 2500);
+                            } catch {
+                              setPrepCopyHint("Copy failed — select the text and copy manually.");
+                            }
+                          })();
+                        },
+                      }
+                    : undefined
+                }
               />
             ) : null}
             {ftcPracticeLastAssistedSubmissionAttempt &&
