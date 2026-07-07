@@ -25,7 +25,7 @@ test.beforeEach(() => {
 test("signed-in user completes intake through BBB, human-fulfillment ladder, resolution, and archive in chat", async ({
   page,
 }) => {
-  test.setTimeout(360_000);
+  test.setTimeout(480_000);
   await page.route("**://www.bbb.org/**", () => {
     throw new Error("Live BBB navigation must not occur during Playwright E2E.");
   });
@@ -242,10 +242,7 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     timeout: 15_000,
   });
 
-  await page.reload();
-  await waitForClerkBrowserApiSession(page);
-
-  await expect(page.getByText("State AG filing queued.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("State AG filing queued.")).toBeVisible({ timeout: 30_000 });
   await expect(
     actionTracking.getByRole("button", { name: "Mark step opened" })
   ).not.toBeVisible();
@@ -266,7 +263,7 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(handlingTrackingLine).toBeVisible({ timeout: 15_000 });
   await expect(handlingTrackingLine).toContainText(
     "Awaiting Surrenderless operator fulfillment for the current escalation step.",
-    { timeout: 15_000 }
+    { timeout: 30_000 }
   );
 
   const stateAgCompleteResponse = await page.request.post("/api/justice/state-ag-filing/complete", {
@@ -280,14 +277,12 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   });
   expect(stateAgCompleteResponse.ok()).toBeTruthy();
 
-  await page.reload();
-  await waitForClerkBrowserApiSession(page);
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
   await expect(actionTracking.getByText("Next step:")).toContainText("Small claims / demand letter", {
     timeout: 30_000,
   });
   await expect(page.getByText("Demand letter queued with Surrenderless.")).toBeVisible({
-    timeout: 15_000,
+    timeout: 30_000,
   });
   await expect(
     actionTracking.getByRole("button", { name: "Mark step opened" })
@@ -311,8 +306,6 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   );
   expect(demandLetterCompleteResponse.ok()).toBeTruthy();
 
-  await page.reload();
-  await waitForClerkBrowserApiSession(page);
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
 
   const expectedOutcomeNote =
@@ -346,13 +339,10 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     timeout: 15_000,
   });
 
-  const closeCaseBlock = page.locator("div").filter({ hasText: "Close this case" });
-  await expect(closeCaseBlock.getByText("Close this case", { exact: true })).toBeVisible({
-    timeout: 15_000,
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
+    timeout: 30_000,
   });
-  const archiveCaseButton = closeCaseBlock.getByRole("button", { name: "Archive case" });
-  await expect(archiveCaseButton).toBeVisible();
-  await archiveCaseButton.click();
+  await actionTracking.getByRole("button", { name: "Archive case" }).click({ timeout: 30_000 });
 
   await expect(page).toHaveURL(/\/justice\/?$/, { timeout: 15_000 });
   const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);

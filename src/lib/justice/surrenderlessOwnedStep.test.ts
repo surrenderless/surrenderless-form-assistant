@@ -78,6 +78,17 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
     ).toBe(true);
   });
 
+  it("suppresses when State AG escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...stateAgAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
   it("does not suppress when State AG filing exists without confirmation", () => {
     expect(
       shouldSuppressChatManualActionForSurrenderlessOwnedStep({
@@ -166,6 +177,17 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
             confirmation_number: "cm-12345",
           },
         ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when demand letter escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...demandLetterAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
       })
     ).toBe(true);
   });
