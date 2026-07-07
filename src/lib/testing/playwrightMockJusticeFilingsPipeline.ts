@@ -10,6 +10,16 @@ const PLAYWRIGHT_MOCK_FILING_TIMESTAMP = "2026-06-21T00:00:02.000Z";
 const PLAYWRIGHT_MOCK_FILING_UPDATED_TIMESTAMP = "2026-06-21T00:00:03.000Z";
 const PLAYWRIGHT_MOCK_FILING_ROW_ID = "playwright_e2e_ftc_practice_filing";
 
+function playwrightMockFilingRowIdForDestination(destination: string): string {
+  const normalized = destination.trim().toLowerCase();
+  if (normalized.includes("better business bureau")) return "playwright_e2e_bbb_filing";
+  if (normalized.includes("state attorney general")) return "playwright_e2e_state_ag_filing";
+  if (normalized.includes("demand letter") || normalized.includes("small claims")) {
+    return "playwright_e2e_demand_letter_filing";
+  }
+  return PLAYWRIGHT_MOCK_FILING_ROW_ID;
+}
+
 export type PlaywrightMockJusticeFilingRow = {
   id: string;
   user_id: string;
@@ -114,7 +124,7 @@ export function buildPlaywrightMockJusticeFilingPostResponse(
   body: PlaywrightMockJusticeFilingPostBody
 ): PlaywrightMockJusticeFilingRow & { timeline?: TimelineEntry[] } {
   const filing: PlaywrightMockJusticeFilingRow = {
-    id: PLAYWRIGHT_MOCK_FILING_ROW_ID,
+    id: playwrightMockFilingRowIdForDestination(body.destination),
     user_id: userId,
     case_id: caseId,
     destination: body.destination.trim(),
@@ -127,7 +137,8 @@ export function buildPlaywrightMockJusticeFilingPostResponse(
   };
 
   const existing = playwrightMockJusticeFilingsByCaseId.get(caseId) ?? [];
-  playwrightMockJusticeFilingsByCaseId.set(caseId, [...existing, filing]);
+  const withoutDuplicate = existing.filter((row) => row.id !== filing.id);
+  playwrightMockJusticeFilingsByCaseId.set(caseId, [...withoutDuplicate, filing]);
 
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
     return filing;

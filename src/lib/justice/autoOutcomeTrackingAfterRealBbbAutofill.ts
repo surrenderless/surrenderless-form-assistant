@@ -3,6 +3,7 @@ import {
   mergeClientStateWithApprovedNextAction,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import { isDownstreamHumanFulfillmentEscalationAction } from "@/lib/justice/escalationLadderResolution";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -116,6 +117,9 @@ export async function autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill(
   params: AutoInitiateOutcomeTrackingAfterRealBbbAutofillParams
 ): Promise<JusticeApprovedNextAction> {
   const { actionAfterHandling, intake, caseId } = params;
+  if (isDownstreamHumanFulfillmentEscalationAction(actionAfterHandling)) {
+    return actionAfterHandling;
+  }
   const hasConfirmationOnFile = hasConfirmationOnFileForRealBbbAutofill(params.confirmationNumber);
   if (!shouldAutoInitiateOutcomeTrackingAfterRealBbbAutofill(actionAfterHandling, hasConfirmationOnFile)) {
     return actionAfterHandling;

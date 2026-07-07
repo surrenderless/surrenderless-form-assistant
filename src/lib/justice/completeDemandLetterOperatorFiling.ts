@@ -21,6 +21,7 @@ import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recompute
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
+import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -256,6 +257,10 @@ export async function completeDemandLetterOperatorFiling(
   let clientState: Record<string, unknown> = parsedClientState as Record<string, unknown>;
   if (nextApprovedNext) {
     clientState = mergeClientStateWithApprovedNextAction(caseRow.client_state, nextApprovedNext);
+    const resolutionMerged = mergeResolutionTrackingIntoClientState(clientState, intake);
+    if (resolutionMerged) {
+      clientState = resolutionMerged;
+    }
     const { error: patchErr } = await supabase
       .from("justice_cases")
       .update({ client_state: clientState })

@@ -161,12 +161,10 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
       href: "/justice/state-ag",
       label: "State Attorney General (consumer)",
     });
-    expect(result.approvedNextActionForSubmission?.handling_requested_at?.trim()).toBeTruthy();
-    expect(result.approvedNextActionForSubmission?.outcome_note).toBe(
-      buildDefaultOutcomeNoteAfterRealBbbAutofill(failedContactPracticeIntake)
-    );
-    expect(result.approvedNextActionForSubmission?.follow_up_needed).toBe(true);
-    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at?.trim()).toBeTruthy();
+    expect(result.approvedNextActionForSubmission?.handling_requested_at?.trim()).toBeFalsy();
+    expect(result.approvedNextActionForSubmission?.outcome_note?.trim()).toBeFalsy();
+    expect(result.approvedNextActionForSubmission?.follow_up_needed).not.toBe(true);
+    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at?.trim()).toBeFalsy();
     expect(onApprovedNextActionCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "completed",
@@ -192,7 +190,7 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
         };
         return Boolean(body.client_state?.approved_next_action?.handling_requested_at?.trim());
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       patchCalls.some(([, init]) => {
         const body = JSON.parse(String(init?.body)) as {
@@ -209,7 +207,7 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
           Boolean(action?.handling_acknowledged_at?.trim())
         );
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns success with advanced action when advance persistence PATCH fails", async () => {
@@ -411,7 +409,11 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.approvedNextActionForSubmission?.handling_requested_at).toBe(existingRequestedAt);
+    expect(result.approvedNextActionForSubmission).toMatchObject({
+      href: "/justice/state-ag",
+      status: "approved",
+    });
+    expect(result.approvedNextActionForSubmission?.handling_requested_at?.trim()).toBeFalsy();
     expect(result.approvedNextActionForSubmission?.handling_request_note ?? "").not.toContain(
       "BBB complaint filed for"
     );
@@ -442,8 +444,12 @@ describe("executeAssistedRealBbbComplaintSubmission", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.approvedNextActionForSubmission?.outcome_note).toBe(existingOutcome);
-    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at).toBe(existingAck);
+    expect(result.approvedNextActionForSubmission).toMatchObject({
+      href: "/justice/state-ag",
+      status: "approved",
+    });
+    expect(result.approvedNextActionForSubmission?.outcome_note?.trim()).toBeFalsy();
+    expect(result.approvedNextActionForSubmission?.handling_acknowledged_at?.trim()).toBeFalsy();
     expect(result.approvedNextActionForSubmission?.outcome_note ?? "").not.toContain(
       "BBB filing recorded for"
     );

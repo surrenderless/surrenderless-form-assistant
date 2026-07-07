@@ -51,8 +51,8 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
-  chatOutcomeTrackingFormOpen,
   chatOutcomeTrackingSaveAllowed,
+  chatResolutionTrackingFormOpen,
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
   findApprovedActionFilingMissingConfirmation,
@@ -61,6 +61,11 @@ import {
   handlingClosureAcknowledgmentVisible,
   shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
+  hasPendingHumanFulfillmentEscalation,
+  shouldExposeCaseResolutionFlow,
+} from "@/lib/justice/escalationLadderResolution";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
   isJusticeEvidenceType,
@@ -1476,7 +1481,12 @@ function deriveChatManualActionNextStep(input: {
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
   canCaptureFilingInline?: boolean;
+  pendingHumanFulfillmentEscalation?: boolean;
+  resolutionFlowExposed?: boolean;
 }): string {
+  if (input.pendingHumanFulfillmentEscalation) {
+    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+  }
   const handlingRequested = Boolean(input.handlingRequestedAt?.trim());
   if (handlingRequested) {
     const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
@@ -1492,8 +1502,11 @@ function deriveChatManualActionNextStep(input: {
       return closureStep;
     }
     if (input.handlingAcknowledgedAt?.trim()) {
-      if (input.followUpNeeded === true) {
+      if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
         return HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP;
+      }
+      if (input.resolutionFlowExposed === false) {
+        return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
       }
       return HANDLING_TRACKING_STEP_COMPLETE;
     }
@@ -1522,8 +1535,11 @@ function deriveChatManualActionNextStep(input: {
     handlingAcknowledgedAt: input.handlingAcknowledgedAt,
   });
   if (closureStep) return closureStep;
-  if (input.followUpNeeded === true) {
+  if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
     return "Review follow-up timing and mark follow-up handled when complete.";
+  }
+  if (input.resolutionFlowExposed === false) {
+    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
   }
   return HANDLING_TRACKING_STEP_COMPLETE;
 }
@@ -1536,6 +1552,8 @@ function deriveChatHandlingTrackingLine(input: {
   filings: JusticeCaseFilingRow[];
   next: JusticeApprovedNextAction;
   canCaptureFilingInline?: boolean;
+  caseId?: string;
+  tasks?: JusticeCaseTaskRow[];
 }): string {
   const readyForManualReview = chatReadyForManualReview({
     basicsReady: input.basicsReady,
@@ -1547,6 +1565,18 @@ function deriveChatHandlingTrackingLine(input: {
   const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
+  const caseId = input.caseId?.trim() ?? "";
+  const tasks = input.tasks ?? [];
+  const pendingHumanFulfillmentEscalation = hasPendingHumanFulfillmentEscalation({
+    approvedAction: input.next,
+    caseId,
+    tasks,
+  });
+  const resolutionFlowExposed = shouldExposeCaseResolutionFlow({
+    approvedAction: input.next,
+    caseId,
+    tasks,
+  });
   return deriveChatManualActionNextStep({
     readyForExternalManualAction,
     actionOpened,
@@ -1558,6 +1588,8 @@ function deriveChatHandlingTrackingLine(input: {
     handlingAcknowledgedAt: input.next.handling_acknowledged_at,
     followUpNeeded: input.next.follow_up_needed === true,
     canCaptureFilingInline: input.canCaptureFilingInline,
+    pendingHumanFulfillmentEscalation,
+    resolutionFlowExposed,
   });
 }
 
@@ -1976,7 +2008,14 @@ function ChatHandlingTrackingStatusReadOnly({
         filings,
         next: approvedNextAction,
         canCaptureFilingInline,
+        caseId,
+        tasks,
       });
+  const resolutionFlowExposed = shouldExposeCaseResolutionFlow({
+    approvedAction: approvedNextAction,
+    caseId,
+    tasks,
+  });
   const showInlineFilingCapture =
     !readinessLoading &&
     canCaptureFilingInline &&
@@ -2001,6 +2040,7 @@ function ChatHandlingTrackingStatusReadOnly({
     canArchiveCase &&
     Boolean(caseId) &&
     derivedStep === HANDLING_TRACKING_STEP_COMPLETE &&
+    resolutionFlowExposed &&
     Boolean(onArchiveCase);
   return (
     <>
@@ -3301,6 +3341,36 @@ export default function JusticeChatAiPage() {
   );
 
   useEffect(() => {
+    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId) || !approvedNextAction) return;
+    if (
+      !hasPendingHumanFulfillmentEscalation({
+        approvedAction: approvedNextAction,
+        caseId,
+        tasks: savedTasks,
+      })
+    ) {
+      return;
+    }
+    const intervalMs = 5000;
+    const interval = window.setInterval(() => {
+      requestSavedEvidencePreviewRefresh();
+      void refreshChatCaseFromServer(caseId, { skipEvidenceRefresh: true });
+    }, intervalMs);
+    return () => window.clearInterval(interval);
+  }, [
+    isUpdatingExistingCase,
+    isLoaded,
+    isSignedIn,
+    approvedNextAction,
+    savedTasks,
+    requestSavedEvidencePreviewRefresh,
+    refreshChatCaseFromServer,
+  ]);
+
+  useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
@@ -4298,8 +4368,18 @@ export default function JusticeChatAiPage() {
           filings: savedFilings,
           next: approvedNextAction,
           canCaptureFilingInline: chatCanCaptureFilingInline,
+          caseId: activeUuidCaseId ?? "",
+          tasks: savedTasks,
         })
       : null;
+  const chatResolutionFlowExposed =
+    Boolean(activeUuidCaseId) &&
+    Boolean(approvedNextAction) &&
+    shouldExposeCaseResolutionFlow({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+    });
   const showChatAcknowledgment = approvedNextAction
     ? handlingClosureAcknowledgmentVisible({
         manualActionNextStep: chatManualActionNextStep,
@@ -4951,17 +5031,17 @@ export default function JusticeChatAiPage() {
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
                 ) : null}
-                {approvedNextAction.outcome_note?.trim() ? (
+                {chatResolutionFlowExposed && approvedNextAction.outcome_note?.trim() ? (
                   <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
                     {truncateAttentionNote(approvedNextAction.outcome_note.trim(), 200)}
                   </p>
                 ) : null}
-                {approvedNextAction.follow_up_needed === true ? (
+                {chatResolutionFlowExposed && approvedNextAction.follow_up_needed === true ? (
                   <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
                     Follow-up needed
                   </p>
                 ) : null}
-                {approvedNextAction.follow_up_at?.trim() ? (
+                {chatResolutionFlowExposed && approvedNextAction.follow_up_at?.trim() ? (
                   <ApprovedNextActionFollowUpTimingLine
                     followUpAt={approvedNextAction.follow_up_at}
                     className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
@@ -5232,7 +5312,11 @@ export default function JusticeChatAiPage() {
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                       Tracking only — not automatic filing or submission.
                     </p>
-                    {chatOutcomeTrackingFormOpen(approvedNextAction) ? (
+                    {chatResolutionTrackingFormOpen({
+                      action: approvedNextAction,
+                      caseId: activeUuidCaseId ?? "",
+                      tasks: savedTasks,
+                    }) ? (
                       <ApprovedNextActionOutcomeTrackingForm
                         action={approvedNextAction}
                         onSave={handleSaveApprovedNextActionTracking}
@@ -5336,7 +5420,11 @@ export default function JusticeChatAiPage() {
                       archiveError={archiveCaseError}
                     />
                     {approvedNextAction.status !== "completed" &&
-                    chatOutcomeTrackingFormOpen(approvedNextAction) ? (
+                    chatResolutionTrackingFormOpen({
+                      action: approvedNextAction,
+                      caseId: activeUuidCaseId ?? "",
+                      tasks: savedTasks,
+                    }) ? (
                       <ApprovedNextActionOutcomeTrackingForm
                         action={approvedNextAction}
                         onSave={handleSaveApprovedNextActionTracking}
@@ -5368,7 +5456,8 @@ export default function JusticeChatAiPage() {
                   </>
                 ) : null}
                 {approvedNextAction.status !== "completed" &&
-                !approvedNextAction.handling_requested_at?.trim() ? (
+                !approvedNextAction.handling_requested_at?.trim() &&
+                chatResolutionFlowExposed ? (
                   <>
                     {approvedNextAction.outcome_note?.trim() ? (
                       <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
@@ -5388,7 +5477,12 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {approvedNextAction.status !== "completed" &&
                 approvedNextAction.handling_requested_at?.trim() &&
-                !chatOutcomeTrackingFormOpen(approvedNextAction) ? (
+                !chatResolutionTrackingFormOpen({
+                  action: approvedNextAction,
+                  caseId: activeUuidCaseId ?? "",
+                  tasks: savedTasks,
+                }) &&
+                chatResolutionFlowExposed ? (
                   <>
                     {approvedNextAction.follow_up_needed === true ? (
                       <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
@@ -5410,7 +5504,7 @@ export default function JusticeChatAiPage() {
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </p>
-                {approvedNextAction.follow_up_needed === true ? (
+                {approvedNextAction.follow_up_needed === true && chatResolutionFlowExposed ? (
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                     <button
                       type="button"

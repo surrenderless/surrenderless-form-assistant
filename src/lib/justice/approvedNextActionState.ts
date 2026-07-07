@@ -1,5 +1,32 @@
 import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
 
+const PENDING_HUMAN_FULFILLMENT_ESCALATION_HREFS = new Set([
+  "/justice/state-ag",
+  "/justice/demand-letter",
+]);
+
+function isPendingHumanFulfillmentEscalationActionForDisplay(
+  action: JusticeApprovedNextAction
+): boolean {
+  const href = action.href?.trim() ?? "";
+  if (!PENDING_HUMAN_FULFILLMENT_ESCALATION_HREFS.has(href)) return false;
+  return action.status !== "completed";
+}
+
+function stripResolutionTrackingForDisplay(
+  action: JusticeApprovedNextAction
+): JusticeApprovedNextAction {
+  const next = { ...action };
+  delete next.handling_requested_at;
+  delete next.handling_request_note;
+  delete next.handling_acknowledged_at;
+  delete next.handling_operator_note;
+  delete next.outcome_note;
+  delete next.follow_up_needed;
+  delete next.follow_up_at;
+  return next;
+}
+
 /** Session JSON: `Record<caseId, JusticeApprovedNextAction>` */
 export const STORAGE_APPROVED_NEXT_ACTION_V1 = "justice_approved_next_action_v1";
 
@@ -260,8 +287,16 @@ export function hydrateApprovedNextActionForDisplay(
     clientState !== undefined
       ? resolveApprovedNextAction(caseId, clientState)
       : fromSession;
-  const base = resolved ?? fromSession;
+  let base = resolved ?? fromSession;
   if (!base) return undefined;
+
+  if (isPendingHumanFulfillmentEscalationActionForDisplay(base)) {
+    base = stripResolutionTrackingForDisplay(base);
+  }
+
+  if (isPendingHumanFulfillmentEscalationActionForDisplay(base)) {
+    return base;
+  }
 
   const rawAck =
     clientState !== undefined ? readHandlingAcknowledgedAtFromClientState(clientState) : undefined;
@@ -429,27 +464,37 @@ export function resolveApprovedNextAction(
   if (!fromServer) return fromSession;
   if (!fromSession) return fromServer;
 
+  const serverOwnsTrackingFields = isPendingHumanFulfillmentEscalationActionForDisplay(fromServer);
+
   const label = fromServer.label ?? fromSession.label;
   const href = fromServer.href ?? fromSession.href;
   const approved_at = fromServer.approved_at ?? fromSession.approved_at;
   const started_at = fromServer.started_at ?? fromSession.started_at;
   const completed_at = fromServer.completed_at ?? fromSession.completed_at;
-  const outcome_note = fromServer.outcome_note ?? fromSession.outcome_note;
-  const follow_up_needed = fromServer.follow_up_needed ?? fromSession.follow_up_needed;
-  const follow_up_at = fromServer.follow_up_at ?? fromSession.follow_up_at;
-  const handling_requested_at =
-    fromServer.handling_requested_at ?? fromSession.handling_requested_at;
-  const handling_request_noteRaw =
-    fromServer.handling_request_note ?? fromSession.handling_request_note;
+  const outcome_note = serverOwnsTrackingFields
+    ? fromServer.outcome_note
+    : fromServer.outcome_note ?? fromSession.outcome_note;
+  const follow_up_needed = serverOwnsTrackingFields
+    ? fromServer.follow_up_needed
+    : fromServer.follow_up_needed ?? fromSession.follow_up_needed;
+  const follow_up_at = serverOwnsTrackingFields
+    ? fromServer.follow_up_at
+    : fromServer.follow_up_at ?? fromSession.follow_up_at;
+  const handling_requested_at = serverOwnsTrackingFields
+    ? fromServer.handling_requested_at
+    : fromServer.handling_requested_at ?? fromSession.handling_requested_at;
+  const handling_request_noteRaw = serverOwnsTrackingFields
+    ? fromServer.handling_request_note
+    : fromServer.handling_request_note ?? fromSession.handling_request_note;
   const handling_request_note = handling_request_noteRaw?.trim()
     ? handling_request_noteRaw.trim()
     : undefined;
-  const handling_acknowledged_at = pickTrimmedIsoField(
-    fromServer.handling_acknowledged_at,
-    fromSession.handling_acknowledged_at
-  );
-  const handling_operator_noteRaw =
-    fromServer.handling_operator_note ?? fromSession.handling_operator_note;
+  const handling_acknowledged_at = serverOwnsTrackingFields
+    ? fromServer.handling_acknowledged_at
+    : pickTrimmedIsoField(fromServer.handling_acknowledged_at, fromSession.handling_acknowledged_at);
+  const handling_operator_noteRaw = serverOwnsTrackingFields
+    ? fromServer.handling_operator_note
+    : fromServer.handling_operator_note ?? fromSession.handling_operator_note;
   const handling_operator_note = handling_operator_noteRaw?.trim()
     ? handling_operator_noteRaw.trim()
     : undefined;

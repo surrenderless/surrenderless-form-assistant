@@ -7,6 +7,8 @@ import {
   FTC_PRACTICE_FILING_DESTINATION,
 } from "@/lib/justice/submissionAttempt";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
+import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
 export type ManualActionTrackingFiling = {
   destination: string;
@@ -234,6 +236,24 @@ export function deriveHandlingClosureStepAfterFilingConfirmation(input: {
 export function chatOutcomeTrackingFormOpen(action: JusticeApprovedNextAction): boolean {
   if (!action.outcome_note?.trim()) return true;
   return action.follow_up_needed === true;
+}
+
+/** Whether chat-ai may show outcome/follow-up after escalation ladder is terminal. */
+export function chatResolutionTrackingFormOpen(input: {
+  action: JusticeApprovedNextAction;
+  caseId: string;
+  tasks: readonly JusticeCaseTaskRow[];
+}): boolean {
+  if (
+    !shouldExposeCaseResolutionFlow({
+      approvedAction: input.action,
+      caseId: input.caseId,
+      tasks: input.tasks,
+    })
+  ) {
+    return false;
+  }
+  return chatOutcomeTrackingFormOpen(input.action);
 }
 
 /**

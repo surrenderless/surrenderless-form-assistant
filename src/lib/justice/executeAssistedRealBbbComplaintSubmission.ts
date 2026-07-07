@@ -26,6 +26,10 @@ import {
 } from "@/lib/justice/submissionAttemptState";
 import { autoRequestHandlingAfterSuccessfulRealBbbAutofill } from "@/lib/justice/autoHandlingRequestAfterRealBbbAutofill";
 import { autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill } from "@/lib/justice/autoOutcomeTrackingAfterRealBbbAutofill";
+import {
+  isDownstreamHumanFulfillmentEscalationAction,
+  stripResolutionTrackingFromApprovedAction,
+} from "@/lib/justice/escalationLadderResolution";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
@@ -312,8 +316,11 @@ async function completeApprovedNextActionAfterAssistedRecording(
     advanced.href.trim() !== completedHref &&
     advanced.status === "approved"
   ) {
-    const resultLocal = omitClearedHandlingRequestNoteFromApprovedNextAction(advanced);
-    await persistApprovedNextActionCompletedUpdate(caseId, advanced, logLabel, fetchFn);
+    const cleanedForPersist = isDownstreamHumanFulfillmentEscalationAction(advanced)
+      ? stripResolutionTrackingFromApprovedAction(advanced)
+      : advanced;
+    const resultLocal = omitClearedHandlingRequestNoteFromApprovedNextAction(cleanedForPersist);
+    await persistApprovedNextActionCompletedUpdate(caseId, cleanedForPersist, logLabel, fetchFn);
     return resultLocal;
   }
 
@@ -434,25 +441,29 @@ export async function executeAssistedRealBbbComplaintSubmission(
         fetchFn,
         logLabel
       );
-      const afterHandling = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
-        caseId: params.caseId,
-        intake: params.intake,
-        actionAfterAdvance: afterAdvance,
-        logLabel,
-        fetchFn,
-        applyTimeline,
-      });
-      approvedNextActionAfterSubmission =
-        await autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill({
+      if (isDownstreamHumanFulfillmentEscalationAction(afterAdvance)) {
+        approvedNextActionAfterSubmission = afterAdvance;
+      } else {
+        const afterHandling = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
           caseId: params.caseId,
           intake: params.intake,
-          actionAfterHandling: afterHandling,
-          confirmationNumber: REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
-          filedAt: lastAssistedSubmissionAttempt?.attemptedAt,
+          actionAfterAdvance: afterAdvance,
           logLabel,
           fetchFn,
           applyTimeline,
         });
+        approvedNextActionAfterSubmission =
+          await autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill({
+            caseId: params.caseId,
+            intake: params.intake,
+            actionAfterHandling: afterHandling,
+            confirmationNumber: REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
+            filedAt: lastAssistedSubmissionAttempt?.attemptedAt,
+            logLabel,
+            fetchFn,
+            applyTimeline,
+          });
+      }
     }
   }
 

@@ -88,6 +88,6 @@ test("signed-in chat Run BBB autofill completes via mocked real-BBB submit-form 
   await expect(assistedSubmissionSnapshot).toContainText(
     `Confirmation: ${REAL_BBB_COMPLAINT_FILING_CONFIRMATION}`
   );
-  await expect(assistedSubmissionSnapshot).toContainText("Filing id: playwright_e2e_ftc_practice_filing");
+  await expect(assistedSubmissionSnapshot).toContainText("Filing id: playwright_e2e_bbb_filing");
   await expect(assistedSubmissionSnapshot).toContainText("Assisted after packet approval");
 });

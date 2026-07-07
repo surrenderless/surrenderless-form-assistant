@@ -28,6 +28,13 @@ const stateAgAction: JusticeApprovedNextAction = {
   approved_at: "2026-06-15T10:00:00.000Z",
 };
 
+const bbbCompletedAction: JusticeApprovedNextAction = {
+  label: "Better Business Bureau",
+  href: "/justice/bbb",
+  status: "completed",
+  completed_at: "2026-06-16T12:00:00.000Z",
+};
+
 describe("buildDefaultHandlingRequestNoteAfterRealBbbAutofill", () => {
   it("builds a concise case-derived note from intake", () => {
     expect(buildDefaultHandlingRequestNoteAfterRealBbbAutofill(intake)).toBe(
@@ -87,7 +94,7 @@ describe("autoRequestHandlingAfterSuccessfulRealBbbAutofill", () => {
     const result = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
       caseId: "550e8400-e29b-41d4-a716-446655440000",
       intake,
-      actionAfterAdvance: stateAgAction,
+      actionAfterAdvance: bbbCompletedAction,
       fetchFn,
       applyTimeline,
     });
@@ -103,6 +110,18 @@ describe("autoRequestHandlingAfterSuccessfulRealBbbAutofill", () => {
     };
     expect(body.client_state?.approved_next_action?.handling_requested_at?.trim()).toBeTruthy();
     expect(applyTimeline).toHaveBeenCalledOnce();
+  });
+
+  it("skips downstream State AG escalation step", async () => {
+    const fetchFn = vi.fn();
+    const result = await autoRequestHandlingAfterSuccessfulRealBbbAutofill({
+      caseId: "550e8400-e29b-41d4-a716-446655440000",
+      intake,
+      actionAfterAdvance: stateAgAction,
+      fetchFn,
+    });
+    expect(result).toBe(stateAgAction);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it("returns action unchanged when handling was already requested", async () => {
