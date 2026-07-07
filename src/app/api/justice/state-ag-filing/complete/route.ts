@@ -3,6 +3,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { completeStateAgOperatorFiling } from "@/lib/justice/completeStateAgOperatorFiling";
 import { getUserOr401 } from "@/server/requireUser";
+import {
+  completePlaywrightMockStateAgOperatorFiling,
+  isPlaywrightMockHumanFulfillmentOperatorFilingCaseId,
+  isPlaywrightMockHumanFulfillmentOperatorFilingEnabled,
+} from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -71,6 +76,32 @@ export async function POST(req: NextRequest) {
         : undefined;
   if (notes === undefined) {
     return NextResponse.json({ error: "Invalid notes" }, { status: 400 });
+  }
+
+  if (
+    isPlaywrightMockHumanFulfillmentOperatorFilingEnabled() &&
+    isPlaywrightMockHumanFulfillmentOperatorFilingCaseId(caseId)
+  ) {
+    const mockResult = completePlaywrightMockStateAgOperatorFiling({
+      caseId,
+      userId,
+      taskId,
+      destination: b.destination.trim(),
+      filedAt: b.filed_at.trim(),
+      confirmationNumber: b.confirmation_number.trim(),
+      notes,
+    });
+    if (!mockResult.ok) {
+      return NextResponse.json({ error: mockResult.error }, { status: mockResult.status });
+    }
+    return NextResponse.json({
+      filing: mockResult.filing,
+      task: mockResult.task,
+      client_state: mockResult.client_state,
+      timeline: mockResult.timeline,
+      advanced: mockResult.advanced,
+      idempotent: false,
+    });
   }
 
   const supabase = getSupabaseAdmin();

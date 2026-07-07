@@ -1,4 +1,11 @@
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import {
+  getPlaywrightMockHumanFulfillmentTasks,
+  resetPlaywrightMockHumanFulfillmentLadderForCase,
+  resetPlaywrightMockHumanFulfillmentLadderForTests,
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch,
+} from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
+import { buildPlaywrightMockCaseGetResponse } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 
 export type PlaywrightMockJusticeTaskRow = {
   id: string;
@@ -29,26 +36,37 @@ export function isPlaywrightMockJusticeTasksCaseId(caseId: string): boolean {
   return caseId.trim() === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
 }
 
-/** Clears mock task snapshots — for unit tests only. */
+/** Clears mock tasks for unit tests only. */
 export function resetPlaywrightMockJusticeTasksForTests(): void {
-  // No cumulative state yet; hook for parity with filings/evidence reset helpers.
+  resetPlaywrightMockHumanFulfillmentLadderForTests();
 }
 
 /** Clears mock tasks for one case — used when Playwright E2E recommits the fixed case. */
 export function resetPlaywrightMockJusticeTasksForCase(caseId: string): void {
-  if (!isPlaywrightMockJusticeTasksCaseId(caseId)) return;
+  resetPlaywrightMockHumanFulfillmentLadderForCase(caseId);
+}
+
+export function resetPlaywrightMockHumanFulfillmentTasksForCase(caseId: string): void {
+  resetPlaywrightMockHumanFulfillmentLadderForCase(caseId);
 }
 
 /**
  * Deterministic GET /api/justice/tasks response for Playwright E2E.
- * Returns an empty list for the fixed E2E case id (no follow-up tasks on the canonical path).
+ * Returns human-fulfillment operator tasks synced from case client_state.
  */
 export function buildPlaywrightMockJusticeTasksGetResponse(
   caseId: string,
-  _userId: string
+  userId: string
 ): PlaywrightMockJusticeTaskRow[] {
   if (!isPlaywrightMockJusticeTasksCaseId(caseId)) {
     return [];
   }
-  return [];
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    userId,
+    snapshot.client_state,
+    snapshot.intake
+  );
+  return getPlaywrightMockHumanFulfillmentTasks(caseId, userId);
 }

@@ -3,6 +3,7 @@ import {
   mergeClientStateWithApprovedNextAction,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
+import { isDownstreamHumanFulfillmentEscalationAction } from "@/lib/justice/escalationLadderResolution";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -59,6 +60,9 @@ export async function autoRequestHandlingAfterSuccessfulRealBbbAutofill(
   params: AutoRequestHandlingAfterRealBbbAutofillParams
 ): Promise<JusticeApprovedNextAction> {
   const { actionAfterAdvance, intake, caseId } = params;
+  if (isDownstreamHumanFulfillmentEscalationAction(actionAfterAdvance)) {
+    return actionAfterAdvance;
+  }
   if (!shouldAutoRequestHandlingAfterRealBbbAutofill(actionAfterAdvance)) {
     return actionAfterAdvance;
   }

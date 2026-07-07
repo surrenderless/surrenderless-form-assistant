@@ -35,6 +35,15 @@ const stateAgAction: JusticeApprovedNextAction = {
   handling_request_note: "Prior handling note",
 };
 
+const bbbCompletedWithHandlingAction: JusticeApprovedNextAction = {
+  label: "Better Business Bureau",
+  href: "/justice/bbb",
+  status: "completed",
+  completed_at: "2026-06-16T12:00:00.000Z",
+  handling_requested_at: "2026-06-16T12:00:00.000Z",
+  handling_request_note: "Prior handling note",
+};
+
 describe("buildDefaultOutcomeNoteAfterRealBbbAutofill", () => {
   it("builds a concise case-derived note from intake", () => {
     expect(buildDefaultOutcomeNoteAfterRealBbbAutofill(intake)).toBe(
@@ -152,7 +161,7 @@ describe("autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill", () => {
     const result = await autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill({
       caseId: "550e8400-e29b-41d4-a716-446655440000",
       intake,
-      actionAfterHandling: stateAgAction,
+      actionAfterHandling: bbbCompletedWithHandlingAction,
       confirmationNumber: REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
       fetchFn,
       applyTimeline,
@@ -174,6 +183,19 @@ describe("autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill", () => {
     expect(body.client_state?.approved_next_action?.outcome_note?.trim()).toBeTruthy();
     expect(body.client_state?.approved_next_action?.handling_acknowledged_at?.trim()).toBeTruthy();
     expect(applyTimeline).toHaveBeenCalledOnce();
+  });
+
+  it("skips downstream State AG escalation step", async () => {
+    const fetchFn = vi.fn();
+    const result = await autoInitiateOutcomeTrackingAfterSuccessfulRealBbbAutofill({
+      caseId: "550e8400-e29b-41d4-a716-446655440000",
+      intake,
+      actionAfterHandling: stateAgAction,
+      confirmationNumber: REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
+      fetchFn,
+    });
+    expect(result).toBe(stateAgAction);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it("returns action unchanged when outcome note already exists and follow-up is set", async () => {

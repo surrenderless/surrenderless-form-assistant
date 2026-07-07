@@ -12,16 +12,20 @@ import {
   PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE,
 } from "@/lib/testing/playwrightMockIntakeChatPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import {
+  PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID,
+  PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
+} from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in user completes intake through real BBB autofill, handling, follow-up, and archive in chat", async ({
+test("signed-in user completes intake through BBB, human-fulfillment ladder, resolution, and archive in chat", async ({
   page,
 }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   await page.route("**://www.bbb.org/**", () => {
     throw new Error("Live BBB navigation must not occur during Playwright E2E.");
   });
@@ -238,34 +242,89 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
     timeout: 15_000,
   });
 
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+
+  await expect(page.getByText("State AG filing queued.")).toBeVisible({ timeout: 15_000 });
+  await expect(
+    actionTracking.getByRole("button", { name: "Mark step opened" })
+  ).not.toBeVisible();
+  await expect(
+    actionTracking.getByRole("button", { name: "Record action handled for now" })
+  ).not.toBeVisible();
   await expect(page.getByRole("form", { name: "Record manual filing" })).not.toBeVisible({
     timeout: 15_000,
   });
+  await expect(page.getByRole("form", { name: "Outcome and follow-up tracking" })).not.toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByRole("button", { name: "Archive case" })).not.toBeVisible({ timeout: 15_000 });
 
   const handlingTrackingLine = page.locator("p").filter({
     has: page.locator("span.font-medium").filter({ hasText: "Handling tracking:" }),
   });
   await expect(handlingTrackingLine).toBeVisible({ timeout: 15_000 });
-  await expect(handlingTrackingLine).not.toContainText(
-    "Add filing records in chat below after external submission."
+  await expect(handlingTrackingLine).toContainText(
+    "Awaiting Surrenderless operator fulfillment for the current escalation step.",
+    { timeout: 15_000 }
   );
 
+  const stateAgCompleteResponse = await page.request.post("/api/justice/state-ag-filing/complete", {
+    data: {
+      case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+      task_id: PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filed_at: "2026-06-22T12:00:00.000Z",
+      confirmation_number: "e2e-state-ag-12345",
+    },
+  });
+  expect(stateAgCompleteResponse.ok()).toBeTruthy();
+
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+  await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+  await expect(actionTracking.getByText("Next step:")).toContainText("Small claims / demand letter", {
+    timeout: 30_000,
+  });
+  await expect(page.getByText("Demand letter queued with Surrenderless.")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(
+    actionTracking.getByRole("button", { name: "Mark step opened" })
+  ).not.toBeVisible();
+  await expect(page.getByRole("form", { name: "Outcome and follow-up tracking" })).not.toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByRole("button", { name: "Archive case" })).not.toBeVisible({ timeout: 15_000 });
+
+  const demandLetterCompleteResponse = await page.request.post(
+    "/api/justice/demand-letter-filing/complete",
+    {
+      data: {
+        case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+        task_id: PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID,
+        destination: "Small claims / demand letter",
+        filed_at: "2026-06-23T12:00:00.000Z",
+        confirmation_number: "e2e-demand-letter-12345",
+      },
+    }
+  );
+  expect(demandLetterCompleteResponse.ok()).toBeTruthy();
+
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+  await expect(actionTracking).toBeVisible({ timeout: 15_000 });
+
+  const expectedOutcomeNote =
+    "Escalation complete for Acme Retail (widget order). BBB, State AG, and demand letter steps recorded. Awaiting responses.";
   const outcomeTrackingForm = page.getByRole("form", {
     name: "Outcome and follow-up tracking",
   });
-  await expect(outcomeTrackingForm).toBeVisible({ timeout: 15_000 });
-  await expect(outcomeTrackingForm.getByText("Record outcome / follow-up")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Request Surrenderless handling" })
-  ).not.toBeVisible();
-
-  const expectedOutcomeNote =
-    "BBB filing recorded for Acme Retail (widget order). Confirmation on file. Awaiting BBB/merchant response.";
+  await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
   await expect(handlingTrackingLine).toContainText(
     "Review follow-up timing and mark follow-up handled when complete.",
     { timeout: 15_000 }
   );
-  await expect(actionTracking.getByRole("button", { name: "Mark acknowledged" })).not.toBeVisible();
   await expect(actionTracking.getByText(`Outcome: ${expectedOutcomeNote}`)).toBeVisible({
     timeout: 15_000,
   });
@@ -274,45 +333,10 @@ test("signed-in user completes intake through real BBB autofill, handling, follo
     outcomeTrackingForm.getByPlaceholder("What happened, or what should Surrenderless track next?")
   ).toHaveValue(expectedOutcomeNote);
   await expect(outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" })).toBeChecked();
+  await expect(
+    actionTracking.getByRole("button", { name: "Mark step opened" })
+  ).not.toBeVisible();
 
-  await actionTracking.getByRole("link", { name: "Handling workbench" }).click();
-  await expect(page).toHaveURL(/\/justice\/handling\/?$/, { timeout: 15_000 });
-  await expect(page.getByRole("heading", { name: "Handling workbench" })).toBeVisible({
-    timeout: 15_000,
-  });
-
-  const acknowledgedHandlingSection = page.locator(
-    "section[aria-labelledby='handling-acknowledged-heading']"
-  );
-  await expect(acknowledgedHandlingSection.getByRole("heading", { name: /^Acknowledged/ })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(acknowledgedHandlingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(acknowledgedHandlingSection.getByText("widget order", { exact: true })).toBeVisible();
-  await expect(acknowledgedHandlingSection.getByText(expectedOutcomeNote)).toBeVisible();
-
-  const followUpTrackingSection = page.locator("section[aria-labelledby='handling-follow-up-heading']");
-  await expect(followUpTrackingSection.getByRole("heading", { name: /^Follow-up tracking/ })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(followUpTrackingSection.getByText("Acme Retail", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(followUpTrackingSection.getByText("Follow-up needed", { exact: true })).toBeVisible();
-
-  await page.goto("/justice/chat-ai");
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await waitForClerkBrowserApiSession(page);
-  await page.reload();
-  await waitForClerkBrowserApiSession(page);
-  await expect(actionTracking).toBeVisible({ timeout: 15_000 });
-  await expect(handlingTrackingLine).toContainText(
-    "Review follow-up timing and mark follow-up handled when complete.",
-    { timeout: 30_000 }
-  );
-  await expect(actionTracking.getByRole("button", { name: "Mark acknowledged" })).not.toBeVisible();
   await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toBeVisible({
     timeout: 15_000,
   });

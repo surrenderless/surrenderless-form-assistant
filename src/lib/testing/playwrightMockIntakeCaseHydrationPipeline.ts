@@ -4,6 +4,8 @@ import {
 } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE } from "@/lib/testing/playwrightMockIntakeChatPipeline";
 import type { TimelineEntry } from "@/lib/justice/types";
+import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
+import { syncPlaywrightMockHumanFulfillmentLadderFromCasePatch } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 
 const PLAYWRIGHT_MOCK_CASE_HYDRATION_TIMESTAMP = "2026-06-21T00:00:00.000Z";
 const PLAYWRIGHT_MOCK_CASE_HYDRATION_UPDATED_TIMESTAMP = "2026-06-21T00:00:01.000Z";
@@ -147,7 +149,23 @@ function applyPlaywrightMockCaseHydrationPatch(
  */
 export function buildPlaywrightMockCaseGetResponse(caseId: string): PlaywrightMockCaseCreateResponse {
   const snapshot = getOrCreatePlaywrightMockCaseSnapshot(caseId);
-  return { ...snapshot };
+  const sanitized = {
+    ...snapshot,
+    client_state:
+      snapshot.client_state === null || snapshot.client_state === undefined
+        ? snapshot.client_state
+        : sanitizeClientStateForEscalationLadder(snapshot.client_state),
+  };
+  if (sanitized.client_state !== snapshot.client_state) {
+    getPlaywrightMockCaseHydrationSnapshots().set(caseId, sanitized);
+  }
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    "playwright_e2e_user",
+    sanitized.client_state,
+    sanitized.intake
+  );
+  return { ...sanitized };
 }
 
 /**
@@ -160,8 +178,24 @@ export function buildPlaywrightMockCasePatchResponse(
 ): PlaywrightMockCaseCreateResponse {
   const current = getOrCreatePlaywrightMockCaseSnapshot(caseId);
   const merged = applyPlaywrightMockCaseHydrationPatch(current, patch);
-  getPlaywrightMockCaseHydrationSnapshots().set(caseId, merged);
-  return { ...merged };
+  const sanitizedClientState =
+    merged.client_state === null || merged.client_state === undefined
+      ? merged.client_state
+      : sanitizeClientStateForEscalationLadder(merged.client_state);
+  const finalSnapshot =
+    sanitizedClientState === merged.client_state
+      ? merged
+      : { ...merged, client_state: sanitizedClientState };
+  getPlaywrightMockCaseHydrationSnapshots().set(caseId, finalSnapshot);
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+    syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+      caseId,
+      "playwright_e2e_user",
+      finalSnapshot.client_state,
+      finalSnapshot.intake
+    );
+  }
+  return { ...finalSnapshot };
 }
 
 /**
