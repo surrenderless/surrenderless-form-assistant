@@ -62,6 +62,11 @@ import {
   shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
+  CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
+  isChatPendingHumanFulfillmentEscalation,
+  shouldRefreshChatAfterEscalationTerminalTransition,
+} from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
+import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
@@ -2367,8 +2372,12 @@ export default function JusticeChatAiPage() {
   const [ftcPracticeError, setFtcPracticeError] = useState<string | null>(null);
   const [ftcPracticeLastAssistedSubmissionAttempt, setFtcPracticeLastAssistedSubmissionAttempt] =
     useState<LastAssistedSubmissionAttemptSnapshot | null>(null);
-  const evidenceRefetchAbortRef = useRef<AbortController | null>(null);
+  const evidencePreviewFetchGenerationRef = useRef(0);
+  const wasPendingHumanFulfillmentEscalationRef = useRef(false);
+  const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
+  const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
+  savedTasksRef.current = savedTasks;
 
   async function handleMarkSubmissionDraftReviewedFromChat() {
     if (!submissionDraftReviewChecked || !isLoaded) return;
@@ -2741,7 +2750,7 @@ export default function JusticeChatAiPage() {
         setFtcPracticeStorageSkipped(result.storageSkipped);
       }
       if (result.ok || ftcSnapshotFallback) {
-        await refreshChatCaseFromServer(caseId, { ftcSnapshotFallback });
+        await refreshFullChatCaseContextFromServer(caseId, { ftcSnapshotFallback });
       }
     } finally {
       setFtcPracticeRunning(false);
@@ -3223,7 +3232,8 @@ export default function JusticeChatAiPage() {
     setStagedProofNotes(readStagedProofNotes());
   }, []);
 
-  const loadSavedEvidencePreview = useCallback(async (signal: AbortSignal) => {
+  const loadSavedEvidencePreview = useCallback(async (signal?: AbortSignal, background = false) => {
+    const generation = evidencePreviewFetchGenerationRef.current;
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
@@ -3244,17 +3254,21 @@ export default function JusticeChatAiPage() {
       setRecentEvidenceRows([]);
       return;
     }
-    setChatHandlingReadinessLoading(true);
+    if (!background) {
+      setChatHandlingReadinessLoading(true);
+    }
     try {
       const [evRes, filRes, taskRes] = await Promise.all([
         fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, { signal }),
         fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`, { signal }),
         fetch(`/api/justice/tasks?case_id=${encodeURIComponent(caseId)}`, { signal }),
       ]);
-      if (signal.aborted) return;
+      if (generation !== evidencePreviewFetchGenerationRef.current) return;
+      if (signal?.aborted) return;
       const evJson: unknown = evRes.ok ? await evRes.json() : [];
       const filJson: unknown = filRes.ok ? await filRes.json() : [];
       const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
+      if (generation !== evidencePreviewFetchGenerationRef.current) return;
       const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
       const count = rows.length;
       if (sessionBaselineEvidenceCountRef.current === null) {
@@ -3266,23 +3280,22 @@ export default function JusticeChatAiPage() {
       setSavedEvidenceRows(rows);
       setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
     } catch {
-      if (!signal.aborted) {
-        setSavedEvidenceCount(null);
-        setSavedFilings([]);
-        setSavedTasks([]);
-        setSavedEvidenceRows([]);
-        setRecentEvidenceRows([]);
-      }
+      if (generation !== evidencePreviewFetchGenerationRef.current || signal?.aborted) return;
+      setSavedEvidenceCount(null);
+      setSavedFilings([]);
+      setSavedTasks([]);
+      setSavedEvidenceRows([]);
+      setRecentEvidenceRows([]);
     } finally {
-      if (!signal.aborted) setChatHandlingReadinessLoading(false);
+      if (!background && generation === evidencePreviewFetchGenerationRef.current) {
+        setChatHandlingReadinessLoading(false);
+      }
     }
   }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
 
   const requestSavedEvidencePreviewRefresh = useCallback(() => {
-    evidenceRefetchAbortRef.current?.abort();
-    const ac = new AbortController();
-    evidenceRefetchAbortRef.current = ac;
-    void loadSavedEvidencePreview(ac.signal);
+    evidencePreviewFetchGenerationRef.current += 1;
+    void loadSavedEvidencePreview();
   }, [loadSavedEvidencePreview]);
 
   const refreshChatCaseFromServer = useCallback(
@@ -3334,10 +3347,46 @@ export default function JusticeChatAiPage() {
         // keep session fallback and post-run local state
       }
       if (!options?.skipEvidenceRefresh) {
-        requestSavedEvidencePreviewRefresh();
+        await loadSavedEvidencePreview(options?.signal);
       }
     },
-    [requestSavedEvidencePreviewRefresh]
+    [loadSavedEvidencePreview]
+  );
+
+  const refreshFullChatCaseContextFromServer = useCallback(
+    async (
+      caseId: string,
+      options?: {
+        signal?: AbortSignal;
+        ftcSnapshotFallback?: LastAssistedSubmissionAttemptSnapshot | null;
+      }
+    ) => {
+      const runRefresh = async () => {
+        await refreshChatCaseFromServer(caseId, {
+          ...options,
+          skipEvidenceRefresh: true,
+        });
+        if (options?.signal?.aborted) return;
+        await loadSavedEvidencePreview(options?.signal, true);
+      };
+
+      const previous = pendingChatContextRefreshRef.current;
+      const current = (async () => {
+        if (previous) {
+          await previous.catch(() => undefined);
+        }
+        await runRefresh();
+      })();
+      pendingChatContextRefreshRef.current = current;
+      try {
+        await current;
+      } finally {
+        if (pendingChatContextRefreshRef.current === current) {
+          pendingChatContextRefreshRef.current = null;
+        }
+      }
+    },
+    [refreshChatCaseFromServer, loadSavedEvidencePreview]
   );
 
   useEffect(() => {
@@ -3345,29 +3394,37 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId) || !approvedNextAction) return;
+
+    const isPending = isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId,
+      tasks: savedTasksRef.current,
+    });
+
     if (
-      !hasPendingHumanFulfillmentEscalation({
-        approvedAction: approvedNextAction,
-        caseId,
-        tasks: savedTasks,
+      shouldRefreshChatAfterEscalationTerminalTransition({
+        wasPending: wasPendingHumanFulfillmentEscalationRef.current,
+        isPending,
       })
     ) {
-      return;
+      void refreshFullChatCaseContextFromServer(caseId);
     }
-    const intervalMs = 5000;
-    const interval = window.setInterval(() => {
-      requestSavedEvidencePreviewRefresh();
-      void refreshChatCaseFromServer(caseId, { skipEvidenceRefresh: true });
-    }, intervalMs);
+    wasPendingHumanFulfillmentEscalationRef.current = isPending;
+
+    if (!isPending) return;
+
+    const poll = () => {
+      void refreshFullChatCaseContextFromServer(caseId);
+    };
+    poll();
+    const interval = window.setInterval(poll, CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS);
     return () => window.clearInterval(interval);
   }, [
     isUpdatingExistingCase,
     isLoaded,
     isSignedIn,
     approvedNextAction,
-    savedTasks,
-    requestSavedEvidencePreviewRefresh,
-    refreshChatCaseFromServer,
+    refreshFullChatCaseContextFromServer,
   ]);
 
   useEffect(() => {
@@ -3422,7 +3479,7 @@ export default function JusticeChatAiPage() {
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      evidenceRefetchAbortRef.current?.abort();
+      evidencePreviewFetchGenerationRef.current += 1;
     };
   }, [isUpdatingExistingCase, isLoaded, isSignedIn, requestSavedEvidencePreviewRefresh]);
 
@@ -4177,11 +4234,21 @@ export default function JusticeChatAiPage() {
   const showStateAgFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedStateAgFilingAction(approvedNextAction) &&
-    Boolean(findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? ""));
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+    });
   const showDemandLetterQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
-    Boolean(findOpenDemandLetterFilingTask(savedTasks, activeUuidCaseId ?? ""));
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+    });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&

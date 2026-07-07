@@ -3,6 +3,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
+import { isDownstreamHumanFulfillmentEscalationAction } from "@/lib/justice/escalationLadderResolution";
 import {
   findOpenDemandLetterFilingTask,
   hasDemandLetterFilingWithConfirmation,
@@ -15,11 +16,21 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type SurrenderlessOwnedStepCheckParams = {
-  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label">;
+  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label" | "status">;
   caseId: string;
   tasks: readonly JusticeCaseTaskRow[];
   filings: readonly ManualActionTrackingFiling[];
 };
+
+function isActiveApprovedHumanFulfillmentEscalation(
+  action: Pick<JusticeApprovedNextAction, "href" | "status">
+): boolean {
+  const status = action.status;
+  return (
+    (status === "approved" || status === "started") &&
+    isDownstreamHumanFulfillmentEscalationAction(action)
+  );
+}
 
 function isStateAgStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams): boolean {
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF) {
@@ -29,6 +40,7 @@ function isStateAgStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckPa
   if (!caseId) return false;
   if (findOpenStateAgFilingTask(params.tasks, caseId)) return true;
   if (hasStateAgFilingWithConfirmation(params.filings)) return true;
+  if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
   return false;
 }
 
@@ -42,6 +54,7 @@ function isDemandLetterStepOwnedBySurrenderless(
   if (!caseId) return false;
   if (findOpenDemandLetterFilingTask(params.tasks, caseId)) return true;
   if (hasDemandLetterFilingWithConfirmation(params.filings)) return true;
+  if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
   return false;
 }
 
