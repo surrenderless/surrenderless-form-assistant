@@ -17,6 +17,10 @@ import {
   ApprovedNextActionHandlingRequestNoteReadOnly,
   formatApprovedNextActionHandlingTimestamp,
   formatHandlingRecordedLine,
+  HANDLING_TRACKING_STEP_COMPLETE,
+  HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
+  HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+  HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -38,6 +42,11 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import {
+  ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
+  hasPendingHumanFulfillmentEscalation,
+  shouldExposeCaseResolutionFlow,
+} from "@/lib/justice/escalationLadderResolution";
 import { stateNameFromCode } from "@/lib/justice/buildStateAgComplaintDraft";
 import { isHandlingWorkbenchAssistedMockSubmissionEligible } from "@/lib/justice/assistedSubmissionEligibility";
 import { executeAssistedFtcPracticeSubmission } from "@/lib/justice/executeAssistedFtcPracticeSubmission";
@@ -78,7 +87,8 @@ import {
 import {
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
-  handlingClosureAcknowledgmentVisible,
+  handlingWorkbenchClosureAcknowledgmentVisible,
+  handlingWorkbenchFollowUpActionsVisible,
   handlingWorkbenchOutcomeTrackingFormVisible,
   isApprovedActionOpenedForHandlingTracking,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
@@ -749,7 +759,37 @@ function deriveManualActionNextStep(input: {
   handlingRequestedAt?: string;
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
+  pendingHumanFulfillmentEscalation?: boolean;
+  resolutionFlowExposed?: boolean;
 }): string {
+  if (input.pendingHumanFulfillmentEscalation) {
+    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+  }
+  const handlingRequested = Boolean(input.handlingRequestedAt?.trim());
+  if (handlingRequested) {
+    const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+      status: input.status,
+      outcomeNote: input.outcomeNote,
+      handlingRequestedAt: input.handlingRequestedAt,
+      handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+    });
+    if (closureStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
+      return closureStep;
+    }
+    if (closureStep === HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
+      return closureStep;
+    }
+    if (input.handlingAcknowledgedAt?.trim()) {
+      if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
+        return HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP;
+      }
+      if (input.resolutionFlowExposed === false) {
+        return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+      }
+      return HANDLING_TRACKING_STEP_COMPLETE;
+    }
+  }
+
   if (!input.readyForExternalManualAction) {
     return "Review packet and saved proof before external manual action.";
   }
@@ -769,18 +809,22 @@ function deriveManualActionNextStep(input: {
     handlingAcknowledgedAt: input.handlingAcknowledgedAt,
   });
   if (closureStep) return closureStep;
-  if (input.followUpNeeded === true) {
+  if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
-  return "Tracking complete for now.";
+  if (input.resolutionFlowExposed === false) {
+    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+  }
+  return HANDLING_TRACKING_STEP_COMPLETE;
 }
 
-const HANDLING_TRACKING_COMPLETE_NEXT_STEP = "Tracking complete for now.";
+const HANDLING_TRACKING_COMPLETE_NEXT_STEP = HANDLING_TRACKING_STEP_COMPLETE;
 
 function deriveHandlingManualActionNextStepForItem(
   item: HandlingWorkbenchItem,
   savedFilings: JusticeCaseFilingRow[] | undefined,
-  evidenceCount: number | undefined
+  evidenceCount: number | undefined,
+  savedTasks: JusticeCaseTaskRow[] | undefined
 ): string {
   const { caseRow, next } = item;
   const readyForManualReview = caseReadyForManualReview(caseRow);
@@ -789,6 +833,17 @@ function deriveHandlingManualActionNextStepForItem(
   const actionOpened = isApprovedActionOpenedForHandlingTracking(next);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], next);
+  const tasks = savedTasks ?? [];
+  const pendingHumanFulfillmentEscalation = hasPendingHumanFulfillmentEscalation({
+    approvedAction: next,
+    caseId: caseRow.id,
+    tasks,
+  });
+  const resolutionFlowExposed = shouldExposeCaseResolutionFlow({
+    approvedAction: next,
+    caseId: caseRow.id,
+    tasks,
+  });
   return deriveManualActionNextStep({
     readyForExternalManualAction,
     actionOpened,
@@ -799,6 +854,8 @@ function deriveHandlingManualActionNextStepForItem(
     handlingRequestedAt: next.handling_requested_at,
     handlingAcknowledgedAt: next.handling_acknowledged_at,
     followUpNeeded: next.follow_up_needed === true,
+    pendingHumanFulfillmentEscalation,
+    resolutionFlowExposed,
   });
 }
 
@@ -915,6 +972,7 @@ function HandlingWorkbenchCaseCard({
   onRecordActionHandled,
   onCaseClientStateUpdate,
   savedFilings,
+  savedTasks,
   filingsReady,
   evidenceCount,
   onRefreshAfterAssistedSubmission,
@@ -935,6 +993,7 @@ function HandlingWorkbenchCaseCard({
   onRecordActionHandled?: () => void;
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
   savedFilings?: JusticeCaseFilingRow[];
+  savedTasks?: JusticeCaseTaskRow[];
   filingsReady?: boolean;
   evidenceCount?: number;
   onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
@@ -975,6 +1034,17 @@ function HandlingWorkbenchCaseCard({
   const actionOpened = isApprovedActionOpenedForHandlingTracking(next);
   const outcomeRecorded = Boolean(next.outcome_note?.trim());
   const handlingAcknowledged = Boolean(next.handling_acknowledged_at?.trim());
+  const tasks = savedTasks ?? [];
+  const pendingHumanFulfillmentEscalation = hasPendingHumanFulfillmentEscalation({
+    approvedAction: next,
+    caseId: caseRow.id,
+    tasks,
+  });
+  const resolutionFlowExposed = shouldExposeCaseResolutionFlow({
+    approvedAction: next,
+    caseId: caseRow.id,
+    tasks,
+  });
   const manualActionNextStep = filingsReady
     ? deriveManualActionNextStep({
         readyForExternalManualAction,
@@ -986,6 +1056,8 @@ function HandlingWorkbenchCaseCard({
         handlingRequestedAt: handlingAt,
         handlingAcknowledgedAt: next.handling_acknowledged_at,
         followUpNeeded: next.follow_up_needed === true,
+        pendingHumanFulfillmentEscalation,
+        resolutionFlowExposed,
       })
     : null;
   const showApprovedStep =
@@ -996,10 +1068,20 @@ function HandlingWorkbenchCaseCard({
     manualActionNextStep,
     filingsReady: filingsReady === true,
     action: next,
+    caseId: caseRow.id,
+    tasks,
   });
-  const showWorkbenchAcknowledgment = handlingClosureAcknowledgmentVisible({
+  const showWorkbenchAcknowledgment = handlingWorkbenchClosureAcknowledgmentVisible({
     manualActionNextStep,
     handlingAcknowledgedAt: next.handling_acknowledged_at,
+    action: next,
+    caseId: caseRow.id,
+    tasks,
+  });
+  const showFollowUpActions = handlingWorkbenchFollowUpActionsVisible({
+    action: next,
+    caseId: caseRow.id,
+    tasks,
   });
   const companyName = caseRow.intake.company_name.trim();
   const showHandoffCompany = Boolean(companyName && companyName !== title);
@@ -1485,20 +1567,20 @@ function HandlingWorkbenchCaseCard({
               {truncateAttentionNote(next.outcome_note.trim(), 200)}
             </p>
           ) : null}
-          {next.follow_up_needed === true ? (
-            <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
-              Follow-up needed
-            </p>
-          ) : null}
-          {next.follow_up_at?.trim() ? (
-            <ApprovedNextActionFollowUpTimingLine
-              followUpAt={next.follow_up_at}
-              className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
-            />
-          ) : null}
+      {next.follow_up_needed === true ? (
+        <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+          Follow-up needed
+        </p>
+      ) : null}
+      {next.follow_up_at?.trim() ? (
+        <ApprovedNextActionFollowUpTimingLine
+          followUpAt={next.follow_up_at}
+          className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+        />
+      ) : null}
         </>
       )}
-      {next.follow_up_needed === true ? (
+      {showFollowUpActions ? (
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <button
             type="button"
@@ -2111,14 +2193,15 @@ export default function JusticeHandlingWorkbenchPage() {
       const nextStep = deriveHandlingManualActionNextStepForItem(
         item,
         filingsByCaseId[item.caseRow.id],
-        evidenceCountByCaseId[item.caseRow.id]
+        evidenceCountByCaseId[item.caseRow.id],
+        tasksByCaseId[item.caseRow.id]
       );
       if (nextStep === HANDLING_TRACKING_COMPLETE_NEXT_STEP) {
         complete.push(item);
       }
     }
     return sortByHandlingRequestedAtDesc(complete);
-  }, [allHandlingItems, filingsReady, filingsByCaseId, evidenceCountByCaseId]);
+  }, [allHandlingItems, filingsReady, filingsByCaseId, evidenceCountByCaseId, tasksByCaseId]);
 
   function activateCaseInSession(row: CaseRow) {
     sessionStorage.setItem(STORAGE_CASE_ID, row.id);
@@ -2525,6 +2608,7 @@ export default function JusticeHandlingWorkbenchPage() {
         }
         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
         savedFilings={filingsByCaseId[item.caseRow.id]}
+        savedTasks={tasksByCaseId[item.caseRow.id]}
         filingsReady={filingsReady}
         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
@@ -2659,6 +2743,7 @@ export default function JusticeHandlingWorkbenchPage() {
         }
         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
         savedFilings={filingsByCaseId[item.caseRow.id]}
+        savedTasks={tasksByCaseId[item.caseRow.id]}
         filingsReady={filingsReady}
         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
@@ -3111,6 +3196,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         savedFilings={filingsByCaseId[item.caseRow.id]}
+        savedTasks={tasksByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
@@ -3168,6 +3254,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         savedFilings={filingsByCaseId[item.caseRow.id]}
+        savedTasks={tasksByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
@@ -3347,6 +3434,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         savedFilings={filingsByCaseId[item.caseRow.id]}
+        savedTasks={tasksByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
