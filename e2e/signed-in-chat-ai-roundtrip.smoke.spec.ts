@@ -16,6 +16,7 @@ import {
   PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID,
   PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
+import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 
 test.beforeEach(() => {
@@ -171,35 +172,9 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(packetApproval).not.toBeVisible({ timeout: 15_000 });
 
-  const merchantContactConfirmation = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "Confirm merchant contact" }),
-    });
-  await expect(merchantContactConfirmation).toBeVisible({ timeout: 15_000 });
-  await expect(merchantContactConfirmation.getByText("Contact method: Email")).toBeVisible();
-  await expect(merchantContactConfirmation.getByText("Contact date: 2026-01-15")).toBeVisible();
   await expect(
-    merchantContactConfirmation.getByText("Response: Refused a refund or real help")
-  ).toBeVisible();
-  await expect(
-    merchantContactConfirmation.getByText(
-      "Proof: E2E: Acme Retail refused a refund by email on 2026-01-15."
-    )
-  ).toBeVisible();
-  await expect(
-    merchantContactConfirmation.getByRole("button", { name: "Confirm contact details" })
-  ).toBeVisible();
-  await expect(
-    page.locator("form").filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "After you contact them" }),
-    })
-  ).not.toBeVisible();
-
-  await merchantContactConfirmation.getByRole("button", { name: "Confirm contact details" }).click();
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(merchantContactConfirmation).not.toBeVisible({ timeout: 15_000 });
+    page.getByRole("button", { name: "Confirm contact details" })
+  ).not.toBeVisible({ timeout: 30_000 });
 
   const actionTracking = page
     .locator("div.mt-4.rounded-xl")
@@ -238,11 +213,17 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(actionTracking.getByText("Next step:")).toContainText("State Attorney General", {
     timeout: 60_000,
   });
+  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_filed"))).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByText("Filing: 1 filing record · confirmation on file")).toBeVisible({
     timeout: 15_000,
   });
 
   await expect(page.getByText("State AG filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("state_ag_queued"))
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     actionTracking.getByRole("button", { name: "Mark step opened" })
   ).not.toBeVisible();
@@ -281,9 +262,15 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(actionTracking.getByText("Next step:")).toContainText("Small claims / demand letter", {
     timeout: 30_000,
   });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("state_ag_confirmed"))
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Demand letter queued with Surrenderless.")).toBeVisible({
     timeout: 30_000,
   });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_queued"))
+  ).toBeVisible({ timeout: 30_000 });
   await expect(
     actionTracking.getByRole("button", { name: "Mark step opened" })
   ).not.toBeVisible();
@@ -314,6 +301,12 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     name: "Outcome and follow-up tracking",
   });
   await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_sent"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
+  ).toBeVisible({ timeout: 30_000 });
   await expect(handlingTrackingLine).toContainText(
     "Review follow-up timing and mark follow-up handled when complete.",
     { timeout: 15_000 }

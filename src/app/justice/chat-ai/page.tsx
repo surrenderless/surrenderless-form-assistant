@@ -67,6 +67,11 @@ import {
   shouldRefreshChatAfterEscalationTerminalTransition,
 } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import {
+  collectNewChatCaseProgressNarrationMessages,
+  type ChatCaseProgressObservation,
+} from "@/lib/justice/chatCaseProgressNarration";
+import { shouldAutopilotMerchantContactDocumentation } from "@/lib/justice/chatSafeChecklistAutopilot";
+import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
@@ -2376,8 +2381,20 @@ export default function JusticeChatAiPage() {
   const wasPendingHumanFulfillmentEscalationRef = useRef(false);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
+  const approvedNextActionRef = useRef<JusticeApprovedNextAction | undefined>(undefined);
+  const merchantContactAutopilotCaseRef = useRef<string | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
+  approvedNextActionRef.current = approvedNextAction;
   savedTasksRef.current = savedTasks;
+
+  const appendChatCaseProgressNarration = useCallback((observation: ChatCaseProgressObservation) => {
+    const narrationMessages = collectNewChatCaseProgressNarrationMessages(observation);
+    if (narrationMessages.length === 0) return;
+    setMessages((prev) => [
+      ...prev,
+      ...narrationMessages.map((text) => ({ id: msgId(), role: "assistant" as const, text })),
+    ]);
+  }, []);
 
   async function handleMarkSubmissionDraftReviewedFromChat() {
     if (!submissionDraftReviewChecked || !isLoaded) return;
@@ -2619,6 +2636,43 @@ export default function JusticeChatAiPage() {
       setSavingMerchantContactDocumentation(false);
     }
   }
+
+  useEffect(() => {
+    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) return;
+    if (merchantContactAutopilotCaseRef.current === caseId) return;
+
+    const timeline = readTimeline(caseId);
+    if (
+      !shouldAutopilotMerchantContactDocumentation({
+        preparedPacketApproved,
+        handlingRequested: Boolean(approvedNextAction?.handling_requested_at?.trim()),
+        timeline,
+        parts,
+      })
+    ) {
+      return;
+    }
+
+    const captured = buildMerchantContactDocumentationInputFromIntakeParts(parts);
+    if (!captured) return;
+
+    merchantContactAutopilotCaseRef.current = caseId;
+    void persistMerchantContactDocumentationFromChat(captured).then((result) => {
+      if (!result.ok) {
+        merchantContactAutopilotCaseRef.current = null;
+      }
+    });
+  }, [
+    isUpdatingExistingCase,
+    isLoaded,
+    isSignedIn,
+    preparedPacketApproved,
+    approvedNextAction?.handling_requested_at,
+    parts,
+  ]);
 
   async function handleSavePaymentDisputeChecklistFromChat(e: FormEvent) {
     e.preventDefault();
@@ -3232,7 +3286,10 @@ export default function JusticeChatAiPage() {
     setStagedProofNotes(readStagedProofNotes());
   }, []);
 
-  const loadSavedEvidencePreview = useCallback(async (signal?: AbortSignal, background = false) => {
+  const loadSavedEvidencePreview = useCallback(async (
+    signal?: AbortSignal,
+    background = false
+  ): Promise<{ tasks: JusticeCaseTaskRow[]; filings: JusticeCaseFilingRow[] } | null> => {
     const generation = evidencePreviewFetchGenerationRef.current;
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
       setSavedEvidenceCount(null);
@@ -3241,7 +3298,7 @@ export default function JusticeChatAiPage() {
       setChatHandlingReadinessLoading(false);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
-      return;
+      return null;
     }
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
@@ -3252,7 +3309,7 @@ export default function JusticeChatAiPage() {
       setChatHandlingReadinessLoading(false);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
-      return;
+      return null;
     }
     if (!background) {
       setChatHandlingReadinessLoading(true);
@@ -3263,35 +3320,45 @@ export default function JusticeChatAiPage() {
         fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`, { signal }),
         fetch(`/api/justice/tasks?case_id=${encodeURIComponent(caseId)}`, { signal }),
       ]);
-      if (generation !== evidencePreviewFetchGenerationRef.current) return;
-      if (signal?.aborted) return;
+      if (generation !== evidencePreviewFetchGenerationRef.current) return null;
+      if (signal?.aborted) return null;
       const evJson: unknown = evRes.ok ? await evRes.json() : [];
       const filJson: unknown = filRes.ok ? await filRes.json() : [];
       const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
-      if (generation !== evidencePreviewFetchGenerationRef.current) return;
+      if (generation !== evidencePreviewFetchGenerationRef.current) return null;
       const rows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
       const count = rows.length;
+      const filings = Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : [];
+      const tasks = Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : [];
       if (sessionBaselineEvidenceCountRef.current === null) {
         sessionBaselineEvidenceCountRef.current = count;
       }
       setSavedEvidenceCount(count);
-      setSavedFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
-      setSavedTasks(Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : []);
+      setSavedFilings(filings);
+      setSavedTasks(tasks);
       setSavedEvidenceRows(rows);
       setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
+      appendChatCaseProgressNarration({
+        caseId,
+        approvedAction: approvedNextActionRef.current,
+        tasks,
+        filings,
+      });
+      return { tasks, filings };
     } catch {
-      if (generation !== evidencePreviewFetchGenerationRef.current || signal?.aborted) return;
+      if (generation !== evidencePreviewFetchGenerationRef.current || signal?.aborted) return null;
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setSavedTasks([]);
       setSavedEvidenceRows([]);
       setRecentEvidenceRows([]);
+      return null;
     } finally {
       if (!background && generation === evidencePreviewFetchGenerationRef.current) {
         setChatHandlingReadinessLoading(false);
       }
     }
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn]);
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, appendChatCaseProgressNarration]);
 
   const requestSavedEvidencePreviewRefresh = useCallback(() => {
     evidencePreviewFetchGenerationRef.current += 1;
@@ -3306,16 +3373,17 @@ export default function JusticeChatAiPage() {
         ftcSnapshotFallback?: LastAssistedSubmissionAttemptSnapshot | null;
         skipEvidenceRefresh?: boolean;
       }
-    ) => {
-      if (!caseId || !isUuid(caseId)) return;
+    ): Promise<JusticeApprovedNextAction | undefined> => {
+      if (!caseId || !isUuid(caseId)) return undefined;
       const sessionFallback = hydrateApprovedNextActionForDisplay(caseId);
+      let hydrated: JusticeApprovedNextAction | undefined = sessionFallback;
       try {
         const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
           signal: options?.signal,
         });
-        if (!res.ok) return;
+        if (!res.ok) return hydrated;
         const data = (await res.json()) as { client_state?: unknown; timeline?: unknown };
-        if (options?.signal?.aborted) return;
+        if (options?.signal?.aborted) return hydrated;
         if (Array.isArray(data.timeline)) {
           const localTimeline = readTimeline(caseId);
           replaceTimelineForCase(
@@ -3326,10 +3394,11 @@ export default function JusticeChatAiPage() {
             )
           );
         }
-        const hydrated =
+        hydrated =
           hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
         if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
         setApprovedNextAction(hydrated);
+        approvedNextActionRef.current = hydrated;
         const sessionPacketApproved = readSessionPreparedPacketApproved(caseId);
         const serverPacketApproved =
           parseJusticeCaseClientState(data.client_state).prepared_packet_approved === true;
@@ -3349,6 +3418,7 @@ export default function JusticeChatAiPage() {
       if (!options?.skipEvidenceRefresh) {
         await loadSavedEvidencePreview(options?.signal);
       }
+      return hydrated;
     },
     [loadSavedEvidencePreview]
   );
@@ -3362,12 +3432,19 @@ export default function JusticeChatAiPage() {
       }
     ) => {
       const runRefresh = async () => {
-        await refreshChatCaseFromServer(caseId, {
+        const approvedAction = await refreshChatCaseFromServer(caseId, {
           ...options,
           skipEvidenceRefresh: true,
         });
         if (options?.signal?.aborted) return;
-        await loadSavedEvidencePreview(options?.signal, true);
+        const preview = await loadSavedEvidencePreview(options?.signal, true);
+        if (!preview || options?.signal?.aborted) return;
+        appendChatCaseProgressNarration({
+          caseId,
+          approvedAction: approvedAction ?? approvedNextActionRef.current,
+          tasks: preview.tasks,
+          filings: preview.filings,
+        });
       };
 
       const previous = pendingChatContextRefreshRef.current;
@@ -3386,7 +3463,7 @@ export default function JusticeChatAiPage() {
         }
       }
     },
-    [refreshChatCaseFromServer, loadSavedEvidencePreview]
+    [refreshChatCaseFromServer, loadSavedEvidencePreview, appendChatCaseProgressNarration]
   );
 
   useEffect(() => {
