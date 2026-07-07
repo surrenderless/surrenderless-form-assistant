@@ -88,6 +88,12 @@ import {
   resolvePendingChatCaseClosureGate,
 } from "@/lib/justice/chatCaseClosureGates";
 import {
+  buildChatIntakeCommitAssistantResponse,
+  buildChatIntakeCommitContext,
+  canCommitIntakeViaChat,
+  parseChatIntakeCommitMessage,
+} from "@/lib/justice/chatIntakeCommitGates";
+import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
@@ -4102,6 +4108,76 @@ export default function JusticeChatAiPage() {
       return;
     }
 
+    const basicsMissingForCommit = getPreviewBasicsMissing(parts);
+    const contactProofCheckForCommit = validateContactProofForIntake({
+      already_contacted: parts.already_contacted,
+      contact_proof_type: parts.contact_proof_type,
+      contact_proof_text: parts.contact_proof_text,
+    });
+    const intakeCommitContext = buildChatIntakeCommitContext({
+      caseId:
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "",
+      intakeReady:
+        basicsMissingForCommit.length === 0 && contactProofCheckForCommit.ok,
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      isUpdatingExistingCase,
+    });
+
+    if (canCommitIntakeViaChat(intakeCommitContext)) {
+      const parsedIntakeCommit = parseChatIntakeCommitMessage(trimmed, intakeCommitContext);
+      if (parsedIntakeCommit.kind !== "none") {
+        sendInFlightRef.current = true;
+        setLoading(true);
+        setInputValue("");
+        setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+        try {
+          let assistantText = buildChatIntakeCommitAssistantResponse(parsedIntakeCommit);
+
+          if (parsedIntakeCommit.kind === "intake_commit") {
+            const ok = await handleContinueToPreview({ fromChatCommit: true });
+            if (!ok) {
+              assistantText =
+                contactProofCheckForCommit.ok && basicsMissingForCommit.length === 0
+                  ? "I could not save your case on the server. Please try again or use Save and continue in chat below."
+                  : "I could not save your case yet. Finish the required intake details first, or use Save and continue in chat below.";
+            }
+          }
+
+          setMessages((prev) => [
+            ...prev,
+            { id: msgId(), role: "assistant", text: assistantText },
+          ]);
+        } finally {
+          sendInFlightRef.current = false;
+          setLoading(false);
+        }
+        return;
+      }
+    } else {
+      const parsedWrongStage = parseChatIntakeCommitMessage(trimmed, intakeCommitContext);
+      if (parsedWrongStage.kind === "wrong_stage" || parsedWrongStage.kind === "ambiguous") {
+        sendInFlightRef.current = true;
+        setLoading(true);
+        setInputValue("");
+        setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+        try {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: msgId(),
+              role: "assistant",
+              text: buildChatIntakeCommitAssistantResponse(parsedWrongStage),
+            },
+          ]);
+        } finally {
+          sendInFlightRef.current = false;
+          setLoading(false);
+        }
+        return;
+      }
+    }
+
     const consentCaseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
@@ -4330,12 +4406,12 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleContinueToPreview() {
+  async function handleContinueToPreview(options?: { fromChatCommit?: boolean }): Promise<boolean> {
     setContactProofError(null);
     setStagedProofFlushError(null);
     const basicsMissing = getPreviewBasicsMissing(parts);
     if (basicsMissing.length > 0) {
-      return;
+      return false;
     }
     const proofCheck = validateContactProofForIntake({
       already_contacted: parts.already_contacted,
@@ -4344,7 +4420,7 @@ export default function JusticeChatAiPage() {
     });
     if (!proofCheck.ok) {
       setContactProofError(proofCheck.message);
-      return;
+      return false;
     }
 
     const stagedToFlush = readStagedProofNotes();
@@ -4371,7 +4447,7 @@ export default function JusticeChatAiPage() {
             errorMessage ??
               "Some staged proof notes could not be saved. Remaining notes stay staged on this device."
           );
-          return;
+          return false;
         }
 
         if (
@@ -4382,11 +4458,13 @@ export default function JusticeChatAiPage() {
             isUpdatingExistingCase,
           })
         ) {
-          return;
+          return true;
         }
 
-        router.push("/justice/preview");
-        return;
+        if (!options?.fromChatCommit) {
+          router.push("/justice/preview");
+        }
+        return false;
       }
 
       const intake = buildJusticeIntakeFromParts(parts);
@@ -4403,7 +4481,7 @@ export default function JusticeChatAiPage() {
           setStagedProofFlushError(
             "Your case could not be saved on the server yet. Staged proof notes were not uploaded. Try again."
           );
-          return;
+          return false;
         }
 
         const { flushedClientIds, errorMessage } = await flushStagedProofNotesToServer(
@@ -4418,7 +4496,7 @@ export default function JusticeChatAiPage() {
             errorMessage ??
               "Some staged proof notes could not be saved. Remaining notes stay staged on this device."
           );
-          return;
+          return false;
         }
       }
 
@@ -4444,10 +4522,13 @@ export default function JusticeChatAiPage() {
           sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(parts);
           setIsUpdatingExistingCase(true);
         }
-        return;
+        return true;
       }
 
-      router.push("/justice/preview");
+      if (!options?.fromChatCommit) {
+        router.push("/justice/preview");
+      }
+      return false;
     } finally {
       setSubmitting(false);
     }

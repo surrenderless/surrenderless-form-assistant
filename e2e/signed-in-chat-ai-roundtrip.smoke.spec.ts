@@ -22,6 +22,9 @@ import {
   CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
 } from "@/lib/justice/chatCaseClosureGates";
 import {
+  CHAT_INTAKE_COMMIT_MESSAGE,
+} from "@/lib/justice/chatIntakeCommitGates";
+import {
   CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE,
   CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
@@ -83,7 +86,19 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(continueButton).toBeVisible();
   await expect(continueButton).toBeEnabled();
 
-  await continueButton.click();
+  const intakeCommitResponse = page.waitForResponse(
+    (res) => res.request().method() === "POST" && res.url().includes("/api/justice/cases"),
+    { timeout: 30_000 }
+  );
+  await chatInput.fill(CHAT_INTAKE_COMMIT_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+  const commitResponse = await intakeCommitResponse;
+  expect(commitResponse.ok()).toBeTruthy();
+
+  await expect(chatTranscript.getByText(CHAT_INTAKE_COMMIT_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText("I've saved your case.")).toBeVisible({ timeout: 15_000 });
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(page.getByText("Review submission draft")).toBeVisible({ timeout: 15_000 });
