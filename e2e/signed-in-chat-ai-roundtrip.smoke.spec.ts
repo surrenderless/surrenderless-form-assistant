@@ -17,6 +17,11 @@ import {
   PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
+import {
+  CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE,
+  CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
+  CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
+} from "@/lib/justice/chatLegalConsentGates";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 
 test.beforeEach(() => {
@@ -121,30 +126,23 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   const draftReviewBlock = page.locator("#chat-ai-inline-submission-draft-review");
   await expect(draftReviewBlock).toBeVisible();
 
-  const markDraftReviewedButton = draftReviewBlock.getByRole("button", {
-    name: "Mark draft reviewed",
-  });
-  await expect(markDraftReviewedButton).toBeDisabled();
-
-  await draftReviewBlock
-    .getByRole("checkbox", { name: "I reviewed the submission draft shown above." })
-    .check();
-
-  await expect(draftReviewBlock).toBeVisible();
-  await expect(markDraftReviewedButton).toBeEnabled();
-
-  const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
   const draftReviewedResponse = page.waitForResponse(
     (res) =>
       res.request().method() === "POST" &&
       res.url().includes("/api/justice/submission-draft-reviewed"),
     { timeout: 30_000 }
   );
-  await markDraftReviewedButton.click();
+  await chatInput.fill(CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
   const response = await draftReviewedResponse;
   expect(response.ok()).toBeTruthy();
 
+  await expect(
+    chatTranscript.getByText(CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE)
+  ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Submission draft reviewed: yes")).toBeVisible({ timeout: 30_000 });
+
+  const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
   await expect(packetApproval).toBeVisible({ timeout: 30_000 });
   await expect(
     packetApproval.locator("p.text-xs.font-medium").filter({ hasText: "Approve prepared packet" })
@@ -154,20 +152,13 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     packetApproval.locator("pre").filter({ hasText: "JUSTICE CASE PACKET" })
   ).toBeVisible({ timeout: 15_000 });
   await expect(packetApproval.locator("pre")).toContainText("Acme Retail");
-  await expect(
-    packetApproval.getByRole("checkbox", { name: "I reviewed this prepared packet" })
-  ).toBeVisible();
-  await expect(
-    packetApproval.getByRole("button", { name: "Approve prepared packet" })
-  ).toBeVisible();
-  await expect(
-    packetApproval.getByRole("button", { name: "Approve prepared packet" })
-  ).toBeDisabled();
 
-  await packetApproval
-    .getByRole("checkbox", { name: "I reviewed this prepared packet" })
-    .check();
-  await packetApproval.getByRole("button", { name: "Approve prepared packet" }).click();
+  await chatInput.fill(CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(
+    chatTranscript.getByText(CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE)
+  ).toBeVisible({ timeout: 15_000 });
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(packetApproval).not.toBeVisible({ timeout: 15_000 });
@@ -203,10 +194,12 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" })).toBeVisible();
   await expect(realBbbAutofillBlock.getByRole("button", { name: "Copy draft instead" })).toBeVisible();
 
-  await realBbbAutofillBlock
-    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
-    .check();
-  await realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" }).click();
+  await chatInput.fill(CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(
+    chatTranscript.getByText(CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE)
+  ).toBeVisible({ timeout: 15_000 });
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
 

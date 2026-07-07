@@ -72,6 +72,15 @@ import {
 } from "@/lib/justice/chatCaseProgressNarration";
 import { shouldAutopilotMerchantContactDocumentation } from "@/lib/justice/chatSafeChecklistAutopilot";
 import {
+  buildChatLegalConsentAssistantResponse,
+  buildChatLegalConsentGateContext,
+  clearChatBbbAccuracyConsented,
+  markChatBbbAccuracyConsented,
+  parseChatLegalConsentMessage,
+  readChatBbbAccuracyConsented,
+  resolvePendingChatLegalConsentGate,
+} from "@/lib/justice/chatLegalConsentGates";
+import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
@@ -2383,6 +2392,7 @@ export default function JusticeChatAiPage() {
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
   const approvedNextActionRef = useRef<JusticeApprovedNextAction | undefined>(undefined);
   const merchantContactAutopilotCaseRef = useRef<string | null>(null);
+  const legalConsentTrackedCaseIdRef = useRef<string | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
   approvedNextActionRef.current = approvedNextAction;
   savedTasksRef.current = savedTasks;
@@ -2396,11 +2406,13 @@ export default function JusticeChatAiPage() {
     ]);
   }, []);
 
-  async function handleMarkSubmissionDraftReviewedFromChat() {
-    if (!submissionDraftReviewChecked || !isLoaded) return;
+  async function handleMarkSubmissionDraftReviewedFromChat(options?: {
+    fromChatConsent?: boolean;
+  }): Promise<boolean> {
+    if ((!submissionDraftReviewChecked && !options?.fromChatConsent) || !isLoaded) return false;
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    if (!caseId) return;
+    if (!caseId) return false;
 
     setMarkingSubmissionDraftReviewed(true);
     setSubmissionDraftReviewError(null);
@@ -2425,13 +2437,13 @@ export default function JusticeChatAiPage() {
             data.error ??
               "The submission draft review was not saved to your case timeline. Please try again."
           );
-          return;
+          return false;
         }
         if (!Array.isArray(data.timeline)) {
           setSubmissionDraftReviewError(
             "The submission draft review was not saved (invalid server response). Please try again."
           );
-          return;
+          return false;
         }
         applyServerTimelineFromResponse(caseId, { timeline: data.timeline });
       } else {
@@ -2445,8 +2457,10 @@ export default function JusticeChatAiPage() {
       setSubmissionDraftReviewOverride(true);
       setSubmissionDraftReviewChecked(false);
       setDraftPreviewExpanded(false);
+      return true;
     } catch {
       setSubmissionDraftReviewError("Could not save draft review. Please try again.");
+      return false;
     } finally {
       setMarkingSubmissionDraftReviewed(false);
     }
@@ -2480,11 +2494,15 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleApprovePreparedPacketFromChat() {
-    if (!approvePreparedPacketChecked || !isLoaded || !isSignedIn) return;
+  async function handleApprovePreparedPacketFromChat(options?: {
+    fromChatConsent?: boolean;
+  }): Promise<boolean> {
+    if ((!approvePreparedPacketChecked && !options?.fromChatConsent) || !isLoaded || !isSignedIn) {
+      return false;
+    }
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    if (!caseId || !isUuid(caseId)) return;
+    if (!caseId || !isUuid(caseId)) return false;
 
     const intake = buildJusticeIntakeFromParts(parts);
     const manualFtc =
@@ -2515,7 +2533,7 @@ export default function JusticeChatAiPage() {
       if (!getRes.ok) {
         console.warn("justice chat-ai: GET before prepared packet approve failed", getRes.status);
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
+        return false;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
       const merged: JusticeCaseClientState = {
@@ -2531,12 +2549,14 @@ export default function JusticeChatAiPage() {
       if (!patchRes.ok) {
         console.warn("justice chat-ai: PATCH prepared packet approve failed", patchRes.status);
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
+        return false;
       }
       setTrackingSaveError(null);
+      return true;
     } catch (e) {
       console.warn("justice chat-ai: prepared packet approve error", e);
       setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+      return false;
     } finally {
       setApprovingPreparedPacket(false);
     }
@@ -2708,8 +2728,8 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleRunFtcPracticeFromChat() {
-    if (!ftcPracticeConfirmed) return;
+  async function handleRunFtcPracticeFromChat(options?: { fromChatConsent?: boolean }): Promise<boolean> {
+    if (!ftcPracticeConfirmed && !options?.fromChatConsent) return false;
     const caseId = activeUuidCaseId;
     const assistedPracticePrepInput = {
       isUpdatingExistingCase,
@@ -2725,7 +2745,7 @@ export default function JusticeChatAiPage() {
         !shouldShowChatInlineRealBbbComplaintPrep(assistedPracticePrepInput)) ||
       !approvedNextAction
     ) {
-      return;
+      return false;
     }
 
     const assistedLaneId = resolveAssistedPracticeSubmissionLaneId(approvedNextAction.href);
@@ -2734,7 +2754,7 @@ export default function JusticeChatAiPage() {
       assistedLaneId !== "bbb_practice" &&
       assistedLaneId !== "bbb_complaint"
     ) {
-      return;
+      return false;
     }
 
     const isRealBbbComplaint = assistedLaneId === "bbb_complaint";
@@ -2776,6 +2796,7 @@ export default function JusticeChatAiPage() {
           setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
           ftcSnapshotFallback = result.lastAssistedSubmissionAttempt;
         }
+        return false;
       } else if (!result.assistedSubmissionRecorded) {
         const snapshotError = result.lastAssistedSubmissionAttempt?.error?.trim();
         setFtcPracticeError(
@@ -2791,6 +2812,7 @@ export default function JusticeChatAiPage() {
           setFtcPracticeLastAssistedSubmissionAttempt(result.lastAssistedSubmissionAttempt);
           ftcSnapshotFallback = result.lastAssistedSubmissionAttempt;
         }
+        return false;
       } else {
         if (result.approvedNextActionForSubmission) {
           setApprovedNextAction(result.approvedNextActionForSubmission);
@@ -2802,10 +2824,12 @@ export default function JusticeChatAiPage() {
         }
         setFtcPracticeSuccess(true);
         setFtcPracticeStorageSkipped(result.storageSkipped);
+        if (caseId) clearChatBbbAccuracyConsented(caseId);
       }
       if (result.ok || ftcSnapshotFallback) {
         await refreshFullChatCaseContextFromServer(caseId, { ftcSnapshotFallback });
       }
+      return result.ok && result.assistedSubmissionRecorded;
     } finally {
       setFtcPracticeRunning(false);
     }
@@ -3911,6 +3935,10 @@ export default function JusticeChatAiPage() {
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
 
     if (!caseId) {
+      if (legalConsentTrackedCaseIdRef.current) {
+        clearChatBbbAccuracyConsented(legalConsentTrackedCaseIdRef.current);
+        legalConsentTrackedCaseIdRef.current = null;
+      }
       setPreparedPacketApproved(false);
       setApprovedNextAction(undefined);
       setFtcPracticeConfirmed(false);
@@ -3920,6 +3948,13 @@ export default function JusticeChatAiPage() {
       setFtcPracticeError(null);
       setFtcPracticeLastAssistedSubmissionAttempt(null);
       return;
+    }
+
+    if (legalConsentTrackedCaseIdRef.current !== caseId) {
+      if (legalConsentTrackedCaseIdRef.current) {
+        clearChatBbbAccuracyConsented(legalConsentTrackedCaseIdRef.current);
+      }
+      legalConsentTrackedCaseIdRef.current = caseId;
     }
 
     const sessionFallback = hydrateApprovedNextActionForDisplay(caseId);
@@ -4020,6 +4055,90 @@ export default function JusticeChatAiPage() {
     if (trimmed.length > MAX_INTAKE_CHAT_USER_MESSAGE) {
       setApiError("Message is too long. Please shorten it and try again.");
       return;
+    }
+
+    const consentCaseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+
+    if (
+      isUpdatingExistingCase &&
+      isLoaded &&
+      isSignedIn &&
+      consentCaseId &&
+      isUuid(consentCaseId)
+    ) {
+      const submissionDraftReviewed =
+        submissionDraftReviewOverride ||
+        readSessionSubmissionDraftReviewed(consentCaseId) ||
+        submissionDraftReviewedInTimeline(consentCaseId);
+      const bbbComplaintPrepVisible = shouldShowChatInlineRealBbbComplaintPrep({
+        isUpdatingExistingCase,
+        caseId: consentCaseId,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+        preparedPacketApproved,
+        approvedNextAction,
+      });
+      const gateContext = buildChatLegalConsentGateContext({
+        caseId: consentCaseId,
+        submissionDraftReviewed,
+        preparedPacketApproved,
+        bbbComplaintPrepVisible,
+        bbbAutofillCompleted: ftcPracticeSuccess,
+      });
+      const pendingGate = resolvePendingChatLegalConsentGate(gateContext);
+      if (pendingGate) {
+        const parsed = parseChatLegalConsentMessage(trimmed, pendingGate, gateContext);
+        if (parsed.kind !== "none") {
+          sendInFlightRef.current = true;
+          setLoading(true);
+          setInputValue("");
+          setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+          try {
+            let assistantText = buildChatLegalConsentAssistantResponse(parsed);
+
+            if (parsed.kind === "submission_draft_review") {
+              const ok = await handleMarkSubmissionDraftReviewedFromChat({ fromChatConsent: true });
+              if (!ok) {
+                assistantText =
+                  "I could not save your draft review on the server. Please try again or use the checklist below.";
+              }
+            } else if (parsed.kind === "prepared_packet_approval") {
+              const ok = await handleApprovePreparedPacketFromChat({ fromChatConsent: true });
+              if (!ok) {
+                assistantText =
+                  "I could not save your packet approval on the server. Please try again or use the checklist below.";
+              }
+            } else if (parsed.kind === "bbb_accuracy_consent") {
+              markChatBbbAccuracyConsented(consentCaseId);
+              setFtcPracticeConfirmed(true);
+            } else if (parsed.kind === "bbb_run_autofill") {
+              const ok = await handleRunFtcPracticeFromChat({ fromChatConsent: true });
+              if (!ok) {
+                assistantText =
+                  "BBB autofill did not complete successfully. Review the BBB summary below and try again when ready.";
+              }
+            } else if (parsed.kind === "bbb_accuracy_and_run") {
+              markChatBbbAccuracyConsented(consentCaseId);
+              setFtcPracticeConfirmed(true);
+              const ok = await handleRunFtcPracticeFromChat({ fromChatConsent: true });
+              if (!ok) {
+                assistantText =
+                  "I recorded your accuracy confirmation, but BBB autofill did not complete successfully. Review the BBB summary below and try again when ready.";
+              }
+            }
+
+            setMessages((prev) => [
+              ...prev,
+              { id: msgId(), role: "assistant", text: assistantText },
+            ]);
+          } finally {
+            sendInFlightRef.current = false;
+            setLoading(false);
+          }
+          return;
+        }
+      }
     }
 
     const conversation_history = messages.map((m) => ({
