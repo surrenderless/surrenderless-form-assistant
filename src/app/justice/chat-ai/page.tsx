@@ -81,6 +81,13 @@ import {
   resolvePendingChatLegalConsentGate,
 } from "@/lib/justice/chatLegalConsentGates";
 import {
+  buildChatCaseClosureAssistantResponse,
+  buildChatCaseClosureGateContext,
+  parseChatCaseClosureMessage,
+  parsePrematureArchiveIntent,
+  resolvePendingChatCaseClosureGate,
+} from "@/lib/justice/chatCaseClosureGates";
+import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
@@ -2466,10 +2473,13 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleArchiveActiveCase(archiveCaseId: string) {
-    if (!isLoaded) return;
+  async function handleArchiveActiveCase(
+    archiveCaseId: string,
+    options?: { fromChat?: boolean }
+  ): Promise<boolean> {
+    if (!isLoaded) return false;
     const caseId = archiveCaseId.trim();
-    if (!caseId || !isUuid(caseId)) return;
+    if (!caseId || !isUuid(caseId)) return false;
 
     setArchivingCase(true);
     setArchiveCaseError(null);
@@ -2482,16 +2492,49 @@ export default function JusticeChatAiPage() {
       if (!res.ok) {
         console.warn("justice chat-ai: archive failed", res.status);
         setArchiveCaseError(CHAT_ARCHIVE_ERROR_MESSAGE);
-        return;
+        return false;
       }
       clearLocalJusticeSession();
+      if (options?.fromChat) {
+        resetChatPostClosureUiState();
+        return true;
+      }
       router.push("/justice");
+      return true;
     } catch (e) {
       console.warn("justice chat-ai: archive error", e);
       setArchiveCaseError(CHAT_ARCHIVE_ERROR_MESSAGE);
+      return false;
     } finally {
       setArchivingCase(false);
     }
+  }
+
+  function resetChatPostClosureUiState() {
+    setIsUpdatingExistingCase(false);
+    setApprovedNextAction(undefined);
+    setPreparedPacketApproved(false);
+    setSavedEvidenceCount(null);
+    setSavedFilings([]);
+    setSavedTasks([]);
+    setChatHandlingReadinessLoading(false);
+    setSavedEvidenceRows([]);
+    setRecentEvidenceRows([]);
+    setSubmissionDraftReviewOverride(false);
+    setSubmissionDraftReviewChecked(false);
+    setSubmissionDraftReviewError(null);
+    setDraftPreviewExpanded(false);
+    setPacketPreviewExpanded(false);
+    setFtcPracticeConfirmed(false);
+    setFtcPracticeRunning(false);
+    setFtcPracticeSuccess(false);
+    setFtcPracticeStorageSkipped(false);
+    setFtcPracticeError(null);
+    setFtcPracticeLastAssistedSubmissionAttempt(null);
+    setArchiveCaseError(null);
+    legalConsentTrackedCaseIdRef.current = null;
+    merchantContactAutopilotCaseRef.current = null;
+    wasPendingHumanFulfillmentEscalationRef.current = false;
   }
 
   async function handleApprovePreparedPacketFromChat(options?: {
@@ -3171,8 +3214,8 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function clearApprovedNextActionFollowUp() {
-    if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return;
+  async function clearApprovedNextActionFollowUp(): Promise<boolean> {
+    if (!approvedNextAction || approvedNextAction.follow_up_needed !== true) return false;
 
     const previousApprovedNextAction = approvedNextAction;
     const cleared = clearFollowUpFromApprovedNextAction(approvedNextAction);
@@ -3187,7 +3230,7 @@ export default function JusticeChatAiPage() {
       writeSessionApprovedNextAction(caseId, local);
     }
 
-    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return true;
 
     function revertClearFollowUpOptimistic() {
       setApprovedNextAction(previousApprovedNextAction);
@@ -3204,7 +3247,7 @@ export default function JusticeChatAiPage() {
         console.warn("justice chat-ai: GET before clear follow-up failed", getRes.status);
         revertClearFollowUpOptimistic();
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
+        return false;
       }
       const existing = (await getRes.json()) as { client_state?: unknown };
       const merged = mergeClientStateWithClearedFollowUp(existing.client_state, withTracking);
@@ -3217,16 +3260,18 @@ export default function JusticeChatAiPage() {
         console.warn("justice chat-ai: PATCH clear follow-up failed", patchRes.status);
         revertClearFollowUpOptimistic();
         setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
+        return false;
       }
       const data = (await patchRes.json()) as { timeline?: unknown };
       applyServerTimelineFromResponse(caseId, data);
       requestSavedEvidencePreviewRefresh();
       setTrackingSaveError(null);
+      return true;
     } catch (e) {
       console.warn("justice chat-ai: clear follow-up error", e);
       revertClearFollowUpOptimistic();
       setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+      return false;
     } finally {
       setClearingFollowUp(false);
     }
@@ -4138,6 +4183,100 @@ export default function JusticeChatAiPage() {
           }
           return;
         }
+      }
+
+      const resolutionFlowExposed =
+        Boolean(approvedNextAction) &&
+        shouldExposeCaseResolutionFlow({
+          approvedAction: approvedNextAction,
+          caseId: consentCaseId,
+          tasks: savedTasks,
+        });
+      const closureReadinessLoading =
+        chatHandlingReadinessLoading ||
+        (Boolean(consentCaseId) && savedEvidenceCount === null);
+      const handlingTrackingStep =
+        approvedNextAction && !closureReadinessLoading
+          ? deriveChatHandlingTrackingLine({
+              basicsReady: isBasicCaseInfoReadyForEscalation(buildJusticeIntakeFromParts(parts)),
+              draftReviewed: submissionDraftReviewed,
+              preparedPacketApproved,
+              evidenceCount: savedEvidenceCount ?? 0,
+              filings: savedFilings,
+              next: approvedNextAction,
+              canCaptureFilingInline: Boolean(consentCaseId) && isLoaded && Boolean(isSignedIn),
+              caseId: consentCaseId,
+              tasks: savedTasks,
+            })
+          : null;
+      const closureContext = buildChatCaseClosureGateContext({
+        caseId: consentCaseId,
+        resolutionFlowExposed,
+        followUpNeeded: approvedNextAction?.follow_up_needed === true,
+        handlingTrackingStep,
+        readinessLoading: closureReadinessLoading,
+      });
+      const pendingClosureGate = resolvePendingChatCaseClosureGate(closureContext);
+      if (pendingClosureGate) {
+        const parsedClosure = parseChatCaseClosureMessage(
+          trimmed,
+          pendingClosureGate,
+          closureContext
+        );
+        if (parsedClosure.kind !== "none") {
+          sendInFlightRef.current = true;
+          setLoading(true);
+          setInputValue("");
+          setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+          try {
+            let assistantText = buildChatCaseClosureAssistantResponse(parsedClosure);
+
+            if (parsedClosure.kind === "follow_up_handled") {
+              const ok = await clearApprovedNextActionFollowUp();
+              if (!ok) {
+                assistantText =
+                  "I could not mark follow-up handled on the server. Please try again or use the button below.";
+              }
+            } else if (parsedClosure.kind === "archive_case") {
+              const ok = await handleArchiveActiveCase(consentCaseId, { fromChat: true });
+              if (!ok) {
+                assistantText =
+                  "I could not archive your case on the server. Please try again or use the Archive case button below.";
+              }
+            }
+
+            setMessages((prev) => [
+              ...prev,
+              { id: msgId(), role: "assistant", text: assistantText },
+            ]);
+          } finally {
+            sendInFlightRef.current = false;
+            setLoading(false);
+          }
+          return;
+        }
+      } else if (
+        resolutionFlowExposed &&
+        parsePrematureArchiveIntent(trimmed, closureContext)
+      ) {
+        sendInFlightRef.current = true;
+        setLoading(true);
+        setInputValue("");
+        setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+        try {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: msgId(),
+              role: "assistant",
+              text: buildChatCaseClosureAssistantResponse({ kind: "premature_archive" }),
+            },
+          ]);
+        } finally {
+          sendInFlightRef.current = false;
+          setLoading(false);
+        }
+        return;
       }
     }
 
