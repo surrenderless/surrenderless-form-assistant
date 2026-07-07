@@ -264,12 +264,55 @@ export function handlingWorkbenchOutcomeTrackingFormVisible(input: {
   manualActionNextStep: string | null;
   filingsReady: boolean;
   action: JusticeApprovedNextAction;
+  caseId: string;
+  tasks?: readonly JusticeCaseTaskRow[];
 }): boolean {
   if (!input.filingsReady) return false;
   if (input.manualActionNextStep !== HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
     return false;
   }
-  return chatOutcomeTrackingFormOpen(input.action);
+  return chatResolutionTrackingFormOpen({
+    action: input.action,
+    caseId: input.caseId,
+    tasks: input.tasks ?? [],
+  });
+}
+
+/** Whether the handling workbench may show handling-request acknowledgment controls. */
+export function handlingWorkbenchClosureAcknowledgmentVisible(input: {
+  manualActionNextStep: string | null;
+  handlingAcknowledgedAt?: string;
+  action: JusticeApprovedNextAction;
+  caseId: string;
+  tasks?: readonly JusticeCaseTaskRow[];
+}): boolean {
+  if (
+    !shouldExposeCaseResolutionFlow({
+      approvedAction: input.action,
+      caseId: input.caseId,
+      tasks: input.tasks ?? [],
+    })
+  ) {
+    return false;
+  }
+  return handlingClosureAcknowledgmentVisible({
+    manualActionNextStep: input.manualActionNextStep,
+    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+  });
+}
+
+/** Whether follow-up clear controls may be shown after escalation is terminal. */
+export function handlingWorkbenchFollowUpActionsVisible(input: {
+  action: JusticeApprovedNextAction;
+  caseId: string;
+  tasks?: readonly JusticeCaseTaskRow[];
+}): boolean {
+  if (input.action.follow_up_needed !== true) return false;
+  return shouldExposeCaseResolutionFlow({
+    approvedAction: input.action,
+    caseId: input.caseId,
+    tasks: input.tasks ?? [],
+  });
 }
 
 /**

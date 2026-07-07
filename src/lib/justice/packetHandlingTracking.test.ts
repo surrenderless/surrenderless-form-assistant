@@ -92,10 +92,11 @@ describe("derivePacketHandlingTrackingLine", () => {
     ).toBe("Mark the handling request acknowledged.");
   });
 
-  it("composes packet derived step with shared outcome-form visibility for handling-requested approved actions", () => {
+  it("composes packet derived step with shared outcome-form visibility after escalation is terminal", () => {
     const next = {
       ...demandLetterNextAction,
-      status: "approved" as const,
+      status: "completed" as const,
+      completed_at: "2026-06-20T12:00:00.000Z",
       handling_requested_at: "2026-06-16T12:00:00.000Z",
     };
     const derivedStep = derivePacketHandlingTrackingLine({
@@ -109,6 +110,7 @@ describe("derivePacketHandlingTrackingLine", () => {
         manualActionNextStep: derivedStep,
         filingsReady: true,
         action: next,
+        caseId: "550e8400-e29b-41d4-a716-446655440000",
       })
     ).toBe(true);
   });

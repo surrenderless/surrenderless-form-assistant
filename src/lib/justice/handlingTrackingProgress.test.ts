@@ -125,29 +125,55 @@ describe("chatOutcomeTrackingFormOpen", () => {
 });
 
 describe("handlingWorkbenchOutcomeTrackingFormVisible", () => {
-  const handlingRequestedApproved = {
+  const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+  const terminalHandlingRequested = {
+    label: "Small claims / demand letter",
+    href: "/justice/demand-letter",
+    status: "completed" as const,
+    handling_requested_at: "2026-06-16T12:00:00.000Z",
+  };
+  const pendingStateAgEscalation = {
+    label: "State Attorney General (consumer)",
+    href: "/justice/state-ag",
     status: "approved" as const,
     handling_requested_at: "2026-06-16T12:00:00.000Z",
   };
 
-  it("shows the outcome form for handling-requested approved actions after filing gates are satisfied", () => {
+  it("shows the outcome form after escalation is terminal and filing gates are satisfied", () => {
     expect(
       handlingWorkbenchOutcomeTrackingFormVisible({
         manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
         filingsReady: true,
-        action: handlingRequestedApproved,
+        action: terminalHandlingRequested,
+        caseId: CASE_ID,
       })
     ).toBe(true);
   });
 
-  it("shows the outcome form for completed actions that still require outcome recording", () => {
+  it("shows the outcome form for completed terminal actions that still require outcome recording", () => {
     expect(
       handlingWorkbenchOutcomeTrackingFormVisible({
         manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
         filingsReady: true,
-        action: { status: "completed" },
+        action: {
+          label: "Better Business Bureau",
+          href: "/justice/bbb",
+          status: "completed",
+        },
+        caseId: CASE_ID,
       })
     ).toBe(true);
+  });
+
+  it("hides the outcome form while human-fulfillment escalation is pending", () => {
+    expect(
+      handlingWorkbenchOutcomeTrackingFormVisible({
+        manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+        filingsReady: true,
+        action: pendingStateAgEscalation,
+        caseId: CASE_ID,
+      })
+    ).toBe(false);
   });
 
   it("hides the outcome form when acknowledgement is the derived next step", () => {
@@ -156,9 +182,10 @@ describe("handlingWorkbenchOutcomeTrackingFormVisible", () => {
         manualActionNextStep: HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
         filingsReady: true,
         action: {
-          ...handlingRequestedApproved,
+          ...terminalHandlingRequested,
           outcome_note: "Filed with BBB confirmation on file.",
         },
+        caseId: CASE_ID,
       })
     ).toBe(false);
   });
@@ -168,7 +195,8 @@ describe("handlingWorkbenchOutcomeTrackingFormVisible", () => {
       handlingWorkbenchOutcomeTrackingFormVisible({
         manualActionNextStep: "Add filing records from the case packet after external submission.",
         filingsReady: true,
-        action: handlingRequestedApproved,
+        action: terminalHandlingRequested,
+        caseId: CASE_ID,
       })
     ).toBe(false);
     expect(
@@ -176,14 +204,16 @@ describe("handlingWorkbenchOutcomeTrackingFormVisible", () => {
         manualActionNextStep:
           "Add or edit the filing confirmation from the case packet after external submission.",
         filingsReady: true,
-        action: handlingRequestedApproved,
+        action: terminalHandlingRequested,
+        caseId: CASE_ID,
       })
     ).toBe(false);
     expect(
       handlingWorkbenchOutcomeTrackingFormVisible({
         manualActionNextStep: HANDLING_TRACKING_STEP_RECORD_OUTCOME,
         filingsReady: false,
-        action: handlingRequestedApproved,
+        action: terminalHandlingRequested,
+        caseId: CASE_ID,
       })
     ).toBe(false);
   });

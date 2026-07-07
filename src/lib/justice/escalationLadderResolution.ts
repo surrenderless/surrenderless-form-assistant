@@ -342,3 +342,51 @@ export const ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP =
   "Awaiting Surrenderless operator fulfillment for the current escalation step.";
 
 
+
+/** True when handling-request resolution tracking is complete enough to archive. */
+
+export function isResolutionTrackingCompleteForArchive(
+
+  action: JusticeApprovedNextAction | undefined
+
+): boolean {
+
+  if (!action) return true;
+
+  if (action.follow_up_needed === true) return false;
+
+  if (!action.handling_requested_at?.trim()) return true;
+
+  if (!action.outcome_note?.trim()) return false;
+
+  if (!action.handling_acknowledged_at?.trim()) return false;
+
+  return true;
+
+}
+
+
+
+/** Whether Saved Cases archive may proceed for the current escalation ladder state. */
+
+export function canArchiveCaseForEscalationLadder(input: {
+
+  approvedAction: JusticeApprovedNextAction | undefined;
+
+  caseId: string;
+
+  tasks: readonly JusticeCaseTaskRow[];
+
+}): boolean {
+
+  if (hasPendingHumanFulfillmentEscalation(input)) return false;
+
+  if (!shouldExposeCaseResolutionFlow(input)) return false;
+
+  if (!isResolutionTrackingCompleteForArchive(input.approvedAction)) return false;
+
+  return true;
+
+}
+
+

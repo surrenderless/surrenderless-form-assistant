@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import { getUserOr401 } from "@/server/requireUser";
 import { isJusticeIntakePayload, isTimelineArray } from "@/lib/justice/caseApiValidation";
 import {
@@ -130,7 +131,15 @@ export async function GET(req: NextRequest) {
 
   const rows = (data ?? []) as CaseResponse[];
   const has_more = rows.length > limit;
-  const cases = has_more ? rows.slice(0, limit) : rows;
+  const cases = (has_more ? rows.slice(0, limit) : rows).map((row) => {
+    if (row.client_state === null || row.client_state === undefined) {
+      return row;
+    }
+    return {
+      ...row,
+      client_state: sanitizeClientStateForEscalationLadder(row.client_state),
+    };
+  });
 
   return NextResponse.json({
     cases,

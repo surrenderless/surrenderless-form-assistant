@@ -61,6 +61,7 @@ import {
   handlingClosureAcknowledgmentVisible,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
+import { canArchiveCaseForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 
 type CaseRow = {
   id: string;
@@ -561,6 +562,15 @@ function buildApprovedPacketActionAttentionItems(
   return items;
 }
 
+function canArchiveCaseRow(row: CaseRow, tasks: JusticeCaseTaskRow[]): boolean {
+  const approvedAction = parseApprovedNextActionFromClientState(row.client_state);
+  return canArchiveCaseForEscalationLadder({
+    approvedAction,
+    caseId: row.id,
+    tasks,
+  });
+}
+
 function caseDisplayTitle(row: CaseRow, labelDraft: string): string {
   const custom = row.case_label?.trim() || labelDraft.trim();
   return custom || row.intake.company_name;
@@ -918,6 +928,11 @@ export default function JusticeCasesPage() {
   }
 
   async function archiveCase(id: string) {
+    const row = cases?.find((c) => c.id === id);
+    if (row && !canArchiveCaseRow(row, tasksByCaseId[id] ?? [])) {
+      console.warn("justice cases: archive blocked by escalation ladder");
+      return;
+    }
     setArchivingId(id);
     try {
       const res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, {
@@ -1846,6 +1861,11 @@ export default function JusticeCasesPage() {
                       This is the active case in this browser. Archive is disabled while it is active. Open another
                       case or use Start new case above to clear or switch the active browser case; you can archive this
                       one later.
+                    </p>
+                  ) : !canArchiveCaseRow(row, tasksByCaseId[row.id] ?? []) ? (
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      Archive unlocks after Surrenderless completes escalation and any follow-up is
+                      handled.
                     </p>
                   ) : (
                     <button

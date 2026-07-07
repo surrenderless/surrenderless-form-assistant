@@ -65,7 +65,7 @@ import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPag
 import {
   canonicalFilingDestinationForApprovedActionHref,
   chatOutcomeTrackingSaveAllowed,
-  handlingClosureAcknowledgmentVisible,
+  handlingWorkbenchClosureAcknowledgmentVisible,
   handlingWorkbenchOutcomeTrackingFormVisible,
 } from "@/lib/justice/handlingTrackingProgress";
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
@@ -686,12 +686,15 @@ export default function JusticePacketPage() {
         manualActionNextStep: packetManualActionNextStep,
         filingsReady: !packetHandlingReadinessLoading,
         action: approvedNextAction,
+        caseId: caseId ?? "",
       })
     : false;
   const showPacketAcknowledgment = approvedNextAction
-    ? handlingClosureAcknowledgmentVisible({
+    ? handlingWorkbenchClosureAcknowledgmentVisible({
         manualActionNextStep: packetManualActionNextStep,
         handlingAcknowledgedAt: approvedNextAction.handling_acknowledged_at,
+        action: approvedNextAction,
+        caseId: caseId ?? "",
       })
     : false;
   const packetLockedFilingDestination = useMemo(
