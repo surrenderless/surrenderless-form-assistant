@@ -18,6 +18,10 @@ import {
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 import {
+  CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE,
+  CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
+} from "@/lib/justice/chatCaseClosureGates";
+import {
   CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE,
   CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
@@ -320,7 +324,21 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     timeout: 15_000,
   });
 
-  await actionTracking.getByRole("button", { name: "Mark follow-up handled" }).click();
+  const followUpClearResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "PATCH" &&
+      res.url().includes("/api/justice/cases/") &&
+      res.request().postDataJSON()?.client_state !== undefined,
+    { timeout: 30_000 }
+  );
+  await chatInput.fill(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+  const followUpPatch = await followUpClearResponse;
+  expect(followUpPatch.ok()).toBeTruthy();
+
+  await expect(
+    chatTranscript.getByText(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE)
+  ).toBeVisible({ timeout: 15_000 });
   await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
     timeout: 15_000,
   });
@@ -328,14 +346,26 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
     timeout: 30_000,
   });
-  await actionTracking.getByRole("button", { name: "Archive case" }).click({ timeout: 30_000 });
 
-  await expect(page).toHaveURL(/\/justice\/?$/, { timeout: 15_000 });
+  const archiveResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "PATCH" &&
+      res.url().includes("/api/justice/cases/") &&
+      typeof res.request().postDataJSON()?.archived_at === "string",
+    { timeout: 30_000 }
+  );
+  await chatInput.fill(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+  const archivePatch = await archiveResponse;
+  expect(archivePatch.ok()).toBeTruthy();
+
+  await expect(
+    chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page).toHaveURL(/\/justice\/chat-ai/, { timeout: 15_000 });
   const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);
   expect(clearedCaseId).toBeNull();
 
-  await page.goto("/justice/chat-ai");
-  await waitForClerkBrowserApiSession(page);
   await page.goto("/justice/cases/archived");
   await expect(page).toHaveURL(/\/justice\/cases\/archived\/?$/);
   await expect(page.getByRole("heading", { name: "Archived cases" })).toBeVisible({ timeout: 30_000 });
