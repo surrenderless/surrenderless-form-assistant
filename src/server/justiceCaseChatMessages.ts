@@ -1,9 +1,17 @@
-import { supabaseAdmin } from "@/utils/supabaseClient";
 import type {
   JusticeCaseChatMessageAppendInput,
   JusticeCaseChatMessageRow,
 } from "@/lib/justice/justiceCaseChatMessages";
+import { getSupabaseAdmin } from "@/server/getSupabaseAdmin";
 import { userOwnsJusticeCase } from "@/server/justiceCaseOwnership";
+
+function requireSupabaseAdmin() {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) {
+    throw new Error("Supabase is not configured on this server.");
+  }
+  return supabase;
+}
 
 const CHAT_MESSAGE_SELECT =
   "id, user_id, case_id, client_turn_id, role, content, source, created_at" as const;
@@ -16,7 +24,7 @@ export async function listJusticeCaseChatMessages(
     return null;
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await requireSupabaseAdmin()
     .from("justice_case_chat_messages")
     .select(CHAT_MESSAGE_SELECT)
     .eq("case_id", caseId)
@@ -51,7 +59,7 @@ export async function appendJusticeCaseChatMessages(
     source: message.source ?? null,
   }));
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await requireSupabaseAdmin()
     .from("justice_case_chat_messages")
     .upsert(rows, {
       onConflict: "case_id,client_turn_id",
