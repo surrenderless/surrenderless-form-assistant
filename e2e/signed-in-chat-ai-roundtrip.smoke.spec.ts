@@ -15,6 +15,8 @@ import {
   PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE,
 } from "@/lib/testing/playwrightMockIntakeChatPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { buildPlaywrightMockE2eCaseIntake } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesPipeline";
 import {
   PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID,
   PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
@@ -97,15 +99,30 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     (res) => res.request().method() === "POST" && res.url().includes("/api/justice/cases"),
     { timeout: 30_000 }
   );
+  const transcriptPersistResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" && res.url().includes("/api/justice/chat-messages"),
+    { timeout: 30_000 }
+  );
   await chatInput.fill(CHAT_INTAKE_COMMIT_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
   const commitResponse = await intakeCommitResponse;
   expect(commitResponse.ok()).toBeTruthy();
+  await transcriptPersistResponse;
 
   await expect(chatTranscript.getByText(CHAT_INTAKE_COMMIT_MESSAGE)).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByText("I've saved your case.")).toBeVisible({ timeout: 15_000 });
+
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatTranscript.getByText(CHAT_INTAKE_COMMIT_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(page.getByText("Review submission draft")).toBeVisible({ timeout: 15_000 });
@@ -397,12 +414,12 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   const archivePatch = await archiveResponse;
   expect(archivePatch.ok()).toBeTruthy();
 
-  await expect(
-    chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)
-  ).toBeVisible({ timeout: 15_000 });
   await expect(page).toHaveURL(/\/justice\/chat-ai/, { timeout: 15_000 });
   const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);
   expect(clearedCaseId).toBeNull();
+  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).not.toBeVisible({
+    timeout: 15_000,
+  });
 
   await page.goto("/justice/cases/archived");
   await expect(page).toHaveURL(/\/justice\/cases\/archived\/?$/);
@@ -431,6 +448,89 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(acmeSavedCaseRow).toBeVisible({ timeout: 15_000 });
   await expect(acmeSavedCaseRow.getByText("widget order", { exact: true })).toBeVisible();
 
+  await acmeSavedCaseRow.getByRole("button", { name: "Open case" }).click();
+  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  await waitForClerkBrowserApiSession(page);
+  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const secondCaseMarker = "E2E second case unique transcript marker";
+  const seedSecondCase = await page.request.post("/api/justice/chat-messages", {
+    data: {
+      case_id: PLAYWRIGHT_MOCK_SECOND_CASE_ID,
+      messages: [
+        {
+          client_turn_id: "playwright-second-case-user-1",
+          role: "user",
+          content: secondCaseMarker,
+          source: "intake_chat",
+        },
+      ],
+    },
+  });
+  expect(seedSecondCase.ok()).toBeTruthy();
+
+  await page.evaluate(
+    ({ caseId, intakeKey, caseIdKey, intake }) => {
+      sessionStorage.setItem(caseIdKey, caseId);
+      sessionStorage.setItem(intakeKey, JSON.stringify(intake));
+    },
+    {
+      caseId: PLAYWRIGHT_MOCK_SECOND_CASE_ID,
+      caseIdKey: STORAGE_CASE_ID,
+      intakeKey: STORAGE_INTAKE,
+      intake: {
+        problem_category: "online_purchase",
+        company_name: "Beta Corp",
+        company_website: "",
+        purchase_or_signup: "other product",
+        story: secondCaseMarker,
+        money_involved: "",
+        pay_or_order_date: "",
+        order_confirmation_details: "",
+        user_display_name: "Beta User",
+        reply_email: "beta@example.com",
+        already_contacted: "no",
+      },
+    }
+  );
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+  await expect(chatTranscript.getByText(secondCaseMarker)).toBeVisible({ timeout: 15_000 });
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).not.toBeVisible();
+
+  const operatorDeniedContext = await page.context().browser()!.newContext({
+    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
+  });
+  const operatorDenied = await operatorDeniedContext.request.get(
+    `/api/justice/chat-messages?case_id=${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`
+  );
+  expect(operatorDenied.status()).toBe(404);
+  await operatorDeniedContext.close();
+
+  await page.evaluate(
+    ({ caseId, intakeKey, caseIdKey, intake }) => {
+      sessionStorage.setItem(caseIdKey, caseId);
+      sessionStorage.setItem(intakeKey, JSON.stringify(intake));
+    },
+    {
+      caseId: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+      caseIdKey: STORAGE_CASE_ID,
+      intakeKey: STORAGE_INTAKE,
+      intake: buildPlaywrightMockE2eCaseIntake(),
+    }
+  );
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatTranscript.getByText(secondCaseMarker)).not.toBeVisible();
+
   const sessionAfterArchivedList = await page.evaluate(
     ({ caseIdKey, intakeKey }) => ({
       caseId: sessionStorage.getItem(caseIdKey),
@@ -438,6 +538,6 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     }),
     { caseIdKey: STORAGE_CASE_ID, intakeKey: STORAGE_INTAKE }
   );
-  expect(sessionAfterArchivedList.caseId).toBeNull();
-  expect(sessionAfterArchivedList.intake).toBeNull();
+  expect(sessionAfterArchivedList.caseId).toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+  expect(sessionAfterArchivedList.intake).not.toBeNull();
 });

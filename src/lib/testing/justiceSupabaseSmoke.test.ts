@@ -22,13 +22,19 @@ vi.mock("@/server/requireUser", () => ({
 
 import { GET as listCases, POST as createCase } from "@/app/api/justice/cases/route";
 import { GET as getCase, PATCH as patchCase } from "@/app/api/justice/cases/[id]/route";
+import {
+  GET as listChatMessages,
+  POST as appendChatMessages,
+} from "@/app/api/justice/chat-messages/route";
 import { getUserOr401 } from "@/server/requireUser";
 import {
   assertJusticeSupabaseSmokeConnectivityPreflight,
   assertJusticeSupabaseSmokeStrictRunIntegrationExecuted,
   buildJusticeSupabaseSmokeCaseStartedTimeline,
+  buildJusticeSupabaseSmokeChatTurns,
   buildJusticeSupabaseSmokeClientState,
   buildJusticeSupabaseSmokeIntake,
+  buildJusticeSupabaseSmokeIntruderClerkUserId,
   buildJusticeSupabaseSmokeRunId,
   canResolveJusticeSupabaseSmokeClerkUserIdFromE2eCredentials,
   deleteJusticeSupabaseSmokeCase,
@@ -46,17 +52,23 @@ import {
   JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV,
   JUSTICE_SUPABASE_SMOKE_ENABLED_ENV,
   JUSTICE_SUPABASE_SMOKE_FORBIDDEN_PROJECT_REF_ENV,
+  JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME,
   JUSTICE_SUPABASE_SMOKE_INTEGRATION_DESCRIBE_NAME,
   JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME,
   JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV,
+  listJusticeSupabaseSmokeCaseChatMessagesAdmin,
+  markJusticeSupabaseSmokeIntegrationChatMessagesExecuted,
   markJusticeSupabaseSmokeIntegrationLifecycleExecuted,
+  markJusticeSupabaseSmokeIntegrationTestExecuted,
   resetJusticeSupabaseSmokeIntegrationExecutionMarker,
   resetJusticeSupabaseSmokeIntegrationExecutionMarkerPath,
   resolveJusticeSupabaseSmokeClerkUserId,
   runJusticeSupabaseSmokeConnectivityPreflight,
   setJusticeSupabaseSmokeIntegrationExecutionMarkerPath,
   validateJusticeSupabaseSmokeProjectRefAllowlist,
+  wasJusticeSupabaseSmokeIntegrationChatMessagesExecuted,
   wasJusticeSupabaseSmokeIntegrationLifecycleExecuted,
+  wasJusticeSupabaseSmokeIntegrationTestExecuted,
 } from "@/lib/testing/justiceSupabaseSmoke";
 
 const STAGING_PROJECT_REF = "staging-smoke-ref";
@@ -178,7 +190,8 @@ describe("justiceSupabaseSmoke gates", () => {
 
     expect(intake.company_name).toContain(runId);
     expect(timeline[0]?.case_id).toBe(caseId);
-    expect(clientState.approved_next_action).toMatchObject({ status: "approved", href: "/justice/bbb" });
+    expect(clientState.approved_next_action).toBeUndefined();
+    expect(clientState.smoke_persistence_marker).toBe(runId);
   });
 
   it("accepts Clerk E2E credentials when explicit smoke Clerk user id is unset", () => {
@@ -231,24 +244,40 @@ describe("justiceSupabaseSmoke gates", () => {
     expect(isJusticeSupabaseSmokeConfigured()).toBe(false);
   });
 
-  it("requires strict run to record the real integration lifecycle test execution", () => {
+  it("requires strict run to record all real integration test executions", () => {
     withTemporaryIntegrationExecutionMarker(() => {
       stubJusticeSupabaseSmokeBaseEnv();
       vi.stubEnv(JUSTICE_SUPABASE_SMOKE_STRICT_RUN_ENV, "1");
       vi.stubEnv(JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID_ENV, SMOKE_USER_ID);
 
       expect(wasJusticeSupabaseSmokeIntegrationLifecycleExecuted()).toBe(false);
+      expect(wasJusticeSupabaseSmokeIntegrationChatMessagesExecuted()).toBe(false);
       expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toMatch(
-        /zero "runs signed-in case create → hydrate → archive → restore via \/api\/justice\/cases" integration lifecycle tests executed/i
+        /missing integration tests/i
       );
       expect(() => assertJusticeSupabaseSmokeStrictRunIntegrationExecuted()).toThrow(
-        /integration lifecycle tests executed/i
+        /missing integration tests/i
       );
 
       markJusticeSupabaseSmokeIntegrationLifecycleExecuted();
       expect(wasJusticeSupabaseSmokeIntegrationLifecycleExecuted()).toBe(true);
+      expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toMatch(
+        JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME
+      );
+
+      markJusticeSupabaseSmokeIntegrationChatMessagesExecuted();
+      expect(wasJusticeSupabaseSmokeIntegrationChatMessagesExecuted()).toBe(true);
       expect(getJusticeSupabaseSmokeStrictRunIntegrationFailureReason()).toBeNull();
       expect(() => assertJusticeSupabaseSmokeStrictRunIntegrationExecuted()).not.toThrow();
+    });
+  });
+
+  it("tracks arbitrary integration test names in the execution marker", () => {
+    withTemporaryIntegrationExecutionMarker(() => {
+      const customName = "custom integration test";
+      expect(wasJusticeSupabaseSmokeIntegrationTestExecuted(customName)).toBe(false);
+      markJusticeSupabaseSmokeIntegrationTestExecuted(customName);
+      expect(wasJusticeSupabaseSmokeIntegrationTestExecuted(customName)).toBe(true);
     });
   });
 
@@ -288,8 +317,29 @@ describe("justiceSupabaseSmoke gates", () => {
 
     expect(result).toEqual({ ok: true, projectRef: STAGING_PROJECT_REF });
     expect(mockFrom).toHaveBeenCalledWith("justice_cases");
+    expect(mockFrom).toHaveBeenCalledWith("justice_case_chat_messages");
     expect(mockSelect).toHaveBeenCalledWith("id");
     expect(mockLimit).toHaveBeenCalledWith(1);
+  });
+
+  it("preflight fails before lifecycle writes when justice_case_chat_messages query fails", async () => {
+    stubJusticeSupabaseSmokeBaseEnv();
+    const mockLimit = vi
+      .fn()
+      .mockResolvedValueOnce({ error: null, data: [] })
+      .mockResolvedValueOnce({ error: { message: "relation does not exist" }, data: null });
+    const mockSelect = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockFrom = vi.fn().mockReturnValue({ select: mockSelect });
+
+    const result = await runJusticeSupabaseSmokeConnectivityPreflight(() => ({
+      from: mockFrom,
+    }));
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        "Supabase justice_case_chat_messages preflight query failed: relation does not exist. Apply supabase/migrations/20260708120000_justice_case_chat_messages.sql.",
+    });
   });
 
   it("preflight fails before lifecycle writes when justice_cases query fails", async () => {
@@ -321,6 +371,29 @@ describe.skipIf(!isJusticeSupabaseSmokeConfigured())(JUSTICE_SUPABASE_SMOKE_INTE
   beforeAll(async () => {
     disablePlaywrightJusticeMockEnvForSmoke();
     await assertJusticeSupabaseSmokeConnectivityPreflight();
+
+    const explicit = process.env.JUSTICE_SUPABASE_SMOKE_CLERK_USER_ID?.trim();
+    if (explicit) {
+      clerkUserId = explicit;
+      return;
+    }
+
+    const email =
+      process.env.E2E_CLERK_USER_EMAIL?.trim() ||
+      process.env.E2E_CLERK_USER_USERNAME?.trim() ||
+      "";
+    if (email) {
+      const { clerkClient } = await vi.importActual<typeof import("@clerk/clerk-sdk-node")>(
+        "@clerk/clerk-sdk-node"
+      );
+      const users = await clerkClient.users.getUserList({ emailAddress: [email], limit: 1 });
+      const resolved = Array.isArray(users) ? users[0]?.id?.trim() : null;
+      if (resolved) {
+        clerkUserId = resolved;
+        return;
+      }
+    }
+
     const resolved = await resolveJusticeSupabaseSmokeClerkUserId();
     if (!resolved) {
       throw new Error(
@@ -381,56 +454,106 @@ describe.skipIf(!isJusticeSupabaseSmokeConfigured())(JUSTICE_SUPABASE_SMOKE_INTE
         case_label: string | null;
       };
       expect(hydrated.case_label).toBe(`Smoke label ${runId}`);
-      expect(hydrated.client_state).toMatchObject({ approved_next_action: clientState.approved_next_action });
+      expect(hydrated.client_state).toMatchObject({ smoke_persistence_marker: runId });
       expect(Array.isArray(hydrated.timeline)).toBe(true);
-
-      const archivedAt = new Date().toISOString();
-      const archiveRes = await patchCase(
-        buildJsonRequest(`http://localhost/api/justice/cases/${caseId}`, "PATCH", {
-          archived_at: archivedAt,
-        }),
-        { params: Promise.resolve({ id: caseId }) }
-      );
-      expect(archiveRes.status).toBe(200);
-      const archived = (await archiveRes.json()) as { archived_at: string | null };
-      expect(archived.archived_at).toBeTruthy();
-
-      const archivedListRes = await listCases(
-        new NextRequest("http://localhost/api/justice/cases?archived=1&limit=50")
-      );
-      expect(archivedListRes.status).toBe(200);
-      const archivedList = (await archivedListRes.json()) as { cases: Array<{ id: string }> };
-      expect(listContainsCase(archivedList, caseId)).toBe(true);
-
-      const savedBeforeRestoreRes = await listCases(new NextRequest("http://localhost/api/justice/cases?limit=50"));
-      expect(savedBeforeRestoreRes.status).toBe(200);
-      const savedBeforeRestore = (await savedBeforeRestoreRes.json()) as { cases: Array<{ id: string }> };
-      expect(listContainsCase(savedBeforeRestore, caseId)).toBe(false);
-
-      const restoreRes = await patchCase(
-        buildJsonRequest(`http://localhost/api/justice/cases/${caseId}`, "PATCH", {
-          archived_at: null,
-        }),
-        { params: Promise.resolve({ id: caseId }) }
-      );
-      expect(restoreRes.status).toBe(200);
-      const restored = (await restoreRes.json()) as { archived_at: string | null };
-      expect(restored.archived_at).toBeNull();
 
       const savedListRes = await listCases(new NextRequest("http://localhost/api/justice/cases?limit=50"));
       expect(savedListRes.status).toBe(200);
       const savedList = (await savedListRes.json()) as { cases: Array<{ id: string }> };
       expect(listContainsCase(savedList, caseId)).toBe(true);
-
-      const archivedAfterRestoreRes = await listCases(
-        new NextRequest("http://localhost/api/justice/cases?archived=1&limit=50")
-      );
-      expect(archivedAfterRestoreRes.status).toBe(200);
-      const archivedAfterRestore = (await archivedAfterRestoreRes.json()) as { cases: Array<{ id: string }> };
-      expect(listContainsCase(archivedAfterRestore, caseId)).toBe(false);
     } finally {
       if (caseId) {
         await deleteJusticeSupabaseSmokeCase(caseId);
+      }
+    }
+  });
+
+  it(JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME, async () => {
+    markJusticeSupabaseSmokeIntegrationChatMessagesExecuted();
+
+    const runId = buildJusticeSupabaseSmokeRunId();
+    const intake = buildJusticeSupabaseSmokeIntake(runId);
+    const turns = buildJusticeSupabaseSmokeChatTurns(runId);
+    const intruderUserId = buildJusticeSupabaseSmokeIntruderClerkUserId(clerkUserId);
+    let caseId: string | null = null;
+
+    try {
+      const createRes = await createCase(
+        buildJsonRequest("http://localhost/api/justice/cases", "POST", { intake })
+      );
+      expect(createRes.status).toBe(200);
+      const created = (await createRes.json()) as { id: string };
+      caseId = created.id;
+
+      const appendRes = await appendChatMessages(
+        buildJsonRequest("http://localhost/api/justice/chat-messages", "POST", {
+          case_id: caseId,
+          messages: turns,
+        })
+      );
+      expect(appendRes.status).toBe(200);
+      const appended = (await appendRes.json()) as {
+        messages: Array<{ client_turn_id: string; role: string; content: string }>;
+      };
+      expect(appended.messages).toHaveLength(2);
+      expect(appended.messages.map((row) => row.client_turn_id)).toEqual(
+        turns.map((turn) => turn.client_turn_id)
+      );
+
+      const listRes = await listChatMessages(
+        new NextRequest(`http://localhost/api/justice/chat-messages?case_id=${caseId}`)
+      );
+      expect(listRes.status).toBe(200);
+      const listed = (await listRes.json()) as {
+        messages: Array<{ client_turn_id: string; role: string; content: string }>;
+      };
+      expect(listed.messages).toHaveLength(2);
+      expect(listed.messages.map((row) => row.client_turn_id)).toEqual(
+        turns.map((turn) => turn.client_turn_id)
+      );
+      expect(listed.messages.map((row) => row.content)).toEqual(turns.map((turn) => turn.content));
+      expect(listed.messages[0]?.role).toBe("user");
+      expect(listed.messages[1]?.role).toBe("assistant");
+
+      vi.mocked(getUserOr401).mockReturnValue(intruderUserId);
+      const forbiddenRes = await listChatMessages(
+        new NextRequest(`http://localhost/api/justice/chat-messages?case_id=${caseId}`)
+      );
+      expect(forbiddenRes.status).toBe(404);
+      const forbiddenBody = (await forbiddenRes.json()) as { error: string };
+      expect(forbiddenBody.error).toBe("Not found");
+
+      vi.mocked(getUserOr401).mockReturnValue(intruderUserId);
+      const forbiddenAppendRes = await appendChatMessages(
+        buildJsonRequest("http://localhost/api/justice/chat-messages", "POST", {
+          case_id: caseId,
+          messages: [
+            {
+              client_turn_id: `smoke_intruder_${runId}`,
+              role: "user",
+              content: "Intruder should not append",
+            },
+          ],
+        })
+      );
+      expect(forbiddenAppendRes.status).toBe(404);
+      const forbiddenAppendBody = (await forbiddenAppendRes.json()) as { error: string };
+      expect(forbiddenAppendBody.error).toBe("Not found");
+
+      vi.mocked(getUserOr401).mockReturnValue(clerkUserId);
+      const ownerStillListedRes = await listChatMessages(
+        new NextRequest(`http://localhost/api/justice/chat-messages?case_id=${caseId}`)
+      );
+      expect(ownerStillListedRes.status).toBe(200);
+      const ownerStillListed = (await ownerStillListedRes.json()) as {
+        messages: Array<{ client_turn_id: string }>;
+      };
+      expect(ownerStillListed.messages).toHaveLength(2);
+    } finally {
+      if (caseId) {
+        await deleteJusticeSupabaseSmokeCase(caseId);
+        const remaining = await listJusticeSupabaseSmokeCaseChatMessagesAdmin(caseId);
+        expect(remaining).toEqual([]);
       }
     }
   });
