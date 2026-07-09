@@ -25,6 +25,7 @@ import {
   isPlaywrightMockJusticeTasksPipelineEnabled,
   resetPlaywrightMockJusticeTasksForCase,
 } from "@/lib/testing/playwrightMockJusticeTasksPipeline";
+import { setPlaywrightMockCaseOwnerUserId } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import {
   buildPlaywrightMockArchivedCasesListResponse,
   isPlaywrightMockJusticeArchivedCasesListPipelineEnabled,
@@ -205,6 +206,7 @@ export async function POST(req: NextRequest) {
     if (isPlaywrightMockIntakeCaseHydrationPipelineEnabled()) {
       seedPlaywrightMockCaseHydrationFromCreate(created);
     }
+    setPlaywrightMockCaseOwnerUserId(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID, userId);
     return NextResponse.json(created);
   }
 

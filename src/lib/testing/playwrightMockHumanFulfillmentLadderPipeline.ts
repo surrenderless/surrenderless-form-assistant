@@ -7,6 +7,7 @@ import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
   buildDemandLetterFilingTaskNotes,
   buildDemandLetterFilingTaskTitle,
+  parseDemandLetterFilingTaskDraft,
   shouldQueueDemandLetterFilingTask,
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
@@ -19,6 +20,7 @@ import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recompute
 import {
   buildStateAgFilingTaskNotes,
   buildStateAgFilingTaskTitle,
+  parseStateAgFilingTaskDraft,
   shouldQueueStateAgFilingTask,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
@@ -28,6 +30,7 @@ import {
   buildPlaywrightMockCasePatchResponse,
   isPlaywrightMockIntakeCaseHydrationCaseId,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
   buildPlaywrightMockJusticeFilingPostResponse,
   type PlaywrightMockJusticeFilingRow,
@@ -43,13 +46,22 @@ const playwrightMockHumanFulfillmentTasksByCaseId = new Map<
   PlaywrightMockJusticeTaskRow[]
 >();
 
+const playwrightMockCaseOwnerUserIdByCaseId = new Map<string, string>();
+
+export function setPlaywrightMockCaseOwnerUserId(caseId: string, userId: string): void {
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
+  playwrightMockCaseOwnerUserIdByCaseId.set(caseId.trim(), userId.trim());
+}
+
 export function resetPlaywrightMockHumanFulfillmentLadderForTests(): void {
   playwrightMockHumanFulfillmentTasksByCaseId.clear();
+  playwrightMockCaseOwnerUserIdByCaseId.clear();
 }
 
 export function resetPlaywrightMockHumanFulfillmentLadderForCase(caseId: string): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
   playwrightMockHumanFulfillmentTasksByCaseId.delete(caseId.trim());
+  playwrightMockCaseOwnerUserIdByCaseId.delete(caseId.trim());
 }
 
 function buildOpenTask(input: {
@@ -119,6 +131,9 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   }
 
   playwrightMockHumanFulfillmentTasksByCaseId.set(trimmedCaseId, tasks);
+  if (userId.trim()) {
+    setPlaywrightMockCaseOwnerUserId(trimmedCaseId, userId.trim());
+  }
 }
 
 export function getPlaywrightMockHumanFulfillmentTasks(
@@ -301,11 +316,82 @@ export function completePlaywrightMockDemandLetterOperatorFiling(
   };
 }
 
+export function resolvePlaywrightMockCaseOwnerUserId(caseId: string): string | null {
+  const trimmedCaseId = caseId.trim();
+  const tasks = playwrightMockHumanFulfillmentTasksByCaseId.get(trimmedCaseId) ?? [];
+  const ownerFromTask = tasks.find((task) => task.user_id?.trim())?.user_id?.trim();
+  if (ownerFromTask) return ownerFromTask;
+  const ownerFromMap = playwrightMockCaseOwnerUserIdByCaseId.get(trimmedCaseId)?.trim();
+  return ownerFromMap && ownerFromMap.length > 0 ? ownerFromMap : null;
+}
+
 /** Whether operator filing mock routes should handle the fixed E2E case. */
 export function isPlaywrightMockHumanFulfillmentOperatorFilingCaseId(caseId: string): boolean {
   return isPlaywrightMockIntakeCaseHydrationCaseId(caseId);
 }
 
 export function isPlaywrightMockHumanFulfillmentOperatorFilingEnabled(): boolean {
-  return process.env.PLAYWRIGHT_MOCK_JUSTICE_TASKS_PIPELINE === "1";
+  if (process.env.PLAYWRIGHT_MOCK_JUSTICE_TASKS_PIPELINE !== "1") {
+    return false;
+  }
+  // Never allow on deployed production, even if the env var is set.
+  if (process.env.VERCEL_ENV === "production") {
+    return false;
+  }
+  return true;
+}
+
+export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/justice/operatorFulfillmentQueue").OperatorFulfillmentQueueItem[] {
+  const caseId = PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return [];
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  const storedTasks = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId) ?? [];
+  const consumerUserId = storedTasks.find((task) => task.user_id?.trim())?.user_id?.trim() ?? "";
+  if (consumerUserId) {
+    syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+      caseId,
+      consumerUserId,
+      snapshot.client_state,
+      snapshot.intake
+    );
+  }
+
+  if (!isJusticeIntakePayload(snapshot.intake)) return [];
+
+  const intake = snapshot.intake as JusticeIntake;
+  const tasks = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId) ?? [];
+  const items: import("@/lib/justice/operatorFulfillmentQueue").OperatorFulfillmentQueueItem[] = [];
+
+  for (const task of tasks) {
+    if (task.completed_at?.trim()) continue;
+    const ownerId = task.user_id?.trim() || consumerUserId;
+    if (taskNotesMatchStateAgFilingMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "state_ag",
+        task_title: task.title?.trim() || "State AG filing",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parseStateAgFilingTaskDraft(task.notes).slice(0, 400),
+      });
+      continue;
+    }
+    if (taskNotesMatchDemandLetterFilingMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "demand_letter",
+        task_title: task.title?.trim() || "Demand letter",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parseDemandLetterFilingTaskDraft(task.notes).slice(0, 400),
+      });
+    }
+  }
+
+  return items;
 }

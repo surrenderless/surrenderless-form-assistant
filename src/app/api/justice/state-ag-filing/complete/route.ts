@@ -2,11 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { completeStateAgOperatorFiling } from "@/lib/justice/completeStateAgOperatorFiling";
-import { getUserOr401 } from "@/server/requireUser";
+import { resolveCaseOwnerUserIdForOperatorFulfillment } from "@/lib/justice/operatorFulfillmentQueue";
+import { requireOperatorApiAccess } from "@/server/requireOperatorApiAccess";
 import {
   completePlaywrightMockStateAgOperatorFiling,
   isPlaywrightMockHumanFulfillmentOperatorFilingCaseId,
   isPlaywrightMockHumanFulfillmentOperatorFilingEnabled,
+  resolvePlaywrightMockCaseOwnerUserId,
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
@@ -32,10 +34,8 @@ function nonEmptyString(v: unknown): v is string {
 }
 
 export async function POST(req: NextRequest) {
-  const userId = getUserOr401(req);
-  if (!userId) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const auth = await requireOperatorApiAccess(req);
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {
@@ -82,9 +82,13 @@ export async function POST(req: NextRequest) {
     isPlaywrightMockHumanFulfillmentOperatorFilingEnabled() &&
     isPlaywrightMockHumanFulfillmentOperatorFilingCaseId(caseId)
   ) {
+    const mockOwnerId = resolvePlaywrightMockCaseOwnerUserId(caseId);
+    if (!mockOwnerId) {
+      return NextResponse.json({ error: "Case owner not found for mock fulfillment" }, { status: 404 });
+    }
     const mockResult = completePlaywrightMockStateAgOperatorFiling({
       caseId,
-      userId,
+      userId: mockOwnerId,
       taskId,
       destination: b.destination.trim(),
       filedAt: b.filed_at.trim(),
@@ -107,7 +111,12 @@ export async function POST(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
-  const result = await completeStateAgOperatorFiling(supabase, userId, {
+  const ownerResult = await resolveCaseOwnerUserIdForOperatorFulfillment(supabase, caseId);
+  if (!ownerResult.ok) {
+    return NextResponse.json({ error: ownerResult.error }, { status: ownerResult.status });
+  }
+
+  const result = await completeStateAgOperatorFiling(supabase, ownerResult.userId, {
     caseId,
     taskId,
     destination: b.destination.trim(),
