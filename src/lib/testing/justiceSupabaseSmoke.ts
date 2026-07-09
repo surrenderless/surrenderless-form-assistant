@@ -17,7 +17,17 @@ export const JUSTICE_SUPABASE_SMOKE_INTEGRATION_DESCRIBE_NAME = "justice Supabas
 
 /** Vitest name for the real signed-in Supabase lifecycle integration test. */
 export const JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME =
-  "runs signed-in case create → hydrate → archive → restore via /api/justice/cases";
+  "runs signed-in case create → hydrate → list via /api/justice/cases";
+
+/** Vitest name for the real signed-in Supabase chat transcript integration test. */
+export const JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME =
+  "runs signed-in case chat transcript append → list → deny other user → cleanup via /api/justice/chat-messages";
+
+/** Integration tests that must execute during a strict dedicated smoke run. */
+export const JUSTICE_SUPABASE_SMOKE_REQUIRED_INTEGRATION_TEST_NAMES = [
+  JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME,
+  JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME,
+] as const;
 
 const SUPABASE_HOST_SUFFIX = ".supabase.co";
 const DEFAULT_INTEGRATION_EXECUTION_MARKER_PATH = path.join(
@@ -51,22 +61,73 @@ export function resetJusticeSupabaseSmokeIntegrationExecutionMarker(): void {
   }
 }
 
+function readIntegrationExecutionMarker(): string[] {
+  try {
+    const raw = fs.readFileSync(getIntegrationExecutionMarkerPath(), "utf8").trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((value): value is string => typeof value === "string" && value.length > 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function writeIntegrationExecutionMarker(testNames: string[]): void {
+  fs.writeFileSync(getIntegrationExecutionMarkerPath(), JSON.stringify(testNames), "utf8");
+}
+
+/** Records that a real integration test body executed. */
+export function markJusticeSupabaseSmokeIntegrationTestExecuted(testName: string): void {
+  const executed = new Set(readIntegrationExecutionMarker());
+  executed.add(testName);
+  writeIntegrationExecutionMarker([...executed]);
+}
+
 /** Records that the real integration lifecycle test body executed. */
 export function markJusticeSupabaseSmokeIntegrationLifecycleExecuted(): void {
-  fs.writeFileSync(getIntegrationExecutionMarkerPath(), String(Date.now()), "utf8");
+  markJusticeSupabaseSmokeIntegrationTestExecuted(JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME);
+}
+
+/** Records that the real chat transcript integration test body executed. */
+export function markJusticeSupabaseSmokeIntegrationChatMessagesExecuted(): void {
+  markJusticeSupabaseSmokeIntegrationTestExecuted(
+    JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME
+  );
+}
+
+/** True when the named integration test body executed in this strict run. */
+export function wasJusticeSupabaseSmokeIntegrationTestExecuted(testName: string): boolean {
+  return readIntegrationExecutionMarker().includes(testName);
 }
 
 /** True when the real integration lifecycle test body executed in this strict run. */
 export function wasJusticeSupabaseSmokeIntegrationLifecycleExecuted(): boolean {
-  return fs.existsSync(getIntegrationExecutionMarkerPath());
+  return wasJusticeSupabaseSmokeIntegrationTestExecuted(
+    JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME
+  );
 }
 
-/** Non-null when strict run is configured but zero integration lifecycle tests executed. */
+/** True when the real chat transcript integration test body executed in this strict run. */
+export function wasJusticeSupabaseSmokeIntegrationChatMessagesExecuted(): boolean {
+  return wasJusticeSupabaseSmokeIntegrationTestExecuted(
+    JUSTICE_SUPABASE_SMOKE_INTEGRATION_CHAT_MESSAGES_TEST_NAME
+  );
+}
+
+/** Non-null when strict run is configured but required integration tests did not all execute. */
 export function getJusticeSupabaseSmokeStrictRunIntegrationFailureReason(): string | null {
   if (!isJusticeSupabaseSmokeStrictRun()) return null;
   if (!isJusticeSupabaseSmokeConfigured()) return null;
-  if (wasJusticeSupabaseSmokeIntegrationLifecycleExecuted()) return null;
-  return `Justice Supabase smoke strict run refused: configured but zero "${JUSTICE_SUPABASE_SMOKE_INTEGRATION_LIFECYCLE_TEST_NAME}" integration lifecycle tests executed.`;
+
+  const executed = new Set(readIntegrationExecutionMarker());
+  const missing = JUSTICE_SUPABASE_SMOKE_REQUIRED_INTEGRATION_TEST_NAMES.filter(
+    (testName) => !executed.has(testName)
+  );
+  if (missing.length === 0) return null;
+
+  return `Justice Supabase smoke strict run refused: configured but missing integration tests — ${missing.join("; ")}.`;
 }
 
 /** Throws when strict run completed without executing the real integration lifecycle test. */
@@ -243,7 +304,7 @@ export async function resolveJusticeSupabaseSmokeClerkUserId(): Promise<string |
 
   const { clerkClient } = await import("@clerk/clerk-sdk-node");
   const users = await clerkClient.users.getUserList({ emailAddress: [email], limit: 1 });
-  const userId = users[0]?.id?.trim();
+  const userId = Array.isArray(users) ? users[0]?.id?.trim() : null;
   return userId && userId.length > 0 ? userId : null;
 }
 
@@ -284,15 +345,33 @@ export function buildJusticeSupabaseSmokeCaseStartedTimeline(
   ];
 }
 
-/** Minimal client_state shape used after draft review in the signed-in roundtrip. */
+/** Chat turns appended during transcript smoke — unique client_turn_id per run. */
+export function buildJusticeSupabaseSmokeChatTurns(runId: string) {
+  return [
+    {
+      client_turn_id: `smoke_user_${runId}`,
+      role: "user" as const,
+      content: `Smoke user turn ${runId}`,
+      source: "intake_chat" as const,
+    },
+    {
+      client_turn_id: `smoke_assistant_${runId}`,
+      role: "assistant" as const,
+      content: `Smoke assistant turn ${runId}`,
+      source: "progress_narration" as const,
+    },
+  ];
+}
+
+/** Clerk user id that must not read another user's case transcript. */
+export function buildJusticeSupabaseSmokeIntruderClerkUserId(ownerClerkUserId: string): string {
+  return `${ownerClerkUserId}_intruder`;
+}
+
+/** Minimal client_state for persistence smoke without escalation-ladder archive blocks. */
 export function buildJusticeSupabaseSmokeClientState(runId: string): Record<string, unknown> {
   return {
-    approved_next_action: {
-      status: "approved",
-      href: "/justice/bbb",
-      destination_id: "bbb",
-      label: `Smoke BBB action ${runId}`,
-    },
+    smoke_persistence_marker: runId,
   };
 }
 
@@ -374,11 +453,22 @@ export async function runJusticeSupabaseSmokeConnectivityPreflight(
     };
   }
 
-  const { error } = await supabase.from("justice_cases").select("id").limit(1);
-  if (error) {
+  const { error: casesError } = await supabase.from("justice_cases").select("id").limit(1);
+  if (casesError) {
     return {
       ok: false,
-      error: `Supabase justice_cases preflight query failed: ${error.message}`,
+      error: `Supabase justice_cases preflight query failed: ${casesError.message}`,
+    };
+  }
+
+  const { error: chatMessagesError } = await supabase
+    .from("justice_case_chat_messages")
+    .select("id")
+    .limit(1);
+  if (chatMessagesError) {
+    return {
+      ok: false,
+      error: `Supabase justice_case_chat_messages preflight query failed: ${chatMessagesError.message}. Apply supabase/migrations/20260708120000_justice_case_chat_messages.sql.`,
     };
   }
 
@@ -393,6 +483,27 @@ export async function assertJusticeSupabaseSmokeConnectivityPreflight(
   if (!result.ok) {
     throw new Error(result.error);
   }
+}
+
+/** Service-role read for smoke cleanup assertions — not part of the user-facing API under test. */
+export async function listJusticeSupabaseSmokeCaseChatMessagesAdmin(
+  caseId: string
+): Promise<Array<{ id: string }>> {
+  const supabase = createJusticeSupabaseSmokeAdminClient();
+  if (!supabase) {
+    throw new Error("Supabase admin client unavailable for smoke cleanup.");
+  }
+
+  const { data, error } = await supabase
+    .from("justice_case_chat_messages")
+    .select("id")
+    .eq("case_id", caseId);
+
+  if (error) {
+    throw new Error(`Failed to list smoke chat messages for case ${caseId}: ${error.message}`);
+  }
+
+  return (data ?? []) as Array<{ id: string }>;
 }
 
 /** Service-role cleanup only — not part of the user-facing API lifecycle under test. */
@@ -414,6 +525,7 @@ export const PLAYWRIGHT_JUSTICE_MOCK_ENV_KEYS = [
   "PLAYWRIGHT_MOCK_INTAKE_CASE_HYDRATION_PIPELINE",
   "PLAYWRIGHT_MOCK_JUSTICE_ARCHIVED_CASES_LIST_PIPELINE",
   "PLAYWRIGHT_MOCK_JUSTICE_SAVED_CASES_LIST_PIPELINE",
+  "PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_PIPELINE",
 ] as const;
 
 /** Clears Playwright justice mock flags so route handlers hit Supabase. */

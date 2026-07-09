@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supabaseAdmin } from "@/utils/supabaseClient";
+import { getSupabaseAdmin } from "@/server/getSupabaseAdmin";
 
 /** Resolves the owning Clerk user id for a justice case (service-role lookup). */
 export async function resolveJusticeCaseOwnerUserId(
@@ -22,7 +22,13 @@ export async function resolveJusticeCaseOwnerUserId(
 
 /** True when `caseId` exists and belongs to `userId` (Clerk user id). */
 export async function userOwnsJusticeCase(userId: string, caseId: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
+  const supabase = getSupabaseAdmin();
+  if (!supabase) {
+    console.warn("justice_case ownership check: Supabase is not configured");
+    return false;
+  }
+
+  const { data, error } = await supabase
     .from("justice_cases")
     .select("id")
     .eq("id", caseId)

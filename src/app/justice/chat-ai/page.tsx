@@ -70,6 +70,13 @@ import {
   collectNewChatCaseProgressNarrationMessages,
   type ChatCaseProgressObservation,
 } from "@/lib/justice/chatCaseProgressNarration";
+import type { JusticeCaseChatMessageSource } from "@/lib/justice/justiceCaseChatMessages";
+import {
+  appendCaseChatTranscriptTurns,
+  fetchCaseChatTranscript,
+  type JusticeCaseChatUiMessage,
+} from "@/lib/justice/justiceCaseChatTranscriptClient";
+import { syncChatProgressNarrationFromTranscript } from "@/lib/justice/syncChatProgressNarrationFromTranscript";
 import { shouldAutopilotMerchantContactDocumentation } from "@/lib/justice/chatSafeChecklistAutopilot";
 import {
   buildChatLegalConsentAssistantResponse,
@@ -491,6 +498,24 @@ function formatIntakeChatApiError(status: number, serverError?: string): string 
 function msgId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `m_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function isEphemeralChatGreeting(text: string): boolean {
+  return text === OPENING_GREETING || text === UPDATE_GREETING;
+}
+
+function uiMessagesToPersistTurns(
+  turns: readonly JusticeCaseChatUiMessage[],
+  source: JusticeCaseChatMessageSource
+) {
+  return turns
+    .filter((turn) => !isEphemeralChatGreeting(turn.text))
+    .map((turn) => ({
+      clientTurnId: turn.id,
+      role: turn.role,
+      content: turn.text,
+      source,
+    }));
 }
 
 function categoryLabel(cat: JusticeIntake["problem_category"]): string {
@@ -2299,9 +2324,11 @@ export default function JusticeChatAiPage() {
   const { isSignedIn, isLoaded } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendInFlightRef = useRef(false);
-  const sessionHydratedRef = useRef(false);
   const sessionBaselinePartsRef = useRef<BuildJusticeIntakeParts | null>(null);
   const sessionBaselineEvidenceCountRef = useRef<number | null>(null);
+  const transcriptCaseIdRef = useRef("");
+  const persistedTurnIdsRef = useRef<Set<string>>(new Set());
+  const messagesRef = useRef<UiMessage[]>([]);
   const prevApprovedActionHrefForAssistedPracticeRef = useRef<string | undefined>(undefined);
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
@@ -2410,14 +2437,91 @@ export default function JusticeChatAiPage() {
   approvedNextActionRef.current = approvedNextAction;
   savedTasksRef.current = savedTasks;
 
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const persistChatTurnsForCase = useCallback(
+    async (caseId: string, turns: readonly UiMessage[], source: JusticeCaseChatMessageSource) => {
+      if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId) || turns.length === 0) {
+        return;
+      }
+      const toPersist = turns.filter((turn) => !persistedTurnIdsRef.current.has(turn.id));
+      if (toPersist.length === 0) return;
+      const payload = uiMessagesToPersistTurns(toPersist, source);
+      if (payload.length === 0) return;
+      try {
+        await appendCaseChatTranscriptTurns(caseId, payload);
+        toPersist.forEach((turn) => persistedTurnIdsRef.current.add(turn.id));
+      } catch (error) {
+        console.warn("justice chat-ai: transcript persist failed", error);
+      }
+    },
+    [isLoaded, isSignedIn]
+  );
+
+  const backfillChatTranscriptForCase = useCallback(
+    async (caseId: string, turns: readonly UiMessage[]) => {
+      if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId) || turns.length === 0) {
+        return;
+      }
+      const toPersist = turns.filter(
+        (turn) =>
+          !isEphemeralChatGreeting(turn.text) && !persistedTurnIdsRef.current.has(turn.id)
+      );
+      if (toPersist.length === 0) return;
+      const payload = uiMessagesToPersistTurns(toPersist, "intake_chat");
+      if (payload.length === 0) return;
+      try {
+        await appendCaseChatTranscriptTurns(caseId, payload);
+        toPersist.forEach((turn) => persistedTurnIdsRef.current.add(turn.id));
+      } catch (error) {
+        console.warn("justice chat-ai: transcript backfill persist failed", error);
+      }
+    },
+    [isLoaded, isSignedIn]
+  );
+
+  const addChatMessages = useCallback(
+    (
+      newTurns: UiMessage[],
+      options?: { caseId?: string; source?: JusticeCaseChatMessageSource }
+    ) => {
+      messagesRef.current = [...messagesRef.current, ...newTurns];
+      setMessages(messagesRef.current);
+      const caseId =
+        options?.caseId?.trim() ||
+        (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "");
+      if (caseId) {
+        void persistChatTurnsForCase(caseId, newTurns, options?.source ?? "intake_chat");
+      }
+    },
+    [persistChatTurnsForCase]
+  );
+
+  const resetActiveChatTranscriptState = useCallback((options?: { openingGreeting?: boolean }) => {
+    transcriptCaseIdRef.current = "";
+    persistedTurnIdsRef.current.clear();
+    if (options?.openingGreeting !== false) {
+      const greeting = { id: msgId(), role: "assistant" as const, text: OPENING_GREETING };
+      messagesRef.current = [greeting];
+      setMessages(messagesRef.current);
+    }
+  }, []);
+
   const appendChatCaseProgressNarration = useCallback((observation: ChatCaseProgressObservation) => {
     const narrationMessages = collectNewChatCaseProgressNarrationMessages(observation);
     if (narrationMessages.length === 0) return;
-    setMessages((prev) => [
-      ...prev,
-      ...narrationMessages.map((text) => ({ id: msgId(), role: "assistant" as const, text })),
-    ]);
-  }, []);
+    const turns = narrationMessages.map((text) => ({
+      id: msgId(),
+      role: "assistant" as const,
+      text,
+    }));
+    addChatMessages(turns, {
+      caseId: observation.caseId,
+      source: "progress_narration",
+    });
+  }, [addChatMessages]);
 
   async function handleMarkSubmissionDraftReviewedFromChat(options?: {
     fromChatConsent?: boolean;
@@ -2503,6 +2607,7 @@ export default function JusticeChatAiPage() {
       clearLocalJusticeSession();
       if (options?.fromChat) {
         resetChatPostClosureUiState();
+        resetActiveChatTranscriptState();
         return true;
       }
       router.push("/justice");
@@ -3348,15 +3453,12 @@ export default function JusticeChatAiPage() {
   }
 
   useEffect(() => {
-    if (sessionHydratedRef.current) return;
-    sessionHydratedRef.current = true;
     const intake = readValidLocalJusticeIntake();
     if (intake) {
       const hydrated = justiceIntakeToBuildJusticeIntakeParts(intake);
       sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
       setParts(hydrated);
       setIsUpdatingExistingCase(true);
-      setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
     }
     setStagedProofNotes(readStagedProofNotes());
   }, []);
@@ -3684,6 +3786,60 @@ export default function JusticeChatAiPage() {
           return id && isUuid(id) ? id : "";
         })()
       : "";
+
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const validCaseId = activeUuidCaseId;
+
+    if (!isSignedIn || !validCaseId) {
+      if (transcriptCaseIdRef.current) {
+        resetActiveChatTranscriptState({ openingGreeting: !readValidLocalJusticeIntake() });
+      }
+      return;
+    }
+
+    if (transcriptCaseIdRef.current === validCaseId) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const loaded = await fetchCaseChatTranscript(validCaseId);
+        if (cancelled) return;
+
+        transcriptCaseIdRef.current = validCaseId;
+        persistedTurnIdsRef.current = new Set(loaded.map((turn) => turn.id));
+
+        if (loaded.length > 0) {
+          messagesRef.current = loaded;
+          setMessages(loaded);
+          syncChatProgressNarrationFromTranscript(validCaseId, loaded);
+          return;
+        }
+
+        const hasInMemoryConversation = messagesRef.current.some(
+          (turn) => !isEphemeralChatGreeting(turn.text)
+        );
+        if (isUpdatingExistingCase && !hasInMemoryConversation) {
+          setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
+        }
+      } catch (error) {
+        console.warn("justice chat-ai: transcript hydrate failed", error);
+        if (cancelled) return;
+        transcriptCaseIdRef.current = validCaseId;
+        const hasInMemoryConversation = messagesRef.current.some(
+          (turn) => !isEphemeralChatGreeting(turn.text)
+        );
+        if (isUpdatingExistingCase && !hasInMemoryConversation) {
+          setMessages([{ id: msgId(), role: "assistant", text: UPDATE_GREETING }]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, isUpdatingExistingCase, activeUuidCaseId, resetActiveChatTranscriptState]);
 
   const chatPacketPlainText = useMemo(() => {
     if (!activeUuidCaseId) return "";
@@ -4130,12 +4286,16 @@ export default function JusticeChatAiPage() {
         sendInFlightRef.current = true;
         setLoading(true);
         setInputValue("");
-        setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+        const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
+        messagesRef.current = [...messagesRef.current, userTurn];
+        setMessages(messagesRef.current);
         try {
           let assistantText = buildChatIntakeCommitAssistantResponse(parsedIntakeCommit);
+          let commitSucceeded = false;
 
           if (parsedIntakeCommit.kind === "intake_commit") {
             const ok = await handleContinueToPreview({ fromChatCommit: true });
+            commitSucceeded = ok;
             if (!ok) {
               assistantText =
                 contactProofCheckForCommit.ok && basicsMissingForCommit.length === 0
@@ -4144,10 +4304,20 @@ export default function JusticeChatAiPage() {
             }
           }
 
-          setMessages((prev) => [
-            ...prev,
-            { id: msgId(), role: "assistant", text: assistantText },
-          ]);
+          const assistantTurn = { id: msgId(), role: "assistant" as const, text: assistantText };
+          messagesRef.current = [...messagesRef.current, assistantTurn];
+          setMessages(messagesRef.current);
+
+          if (parsedIntakeCommit.kind === "intake_commit" && commitSucceeded) {
+            const caseIdAfterCommit =
+              typeof window !== "undefined"
+                ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
+                : "";
+            if (caseIdAfterCommit && isUuid(caseIdAfterCommit)) {
+              transcriptCaseIdRef.current = caseIdAfterCommit;
+              await backfillChatTranscriptForCase(caseIdAfterCommit, messagesRef.current);
+            }
+          }
         } finally {
           sendInFlightRef.current = false;
           setLoading(false);
@@ -4160,16 +4330,18 @@ export default function JusticeChatAiPage() {
         sendInFlightRef.current = true;
         setLoading(true);
         setInputValue("");
-        setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
         try {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: msgId(),
-              role: "assistant",
-              text: buildChatIntakeCommitAssistantResponse(parsedWrongStage),
-            },
-          ]);
+          addChatMessages(
+            [
+              { id: msgId(), role: "user", text: trimmed },
+              {
+                id: msgId(),
+                role: "assistant",
+                text: buildChatIntakeCommitAssistantResponse(parsedWrongStage),
+              },
+            ],
+            { source: "intake_commit_gate" }
+          );
         } finally {
           sendInFlightRef.current = false;
           setLoading(false);
@@ -4214,7 +4386,7 @@ export default function JusticeChatAiPage() {
           sendInFlightRef.current = true;
           setLoading(true);
           setInputValue("");
-          setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+          const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
           try {
             let assistantText = buildChatLegalConsentAssistantResponse(parsed);
 
@@ -4249,10 +4421,10 @@ export default function JusticeChatAiPage() {
               }
             }
 
-            setMessages((prev) => [
-              ...prev,
-              { id: msgId(), role: "assistant", text: assistantText },
-            ]);
+            addChatMessages(
+              [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+              { caseId: consentCaseId, source: "legal_consent_gate" }
+            );
           } finally {
             sendInFlightRef.current = false;
             setLoading(false);
@@ -4303,7 +4475,7 @@ export default function JusticeChatAiPage() {
           sendInFlightRef.current = true;
           setLoading(true);
           setInputValue("");
-          setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
+          const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
           try {
             let assistantText = buildChatCaseClosureAssistantResponse(parsedClosure);
 
@@ -4313,18 +4485,29 @@ export default function JusticeChatAiPage() {
                 assistantText =
                   "I could not mark follow-up handled on the server. Please try again or use the button below.";
               }
+              addChatMessages(
+                [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+                { caseId: consentCaseId, source: "closure_gate" }
+              );
             } else if (parsedClosure.kind === "archive_case") {
+              const assistantTurn = { id: msgId(), role: "assistant" as const, text: assistantText };
+              await appendCaseChatTranscriptTurns(
+                consentCaseId,
+                uiMessagesToPersistTurns([userTurn, assistantTurn], "closure_gate")
+              );
+              persistedTurnIdsRef.current.add(userTurn.id);
+              persistedTurnIdsRef.current.add(assistantTurn.id);
+
               const ok = await handleArchiveActiveCase(consentCaseId, { fromChat: true });
               if (!ok) {
                 assistantText =
                   "I could not archive your case on the server. Please try again or use the Archive case button below.";
+                addChatMessages(
+                  [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+                  { caseId: consentCaseId, source: "closure_gate" }
+                );
               }
             }
-
-            setMessages((prev) => [
-              ...prev,
-              { id: msgId(), role: "assistant", text: assistantText },
-            ]);
           } finally {
             sendInFlightRef.current = false;
             setLoading(false);
@@ -4338,16 +4521,18 @@ export default function JusticeChatAiPage() {
         sendInFlightRef.current = true;
         setLoading(true);
         setInputValue("");
-        setMessages((prev) => [...prev, { id: msgId(), role: "user", text: trimmed }]);
         try {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: msgId(),
-              role: "assistant",
-              text: buildChatCaseClosureAssistantResponse({ kind: "premature_archive" }),
-            },
-          ]);
+          addChatMessages(
+            [
+              { id: msgId(), role: "user", text: trimmed },
+              {
+                id: msgId(),
+                role: "assistant",
+                text: buildChatCaseClosureAssistantResponse({ kind: "premature_archive" }),
+              },
+            ],
+            { caseId: consentCaseId, source: "closure_gate" }
+          );
         } finally {
           sendInFlightRef.current = false;
           setLoading(false);
@@ -4390,11 +4575,13 @@ export default function JusticeChatAiPage() {
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        { id: msgId(), role: "user", text: trimmed },
-        { id: msgId(), role: "assistant", text: data.assistantMessage!.trim() },
-      ]);
+      addChatMessages(
+        [
+          { id: msgId(), role: "user", text: trimmed },
+          { id: msgId(), role: "assistant", text: data.assistantMessage!.trim() },
+        ],
+        { source: "intake_chat" }
+      );
       setParts(enrichContactProofPartsAfterChatTurn(data.parts, trimmed));
       setInputValue("");
       tryShowProofKeywordNudge(trimmed);
