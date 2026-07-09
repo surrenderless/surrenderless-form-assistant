@@ -1,6 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 import { loadEnvConfig } from "@next/env";
-import { CLERK_STORAGE_STATE_PATH } from "./e2e/helpers/clerk-e2e";
+import {
+  CLERK_STORAGE_STATE_PATH,
+  OPERATOR_CLERK_STORAGE_STATE_PATH,
+} from "./e2e/helpers/clerk-e2e";
 
 loadEnvConfig(process.cwd());
 
@@ -25,7 +28,7 @@ export default defineConfig({
       name: "chromium",
       dependencies: ["global setup"],
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: [/global\.setup\.ts/, /signed-in-.*\.smoke\.spec\.ts/],
+      testIgnore: [/global\.setup\.ts/, /signed-in-.*\.smoke\.spec\.ts/, /operator-.*\.smoke\.spec\.ts/],
     },
     {
       name: "authenticated",
@@ -39,9 +42,19 @@ export default defineConfig({
       },
     },
     {
+      name: "operator authenticated",
+      testMatch: "**/operator-*.smoke.spec.ts",
+      dependencies: ["global setup"],
+      fullyParallel: false,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
+      },
+    },
+    {
       name: "authenticated roundtrip",
       testMatch: /signed-in-chat-ai-roundtrip\.smoke\.spec\.ts/,
-      dependencies: ["authenticated"],
+      dependencies: ["authenticated", "operator authenticated"],
       fullyParallel: false,
       use: {
         ...devices["Desktop Chrome"],

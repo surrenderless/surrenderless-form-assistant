@@ -4,8 +4,11 @@ import fs from "fs";
 import path from "path";
 import {
   CLERK_STORAGE_STATE_PATH,
+  OPERATOR_CLERK_STORAGE_STATE_PATH,
   clerkE2eUserIdentifier,
   isClerkE2eConfigured,
+  isOperatorClerkE2eConfigured,
+  operatorClerkE2eUserIdentifier,
 } from "./helpers/clerk-e2e";
 
 setup.describe.configure({ mode: "serial" });
@@ -128,4 +131,50 @@ setup("sign in and persist storageState", async ({ page }) => {
   }
 
   await page.context().storageState({ path: CLERK_STORAGE_STATE_PATH });
+});
+
+setup("sign in operator and persist operator storageState", async ({ page }) => {
+  fs.mkdirSync(path.dirname(OPERATOR_CLERK_STORAGE_STATE_PATH), { recursive: true });
+  if (!isOperatorClerkE2eConfigured()) {
+    if (fs.existsSync(CLERK_STORAGE_STATE_PATH)) {
+      fs.copyFileSync(CLERK_STORAGE_STATE_PATH, OPERATOR_CLERK_STORAGE_STATE_PATH);
+    }
+    return;
+  }
+
+  const { clerkClient } = await import("@clerk/clerk-sdk-node");
+  const operatorIdentifier = operatorClerkE2eUserIdentifier();
+
+  await page.goto("/");
+  await clerk.signIn({
+    page,
+    signInParams: {
+      strategy: "password",
+      identifier: operatorIdentifier,
+      password: process.env.E2E_OPERATOR_CLERK_USER_PASSWORD!.trim(),
+    },
+  });
+
+  const authBody = await waitForAuthenticatedSubmitFormSession(page);
+  if (authBody?.result !== "Success" || authBody?.fillResult?.status !== "success") {
+    throw new Error(
+      `Operator Clerk E2E mock submit-form auth check returned unexpected body: ${JSON.stringify(authBody).slice(0, 400)}`
+    );
+  }
+
+  const users = await clerkClient.users.getUserList({
+    emailAddress: operatorIdentifier.includes("@") ? [operatorIdentifier] : undefined,
+    username: operatorIdentifier.includes("@") ? undefined : [operatorIdentifier],
+    limit: 1,
+  });
+  const operatorUser = users[0];
+  if (!operatorUser?.id) {
+    throw new Error(`Operator Clerk E2E could not resolve user for identifier ${operatorIdentifier}`);
+  }
+
+  await clerkClient.users.updateUser(operatorUser.id, {
+    publicMetadata: { ...(operatorUser.publicMetadata ?? {}), role: "operator" },
+  });
+
+  await page.context().storageState({ path: OPERATOR_CLERK_STORAGE_STATE_PATH });
 });

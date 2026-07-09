@@ -3,6 +3,9 @@ import {
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
+  isOperatorClerkE2eConfigured,
+  operatorClerkStorageStateExists,
+  OPERATOR_CLERK_STORAGE_STATE_PATH,
   waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
 import {
@@ -33,6 +36,10 @@ import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
+  test.skip(
+    !isOperatorClerkE2eConfigured() || !operatorClerkStorageStateExists(),
+    "Skipped: operator Clerk E2E credentials required for fulfillment steps in roundtrip."
+  );
 });
 
 test("signed-in user completes intake through BBB, human-fulfillment ladder, resolution, and archive in chat", async ({
@@ -259,7 +266,22 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     { timeout: 30_000 }
   );
 
-  const stateAgCompleteResponse = await page.request.post("/api/justice/state-ag-filing/complete", {
+  const consumerSelfComplete = await page.request.post("/api/justice/state-ag-filing/complete", {
+    data: {
+      case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+      task_id: PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filed_at: "2026-06-22T12:00:00.000Z",
+      confirmation_number: "consumer-should-not-complete",
+    },
+  });
+  expect(consumerSelfComplete.status()).toBe(403);
+
+  const operatorContext = await page.context().browser()!.newContext({
+    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
+  });
+  const operatorRequest = operatorContext.request;
+  const stateAgCompleteResponse = await operatorRequest.post("/api/justice/state-ag-filing/complete", {
     data: {
       case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
       task_id: PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
@@ -291,7 +313,7 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   });
   await expect(page.getByRole("button", { name: "Archive case" })).not.toBeVisible({ timeout: 15_000 });
 
-  const demandLetterCompleteResponse = await page.request.post(
+  const demandLetterCompleteResponse = await operatorRequest.post(
     "/api/justice/demand-letter-filing/complete",
     {
       data: {
@@ -304,6 +326,7 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     }
   );
   expect(demandLetterCompleteResponse.ok()).toBeTruthy();
+  await operatorContext.close();
 
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
 

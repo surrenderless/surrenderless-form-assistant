@@ -2057,39 +2057,10 @@ export default function JusticeHandlingWorkbenchPage() {
     return () => ac.abort();
   }, [isLoaded, isSignedIn, humanFulfillmentQueueCaseIdsKey, cases]);
 
-  const stateAgOperatorFilingItems = useMemo(() => {
-    if (!cases || !humanFulfillmentQueueCaseIdsKey) return [];
-    const ids = humanFulfillmentQueueCaseIdsKey.split(",").filter(Boolean);
-    const items: StateAgOperatorFilingItem[] = [];
-    for (const id of ids) {
-      const caseRow = cases.find((c) => c.id === id);
-      const task = findOpenStateAgFilingTask(tasksByCaseId[id] ?? [], id);
-      if (caseRow && task) {
-        items.push({ caseRow, task });
-      }
-    }
-    return items.sort(
-      (a, b) =>
-        new Date(b.task.created_at).getTime() - new Date(a.task.created_at).getTime()
-    );
-  }, [cases, humanFulfillmentQueueCaseIdsKey, tasksByCaseId]);
+  // Surrenderless-owned fulfillment recording moved to /operator/fulfillment (operator role only).
+  const stateAgOperatorFilingItems = useMemo((): StateAgOperatorFilingItem[] => [], []);
 
-  const demandLetterOperatorFilingItems = useMemo(() => {
-    if (!cases || !humanFulfillmentQueueCaseIdsKey) return [];
-    const ids = humanFulfillmentQueueCaseIdsKey.split(",").filter(Boolean);
-    const items: DemandLetterOperatorFilingItem[] = [];
-    for (const id of ids) {
-      const caseRow = cases.find((c) => c.id === id);
-      const task = findOpenDemandLetterFilingTask(tasksByCaseId[id] ?? [], id);
-      if (caseRow && task) {
-        items.push({ caseRow, task });
-      }
-    }
-    return items.sort(
-      (a, b) =>
-        new Date(b.task.created_at).getTime() - new Date(a.task.created_at).getTime()
-    );
-  }, [cases, humanFulfillmentQueueCaseIdsKey, tasksByCaseId]);
+  const demandLetterOperatorFilingItems = useMemo((): DemandLetterOperatorFilingItem[] => [], []);
 
   const filingsReady = !filingsLoading && cases !== null;
   const humanFulfillmentQueueReady = !tasksLoading && cases !== null;

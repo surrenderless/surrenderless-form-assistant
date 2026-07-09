@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 
 export const CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "user.json");
+export const OPERATOR_CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "operator.json");
 
 export const MOCK_FTC_PRACTICE_SUBMIT_URL = "http://127.0.0.1:3000/mock/ftc-complaint";
 
@@ -34,6 +35,57 @@ export function clerkE2eUserIdentifier(): string {
   return (
     process.env.E2E_CLERK_USER_EMAIL?.trim() || process.env.E2E_CLERK_USER_USERNAME?.trim() || ""
   );
+}
+
+function isRealClerkKeyForE2e(value: string | undefined, prefix: "pk" | "sk"): boolean {
+  return isRealClerkKey(value, prefix);
+}
+
+export function operatorClerkE2eUserIdentifier(): string {
+  return (
+    process.env.E2E_OPERATOR_CLERK_USER_EMAIL?.trim() ||
+    process.env.E2E_OPERATOR_CLERK_USER_USERNAME?.trim() ||
+    ""
+  );
+}
+
+/** True when a separate operator Clerk test user is configured for role-boundary E2E. */
+export function isOperatorClerkE2eConfigured(): boolean {
+  const identifier = operatorClerkE2eUserIdentifier();
+  return (
+    isRealClerkKeyForE2e(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, "pk") &&
+    isRealClerkKeyForE2e(process.env.CLERK_SECRET_KEY, "sk") &&
+    identifier.length > 0 &&
+    Boolean(process.env.E2E_OPERATOR_CLERK_USER_PASSWORD?.trim())
+  );
+}
+
+export function operatorClerkStorageStateExists(): boolean {
+  return fs.existsSync(OPERATOR_CLERK_STORAGE_STATE_PATH);
+}
+
+export function operatorClerkE2eSkipReason(): string {
+  const missing: string[] = [];
+  if (!isRealClerkKey(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, "pk")) {
+    missing.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
+  }
+  if (!isRealClerkKey(process.env.CLERK_SECRET_KEY, "sk")) {
+    missing.push("CLERK_SECRET_KEY");
+  }
+  const identifier = operatorClerkE2eUserIdentifier();
+  if (!identifier) {
+    missing.push("E2E_OPERATOR_CLERK_USER_EMAIL or E2E_OPERATOR_CLERK_USER_USERNAME");
+  }
+  if (!process.env.E2E_OPERATOR_CLERK_USER_PASSWORD?.trim()) {
+    missing.push("E2E_OPERATOR_CLERK_USER_PASSWORD");
+  }
+  if (missing.length > 0) {
+    return `Skipped: missing operator Clerk E2E credentials — ${missing.join(", ")}.`;
+  }
+  if (!operatorClerkStorageStateExists()) {
+    return "Skipped: operator Clerk E2E storageState missing — run Playwright global setup.";
+  }
+  return "Skipped: operator Clerk E2E prerequisites not met.";
 }
 
 export function clerkStorageStateExists(): boolean {
