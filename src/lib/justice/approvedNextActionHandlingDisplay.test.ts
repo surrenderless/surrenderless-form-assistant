@@ -52,7 +52,18 @@ describe("resolveHandlingTrackingContextualLink", () => {
     });
   });
 
-  it("marks review-packet link optional on chat-ai when shown", () => {
+  it("suppresses main-ladder off-chat open-step links on chat-ai", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: "/justice/packet" },
+        surface: "chat-ai",
+        prepInlineInChat: false,
+      })
+    ).toBeNull();
+  });
+
+  it("suppresses review-packet link on chat-ai so consumers stay in chat", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
@@ -61,10 +72,7 @@ describe("resolveHandlingTrackingContextualLink", () => {
         basicsReady: true,
         evidenceCount: 1,
       })
-    ).toEqual({
-      href: "/justice/packet",
-      label: "Review case packet (optional)",
-    });
+    ).toBeNull();
   });
 
   it("keeps non-chat-ai contextual labels unchanged", () => {
@@ -242,17 +250,14 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
-  it("offers packet filing link when inline capture is not shown", () => {
+  it("suppresses packet filing link on chat-ai even when inline capture is not shown", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
         surface: "chat-ai",
         inlineFilingCaptureInChat: false,
       })
-    ).toEqual({
-      href: "/justice/packet#packet-filings",
-      label: "Open filing records",
-    });
+    ).toBeNull();
   });
 
   it("suppresses record-outcome link on packet when outcome capture is inline", () => {
