@@ -40,6 +40,11 @@ import {
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
+import {
+  CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
+  resolveConsumerActiveCaseChecklistDraftReviewNavigate,
+  resolveConsumerActiveCaseChecklistPacketApprovalNavigate,
+} from "@/lib/justice/chatAiLadderNavigation";
 import { readTimeline, applyServerTimelineFromResponse, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
@@ -555,8 +560,10 @@ export default function JusticeHubWorkspaceBody() {
       })
     : false;
 
-  const primaryHref = "/justice/chat-ai";
+  const primaryHref = CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
   const primaryLabel = "Continue in chat";
+  const draftReviewNavigate = resolveConsumerActiveCaseChecklistDraftReviewNavigate();
+  const packetApprovalNavigate = resolveConsumerActiveCaseChecklistPacketApprovalNavigate();
 
   return (
     <>
@@ -683,8 +690,8 @@ export default function JusticeHubWorkspaceBody() {
               {snapshot && !snapshot.reviewed ? (
                 <>
                   {" · "}
-                  <Link href="/justice/preview" className={hubChecklistLinkCls}>
-                    Review submission draft
+                  <Link href={draftReviewNavigate.href} className={hubChecklistLinkCls}>
+                    {draftReviewNavigate.label}
                   </Link>
                 </>
               ) : null}
@@ -695,8 +702,8 @@ export default function JusticeHubWorkspaceBody() {
                 {!snapshot.packetApproved ? (
                   <>
                     {" · "}
-                    <Link href="/justice/packet" className={hubChecklistLinkCls}>
-                      Review prepared case packet
+                    <Link href={packetApprovalNavigate.href} className={hubChecklistLinkCls}>
+                      {packetApprovalNavigate.label}
                     </Link>
                   </>
                 ) : null}
@@ -725,10 +732,10 @@ export default function JusticeHubWorkspaceBody() {
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
-                      href="/justice/handling"
+                      href={primaryHref}
                       className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                     >
-                      View on handling workbench
+                      Continue in chat
                     </Link>
                   </p>
                   <HubHandlingTrackingStatusReadOnly
@@ -799,10 +806,10 @@ export default function JusticeHubWorkspaceBody() {
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
-                      href="/justice/handling"
+                      href={primaryHref}
                       className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                     >
-                      View in handling workbench
+                      Continue in chat
                     </Link>
                   </p>
                   {showHubAcknowledgment ? (
@@ -848,10 +855,10 @@ export default function JusticeHubWorkspaceBody() {
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
-                      href="/justice/handling"
+                      href={primaryHref}
                       className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                     >
-                      View in handling workbench
+                      Continue in chat
                     </Link>
                   </p>
                 </>
@@ -867,10 +874,10 @@ export default function JusticeHubWorkspaceBody() {
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
-                      href="/justice/handling"
+                      href={primaryHref}
                       className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                     >
-                      View on handling workbench
+                      Continue in chat
                     </Link>
                   </p>
                 </>

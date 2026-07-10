@@ -62,6 +62,12 @@ import {
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
 import { canArchiveCaseForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
+import {
+  CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
+  redirectConsumerActiveCaseOffChatHref,
+  resolveConsumerActiveCaseChecklistDraftReviewNavigate,
+  resolveConsumerActiveCaseChecklistPacketApprovalNavigate,
+} from "@/lib/justice/chatAiLadderNavigation";
 
 type CaseRow = {
   id: string;
@@ -234,10 +240,10 @@ function CaseApprovedNextActionTracking({
       {handlingAt ? (
         <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
           <Link
-            href="/justice/handling"
+            href={CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}
             className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
           >
-            View in handling workbench
+            Continue in chat
           </Link>
         </p>
       ) : null}
@@ -264,10 +270,10 @@ function CaseApprovedNextActionTracking({
           </p>
           <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
             <Link
-              href="/justice/handling"
+              href={CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}
               className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
             >
-              View on handling workbench
+              Continue in chat
             </Link>
           </p>
         </>
@@ -966,20 +972,17 @@ export default function JusticeCasesPage() {
     openUpdateInChat(row);
   }
 
+  function openResumeCaseInChat(row: CaseRow, focusHref?: string) {
+    activateCaseInSession(row);
+    router.push(focusHref ?? CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF);
+  }
+
   function openUpdateInChat(row: CaseRow) {
-    activateCaseInSession(row);
-    router.push("/justice/chat-ai");
+    openResumeCaseInChat(row);
   }
 
-  function openReviewSubmissionDraft(row: CaseRow) {
-    activateCaseInSession(row);
-    router.push("/justice/preview");
-  }
-
-  function openReviewPreparedPacket(row: CaseRow) {
-    activateCaseInSession(row);
-    router.push("/justice/packet");
-  }
+  const draftReviewNavigate = resolveConsumerActiveCaseChecklistDraftReviewNavigate();
+  const packetApprovalNavigate = resolveConsumerActiveCaseChecklistPacketApprovalNavigate();
 
   function isInternalJusticeHref(href: string): boolean {
     const t = href.trim();
@@ -1007,7 +1010,7 @@ export default function JusticeCasesPage() {
 
   function openHandlingTrackingContextualLink(caseRow: CaseRow, href: string) {
     activateCaseInSession(caseRow);
-    router.push(href);
+    router.push(redirectConsumerActiveCaseOffChatHref(href));
   }
 
   function applyClearedFollowUpToCaseRow(caseId: string, mergedClientState: JusticeCaseClientState) {
@@ -1348,10 +1351,11 @@ export default function JusticeCasesPage() {
                             Open case
                           </button>
                           <Link
-                            href="/justice/handling"
+                            href={CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}
+                            onClick={() => activateCaseInSession(caseRow)}
                             className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-center text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
                           >
-                            View on handling workbench
+                            Continue in chat
                           </Link>
                         </div>
                       </li>
@@ -1471,10 +1475,11 @@ export default function JusticeCasesPage() {
                             Open case
                           </button>
                           <Link
-                            href="/justice/handling"
+                            href={CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}
+                            onClick={() => activateCaseInSession(caseRow)}
                             className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-center text-sm font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 sm:w-auto"
                           >
-                            View in handling workbench
+                            Continue in chat
                           </Link>
                           <button
                             type="button"
@@ -1751,10 +1756,10 @@ export default function JusticeCasesPage() {
                               {" · "}
                               <button
                                 type="button"
-                                onClick={() => openReviewSubmissionDraft(row)}
+                                onClick={() => openResumeCaseInChat(row, draftReviewNavigate.href)}
                                 className={casesChecklistLinkCls}
                               >
-                                Review submission draft
+                                {draftReviewNavigate.label}
                               </button>
                             </>
                           ) : null}
@@ -1768,10 +1773,10 @@ export default function JusticeCasesPage() {
                                 {" · "}
                                 <button
                                   type="button"
-                                  onClick={() => openReviewPreparedPacket(row)}
+                                  onClick={() => openResumeCaseInChat(row, packetApprovalNavigate.href)}
                                   className={casesChecklistLinkCls}
                                 >
-                                  Review prepared case packet
+                                  {packetApprovalNavigate.label}
                                 </button>
                               </>
                             ) : null}

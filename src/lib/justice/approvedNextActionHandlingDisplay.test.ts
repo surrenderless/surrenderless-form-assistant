@@ -75,7 +75,7 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
-  it("keeps non-chat-ai contextual labels unchanged", () => {
+  it("keeps hub/cases contextual links in chat instead of legacy detour pages", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
@@ -88,14 +88,35 @@ describe("resolveHandlingTrackingContextualLink", () => {
     });
     expect(
       resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: "/justice/packet" },
+        surface: "hub",
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Continue in chat",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
         surface: "cases",
         basicsReady: true,
         evidenceCount: 1,
       })
     ).toEqual({
-      href: "/justice/packet",
-      label: "Review case packet",
+      href: "/justice/chat-ai",
+      label: "Continue in chat",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        surface: "hub",
+        basicsReady: true,
+        evidenceCount: 1,
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Continue in chat",
     });
   });
 
@@ -312,8 +333,8 @@ describe("resolveHandlingTrackingContextualLink", () => {
         surface: "cases",
       })
     ).toEqual({
-      href: "/justice/packet#packet-filings",
-      label: "Open filing records",
+      href: "/justice/chat-ai",
+      label: "Add filing in chat",
     });
     expect(
       resolveHandlingTrackingContextualLink({
@@ -321,8 +342,8 @@ describe("resolveHandlingTrackingContextualLink", () => {
         surface: "hub",
       })
     ).toEqual({
-      href: "/justice/packet#packet-filings",
-      label: "Open filing records",
+      href: "/justice/chat-ai",
+      label: "Add filing in chat",
     });
   });
 

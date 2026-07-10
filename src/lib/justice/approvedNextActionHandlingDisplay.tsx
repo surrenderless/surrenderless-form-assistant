@@ -138,6 +138,9 @@ export function resolveHandlingTrackingContextualLink(input: {
     if (input.surface === "chat-ai") {
       return null;
     }
+    if (input.surface === "hub" || input.surface === "cases") {
+      return { href: "/justice/chat-ai", label: "Continue in chat" };
+    }
     return {
       href: "/justice/packet",
       label: "Review case packet",
@@ -161,6 +164,11 @@ export function resolveHandlingTrackingContextualLink(input: {
         return null;
       }
     }
+    if (input.surface === "hub" || input.surface === "cases") {
+      if (isChatAiMainLadderOffChatHref(href)) {
+        return { href: "/justice/chat-ai", label: "Continue in chat" };
+      }
+    }
     return {
       href,
       label: input.surface === "chat-ai" ? "Open approved step (optional)" : "Open approved step",
@@ -179,6 +187,9 @@ export function resolveHandlingTrackingContextualLink(input: {
     }
     if (input.surface === "packet") {
       return null;
+    }
+    if (input.surface === "hub" || input.surface === "cases") {
+      return { href: "/justice/chat-ai", label: "Add filing in chat" };
     }
     return { href: `/justice/packet${PACKET_FILINGS_HASH}`, label: "Open filing records" };
   }

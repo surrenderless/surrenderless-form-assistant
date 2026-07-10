@@ -4,11 +4,16 @@ import {
   CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID,
   CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID,
   CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS,
+  CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
   isChatAiMainLadderOffChatHref,
+  redirectConsumerActiveCaseOffChatHref,
   resolveChatAiActiveCaseWorkHref,
   resolveChatAiChecklistDraftReviewAction,
   resolveChatAiChecklistPacketApprovalAction,
   resolveChatAiFilingStepInChatAction,
+  resolveConsumerActiveCaseChecklistDraftReviewNavigate,
+  resolveConsumerActiveCaseChecklistPacketApprovalNavigate,
+  resolveConsumerActiveCaseResumeChatAiHref,
   shouldBlockChatAiOffChatNavigation,
   shouldKeepSignedInChatAiActiveCaseInChat,
 } from "@/lib/justice/chatAiLadderNavigation";
@@ -254,6 +259,41 @@ describe("chatAiLadderNavigation", () => {
           targetHref: "/justice/preview",
         })
       ).toBe(false);
+    });
+  });
+
+  describe("consumer active-case resume helpers", () => {
+    it("resolves chat-ai href with optional inline focus hash", () => {
+      expect(resolveConsumerActiveCaseResumeChatAiHref()).toBe(
+        CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
+      );
+      expect(
+        resolveConsumerActiveCaseResumeChatAiHref(
+          CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID
+        )
+      ).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID}`
+      );
+    });
+
+    it("redirects main-ladder off-chat hrefs to chat-ai", () => {
+      for (const href of CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS) {
+        expect(redirectConsumerActiveCaseOffChatHref(href)).toBe(
+          CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
+        );
+      }
+      expect(redirectConsumerActiveCaseOffChatHref("/justice/ftc")).toBe("/justice/ftc");
+    });
+
+    it("exposes checklist navigate labels for hub and saved cases", () => {
+      expect(resolveConsumerActiveCaseChecklistDraftReviewNavigate()).toEqual({
+        href: `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID}`,
+        label: "Review in chat",
+      });
+      expect(resolveConsumerActiveCaseChecklistPacketApprovalNavigate()).toEqual({
+        href: `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID}`,
+        label: "Approve in chat",
+      });
     });
   });
 });
