@@ -250,3 +250,38 @@ export async function clickAndAssertStaysOnChatAi(
   await page.waitForTimeout(300);
   await expectUrlStaysOnChatAi(page);
 }
+
+export function hubCurrentCaseChecklist(page: Page): Locator {
+  return page
+    .locator("main")
+    .getByText("Current case", { exact: true })
+    .locator("xpath=ancestor::div[contains(@class,'mt-8')][1]")
+    .locator("ul")
+    .first();
+}
+
+export function casesSavedRowChecklist(page: Page, companyName: string): Locator {
+  return page
+    .locator("main > ul > li")
+    .filter({ hasText: companyName })
+    .locator("ul")
+    .filter({ hasText: "Basic case info" });
+}
+
+export async function seedActiveCaseForHubResume(page: Page): Promise<void> {
+  await seedActiveCaseDraftNotReviewed(page);
+  await page.goto("/justice");
+  await page.getByText("Current case", { exact: true }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+}
+
+export async function seedActiveCaseForCasesListResume(page: Page): Promise<void> {
+  await seedActiveCaseDraftNotReviewed(page);
+  await page.goto("/justice/cases");
+  await page.getByRole("heading", { name: "Saved cases" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+}

@@ -154,6 +154,48 @@ export type ChatAiFilingStepInChatAction =
   | { kind: "scroll"; targetElementId: string; label: string };
 
 /** In-chat filing guidance when packet/handling detours are suppressed on chat-ai. */
+export const CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF = "/justice/chat-ai";
+
+/** Hub and saved-cases re-entry: resume the in-chat ladder instead of legacy detour pages. */
+export function resolveConsumerActiveCaseResumeChatAiHref(
+  focusElementId?: string | null
+): string {
+  const id = focusElementId?.trim();
+  if (!id) return CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
+  return `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${id}`;
+}
+
+export function redirectConsumerActiveCaseOffChatHref(targetHref: string): string {
+  const trimmed = targetHref.trim();
+  return isChatAiMainLadderOffChatHref(trimmed)
+    ? CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
+    : trimmed;
+}
+
+export function resolveConsumerActiveCaseChecklistDraftReviewNavigate(): {
+  href: string;
+  label: string;
+} {
+  return {
+    href: resolveConsumerActiveCaseResumeChatAiHref(
+      CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID
+    ),
+    label: "Review in chat",
+  };
+}
+
+export function resolveConsumerActiveCaseChecklistPacketApprovalNavigate(): {
+  href: string;
+  label: string;
+} {
+  return {
+    href: resolveConsumerActiveCaseResumeChatAiHref(
+      CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID
+    ),
+    label: "Approve in chat",
+  };
+}
+
 export function resolveChatAiFilingStepInChatAction(input: {
   isFilingCaptureStep: boolean;
   showInlineFilingCapture: boolean;
