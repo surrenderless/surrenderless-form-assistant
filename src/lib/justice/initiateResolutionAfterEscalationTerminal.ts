@@ -90,6 +90,7 @@ export type InitiateResolutionAfterEscalationTerminalParams = {
   caseId: string;
   intake: JusticeIntake;
   clientState: unknown;
+  resolvedAction?: JusticeApprovedNextAction;
   logLabel?: string;
   fetchFn?: typeof fetch;
   applyTimeline?: typeof applyServerTimelineFromResponse;
@@ -104,9 +105,10 @@ export type InitiateResolutionAfterEscalationTerminalResult = {
 export async function initiateResolutionAfterEscalationTerminal(
   params: InitiateResolutionAfterEscalationTerminalParams
 ): Promise<InitiateResolutionAfterEscalationTerminalResult> {
-  const action = parseApprovedNextActionFromClientState(params.clientState);
+  const clientAction = parseApprovedNextActionFromClientState(params.clientState);
+  const action = params.resolvedAction ?? clientAction;
   if (!shouldInitiateResolutionAfterEscalationTerminal(action)) {
-    return { action, persisted: false };
+    return { action: clientAction ?? action, persisted: false };
   }
 
   const logLabel = params.logLabel ?? "justice escalation-terminal";

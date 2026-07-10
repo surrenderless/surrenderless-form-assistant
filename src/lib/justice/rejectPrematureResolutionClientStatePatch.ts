@@ -2,6 +2,7 @@ import { parseApprovedNextActionFromClientState } from "@/lib/justice/approvedNe
 import {
   canArchiveCaseForEscalationLadder,
   hasPendingHumanFulfillmentEscalation,
+  isAllowedOperatorEvidenceTerminalResolutionClientStatePatch,
 } from "@/lib/justice/escalationLadderResolution";
 import { rejectManualOwnedStepClientStatePatch } from "@/lib/justice/rejectManualOwnedStepClientStatePatch";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
@@ -83,17 +84,31 @@ export type RejectPrematureResolutionClientStatePatchParams = {
   existingClientState: unknown;
   incomingClientState: unknown;
   tasks: readonly JusticeCaseTaskRow[];
+  filings?: readonly ManualActionTrackingFiling[];
 };
 
 export function rejectPrematureResolutionClientStatePatch(
   params: RejectPrematureResolutionClientStatePatchParams
 ): string | null {
+  if (
+    isAllowedOperatorEvidenceTerminalResolutionClientStatePatch({
+      caseId: params.caseId,
+      existingClientState: params.existingClientState,
+      incomingClientState: params.incomingClientState,
+      tasks: params.tasks,
+      filings: params.filings ?? [],
+    })
+  ) {
+    return null;
+  }
+
   const existingAction = parseApprovedNextActionFromClientState(params.existingClientState);
   if (
     !hasPendingHumanFulfillmentEscalation({
       approvedAction: existingAction,
       caseId: params.caseId,
       tasks: params.tasks,
+      filings: params.filings,
     })
   ) {
     return null;
@@ -114,6 +129,7 @@ export type RejectPrematureCaseArchivePatchParams = {
   existingArchivedAt: string | null | undefined;
   incomingArchivedAt: unknown;
   tasks: readonly JusticeCaseTaskRow[];
+  filings?: readonly ManualActionTrackingFiling[];
 };
 
 export function rejectPrematureCaseArchivePatch(
@@ -135,6 +151,7 @@ export function rejectPrematureCaseArchivePatch(
       approvedAction,
       caseId: params.caseId,
       tasks: params.tasks,
+      filings: params.filings,
     })
   ) {
     return null;
@@ -171,6 +188,7 @@ export function rejectCasePatchEscalationViolations(
       existingClientState: params.existingClientState,
       incomingClientState: params.patch.client_state,
       tasks: params.tasks,
+      filings: params.filings,
     });
     if (prematureResolutionReject) return prematureResolutionReject;
   }
@@ -182,6 +200,7 @@ export function rejectCasePatchEscalationViolations(
       existingArchivedAt: params.existingArchivedAt,
       incomingArchivedAt: params.patch.archived_at,
       tasks: params.tasks,
+      filings: params.filings,
     });
     if (archiveReject) return archiveReject;
   }

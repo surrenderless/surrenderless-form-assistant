@@ -1,5 +1,11 @@
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
+  isEscalationLadderTerminalForResolution,
+  isOperatorFulfillmentTerminalFromTasksAndFilings,
+  resolveTerminalApprovedActionForResolution,
+} from "@/lib/justice/escalationLadderResolution";
+import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
+import {
   initiateResolutionAfterEscalationTerminal,
   shouldInitiateResolutionAfterEscalationTerminal,
 } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
@@ -14,7 +20,51 @@ export type ChatEscalationFulfillmentObservation = {
   caseId: string;
   approvedAction: JusticeApprovedNextAction | undefined;
   tasks: readonly JusticeCaseTaskRow[];
+  filings: readonly ManualActionTrackingFiling[];
 };
+
+function shouldSeedResolutionTracking(
+  action: JusticeApprovedNextAction | undefined
+): action is JusticeApprovedNextAction {
+  if (!action) return false;
+  if (action.handling_requested_at?.trim() && action.outcome_note?.trim()) return false;
+  return true;
+}
+
+/** Whether chat should seed resolution from approved action and/or operator tasks + filings. */
+export function shouldInitiateResolutionFromFulfillmentObservation(
+  observation: ChatEscalationFulfillmentObservation
+): boolean {
+  const action = observation.approvedAction;
+  if (!shouldSeedResolutionTracking(action)) return false;
+  if (isEscalationLadderTerminalForResolution(action)) return true;
+  return isOperatorFulfillmentTerminalFromTasksAndFilings({
+    caseId: observation.caseId,
+    tasks: observation.tasks,
+    filings: observation.filings,
+  });
+}
+
+export function resolveActionForResolutionInitiation(input: {
+  approvedAction: JusticeApprovedNextAction | undefined;
+  caseId: string;
+  tasks: readonly JusticeCaseTaskRow[];
+  filings: readonly ManualActionTrackingFiling[];
+}): JusticeApprovedNextAction | undefined {
+  const action = input.approvedAction;
+  if (!action) return undefined;
+  if (isEscalationLadderTerminalForResolution(action)) return action;
+  if (
+    isOperatorFulfillmentTerminalFromTasksAndFilings({
+      caseId: input.caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    return resolveTerminalApprovedActionForResolution(action);
+  }
+  return undefined;
+}
 
 export function observeChatEscalationFulfillmentPending(input: {
   observation: ChatEscalationFulfillmentObservation;
@@ -28,14 +78,14 @@ export function observeChatEscalationFulfillmentPending(input: {
     approvedAction: input.observation.approvedAction,
     caseId: input.observation.caseId,
     tasks: input.observation.tasks,
+    filings: input.observation.filings,
   });
   const terminalTransitioned = shouldRefreshChatAfterEscalationTerminalTransition({
     wasPending: input.wasPending,
     isPending,
   });
   const shouldInitiateResolution =
-    !isPending &&
-    shouldInitiateResolutionAfterEscalationTerminal(input.observation.approvedAction);
+    !isPending && shouldInitiateResolutionFromFulfillmentObservation(input.observation);
   return { isPending, terminalTransitioned, shouldInitiateResolution };
 }
 
@@ -62,12 +112,30 @@ export function shouldRehydrateCaseAfterResolutionSync(
 export async function ensureChatResolutionAfterEscalationFulfillment(input: {
   caseId: string;
   approvedAction: JusticeApprovedNextAction | undefined;
+  tasks: readonly JusticeCaseTaskRow[];
+  filings: readonly ManualActionTrackingFiling[];
   intakeFallback: JusticeIntake;
   logLabel?: string;
   fetchFn?: typeof fetch;
   onLocalAction?: (action: JusticeApprovedNextAction) => void;
 }): Promise<EnsureChatResolutionAfterEscalationFulfillmentResult> {
-  if (!shouldInitiateResolutionAfterEscalationTerminal(input.approvedAction)) {
+  const observation: ChatEscalationFulfillmentObservation = {
+    caseId: input.caseId,
+    approvedAction: input.approvedAction,
+    tasks: input.tasks,
+    filings: input.filings,
+  };
+  if (!shouldInitiateResolutionFromFulfillmentObservation(observation)) {
+    return { action: input.approvedAction, persisted: false };
+  }
+
+  const resolvedAction = resolveActionForResolutionInitiation({
+    approvedAction: input.approvedAction,
+    caseId: input.caseId,
+    tasks: input.tasks,
+    filings: input.filings,
+  });
+  if (!resolvedAction || !shouldInitiateResolutionAfterEscalationTerminal(resolvedAction)) {
     return { action: input.approvedAction, persisted: false };
   }
 
@@ -86,6 +154,7 @@ export async function ensureChatResolutionAfterEscalationFulfillment(input: {
     caseId: input.caseId,
     intake,
     clientState: caseData.client_state,
+    resolvedAction,
     logLabel: input.logLabel ?? "justice chat-ai escalation-terminal",
     fetchFn,
   });

@@ -75,6 +75,7 @@ export function deriveSatisfiedChatCaseProgressMilestones(
       approvedAction: action,
       caseId,
       tasks: input.tasks,
+      filings: input.filings,
     })
   ) {
     satisfied.push("state_ag_queued");
@@ -91,6 +92,7 @@ export function deriveSatisfiedChatCaseProgressMilestones(
       approvedAction: action,
       caseId,
       tasks: input.tasks,
+      filings: input.filings,
     })
   ) {
     satisfied.push("demand_letter_queued");
@@ -106,6 +108,7 @@ export function deriveSatisfiedChatCaseProgressMilestones(
       approvedAction: action,
       caseId,
       tasks: input.tasks,
+      filings: input.filings,
     }) &&
     Boolean(action.outcome_note?.trim())
   ) {

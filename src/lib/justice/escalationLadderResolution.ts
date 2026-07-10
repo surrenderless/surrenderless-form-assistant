@@ -1,9 +1,14 @@
-import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
-
+import {
+  parseApprovedNextActionFromClientState,
+  parseJusticeCaseClientState,
+} from "@/lib/justice/approvedNextActionState";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
-
 import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
 
+export type OperatorFulfillmentTerminalFiling = {
+  destination: string;
+  confirmation_number?: string | null;
+};
 
 
 const MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF = "/justice/bbb";
@@ -36,6 +41,36 @@ function demandLetterFilingTaskNotesMarker(caseId: string): string {
 
   return `demand_letter_filing_queue:${caseId.trim()}`;
 
+}
+
+
+
+function findOpenStateAgFilingTask(
+  tasks: readonly JusticeCaseTaskRow[],
+  caseId: string
+): JusticeCaseTaskRow | undefined {
+  return findOpenEscalationTask(tasks, caseId, stateAgFilingTaskNotesMarker(caseId));
+}
+
+
+
+function findOpenDemandLetterFilingTask(
+  tasks: readonly JusticeCaseTaskRow[],
+  caseId: string
+): JusticeCaseTaskRow | undefined {
+  return findOpenEscalationTask(tasks, caseId, demandLetterFilingTaskNotesMarker(caseId));
+}
+
+
+
+function hasDemandLetterFilingWithConfirmationFromFilings(
+  filings: readonly OperatorFulfillmentTerminalFiling[]
+): boolean {
+  return filings.some(
+    (filing) =>
+      filing.destination?.trim() === "Small claims / demand letter" &&
+      Boolean(filing.confirmation_number?.trim())
+  );
 }
 
 
@@ -229,6 +264,8 @@ export function hasPendingHumanFulfillmentEscalation(input: {
 
   tasks: readonly JusticeCaseTaskRow[];
 
+  filings?: readonly OperatorFulfillmentTerminalFiling[];
+
 }): boolean {
 
   const caseId = input.caseId.trim();
@@ -250,6 +287,30 @@ export function hasPendingHumanFulfillmentEscalation(input: {
       return true;
 
     }
+
+  }
+
+
+
+  if (
+
+    input.filings &&
+
+    input.approvedAction &&
+
+    isOperatorFulfillmentTerminalFromTasksAndFilings({
+
+      caseId,
+
+      tasks: input.tasks,
+
+      filings: input.filings,
+
+    })
+
+  ) {
+
+    return false;
 
   }
 
@@ -317,6 +378,105 @@ export function isEscalationLadderTerminalForResolution(
 
 
 
+/**
+
+ * True when operator tasks and filings prove demand-letter fulfillment is complete
+
+ * (no open State AG / demand-letter operator tasks; demand letter confirmed on file).
+
+ */
+
+export function isOperatorFulfillmentTerminalFromTasksAndFilings(input: {
+
+  caseId: string;
+
+  tasks: readonly JusticeCaseTaskRow[];
+
+  filings: readonly OperatorFulfillmentTerminalFiling[];
+
+}): boolean {
+
+  const caseId = input.caseId.trim();
+
+  if (!caseId) return false;
+
+  if (findOpenStateAgFilingTask(input.tasks, caseId)) return false;
+
+  if (findOpenDemandLetterFilingTask(input.tasks, caseId)) return false;
+
+  return hasDemandLetterFilingWithConfirmationFromFilings(input.filings);
+
+}
+
+
+
+/** Normalize a stale approved action to terminal demand-letter completion for resolution. */
+
+export function resolveTerminalApprovedActionForResolution(
+
+  action: JusticeApprovedNextAction,
+
+  options: { completedAt?: string } = {}
+
+): JusticeApprovedNextAction {
+
+  if (isEscalationLadderTerminalForResolution(action)) return action;
+
+  const completedAt = action.completed_at?.trim() || options.completedAt || new Date().toISOString();
+
+  return {
+
+    ...action,
+
+    label: action.label?.trim() || "Small claims / demand letter",
+
+    href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+
+    status: "completed",
+
+    completed_at: completedAt,
+
+  };
+
+}
+
+/**
+ * True when a client_state PATCH may normalize a stale approved action to terminal
+ * and seed resolution tracking because operator tasks + filings prove fulfillment is complete.
+ */
+export function isAllowedOperatorEvidenceTerminalResolutionClientStatePatch(input: {
+  caseId: string;
+  existingClientState: unknown;
+  incomingClientState: unknown;
+  tasks: readonly JusticeCaseTaskRow[];
+  filings: readonly OperatorFulfillmentTerminalFiling[];
+}): boolean {
+  const existingAction = parseApprovedNextActionFromClientState(input.existingClientState);
+  const incomingAction = parseApprovedNextActionFromClientState(input.incomingClientState);
+  if (!existingAction || !incomingAction) return false;
+  if (isEscalationLadderTerminalForResolution(existingAction)) return false;
+  if (
+    existingAction.handling_requested_at?.trim() &&
+    existingAction.outcome_note?.trim()
+  ) {
+    return false;
+  }
+  if (
+    !isOperatorFulfillmentTerminalFromTasksAndFilings({
+      caseId: input.caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    return false;
+  }
+  if (!isEscalationLadderTerminalForResolution(incomingAction)) return false;
+  return (
+    Boolean(incomingAction.handling_requested_at?.trim()) &&
+    Boolean(incomingAction.outcome_note?.trim())
+  );
+}
+
 /** Whether follow-up/outcome/archive resolution UI may be shown in chat. */
 
 export function shouldExposeCaseResolutionFlow(input: {
@@ -327,11 +487,25 @@ export function shouldExposeCaseResolutionFlow(input: {
 
   tasks: readonly JusticeCaseTaskRow[];
 
+  filings?: readonly OperatorFulfillmentTerminalFiling[];
+
 }): boolean {
 
   if (hasPendingHumanFulfillmentEscalation(input)) return false;
 
-  return isEscalationLadderTerminalForResolution(input.approvedAction);
+  if (isEscalationLadderTerminalForResolution(input.approvedAction)) return true;
+
+  if (!input.approvedAction || !input.filings) return false;
+
+  return isOperatorFulfillmentTerminalFromTasksAndFilings({
+
+    caseId: input.caseId,
+
+    tasks: input.tasks,
+
+    filings: input.filings,
+
+  });
 
 }
 
@@ -376,6 +550,8 @@ export function canArchiveCaseForEscalationLadder(input: {
   caseId: string;
 
   tasks: readonly JusticeCaseTaskRow[];
+
+  filings?: readonly OperatorFulfillmentTerminalFiling[];
 
 }): boolean {
 

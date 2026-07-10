@@ -243,12 +243,14 @@ export function chatResolutionTrackingFormOpen(input: {
   action: JusticeApprovedNextAction;
   caseId: string;
   tasks: readonly JusticeCaseTaskRow[];
+  filings?: readonly ManualActionTrackingFiling[];
 }): boolean {
   if (
     !shouldExposeCaseResolutionFlow({
       approvedAction: input.action,
       caseId: input.caseId,
       tasks: input.tasks,
+      filings: input.filings,
     })
   ) {
     return false;
