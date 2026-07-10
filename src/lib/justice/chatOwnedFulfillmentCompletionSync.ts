@@ -1,6 +1,11 @@
 import type { ChatEscalationFulfillmentObservation } from "@/lib/justice/chatEscalationFulfillmentSync";
 import { observeChatEscalationFulfillmentPending } from "@/lib/justice/chatEscalationFulfillmentSync";
 import {
+  findOpenDemandLetterFilingTask,
+  hasDemandLetterFilingWithConfirmation,
+} from "@/lib/justice/demandLetterFilingTask";
+import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
@@ -9,7 +14,7 @@ import {
 } from "@/lib/justice/stateAgFilingTask";
 
 /** Surrenderless-owned fulfillment steps chat can observe completing in place. */
-export type ChatOwnedFulfillmentStepId = "state_ag";
+export type ChatOwnedFulfillmentStepId = "state_ag" | "demand_letter";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
   completedStepIds: readonly ChatOwnedFulfillmentStepId[];
@@ -40,12 +45,24 @@ function isStateAgOwnedStepCompleted(observation: ChatEscalationFulfillmentObser
   return !findOpenStateAgFilingTask(observation.tasks, caseId);
 }
 
+function isDemandLetterOwnedStepCompleted(
+  observation: ChatEscalationFulfillmentObservation
+): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasDemandLetterFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenDemandLetterFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
   const completedStepIds: ChatOwnedFulfillmentStepId[] = [];
   if (isStateAgOwnedStepCompleted(observation)) {
     completedStepIds.push("state_ag");
+  }
+  if (isDemandLetterOwnedStepCompleted(observation)) {
+    completedStepIds.push("demand_letter");
   }
   return {
     completedStepIds,
@@ -120,3 +137,7 @@ export function observeChatOwnedFulfillmentCompletionSync(input: {
 /** Approved action href for the State AG owned step (for tests and future registry entries). */
 export const CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF =
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF;
+
+/** Approved action href for the demand-letter owned step. */
+export const CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF =
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF;

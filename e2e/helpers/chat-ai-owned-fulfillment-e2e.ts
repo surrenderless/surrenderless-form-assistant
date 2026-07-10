@@ -129,3 +129,104 @@ export async function driveConsumerToStateAgQueuedFromChat(page: Page): Promise<
   ).toBeVisible({ timeout: 30_000 });
   await expectUrlStaysOnChatAi(page);
 }
+
+/** Complete State AG fulfillment for Acme Retail via operator fulfillment UI (real click, not request.post). */
+export async function completeStateAgFulfillmentViaOperatorUi(operatorPage: Page): Promise<void> {
+  await operatorPage.goto("/operator/fulfillment");
+  await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const stateAgItem = operatorPage.locator("li").filter({ hasText: "Acme Retail" }).first();
+  await expect(stateAgItem).toBeVisible({ timeout: 30_000 });
+  await expect(stateAgItem.getByText("State Attorney General filing")).toBeVisible();
+
+  await stateAgItem.locator('input[type="date"]').fill("2026-06-22");
+  await stateAgItem
+    .getByPlaceholder("Portal confirmation or reference number")
+    .fill("e2e-ui-state-ag-999");
+  const completeResponsePromise = operatorPage.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" &&
+      res.url().includes("/api/justice/state-ag-filing/complete"),
+    { timeout: 30_000 }
+  );
+  await stateAgItem.getByRole("button", { name: "Mark fulfillment complete" }).click();
+  const completeResponse = await completeResponsePromise;
+  expect(completeResponse.ok()).toBeTruthy();
+  const completeBody = (await completeResponse.json()) as { advanced?: boolean };
+  expect(completeBody.advanced).toBe(true);
+
+  await expect(
+    operatorPage.locator("li").filter({ hasText: "State Attorney General filing" })
+  ).toHaveCount(0, { timeout: 30_000 });
+  await expect(
+    operatorPage.locator("li").filter({ hasText: "Demand letter" }).filter({ hasText: "Acme Retail" })
+  ).toBeVisible({ timeout: 30_000 });
+}
+
+/** Complete demand-letter fulfillment for Acme Retail via operator fulfillment UI (real click, not request.post). */
+export async function completeDemandLetterFulfillmentViaOperatorUi(operatorPage: Page): Promise<void> {
+  await operatorPage.goto("/operator/fulfillment");
+  await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const demandLetterItem = operatorPage
+    .locator("li")
+    .filter({ hasText: "Demand letter" })
+    .filter({ hasText: "Acme Retail" })
+    .first();
+  await expect(demandLetterItem).toBeVisible({ timeout: 30_000 });
+
+  await demandLetterItem.locator('input[type="date"]').fill("2026-06-23");
+  await demandLetterItem
+    .getByPlaceholder("Portal confirmation or reference number")
+    .fill("e2e-ui-demand-letter-999");
+  const completeResponsePromise = operatorPage.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" &&
+      res.url().includes("/api/justice/demand-letter-filing/complete"),
+    { timeout: 30_000 }
+  );
+  await demandLetterItem.getByRole("button", { name: "Mark fulfillment complete" }).click();
+  const completeResponse = await completeResponsePromise;
+  expect(completeResponse.ok()).toBeTruthy();
+
+  await expect(
+    operatorPage.locator("li").filter({ hasText: "Demand letter" }).filter({ hasText: "Acme Retail" })
+  ).toHaveCount(0, { timeout: 30_000 });
+}
+
+/**
+ * Drive consumer chat to queued demand letter: intake → BBB → State AG queued → operator completes State AG via UI.
+ */
+export async function driveConsumerToDemandLetterQueuedFromChat(
+  consumerPage: Page,
+  operatorPage: Page
+): Promise<void> {
+  await driveConsumerToStateAgQueuedFromChat(consumerPage);
+
+  const actionTracking = chatAiActionTracking(consumerPage);
+  await actionTracking.scrollIntoViewIfNeeded();
+  await expect(actionTracking.getByText("State AG filing queued.")).toBeVisible({ timeout: 15_000 });
+  await expectUrlStaysOnChatAi(consumerPage);
+
+  await completeStateAgFulfillmentViaOperatorUi(operatorPage);
+
+  const chatTranscript = chatAiTranscript(consumerPage);
+  await expectUrlStaysOnChatAi(consumerPage);
+  await expect(actionTracking.getByText("Next step:")).toContainText("Small claims / demand letter", {
+    timeout: 30_000,
+  });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("state_ag_confirmed"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(consumerPage.getByText("Demand letter queued with Surrenderless.")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_queued"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expectUrlStaysOnChatAi(consumerPage);
+}
