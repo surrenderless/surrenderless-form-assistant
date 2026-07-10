@@ -1637,6 +1637,7 @@ function deriveChatHandlingTrackingLine(input: {
     approvedAction: input.next,
     caseId,
     tasks,
+    filings: input.filings,
   });
   return deriveChatManualActionNextStep({
     readyForExternalManualAction,
@@ -2076,6 +2077,7 @@ function ChatHandlingTrackingStatusReadOnly({
     approvedAction: approvedNextAction,
     caseId,
     tasks,
+    filings,
   });
   const showInlineFilingCapture =
     !readinessLoading &&
@@ -3627,6 +3629,7 @@ export default function JusticeChatAiPage() {
           caseId,
           approvedAction: approvedAction ?? approvedNextActionRef.current,
           tasks: preview.tasks,
+          filings: preview.filings,
         };
         const escalationSync = observeChatEscalationFulfillmentPending({
           observation,
@@ -3638,6 +3641,8 @@ export default function JusticeChatAiPage() {
           const resolutionSync = await ensureChatResolutionAfterEscalationFulfillment({
             caseId,
             approvedAction: observation.approvedAction,
+            tasks: observation.tasks,
+            filings: observation.filings,
             intakeFallback: buildJusticeIntakeFromParts(partsRef.current),
             logLabel: "justice chat-ai escalation-terminal",
             onLocalAction: (local) => {
@@ -3713,6 +3718,7 @@ export default function JusticeChatAiPage() {
       approvedAction: approvedNextActionRef.current,
       caseId,
       tasks: savedTasksRef.current,
+      filings: savedFilings,
     });
 
     if (initialPending) {
@@ -3736,6 +3742,7 @@ export default function JusticeChatAiPage() {
     isSignedIn,
     approvedNextAction,
     savedTasks,
+    savedFilings,
     refreshFullChatCaseContextFromServer,
   ]);
 
@@ -4498,6 +4505,7 @@ export default function JusticeChatAiPage() {
           approvedAction: approvedNextAction,
           caseId: consentCaseId,
           tasks: savedTasks,
+          filings: savedFilings,
         });
       const closureReadinessLoading =
         chatHandlingReadinessLoading ||
@@ -4901,6 +4909,7 @@ export default function JusticeChatAiPage() {
       approvedAction: approvedNextAction,
       caseId: activeUuidCaseId ?? "",
       tasks: savedTasks,
+      filings: savedFilings,
     });
   const showDemandLetterQueuedNotice =
     Boolean(activeUuidCaseId) &&
@@ -4910,6 +4919,7 @@ export default function JusticeChatAiPage() {
       approvedAction: approvedNextAction,
       caseId: activeUuidCaseId ?? "",
       tasks: savedTasks,
+      filings: savedFilings,
     });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
@@ -5108,6 +5118,7 @@ export default function JusticeChatAiPage() {
       approvedAction: approvedNextAction,
       caseId: activeUuidCaseId ?? "",
       tasks: savedTasks,
+      filings: savedFilings,
     });
   const showChatAcknowledgment = approvedNextAction
     ? handlingClosureAcknowledgmentVisible({
@@ -6045,6 +6056,7 @@ export default function JusticeChatAiPage() {
                       action: approvedNextAction,
                       caseId: activeUuidCaseId ?? "",
                       tasks: savedTasks,
+                      filings: savedFilings,
                     }) ? (
                       <ApprovedNextActionOutcomeTrackingForm
                         action={approvedNextAction}
@@ -6153,6 +6165,7 @@ export default function JusticeChatAiPage() {
                       action: approvedNextAction,
                       caseId: activeUuidCaseId ?? "",
                       tasks: savedTasks,
+                      filings: savedFilings,
                     }) ? (
                       <ApprovedNextActionOutcomeTrackingForm
                         action={approvedNextAction}
@@ -6210,6 +6223,7 @@ export default function JusticeChatAiPage() {
                   action: approvedNextAction,
                   caseId: activeUuidCaseId ?? "",
                   tasks: savedTasks,
+                  filings: savedFilings,
                 }) &&
                 chatResolutionFlowExposed ? (
                   <>

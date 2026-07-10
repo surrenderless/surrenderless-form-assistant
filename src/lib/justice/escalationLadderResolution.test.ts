@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   hasPendingHumanFulfillmentEscalation,
+  isAllowedOperatorEvidenceTerminalResolutionClientStatePatch,
   isEscalationLadderTerminalForResolution,
+  isOperatorFulfillmentTerminalFromTasksAndFilings,
   sanitizeClientStateForEscalationLadder,
   shouldExposeCaseResolutionFlow,
   stripResolutionTrackingFromApprovedAction,
 } from "@/lib/justice/escalationLadderResolution";
+import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
@@ -95,6 +98,151 @@ describe("escalationLadderResolution", () => {
         },
       })
     ).toBe(true);
+  });
+
+  it("exposes resolution flow from operator tasks and filings when approved_next_action is stale", () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    expect(
+      shouldExposeCaseResolutionFlow({
+        caseId: CASE_ID,
+        tasks: [
+          {
+            id: "task-demand-letter",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "Demand letter",
+            due_date: null,
+            notes: `${marker}\ncase_id: ${CASE_ID}`,
+            completed_at: "2026-01-03T00:00:00.000Z",
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-03T00:00:00.000Z",
+          },
+        ],
+        filings: [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: "dl-123",
+          },
+        ],
+        approvedAction: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "approved",
+        },
+      })
+    ).toBe(true);
+  });
+
+  it("clears pending escalation when operator evidence proves terminal fulfillment", () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    expect(
+      hasPendingHumanFulfillmentEscalation({
+        caseId: CASE_ID,
+        tasks: [
+          {
+            id: "task-demand-letter",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "Demand letter",
+            due_date: null,
+            notes: `${marker}\ncase_id: ${CASE_ID}`,
+            completed_at: "2026-01-03T00:00:00.000Z",
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-03T00:00:00.000Z",
+          },
+        ],
+        filings: [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: "dl-123",
+          },
+        ],
+        approvedAction: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "approved",
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("does not treat State AG confirmation alone as terminal fulfillment", () => {
+    expect(
+      isOperatorFulfillmentTerminalFromTasksAndFilings({
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "State Attorney General (consumer)",
+            confirmation_number: "ag-123",
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it("allows operator-evidence resolution seed PATCH only with terminal incoming + tracking fields", () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const tasks = [
+      {
+        id: "task-demand-letter",
+        user_id: "user",
+        case_id: CASE_ID,
+        title: "Demand letter",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}`,
+        completed_at: "2026-01-03T00:00:00.000Z",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-03T00:00:00.000Z",
+      },
+    ];
+    const filings = [
+      {
+        destination: "Small claims / demand letter",
+        confirmation_number: "dl-123",
+      },
+    ];
+    const existingClientState = {
+      approved_next_action: {
+        label: "Small claims / demand letter",
+        href: "/justice/demand-letter",
+        status: "approved",
+      },
+    };
+    expect(
+      isAllowedOperatorEvidenceTerminalResolutionClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState,
+        incomingClientState: {
+          approved_next_action: {
+            label: "Small claims / demand letter",
+            href: "/justice/demand-letter",
+            status: "completed",
+            completed_at: "2026-01-03T00:00:00.000Z",
+            handling_requested_at: "2026-01-03T00:01:00.000Z",
+            outcome_note: "Escalation complete. Awaiting responses.",
+          },
+        },
+        tasks,
+        filings,
+      })
+    ).toBe(true);
+    expect(
+      isAllowedOperatorEvidenceTerminalResolutionClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState,
+        incomingClientState: {
+          approved_next_action: {
+            label: "Small claims / demand letter",
+            href: "/justice/demand-letter",
+            status: "completed",
+            completed_at: "2026-01-03T00:00:00.000Z",
+          },
+        },
+        tasks,
+        filings,
+      })
+    ).toBe(false);
   });
 
   it("strips premature BBB resolution from pending State AG client_state", () => {

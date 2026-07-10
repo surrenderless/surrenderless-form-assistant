@@ -70,6 +70,21 @@ function openDemandLetterTask(): JusticeCaseTaskRow {
   };
 }
 
+function completedDemandLetterTask(): JusticeCaseTaskRow {
+  return {
+    ...openDemandLetterTask(),
+    completed_at: "2026-06-23T12:00:00.000Z",
+    updated_at: "2026-06-23T12:00:00.000Z",
+  };
+}
+
+const confirmedDemandLetterFilings = [
+  {
+    destination: "Small claims / demand letter",
+    confirmation_number: "dl-confirmed-123",
+  },
+] as const;
+
 describe("incomingAddsPrematureResolutionTracking", () => {
   it("detects outcome_note changes", () => {
     expect(
@@ -282,6 +297,101 @@ describe("rejectCasePatchEscalationViolations", () => {
         filings: [],
       })
     ).toBe(REJECT_PREMATURE_RESOLUTION_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("allows stale approved_next_action terminal normalization + resolution seeding when operator evidence proves fulfillment", () => {
+    expect(
+      rejectCasePatchEscalationViolations({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: demandLetterApproved },
+        existingArchivedAt: null,
+        patch: {
+          client_state: {
+            approved_next_action: {
+              ...demandLetterApproved,
+              status: "completed",
+              completed_at: "2026-06-23T12:00:00.000Z",
+              handling_requested_at: "2026-06-23T12:05:00.000Z",
+              handling_request_note: "Escalation steps complete for Acme.",
+              outcome_note: "Escalation complete for Acme. Awaiting responses.",
+              follow_up_needed: true,
+              follow_up_at: "2026-08-22T12:00:00.000Z",
+              handling_acknowledged_at: "2026-06-23T12:05:01.000Z",
+            },
+          },
+        },
+        tasks: [completedDemandLetterTask()],
+        filings: [...confirmedDemandLetterFilings],
+      })
+    ).toBeNull();
+  });
+
+  it("still rejects bare manual completion without resolution seeding even when demand letter is confirmed", () => {
+    expect(
+      rejectCasePatchEscalationViolations({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: demandLetterApproved },
+        existingArchivedAt: null,
+        patch: {
+          client_state: {
+            approved_next_action: {
+              ...demandLetterApproved,
+              status: "completed",
+              completed_at: "2026-06-23T12:00:00.000Z",
+            },
+          },
+        },
+        tasks: [completedDemandLetterTask()],
+        filings: [...confirmedDemandLetterFilings],
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("still rejects premature State AG resolution while demand-letter work is pending", () => {
+    expect(
+      rejectCasePatchEscalationViolations({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: stateAgApproved },
+        existingArchivedAt: null,
+        patch: {
+          client_state: {
+            approved_next_action: {
+              ...demandLetterCompleted,
+              handling_requested_at: "2026-06-23T12:05:00.000Z",
+              outcome_note: "Premature bypass attempt.",
+            },
+          },
+        },
+        tasks: [openDemandLetterTask()],
+        filings: [
+          {
+            destination: "State Attorney General (consumer)",
+            confirmation_number: "ag-confirmed-456",
+          },
+        ],
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("still rejects owned-step manual start while State AG operator task is open", () => {
+    expect(
+      rejectCasePatchEscalationViolations({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: stateAgApproved },
+        existingArchivedAt: null,
+        patch: {
+          client_state: {
+            approved_next_action: {
+              ...stateAgApproved,
+              status: "started",
+              started_at: "2026-01-02T00:00:00.000Z",
+            },
+          },
+        },
+        tasks: [openStateAgTask()],
+        filings: [],
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
   });
 });
 

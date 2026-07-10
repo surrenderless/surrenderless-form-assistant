@@ -4,6 +4,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
+import { isAllowedOperatorEvidenceTerminalResolutionClientStatePatch } from "@/lib/justice/escalationLadderResolution";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
@@ -65,6 +66,18 @@ export function rejectManualOwnedStepClientStatePatch(
   const incomingAction = parseApprovedNextActionFromClientState(params.incomingClientState);
 
   if (!existingAction) return null;
+
+  if (
+    isAllowedOperatorEvidenceTerminalResolutionClientStatePatch({
+      caseId: params.caseId,
+      existingClientState: params.existingClientState,
+      incomingClientState: params.incomingClientState,
+      tasks: params.tasks,
+      filings: params.filings,
+    })
+  ) {
+    return null;
+  }
 
   const owned = shouldSuppressChatManualActionForSurrenderlessOwnedStep({
     approvedAction: existingAction,

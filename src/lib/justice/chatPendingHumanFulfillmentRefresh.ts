@@ -1,4 +1,5 @@
 import { hasPendingHumanFulfillmentEscalation } from "@/lib/justice/escalationLadderResolution";
+import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
@@ -9,6 +10,7 @@ export function isChatPendingHumanFulfillmentEscalation(input: {
   approvedAction: JusticeApprovedNextAction | undefined;
   caseId: string;
   tasks: readonly JusticeCaseTaskRow[];
+  filings?: readonly ManualActionTrackingFiling[];
 }): boolean {
   return hasPendingHumanFulfillmentEscalation(input);
 }
