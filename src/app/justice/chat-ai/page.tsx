@@ -64,8 +64,12 @@ import {
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
   isChatPendingHumanFulfillmentEscalation,
-  shouldRefreshChatAfterEscalationTerminalTransition,
 } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
+import {
+  ensureChatResolutionAfterEscalationFulfillment,
+  observeChatEscalationFulfillmentPending,
+  shouldRehydrateCaseAfterResolutionSync,
+} from "@/lib/justice/chatEscalationFulfillmentSync";
 import {
   collectNewChatCaseProgressNarrationMessages,
   type ChatCaseProgressObservation,
@@ -2428,6 +2432,7 @@ export default function JusticeChatAiPage() {
     useState<LastAssistedSubmissionAttemptSnapshot | null>(null);
   const evidencePreviewFetchGenerationRef = useRef(0);
   const wasPendingHumanFulfillmentEscalationRef = useRef(false);
+  const partsRef = useRef(parts);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
   const approvedNextActionRef = useRef<JusticeApprovedNextAction | undefined>(undefined);
@@ -2435,6 +2440,7 @@ export default function JusticeChatAiPage() {
   const legalConsentTrackedCaseIdRef = useRef<string | null>(null);
   const proofKeywordNudgeOfferedRef = useRef(false);
   approvedNextActionRef.current = approvedNextAction;
+  partsRef.current = parts;
   savedTasksRef.current = savedTasks;
 
   useEffect(() => {
@@ -3609,13 +3615,54 @@ export default function JusticeChatAiPage() {
       }
     ) => {
       const runRefresh = async () => {
-        const approvedAction = await refreshChatCaseFromServer(caseId, {
+        let approvedAction = await refreshChatCaseFromServer(caseId, {
           ...options,
           skipEvidenceRefresh: true,
         });
         if (options?.signal?.aborted) return;
-        const preview = await loadSavedEvidencePreview(options?.signal, true);
+        let preview = await loadSavedEvidencePreview(options?.signal, true);
         if (!preview || options?.signal?.aborted) return;
+
+        const observation = {
+          caseId,
+          approvedAction: approvedAction ?? approvedNextActionRef.current,
+          tasks: preview.tasks,
+        };
+        const escalationSync = observeChatEscalationFulfillmentPending({
+          observation,
+          wasPending: wasPendingHumanFulfillmentEscalationRef.current,
+        });
+        wasPendingHumanFulfillmentEscalationRef.current = escalationSync.isPending;
+
+        if (escalationSync.shouldInitiateResolution) {
+          const resolutionSync = await ensureChatResolutionAfterEscalationFulfillment({
+            caseId,
+            approvedAction: observation.approvedAction,
+            intakeFallback: buildJusticeIntakeFromParts(partsRef.current),
+            logLabel: "justice chat-ai escalation-terminal",
+            onLocalAction: (local) => {
+              writeSessionApprovedNextAction(caseId, local);
+              setApprovedNextAction(local);
+              approvedNextActionRef.current = local;
+            },
+          });
+          if (resolutionSync.action) {
+            approvedAction = resolutionSync.action;
+          }
+          if (
+            shouldRehydrateCaseAfterResolutionSync(resolutionSync) &&
+            !options?.signal?.aborted
+          ) {
+            await refreshChatCaseFromServer(caseId, {
+              ...options,
+              skipEvidenceRefresh: true,
+            });
+            if (options?.signal?.aborted) return;
+            preview = (await loadSavedEvidencePreview(options?.signal, true)) ?? preview;
+          }
+        }
+
+        if (options?.signal?.aborted || !preview) return;
         appendChatCaseProgressNarration({
           caseId,
           approvedAction: approvedAction ?? approvedNextActionRef.current,
@@ -3649,35 +3696,46 @@ export default function JusticeChatAiPage() {
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId) || !approvedNextAction) return;
 
-    const isPending = isChatPendingHumanFulfillmentEscalation({
-      approvedAction: approvedNextAction,
+    let cancelled = false;
+    let intervalId: number | undefined;
+
+    const tick = async () => {
+      if (cancelled) return;
+      await refreshFullChatCaseContextFromServer(caseId);
+      if (cancelled) return;
+      if (!wasPendingHumanFulfillmentEscalationRef.current && intervalId !== undefined) {
+        window.clearInterval(intervalId);
+        intervalId = undefined;
+      }
+    };
+
+    const initialPending = isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextActionRef.current,
       caseId,
       tasks: savedTasksRef.current,
     });
 
-    if (
-      shouldRefreshChatAfterEscalationTerminalTransition({
-        wasPending: wasPendingHumanFulfillmentEscalationRef.current,
-        isPending,
-      })
-    ) {
-      void refreshFullChatCaseContextFromServer(caseId);
+    if (initialPending) {
+      void tick();
+      intervalId = window.setInterval(() => void tick(), CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS);
+    } else if (wasPendingHumanFulfillmentEscalationRef.current) {
+      void tick();
+    } else {
+      wasPendingHumanFulfillmentEscalationRef.current = false;
     }
-    wasPendingHumanFulfillmentEscalationRef.current = isPending;
 
-    if (!isPending) return;
-
-    const poll = () => {
-      void refreshFullChatCaseContextFromServer(caseId);
+    return () => {
+      cancelled = true;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+      }
     };
-    poll();
-    const interval = window.setInterval(poll, CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS);
-    return () => window.clearInterval(interval);
   }, [
     isUpdatingExistingCase,
     isLoaded,
     isSignedIn,
     approvedNextAction,
+    savedTasks,
     refreshFullChatCaseContextFromServer,
   ]);
 
@@ -4174,11 +4232,12 @@ export default function JusticeChatAiPage() {
 
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
+    wasPendingHumanFulfillmentEscalationRef.current = false;
     const ac = new AbortController();
-    void refreshChatCaseFromServer(caseId, { signal: ac.signal, skipEvidenceRefresh: true });
+    void refreshFullChatCaseContextFromServer(caseId, { signal: ac.signal });
 
     return () => ac.abort();
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn, refreshChatCaseFromServer]);
+  }, [isUpdatingExistingCase, isLoaded, isSignedIn, refreshFullChatCaseContextFromServer]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
