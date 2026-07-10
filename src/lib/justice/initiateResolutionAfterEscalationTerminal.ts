@@ -95,13 +95,18 @@ export type InitiateResolutionAfterEscalationTerminalParams = {
   applyTimeline?: typeof applyServerTimelineFromResponse;
 };
 
+export type InitiateResolutionAfterEscalationTerminalResult = {
+  action: JusticeApprovedNextAction | undefined;
+  persisted: boolean;
+};
+
 /** Idempotent: starts resolution/follow-up tracking when escalation ladder is terminal. */
 export async function initiateResolutionAfterEscalationTerminal(
   params: InitiateResolutionAfterEscalationTerminalParams
-): Promise<JusticeApprovedNextAction | undefined> {
+): Promise<InitiateResolutionAfterEscalationTerminalResult> {
   const action = parseApprovedNextActionFromClientState(params.clientState);
   if (!shouldInitiateResolutionAfterEscalationTerminal(action)) {
-    return action;
+    return { action, persisted: false };
   }
 
   const logLabel = params.logLabel ?? "justice escalation-terminal";
@@ -112,11 +117,12 @@ export async function initiateResolutionAfterEscalationTerminal(
     params.intake
   );
 
+  let persisted = false;
   try {
     const getRes = await fetchFn(`/api/justice/cases/${encodeURIComponent(params.caseId)}`);
     if (!getRes.ok) {
       console.warn(`${logLabel}: GET before resolution initiation failed`, getRes.status);
-      return local;
+      return { action: local, persisted: false };
     }
     const existing = (await getRes.json()) as { client_state?: unknown };
     const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
@@ -127,15 +133,16 @@ export async function initiateResolutionAfterEscalationTerminal(
     });
     if (!patchRes.ok) {
       console.warn(`${logLabel}: PATCH resolution initiation failed`, patchRes.status);
-      return local;
+      return { action: local, persisted: false };
     }
     const payload = (await patchRes.json()) as unknown;
     applyTimeline(params.caseId, payload);
+    persisted = true;
   } catch (e) {
     console.warn(`${logLabel}: resolution initiation error`, e);
   }
 
-  return local;
+  return { action: local, persisted };
 }
 
 /** Server-side: merge resolution tracking into client_state without fetch. */
