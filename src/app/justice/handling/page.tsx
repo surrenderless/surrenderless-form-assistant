@@ -59,6 +59,7 @@ import type {
   TimelineEntry,
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
+import { useRedirectConsumerActiveCaseOffLegacyLadderPage } from "@/lib/justice/useRedirectConsumerActiveCaseOffLegacyLadderPage";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingRecord,
@@ -2771,6 +2772,13 @@ export default function JusticeHandlingWorkbenchPage() {
     return assistedMockSubmissionEligibleItems.filter((item) => !retryCaseIds.has(item.caseRow.id));
   }, [assistedMockSubmissionEligibleItems, assistedMockSubmissionRetryItems]);
 
+  const redirectOffHandling = useRedirectConsumerActiveCaseOffLegacyLadderPage({
+    legacyPageHref: "/justice/handling",
+    caseId: sessionCaseId ?? "",
+    hasResumableCase: Boolean(sessionCaseId?.trim()),
+    allowOperatorAccess: true,
+  });
+
   return (
     <>
       <Header />
@@ -2797,7 +2805,7 @@ export default function JusticeHandlingWorkbenchPage() {
           only — Surrenderless has not filed, submitted, sent, queued externally, or contacted anyone.
         </p>
 
-        {!isLoaded ? (
+        {!isLoaded || redirectOffHandling ? (
           <p className="mt-8 text-sm text-neutral-500 dark:text-neutral-400">Loading…</p>
         ) : !isSignedIn ? (
           <p className="mt-8 text-sm text-neutral-600 dark:text-neutral-400">Sign in to view handling requests.</p>
