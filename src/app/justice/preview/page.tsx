@@ -35,6 +35,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { readAndClearPreviewChatUpdateSummary } from "@/lib/justice/previewChatUpdateHandoff";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { useRedirectConsumerActiveCaseOffLegacyLadderPage } from "@/lib/justice/useRedirectConsumerActiveCaseOffLegacyLadderPage";
 
 /** Page-local; mirrors plan/packet approval session keys. */
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
@@ -315,11 +316,18 @@ export default function JusticePreviewPage() {
     }
   }, [reviewed, isSignedIn, aiDraft, selectedDestination, router]);
 
+  const redirectOffPreview = useRedirectConsumerActiveCaseOffLegacyLadderPage({
+    legacyPageHref: "/justice/preview",
+    caseId,
+    hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
+    sessionReady,
+  });
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (!sessionReady || hydrationStatus === "loading" || hydrationStatus === "redirecting") {
+  if (!sessionReady || hydrationStatus === "loading" || hydrationStatus === "redirecting" || redirectOffPreview) {
     return (
       <>
         <Header />

@@ -172,6 +172,40 @@ export function redirectConsumerActiveCaseOffChatHref(targetHref: string): strin
     : trimmed;
 }
 
+export type ConsumerLegacyLadderPageHref = "/justice/preview" | "/justice/handling";
+
+/** Direct URL entry guard for legacy consumer ladder detour pages. */
+export function shouldRedirectConsumerActiveCaseOffLegacyLadderPage(input: {
+  legacyPageHref: ConsumerLegacyLadderPageHref;
+  isSignedIn: boolean;
+  isLoaded: boolean;
+  caseId: string;
+  hasResumableCase: boolean;
+  /** When true, operator/admin roles may remain on `/justice/handling`. */
+  allowOperatorAccess?: boolean;
+  isOperator?: boolean;
+}): boolean {
+  if (input.allowOperatorAccess && input.isOperator) return false;
+  return shouldBlockChatAiOffChatNavigation({
+    isSignedIn: input.isSignedIn,
+    isUpdatingExistingCase: input.hasResumableCase,
+    isLoaded: input.isLoaded,
+    caseId: input.caseId,
+    targetHref: input.legacyPageHref,
+  });
+}
+
+export function resolveConsumerActiveCaseLegacyLadderRedirectHref(
+  legacyPageHref: ConsumerLegacyLadderPageHref
+): string {
+  if (legacyPageHref === "/justice/preview") {
+    return resolveConsumerActiveCaseResumeChatAiHref(
+      CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID
+    );
+  }
+  return CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
+}
+
 export function resolveConsumerActiveCaseChecklistDraftReviewNavigate(): {
   href: string;
   label: string;

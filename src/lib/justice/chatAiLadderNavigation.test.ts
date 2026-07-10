@@ -7,6 +7,8 @@ import {
   CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
   isChatAiMainLadderOffChatHref,
   redirectConsumerActiveCaseOffChatHref,
+  resolveConsumerActiveCaseLegacyLadderRedirectHref,
+  shouldRedirectConsumerActiveCaseOffLegacyLadderPage,
   resolveChatAiActiveCaseWorkHref,
   resolveChatAiChecklistDraftReviewAction,
   resolveChatAiChecklistPacketApprovalAction,
@@ -294,6 +296,72 @@ describe("chatAiLadderNavigation", () => {
         href: `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID}`,
         label: "Approve in chat",
       });
+    });
+  });
+
+  describe("legacy ladder direct-entry guards", () => {
+    const activeCaseInput = {
+      isSignedIn: true,
+      isLoaded: true,
+      caseId: "550e8400-e29b-41d4-a716-446655440000",
+      hasResumableCase: true,
+    } as const;
+
+    it("redirects signed-in resumable consumers off preview and handling pages", () => {
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          ...activeCaseInput,
+          legacyPageHref: "/justice/preview",
+        })
+      ).toBe(true);
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          ...activeCaseInput,
+          legacyPageHref: "/justice/handling",
+        })
+      ).toBe(true);
+    });
+
+    it("preserves handling workbench for operator roles with an active session case", () => {
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          ...activeCaseInput,
+          legacyPageHref: "/justice/handling",
+          allowOperatorAccess: true,
+          isOperator: true,
+        })
+      ).toBe(false);
+    });
+
+    it("does not redirect unsigned users or users without a resumable case", () => {
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          legacyPageHref: "/justice/preview",
+          isSignedIn: false,
+          isLoaded: true,
+          caseId: activeCaseInput.caseId,
+          hasResumableCase: true,
+        })
+      ).toBe(false);
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          legacyPageHref: "/justice/handling",
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "",
+          hasResumableCase: false,
+        })
+      ).toBe(false);
+    });
+
+    it("resolves chat-ai resume hrefs for legacy page redirects", () => {
+      expect(resolveConsumerActiveCaseLegacyLadderRedirectHref("/justice/preview")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID}`
+      );
+      expect(resolveConsumerActiveCaseLegacyLadderRedirectHref("/justice/handling")).toBe(
+        CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
+      );
+      expect(redirectConsumerActiveCaseOffChatHref("/justice/state-ag")).toBe("/justice/state-ag");
     });
   });
 });
