@@ -67,9 +67,13 @@ import {
 } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import {
   ensureChatResolutionAfterEscalationFulfillment,
-  observeChatEscalationFulfillmentPending,
   shouldRehydrateCaseAfterResolutionSync,
 } from "@/lib/justice/chatEscalationFulfillmentSync";
+import {
+  observeChatOwnedFulfillmentCompletionSync,
+  shouldRehydrateCaseAfterOwnedFulfillmentSync,
+  type ChatOwnedFulfillmentObservationSnapshot,
+} from "@/lib/justice/chatOwnedFulfillmentCompletionSync";
 import {
   collectNewChatCaseProgressNarrationMessages,
   type ChatCaseProgressObservation,
@@ -2468,6 +2472,7 @@ export default function JusticeChatAiPage() {
     useState<LastAssistedSubmissionAttemptSnapshot | null>(null);
   const evidencePreviewFetchGenerationRef = useRef(0);
   const wasPendingHumanFulfillmentEscalationRef = useRef(false);
+  const ownedFulfillmentSnapshotRef = useRef<ChatOwnedFulfillmentObservationSnapshot | null>(null);
   const partsRef = useRef(parts);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
@@ -3682,19 +3687,20 @@ export default function JusticeChatAiPage() {
         let preview = await loadSavedEvidencePreview(options?.signal, true);
         if (!preview || options?.signal?.aborted) return;
 
-        const observation = {
+        let observation = {
           caseId,
           approvedAction: approvedAction ?? approvedNextActionRef.current,
           tasks: preview.tasks,
           filings: preview.filings,
         };
-        const escalationSync = observeChatEscalationFulfillmentPending({
+        let fulfillmentSync = observeChatOwnedFulfillmentCompletionSync({
           observation,
+          previousSnapshot: ownedFulfillmentSnapshotRef.current,
           wasPending: wasPendingHumanFulfillmentEscalationRef.current,
         });
-        wasPendingHumanFulfillmentEscalationRef.current = escalationSync.isPending;
+        wasPendingHumanFulfillmentEscalationRef.current = fulfillmentSync.isPending;
 
-        if (escalationSync.shouldInitiateResolution) {
+        if (fulfillmentSync.shouldInitiateResolution) {
           const resolutionSync = await ensureChatResolutionAfterEscalationFulfillment({
             caseId,
             approvedAction: observation.approvedAction,
@@ -3715,14 +3721,54 @@ export default function JusticeChatAiPage() {
             shouldRehydrateCaseAfterResolutionSync(resolutionSync) &&
             !options?.signal?.aborted
           ) {
-            await refreshChatCaseFromServer(caseId, {
+            approvedAction = await refreshChatCaseFromServer(caseId, {
               ...options,
               skipEvidenceRefresh: true,
             });
             if (options?.signal?.aborted) return;
             preview = (await loadSavedEvidencePreview(options?.signal, true)) ?? preview;
+            if (preview) {
+              observation = {
+                caseId,
+                approvedAction: approvedAction ?? approvedNextActionRef.current,
+                tasks: preview.tasks,
+                filings: preview.filings,
+              };
+              fulfillmentSync = observeChatOwnedFulfillmentCompletionSync({
+                observation,
+                previousSnapshot: ownedFulfillmentSnapshotRef.current,
+                wasPending: wasPendingHumanFulfillmentEscalationRef.current,
+              });
+              wasPendingHumanFulfillmentEscalationRef.current = fulfillmentSync.isPending;
+            }
+          }
+        } else if (
+          shouldRehydrateCaseAfterOwnedFulfillmentSync(fulfillmentSync) &&
+          !options?.signal?.aborted
+        ) {
+          approvedAction = await refreshChatCaseFromServer(caseId, {
+            ...options,
+            skipEvidenceRefresh: true,
+          });
+          if (options?.signal?.aborted) return;
+          preview = (await loadSavedEvidencePreview(options?.signal, true)) ?? preview;
+          if (preview) {
+            observation = {
+              caseId,
+              approvedAction: approvedAction ?? approvedNextActionRef.current,
+              tasks: preview.tasks,
+              filings: preview.filings,
+            };
+            fulfillmentSync = observeChatOwnedFulfillmentCompletionSync({
+              observation,
+              previousSnapshot: ownedFulfillmentSnapshotRef.current,
+              wasPending: wasPendingHumanFulfillmentEscalationRef.current,
+            });
+            wasPendingHumanFulfillmentEscalationRef.current = fulfillmentSync.isPending;
           }
         }
+
+        ownedFulfillmentSnapshotRef.current = fulfillmentSync.currentSnapshot;
 
         if (options?.signal?.aborted || !preview) return;
         appendChatCaseProgressNarration({
@@ -4297,6 +4343,7 @@ export default function JusticeChatAiPage() {
     if (!isLoaded || !isSignedIn || !isUuid(caseId)) return;
 
     wasPendingHumanFulfillmentEscalationRef.current = false;
+    ownedFulfillmentSnapshotRef.current = null;
     const ac = new AbortController();
     void refreshFullChatCaseContextFromServer(caseId, { signal: ac.signal });
 
