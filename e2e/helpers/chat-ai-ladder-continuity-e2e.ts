@@ -191,7 +191,7 @@ export async function seedActiveCaseMerchantFilingStep(page: Page): Promise<void
 
 export async function seedActiveCaseStateAgQueued(page: Page): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
-  const intake = buildPlaywrightMockE2eCaseIntake();
+  const intake = { ...buildPlaywrightMockE2eCaseIntake(), already_contacted: "yes" as const };
   const approvedNextAction: JusticeApprovedNextAction = {
     label: "State Attorney General (consumer)",
     href: MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
