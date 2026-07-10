@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 import { isChatInlinePrepHref } from "@/lib/justice/chatInlineApprovedPrep";
+import { isChatAiMainLadderOffChatHref } from "@/lib/justice/chatAiLadderNavigation";
 import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 
 /** Read-only / interactive copy for approved-next-action handling request tracking. */
@@ -134,12 +135,12 @@ export function resolveHandlingTrackingContextualLink(input: {
       return { href: "/justice/chat-ai", label: "Update case in chat" };
     }
     if (input.surface === "packet") return null;
-    if (input.surface === "chat-ai" && input.prepInlineInChat) {
+    if (input.surface === "chat-ai") {
       return null;
     }
     return {
       href: "/justice/packet",
-      label: input.surface === "chat-ai" ? "Review case packet (optional)" : "Review case packet",
+      label: "Review case packet",
     };
   }
 
@@ -156,6 +157,9 @@ export function resolveHandlingTrackingContextualLink(input: {
       if (input.prepInlineInChat && isChatInlinePrepHref(href)) {
         return null;
       }
+      if (isChatAiMainLadderOffChatHref(href)) {
+        return null;
+      }
     }
     return {
       href,
@@ -167,7 +171,10 @@ export function resolveHandlingTrackingContextualLink(input: {
     isHandlingTrackingAddFilingStep(derivedStep) ||
     isHandlingTrackingAddConfirmationStep(derivedStep)
   ) {
-    if (input.surface === "chat-ai" && input.inlineFilingCaptureInChat) {
+    if (input.surface === "chat-ai") {
+      return null;
+    }
+    if (input.inlineFilingCaptureInChat) {
       return null;
     }
     if (input.surface === "packet") {

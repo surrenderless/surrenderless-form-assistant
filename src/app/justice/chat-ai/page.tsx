@@ -223,6 +223,18 @@ import {
   commitIntakeToSessionAndServer,
   shouldRouteToChatAiAfterIntakeCommit,
 } from "@/lib/justice/commitIntakeToSessionAndServer";
+import {
+  CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID,
+  CHAT_AI_INLINE_FILING_CAPTURE_ELEMENT_ID,
+  resolveChatAiActiveCaseWorkHref,
+  resolveChatAiActiveCaseWorkLabel,
+  resolveChatAiChecklistDraftReviewAction,
+  resolveChatAiChecklistPacketApprovalAction,
+  resolveChatAiFilingStepInChatAction,
+  scrollChatAiInlineElementWithHydrationWait,
+  shouldBlockChatAiOffChatNavigation,
+  shouldKeepSignedInChatAiActiveCaseInChat,
+} from "@/lib/justice/chatAiLadderNavigation";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
   clearPreviewChatUpdateSummary,
@@ -391,24 +403,6 @@ function writeSessionSubmissionDraftReviewed(caseId: string): void {
   } catch {
     // ignore corrupt session data
   }
-}
-
-function resolveActiveCaseWorkHref(
-  draftReviewed: boolean,
-  packetApproved: boolean
-): string {
-  if (!draftReviewed) return "/justice/preview";
-  if (!packetApproved) return "/justice/packet";
-  return "/justice/chat-ai";
-}
-
-function resolveActiveCaseWorkLabel(
-  draftReviewed: boolean,
-  packetApproved: boolean
-): string {
-  if (!draftReviewed) return "Submission preview";
-  if (!packetApproved) return "Review prepared case packet";
-  return "Continue in chat";
 }
 
 type ContinueHandoffStepsInput = {
@@ -622,8 +616,7 @@ function ChatInlineSubmissionDraftReviewBlock({
         </>
       ) : (
         <p className="text-[11px] text-blue-900/90 dark:text-blue-100/90">
-          Draft preview is not available yet. Use the full submission preview to review your case
-          text.
+          Draft preview is loading. Stay in this chat — it will appear here when ready.
         </p>
       )}
       <div className="flex items-start gap-2 text-[11px] text-blue-900 dark:text-blue-100">
@@ -714,7 +707,7 @@ function ChatInlinePreparedPacketApprovalBlock({
         </>
       ) : (
         <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
-          Packet preview is not available yet. Use the full packet page to review your case packet.
+          Packet preview is loading. Stay in this chat — it will appear here when ready.
         </p>
       )}
       <div className="flex items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
@@ -1499,16 +1492,10 @@ const CHAT_TRACKING_SAVE_ERROR_MESSAGE =
 const CHAT_ARCHIVE_ERROR_MESSAGE =
   "This case could not be archived on the server. Try again.";
 
-function ChatHandlingWorkbenchOptionalLink() {
+function ChatHandlingWorkbenchInChatNotice() {
   return (
     <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/65 dark:text-emerald-200/65">
-      <Link
-        href="/justice/handling"
-        className="underline underline-offset-2 hover:text-emerald-900/90 dark:hover:text-emerald-100/90"
-      >
-        Handling workbench
-      </Link>
-      <span className="text-emerald-900/60 dark:text-emerald-100/60"> (optional)</span>
+      Operator queue updates continue here in chat.
     </p>
   );
 }
@@ -1542,6 +1529,8 @@ function deriveChatManualActionNextStep(input: {
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
   canCaptureFilingInline?: boolean;
+  /** Signed-in chat-ai may show in-chat filing copy before UUID hydration completes. */
+  canCaptureFilingInChat?: boolean;
   pendingHumanFulfillmentEscalation?: boolean;
   resolutionFlowExposed?: boolean;
 }): string {
@@ -1579,13 +1568,15 @@ function deriveChatManualActionNextStep(input: {
   if (!input.actionOpened) {
     return "Open the approved step and prepare the manual action.";
   }
+  const useChatInlineFilingCopy =
+    input.canCaptureFilingInChat ?? input.canCaptureFilingInline;
   if (!input.hasFilingRecord) {
-    return input.canCaptureFilingInline
+    return useChatInlineFilingCopy
       ? HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE
       : HANDLING_TRACKING_STEP_ADD_FILING;
   }
   if (!input.hasConfirmationOnFile) {
-    return input.canCaptureFilingInline
+    return useChatInlineFilingCopy
       ? HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE
       : HANDLING_TRACKING_STEP_ADD_CONFIRMATION;
   }
@@ -1613,6 +1604,7 @@ function deriveChatHandlingTrackingLine(input: {
   filings: JusticeCaseFilingRow[];
   next: JusticeApprovedNextAction;
   canCaptureFilingInline?: boolean;
+  canCaptureFilingInChat?: boolean;
   caseId?: string;
   tasks?: JusticeCaseTaskRow[];
 }): string {
@@ -1650,9 +1642,34 @@ function deriveChatHandlingTrackingLine(input: {
     handlingAcknowledgedAt: input.next.handling_acknowledged_at,
     followUpNeeded: input.next.follow_up_needed === true,
     canCaptureFilingInline: input.canCaptureFilingInline,
+    canCaptureFilingInChat: input.canCaptureFilingInChat,
     pendingHumanFulfillmentEscalation,
     resolutionFlowExposed,
   });
+}
+
+function ChatAiFilingStepInChatGuidance({
+  action,
+}: {
+  action: ReturnType<typeof resolveChatAiFilingStepInChatAction>;
+}) {
+  if (action.kind === "hidden") return null;
+  if (action.kind === "wait") {
+    return (
+      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">{action.label}</p>
+    );
+  }
+  return (
+    <p className="mt-1 text-xs">
+      <button
+        type="button"
+        onClick={() => scrollChatAiInlineElementWithHydrationWait(action.targetElementId)}
+        className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+      >
+        {action.label}
+      </button>
+    </p>
+  );
 }
 
 function ChatManualFilingCaptureForm({
@@ -2070,6 +2087,7 @@ function ChatHandlingTrackingStatusReadOnly({
         filings,
         next: approvedNextAction,
         canCaptureFilingInline,
+        canCaptureFilingInChat: canCaptureFiling,
         caseId,
         tasks,
       });
@@ -2079,21 +2097,23 @@ function ChatHandlingTrackingStatusReadOnly({
     tasks,
     filings,
   });
-  const showInlineFilingCapture =
-    !readinessLoading &&
-    canCaptureFilingInline &&
-    derivedStep !== null &&
-    isHandlingTrackingFilingCaptureStep(derivedStep) &&
-    !shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
+  const filingCaptureSuppressed =
+    shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
       approvedAction: approvedNextAction,
       filings,
-    }) &&
-    !shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+    }) ||
+    shouldSuppressChatManualActionForSurrenderlessOwnedStep({
       approvedAction: approvedNextAction,
       caseId,
       tasks,
       filings,
     });
+  const showInlineFilingCapture =
+    !readinessLoading &&
+    canCaptureFilingInline &&
+    derivedStep !== null &&
+    isHandlingTrackingFilingCaptureStep(derivedStep) &&
+    !filingCaptureSuppressed;
   const inlineFilingMode =
     derivedStep !== null && isHandlingTrackingAddFilingStep(derivedStep)
       ? "add_filing"
@@ -2124,26 +2144,40 @@ function ChatHandlingTrackingStatusReadOnly({
         />
       ) : null}
       {!readinessLoading && derivedStep !== null && !showInlineFilingCapture ? (
-        <ApprovedNextActionHandlingTrackingContextualLink
-          derivedStep={derivedStep}
-          approvedNextAction={approvedNextAction}
-          surface="chat-ai"
-          basicsReady={basicsReady}
-          evidenceCount={evidenceCount}
-          markAcknowledgedOnScreen={markAcknowledgedOnScreen}
-          prepInlineInChat={prepInlineInChat}
-          suppressOwnedStepManualNavigation={suppressOwnedStepManualNavigation}
-          inlineFilingCaptureInChat={showInlineFilingCapture}
-        />
+        <>
+          <ApprovedNextActionHandlingTrackingContextualLink
+            derivedStep={derivedStep}
+            approvedNextAction={approvedNextAction}
+            surface="chat-ai"
+            basicsReady={basicsReady}
+            evidenceCount={evidenceCount}
+            markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+            prepInlineInChat={prepInlineInChat}
+            suppressOwnedStepManualNavigation={suppressOwnedStepManualNavigation}
+            inlineFilingCaptureInChat={showInlineFilingCapture}
+          />
+          <ChatAiFilingStepInChatGuidance
+            action={resolveChatAiFilingStepInChatAction({
+              isFilingCaptureStep:
+                derivedStep !== null && isHandlingTrackingFilingCaptureStep(derivedStep),
+              showInlineFilingCapture,
+              filingCaptureSuppressed,
+              canCaptureFilingInChat: canCaptureFiling,
+              caseId,
+            })}
+          />
+        </>
       ) : null}
       {showInlineFilingCapture && onFilingsSaved ? (
-        <ChatManualFilingCaptureForm
-          mode={inlineFilingMode}
-          caseId={caseId}
-          approvedNextAction={approvedNextAction}
-          filings={filings}
-          onSaved={onFilingsSaved}
-        />
+        <div id={CHAT_AI_INLINE_FILING_CAPTURE_ELEMENT_ID}>
+          <ChatManualFilingCaptureForm
+            mode={inlineFilingMode}
+            caseId={caseId}
+            approvedNextAction={approvedNextAction}
+            filings={filings}
+            onSaved={onFilingsSaved}
+          />
+        </div>
       ) : null}
       {showArchiveWhenComplete ? (
         <div className="mt-2 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40">
@@ -3254,7 +3288,27 @@ export default function JusticeChatAiPage() {
       return;
     }
     const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    const shouldStayInChat =
+      isUpdatingExistingCase &&
+      isLoaded &&
+      isSignedIn &&
+      Boolean(caseId) &&
+      isUuid(caseId);
+    const blockOffChatNavigation = shouldBlockChatAiOffChatNavigation({
+      isSignedIn: Boolean(isSignedIn),
+      isUpdatingExistingCase,
+      isLoaded,
+      caseId,
+      targetHref,
+    });
+
     if (approvedNextAction.status === "completed") {
+      if (shouldStayInChat || blockOffChatNavigation) {
+        scrollChatAiInlineElementWithHydrationWait(CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID);
+        return;
+      }
       router.push(targetHref);
       return;
     }
@@ -3273,9 +3327,6 @@ export default function JusticeChatAiPage() {
     const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
     setApprovedNextAction(local);
 
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-
     if (caseId) {
       writeSessionApprovedNextAction(caseId, local);
       try {
@@ -3291,15 +3342,21 @@ export default function JusticeChatAiPage() {
     }
 
     const navigateHref = local.href?.trim() || targetHref;
-    const shouldStayInChat =
-      isUpdatingExistingCase &&
-      isLoaded &&
-      isSignedIn &&
-      Boolean(caseId) &&
-      isUuid(caseId);
+    const blockNavigateOffChat = shouldBlockChatAiOffChatNavigation({
+      isSignedIn: Boolean(isSignedIn),
+      isUpdatingExistingCase,
+      isLoaded,
+      caseId,
+      targetHref: navigateHref,
+    });
 
-    if (!shouldStayInChat) {
+    if (!shouldStayInChat && !blockNavigateOffChat) {
       router.push(navigateHref);
+      return;
+    }
+
+    if (!shouldStayInChat && blockNavigateOffChat) {
+      scrollChatAiInlineElementWithHydrationWait(CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID);
       return;
     }
 
@@ -4360,7 +4417,7 @@ export default function JusticeChatAiPage() {
           let commitSucceeded = false;
 
           if (parsedIntakeCommit.kind === "intake_commit") {
-            const ok = await handleContinueToPreview({ fromChatCommit: true });
+            const ok = await handleContinueToPreview();
             commitSucceeded = ok;
             if (!ok) {
               assistantText =
@@ -4660,7 +4717,7 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleContinueToPreview(options?: { fromChatCommit?: boolean }): Promise<boolean> {
+  async function handleContinueToPreview(): Promise<boolean> {
     setContactProofError(null);
     setStagedProofFlushError(null);
     const basicsMissing = getPreviewBasicsMissing(parts);
@@ -4715,9 +4772,6 @@ export default function JusticeChatAiPage() {
           return true;
         }
 
-        if (!options?.fromChatCommit) {
-          router.push("/justice/preview");
-        }
         return false;
       }
 
@@ -4779,9 +4833,6 @@ export default function JusticeChatAiPage() {
         return true;
       }
 
-      if (!options?.fromChatCommit) {
-        router.push("/justice/preview");
-      }
       return false;
     } finally {
       setSubmitting(false);
@@ -5127,6 +5178,10 @@ export default function JusticeChatAiPage() {
       })
     : false;
   const activeCaseEvidenceReady = showSavedEvidenceCount && (savedEvidenceCount ?? 0) >= 1;
+  const chatAiKeepInChatLadder = shouldKeepSignedInChatAiActiveCaseInChat({
+    isSignedIn: Boolean(isSignedIn),
+    isUpdatingExistingCase,
+  });
   const activeCaseFocusLine =
     basicsMissing.length > 0
       ? stillNeededBeforePreviewMessage(basicsMissing)
@@ -5135,20 +5190,37 @@ export default function JusticeChatAiPage() {
         : showInlinePreparedPacketApproval
           ? "Approve your prepared packet below in this chat."
           : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
-            ? "Review your submission draft before continuing."
+            ? chatAiKeepInChatLadder
+              ? "Review your submission draft below in this chat."
+              : "Review your submission draft before continuing."
             : "Describe what to add or change, then save in chat.";
-  const activeCaseWorkHref = resolveActiveCaseWorkHref(
-    activeCaseDraftReviewed,
-    preparedPacketApproved
-  );
-  const activeCaseWorkLabel = resolveActiveCaseWorkLabel(
-    activeCaseDraftReviewed,
-    preparedPacketApproved
-  );
+  const chatAiChecklistDraftReviewAction = resolveChatAiChecklistDraftReviewAction({
+    draftReviewed: activeCaseDraftReviewed,
+    keepInChat: chatAiKeepInChatLadder,
+    showInlineBlock: showInlineSubmissionDraftReview,
+    activeUuidCaseId,
+  });
+  const chatAiChecklistPacketApprovalAction = resolveChatAiChecklistPacketApprovalAction({
+    draftReviewed: activeCaseDraftReviewed,
+    packetApproved: preparedPacketApproved,
+    keepInChat: chatAiKeepInChatLadder,
+    showInlineBlock: showInlinePreparedPacketApproval,
+    activeUuidCaseId,
+  });
+  const activeCaseWorkHref = resolveChatAiActiveCaseWorkHref({
+    keepInChat: chatAiKeepInChatLadder,
+    draftReviewed: activeCaseDraftReviewed,
+    packetApproved: preparedPacketApproved,
+  });
+  const activeCaseWorkLabel = resolveChatAiActiveCaseWorkLabel({
+    keepInChat: chatAiKeepInChatLadder,
+    draftReviewed: activeCaseDraftReviewed,
+    packetApproved: preparedPacketApproved,
+  });
   const activeCaseSecondaryWorkLink =
-    activeCaseDraftReviewed && preparedPacketApproved
-      ? { href: "/justice/preview", label: "Submission preview" }
-      : null;
+    chatAiKeepInChatLadder || !(activeCaseDraftReviewed && preparedPacketApproved)
+      ? null
+      : { href: "/justice/preview", label: "Submission preview" };
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
   const chatFirstActiveCaseBreadcrumbContinuity =
@@ -5289,58 +5361,58 @@ export default function JusticeChatAiPage() {
               <li>
                 Submission draft reviewed: {activeCaseDraftReviewed ? "yes" : "not yet"}
                 {!activeCaseDraftReviewed ? (
-                  showInlineSubmissionDraftReview ? (
+                  chatAiChecklistDraftReviewAction.kind === "scroll" ? (
                     <>
                       {" · "}
                       <button
                         type="button"
                         onClick={() =>
-                          document
-                            .getElementById("chat-ai-inline-submission-draft-review")
-                            ?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+                          scrollChatAiInlineElementWithHydrationWait(
+                            chatAiChecklistDraftReviewAction.targetElementId
+                          )
                         }
                         className={activeCaseChecklistLinkCls}
                       >
-                        Review below
+                        {chatAiChecklistDraftReviewAction.label}
                       </button>
                     </>
-                  ) : (
+                  ) : chatAiChecklistDraftReviewAction.kind === "wait" ? (
                     <>
                       {" · "}
-                      <Link href="/justice/preview" className={activeCaseChecklistLinkCls}>
-                        Review submission draft
-                      </Link>
+                      <span className="text-neutral-500 dark:text-neutral-400">
+                        {chatAiChecklistDraftReviewAction.label}
+                      </span>
                     </>
-                  )
+                  ) : null
                 ) : null}
               </li>
               {activeCaseDraftReviewed ? (
                 <li>
                   Prepared case packet reviewed: {preparedPacketApproved ? "yes" : "not yet"}
                   {!preparedPacketApproved ? (
-                    showInlinePreparedPacketApproval ? (
+                    chatAiChecklistPacketApprovalAction.kind === "scroll" ? (
                       <>
                         {" · "}
                         <button
                           type="button"
                           onClick={() =>
-                            document
-                              .getElementById("chat-ai-inline-prepared-packet-approval")
-                              ?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+                            scrollChatAiInlineElementWithHydrationWait(
+                              chatAiChecklistPacketApprovalAction.targetElementId
+                            )
                           }
                           className={activeCaseChecklistLinkCls}
                         >
-                          Approve below
+                          {chatAiChecklistPacketApprovalAction.label}
                         </button>
                       </>
-                    ) : (
+                    ) : chatAiChecklistPacketApprovalAction.kind === "wait" ? (
                       <>
                         {" · "}
-                        <Link href="/justice/packet" className={activeCaseChecklistLinkCls}>
-                          Review prepared case packet
-                        </Link>
+                        <span className="text-neutral-500 dark:text-neutral-400">
+                          {chatAiChecklistPacketApprovalAction.label}
+                        </span>
                       </>
-                    )
+                    ) : null
                   ) : null}
                 </li>
               ) : null}
@@ -5898,7 +5970,10 @@ export default function JusticeChatAiPage() {
             ) : null}
 
             {isUpdatingExistingCase && approvedNextAction ? (
-              <div className="mt-4 rounded-xl border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 ring-1 ring-emerald-600/15 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:ring-emerald-400/10">
+              <div
+                id={CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}
+                className="mt-4 rounded-xl border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 ring-1 ring-emerald-600/15 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:ring-emerald-400/10"
+              >
                 <p className="text-xs font-semibold text-emerald-950 dark:text-emerald-100">
                   Current action tracking
                 </p>
@@ -5926,16 +6001,7 @@ export default function JusticeChatAiPage() {
                     queued your State Attorney General complaint for operator filing using your case
                     draft. Nothing has been filed yet.
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      <Link
-                        href="/justice/handling"
-                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                      >
-                        Handling workbench
-                      </Link>
-                      <span className="text-emerald-900/80 dark:text-emerald-100/80">
-                        {" "}
-                        (operator queue)
-                      </span>
+                      Stay in this chat — operator updates will appear here.
                     </span>
                   </p>
                 ) : null}
@@ -5945,16 +6011,7 @@ export default function JusticeChatAiPage() {
                     Surrenderless has queued your demand letter for operator fulfillment using your
                     case draft. Nothing has been sent yet.
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      <Link
-                        href="/justice/handling"
-                        className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-                      >
-                        Handling workbench
-                      </Link>
-                      <span className="text-emerald-900/80 dark:text-emerald-100/80">
-                        {" "}
-                        (operator queue)
-                      </span>
+                      Stay in this chat — operator updates will appear here.
                     </span>
                   </p>
                 ) : null}
@@ -6242,7 +6299,7 @@ export default function JusticeChatAiPage() {
                   preparedPacketApproved,
                   approvedNextAction,
                 }) || approvedNextAction.handling_requested_at?.trim() ? (
-                  <ChatHandlingWorkbenchOptionalLink />
+                  <ChatHandlingWorkbenchInChatNotice />
                 ) : null}
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
                   {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
