@@ -69,6 +69,11 @@ import {
   handlingWorkbenchOutcomeTrackingFormVisible,
 } from "@/lib/justice/handlingTrackingProgress";
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
+import {
+  CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
+  redirectConsumerActiveCaseOffChatHref,
+  resolveConsumerActiveCaseChecklistDraftReviewNavigate,
+} from "@/lib/justice/chatAiLadderNavigation";
 
 /** Post-review prepared-packet framing gates (page-local; does not change rules). */
 const PREP_OPENED_TYPES: TimelineEntryType[] = [
@@ -529,6 +534,11 @@ export default function JusticePacketPage() {
     return buildPacketPlainText(intake, timeline, evidence, filings, caseId);
   }, [intake, timeline, evidence, filings, caseId]);
 
+  const packetLockedFilingDestination = useMemo(
+    () => canonicalFilingDestinationForApprovedActionHref(approvedNextAction?.href),
+    [approvedNextAction?.href]
+  );
+
   async function copyPacket() {
     if (!packetText) return;
     try {
@@ -697,10 +707,6 @@ export default function JusticePacketPage() {
         caseId: caseId ?? "",
       })
     : false;
-  const packetLockedFilingDestination = useMemo(
-    () => canonicalFilingDestinationForApprovedActionHref(approvedNextAction?.href),
-    [approvedNextAction?.href]
-  );
 
   async function persistApprovedNextAction(
     next: JusticeApprovedNextAction,
@@ -806,17 +812,23 @@ export default function JusticePacketPage() {
     }
   }
 
+  function resolveConsumerPacketNavigateHref(href: string | undefined): string {
+    const raw = href?.trim() || approvedNextAction?.href?.trim() || "/justice/packet";
+    return redirectConsumerActiveCaseOffChatHref(raw);
+  }
+
   async function handleApprovedNextActionOpen(href: string) {
+    const actionHref = href?.trim() || approvedNextAction?.href?.trim() || "/justice/packet";
+    const targetHref = redirectConsumerActiveCaseOffChatHref(actionHref);
     if (approvedNextActionCompleted) {
-      router.push(href || approvedNextAction?.href || "/justice/packet");
+      router.push(targetHref);
       return;
     }
     const label = approvedNextAction?.label;
-    const targetHref = href || approvedNextAction?.href || "/justice/packet";
     const next: JusticeApprovedNextAction = {
       ...(approvedNextAction ?? {}),
       ...(label ? { label } : {}),
-      href: approvedNextAction?.href ?? targetHref,
+      href: approvedNextAction?.href ?? actionHref,
       status: "started",
       started_at: approvedNextAction?.started_at ?? new Date().toISOString(),
       ...(approvedNextAction?.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
@@ -895,6 +907,9 @@ export default function JusticePacketPage() {
       console.warn("justice packet: PATCH /api/justice/cases/[id] (client_state) error", e);
     }
   }
+
+  const draftReviewNavigate = resolveConsumerActiveCaseChecklistDraftReviewNavigate();
+  const resumeChatAiHref = CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
 
   return (
     <>
@@ -1027,8 +1042,8 @@ export default function JusticePacketPage() {
                           <span className="text-emerald-800/70 dark:text-emerald-200/70"> · </span>
                         ) : null}
                         {!draftReviewed ? (
-                          <Link href="/justice/preview" className={packetChecklistLinkCls}>
-                            Review submission draft
+                          <Link href={draftReviewNavigate.href} className={packetChecklistLinkCls}>
+                            {draftReviewNavigate.label}
                           </Link>
                         ) : null}
                       </p>
@@ -1116,10 +1131,10 @@ export default function JusticePacketPage() {
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
-                      href="/justice/handling"
+                      href={resumeChatAiHref}
                       className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                     >
-                      View in handling workbench
+                      Continue in chat
                     </Link>
                   </p>
                   {showPacketAcknowledgment ? (
@@ -1189,10 +1204,10 @@ export default function JusticePacketPage() {
               ) : null}
               <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                 <Link
-                  href="/justice/handling"
+                  href={resumeChatAiHref}
                   className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                 >
-                  View in handling workbench
+                  Continue in chat
                 </Link>
               </p>
             </>
@@ -1330,7 +1345,7 @@ export default function JusticePacketPage() {
                   approvedNextAction?.href &&
                   approvedNextAction.label ? (
                   <Link
-                    href={approvedNextAction.href}
+                    href={resolveConsumerPacketNavigateHref(approvedNextAction.href)}
                     className="mt-2 inline-flex text-sm font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                   >
                     Open {approvedNextAction.label}
@@ -1347,10 +1362,10 @@ export default function JusticePacketPage() {
                     </p>
                     <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                       <Link
-                        href="/justice/handling"
+                        href={resumeChatAiHref}
                         className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
                       >
-                        View on handling workbench
+                        Continue in chat
                       </Link>
                     </p>
                   </>

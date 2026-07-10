@@ -285,3 +285,27 @@ export async function seedActiveCaseForCasesListResume(page: Page): Promise<void
     timeout: 30_000,
   });
 }
+
+export function packetReadinessChecklist(page: Page): Locator {
+  return page
+    .getByText("Before you approve, finish readiness:", { exact: false })
+    .locator("xpath=ancestor::p[1]");
+}
+
+export async function seedActiveCaseForPacketNotApprovedResume(page: Page): Promise<void> {
+  await seedActiveCasePacketNotApproved(page);
+  await page.goto("/justice/packet");
+  await page.locator("main").getByRole("heading", { name: "Case packet" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+}
+
+export async function seedActiveCaseForPacketHandlingResume(page: Page): Promise<void> {
+  await seedActiveCaseStateAgQueued(page);
+  await page.goto("/justice/packet");
+  await page.locator("main").getByRole("heading", { name: "Case packet" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+}

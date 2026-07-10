@@ -991,8 +991,10 @@ export default function JusticeCasesPage() {
 
   function resolveApprovedNextActionFollowUpHref(next: JusticeApprovedNextAction): string {
     const href = next.href?.trim();
-    if (href && isInternalJusticeHref(href)) return href;
-    return "/justice/chat-ai";
+    if (href && isInternalJusticeHref(href)) {
+      return redirectConsumerActiveCaseOffChatHref(href);
+    }
+    return CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
   }
 
   function approvedNextActionFollowUpOpenLabel(next: JusticeApprovedNextAction): string {
