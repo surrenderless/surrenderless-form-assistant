@@ -164,7 +164,7 @@ export function resolveHandlingTrackingContextualLink(input: {
         return null;
       }
     }
-    if (input.surface === "hub" || input.surface === "cases") {
+    if (input.surface === "hub" || input.surface === "cases" || input.surface === "packet") {
       if (isChatAiMainLadderOffChatHref(href)) {
         return { href: "/justice/chat-ai", label: "Continue in chat" };
       }

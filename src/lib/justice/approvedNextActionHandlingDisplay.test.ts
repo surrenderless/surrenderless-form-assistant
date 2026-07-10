@@ -98,6 +98,16 @@ describe("resolveHandlingTrackingContextualLink", () => {
     });
     expect(
       resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: "/justice/handling" },
+        surface: "packet",
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Continue in chat",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
         surface: "cases",
         basicsReady: true,
