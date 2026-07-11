@@ -14,8 +14,16 @@ import {
   CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
 } from "@/lib/justice/chatLegalConsentGates";
+import {
+  CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE,
+  CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
+} from "@/lib/justice/chatCaseClosureGates";
+import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 import { expectUrlStaysOnChatAi } from "./chat-ai-ladder-continuity-e2e";
+
+export const OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE =
+  "Escalation complete for Acme Retail (widget order). BBB, State AG, and demand letter steps recorded. Awaiting responses.";
 
 export function chatAiTranscript(page: Page): Locator {
   return page
@@ -229,4 +237,150 @@ export async function driveConsumerToDemandLetterQueuedFromChat(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_queued"))
   ).toBeVisible({ timeout: 30_000 });
   await expectUrlStaysOnChatAi(consumerPage);
+}
+
+export function chatAiHandlingTrackingLine(page: Page): Locator {
+  return page.locator("p").filter({
+    has: page.locator("span.font-medium").filter({ hasText: "Handling tracking:" }),
+  });
+}
+
+export function chatAiInput(page: Page): Locator {
+  return page.locator("#chat-ai-input");
+}
+
+async function sendChatClosureMessage(page: Page, message: string): Promise<void> {
+  const chatInput = chatAiInput(page);
+  await expect(chatInput).toBeEnabled({ timeout: 15_000 });
+  await chatInput.click();
+  await chatInput.fill(message);
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Send" }).click();
+}
+
+/**
+ * Real chat path through operator UI completions to terminal resolution/outcome tracking.
+ */
+export async function driveConsumerToOwnedFulfillmentResolutionInChat(
+  consumerPage: Page,
+  operatorPage: Page
+): Promise<void> {
+  await driveConsumerToDemandLetterQueuedFromChat(consumerPage, operatorPage);
+  await completeDemandLetterFulfillmentViaOperatorUi(operatorPage);
+
+  const actionTracking = chatAiActionTracking(consumerPage);
+  const chatTranscript = chatAiTranscript(consumerPage);
+  const outcomeTrackingForm = consumerPage.getByRole("form", {
+    name: "Outcome and follow-up tracking",
+  });
+  const handlingTrackingLine = chatAiHandlingTrackingLine(consumerPage);
+
+  await expectUrlStaysOnChatAi(consumerPage);
+  await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_sent"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(handlingTrackingLine).toContainText(
+    "Review follow-up timing and mark follow-up handled when complete.",
+    { timeout: 15_000 }
+  );
+  await expect(actionTracking.getByText(`Outcome: ${OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE}`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(actionTracking.getByText(/Follow-up: flagged/)).toBeVisible({ timeout: 15_000 });
+  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+/** Mark follow-up handled via chat closure gate (real Send, not request.post). */
+export async function markFollowUpHandledViaChat(page: Page): Promise<void> {
+  const chatTranscript = chatAiTranscript(page);
+  const handlingTrackingLine = chatAiHandlingTrackingLine(page);
+  const actionTracking = chatAiActionTracking(page);
+
+  const followUpClearResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "PATCH" &&
+      res.url().includes("/api/justice/cases/") &&
+      res.request().postDataJSON()?.client_state !== undefined,
+    { timeout: 30_000 }
+  );
+  await sendChatClosureMessage(page, CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE);
+  const followUpPatch = await followUpClearResponse;
+  expect(followUpPatch.ok()).toBeTruthy();
+
+  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(
+    chatTranscript.getByText("I've marked follow-up as handled for this case.")
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
+    timeout: 30_000,
+  });
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Archive the active case via chat closure gate (real Send, not request.post). */
+export async function archiveCaseViaChat(page: Page): Promise<void> {
+  const archiveResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "PATCH" &&
+      res.url().includes("/api/justice/cases/") &&
+      typeof res.request().postDataJSON()?.archived_at === "string",
+    { timeout: 30_000 }
+  );
+  await sendChatClosureMessage(page, CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE);
+  const archivePatch = await archiveResponse;
+  expect(archivePatch.ok()).toBeTruthy();
+
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Assert chat shows a closed/archived consumer session with no active case loaded. */
+export async function expectConsumerChatCaseArchivedClosed(page: Page): Promise<void> {
+  const clearedCaseId = await page.evaluate(
+    (caseIdKey) => sessionStorage.getItem(caseIdKey),
+    STORAGE_CASE_ID
+  );
+  expect(clearedCaseId).toBeNull();
+
+  await expect(page.getByRole("form", { name: "Outcome and follow-up tracking" })).not.toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatAiActionTracking(page)).not.toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Demand letter queued with Surrenderless.")).not.toBeVisible({
+    timeout: 15_000,
+  });
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Reload chat and confirm archived state persists without re-opening the case or duplicating narration. */
+export async function expectConsumerChatStaysArchivedAfterReload(page: Page): Promise<void> {
+  const chatTranscript = chatAiTranscript(page);
+
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+
+  await expectConsumerChatCaseArchivedClosed(page);
+
+  expect(
+    await chatTranscript
+      .getByText(buildChatCaseProgressNarrationMessage("demand_letter_sent"))
+      .count()
+  ).toBe(0);
+  expect(
+    await chatTranscript
+      .getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
+      .count()
+  ).toBe(0);
+  expect(await chatTranscript.getByText(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE).count()).toBe(0);
+  expect(await chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE).count()).toBe(0);
 }

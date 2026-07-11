@@ -65,7 +65,11 @@ export function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction
     ...(typeof o.outcome_note === "string" && o.outcome_note.trim()
       ? { outcome_note: o.outcome_note.trim() }
       : {}),
-    ...(o.follow_up_needed === true ? { follow_up_needed: true } : {}),
+    ...(o.follow_up_needed === true
+      ? { follow_up_needed: true as const }
+      : o.follow_up_needed === false
+        ? { follow_up_needed: false as const }
+        : {}),
     ...(typeof o.follow_up_at === "string" && o.follow_up_at.trim()
       ? { follow_up_at: o.follow_up_at.trim() }
       : {}),
@@ -389,12 +393,11 @@ export function mergeApprovedNextActionForHydrate(
     ...(fromServer?.outcome_note ?? fromSession?.outcome_note
       ? { outcome_note: fromServer?.outcome_note ?? fromSession?.outcome_note }
       : {}),
-    ...(fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true
-      ? {
-          follow_up_needed:
-            fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true,
-        }
-      : {}),
+    ...(fromServer?.follow_up_needed === false || fromSession?.follow_up_needed === false
+      ? { follow_up_needed: false as const }
+      : fromServer?.follow_up_needed === true || fromSession?.follow_up_needed === true
+        ? { follow_up_needed: true as const }
+        : {}),
     ...(fromServer?.follow_up_at ?? fromSession?.follow_up_at
       ? { follow_up_at: fromServer?.follow_up_at ?? fromSession?.follow_up_at }
       : {}),
@@ -476,7 +479,9 @@ export function resolveApprovedNextAction(
     : fromServer.outcome_note ?? fromSession.outcome_note;
   const follow_up_needed = serverOwnsTrackingFields
     ? fromServer.follow_up_needed
-    : fromServer.follow_up_needed ?? fromSession.follow_up_needed;
+    : fromServer.follow_up_needed === false || fromSession.follow_up_needed === false
+      ? false
+      : fromServer.follow_up_needed ?? fromSession.follow_up_needed;
   const follow_up_at = serverOwnsTrackingFields
     ? fromServer.follow_up_at
     : fromServer.follow_up_at ?? fromSession.follow_up_at;
@@ -504,8 +509,12 @@ export function resolveApprovedNextAction(
     !completed && (fromServer.status === "started" || fromSession.status === "started");
   const trackingFields = {
     ...(outcome_note ? { outcome_note } : {}),
-    ...(follow_up_needed === true ? { follow_up_needed: true } : {}),
-    ...(follow_up_at ? { follow_up_at } : {}),
+    ...(follow_up_needed === true
+      ? { follow_up_needed: true as const }
+      : follow_up_needed === false
+        ? { follow_up_needed: false as const }
+        : {}),
+    ...(follow_up_needed === false ? {} : follow_up_at ? { follow_up_at } : {}),
     ...(handling_requested_at ? { handling_requested_at } : {}),
     ...(handling_request_note ? { handling_request_note } : {}),
     ...(handling_acknowledged_at ? { handling_acknowledged_at } : {}),

@@ -122,6 +122,18 @@ describe("chatCaseClosureGates", () => {
     ).toBe(false);
   });
 
+  it("allows archive while readiness refresh is in flight once follow-up is cleared", () => {
+    expect(
+      canArchiveCaseViaChat(
+        baseContext({
+          followUpNeeded: false,
+          handlingTrackingStep: HANDLING_TRACKING_STEP_COMPLETE,
+          readinessLoading: true,
+        })
+      )
+    ).toBe(true);
+  });
+
   it("builds assistant responses for closure outcomes", () => {
     expect(
       buildChatCaseClosureAssistantResponse({ kind: "archive_case" })
