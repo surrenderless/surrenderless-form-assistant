@@ -4615,7 +4615,7 @@ export default function JusticeChatAiPage() {
         chatHandlingReadinessLoading ||
         (Boolean(consentCaseId) && savedEvidenceCount === null);
       const handlingTrackingStep =
-        approvedNextAction && !closureReadinessLoading
+        approvedNextAction
           ? deriveChatHandlingTrackingLine({
               basicsReady: isBasicCaseInfoReadyForEscalation(buildJusticeIntakeFromParts(parts)),
               draftReviewed: submissionDraftReviewed,

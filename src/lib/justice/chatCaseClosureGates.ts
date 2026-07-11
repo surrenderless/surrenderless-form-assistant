@@ -101,7 +101,7 @@ export function canClearFollowUpViaChat(context: ChatCaseClosureContext): boolea
 }
 
 export function canArchiveCaseViaChat(context: ChatCaseClosureContext): boolean {
-  if (!context.caseId.trim() || context.readinessLoading) return false;
+  if (!context.caseId.trim()) return false;
   if (!context.resolutionFlowExposed || context.followUpNeeded) return false;
   return context.handlingTrackingStep === HANDLING_TRACKING_STEP_COMPLETE;
 }
