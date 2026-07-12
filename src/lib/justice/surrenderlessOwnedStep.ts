@@ -1,9 +1,3 @@
-import {
-  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
-  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
-  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
-  type ManualActionTrackingFiling,
-} from "@/lib/justice/handlingTrackingProgress";
 import { isDownstreamHumanFulfillmentEscalationAction } from "@/lib/justice/escalationLadderResolution";
 import {
   findOpenCfpbFilingTask,
@@ -13,6 +7,17 @@ import {
   findOpenDemandLetterFilingTask,
   hasDemandLetterFilingWithConfirmation,
 } from "@/lib/justice/demandLetterFilingTask";
+import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  type ManualActionTrackingFiling,
+} from "@/lib/justice/handlingTrackingProgress";
+import {
+  findOpenPaymentDisputeFilingTask,
+  hasPaymentDisputeFilingWithConfirmation,
+} from "@/lib/justice/paymentDisputeFilingTask";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
@@ -75,6 +80,22 @@ function isCfpbStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParam
   return false;
 }
 
+function isPaymentDisputeStepOwnedBySurrenderless(
+  params: SurrenderlessOwnedStepCheckParams
+): boolean {
+  if (
+    params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
+  ) {
+    return false;
+  }
+  const caseId = params.caseId.trim();
+  if (!caseId) return false;
+  if (findOpenPaymentDisputeFilingTask(params.tasks, caseId)) return true;
+  if (hasPaymentDisputeFilingWithConfirmation(params.filings)) return true;
+  if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  return false;
+}
+
 /**
  * True when Surrenderless owns the active approved step (human-fulfillment queue or confirmed filing).
  * Suppresses conflicting copy/paste prep and manual filing capture in chat for that step.
@@ -85,6 +106,7 @@ export function shouldSuppressChatManualActionForSurrenderlessOwnedStep(
   return (
     isStateAgStepOwnedBySurrenderless(params) ||
     isDemandLetterStepOwnedBySurrenderless(params) ||
-    isCfpbStepOwnedBySurrenderless(params)
+    isCfpbStepOwnedBySurrenderless(params) ||
+    isPaymentDisputeStepOwnedBySurrenderless(params)
   );
 }

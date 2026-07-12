@@ -318,6 +318,11 @@ import {
   hasCfpbFilingWithConfirmation,
   isApprovedCfpbFilingAction,
 } from "@/lib/justice/cfpbFilingTask";
+import {
+  findOpenPaymentDisputeFilingTask,
+  hasPaymentDisputeFilingWithConfirmation,
+  isApprovedPaymentDisputeFilingAction,
+} from "@/lib/justice/paymentDisputeFilingTask";
 
 type UiMessage = {
   id: string;
@@ -5690,6 +5695,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showPaymentDisputeFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedPaymentDisputeFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
@@ -5705,6 +5720,11 @@ export default function JusticeChatAiPage() {
     isApprovedCfpbFilingAction(approvedNextAction) &&
     !findOpenCfpbFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasCfpbFilingWithConfirmation(savedFilings);
+  const showPaymentDisputeFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedPaymentDisputeFilingAction(approvedNextAction) &&
+    !findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasPaymentDisputeFilingWithConfirmation(savedFilings);
   const suppressSurrenderlessOwnedManualUi = suppressSurrenderlessOwnedManualUiEarly;
   const showInlineApprovedPrepVisible =
     showInlineApprovedPrep &&
@@ -5726,7 +5746,8 @@ export default function JusticeChatAiPage() {
     Boolean(approvedNextAction) &&
     approvedNextAction?.href?.trim() === CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF &&
     !approvedNextAction?.handling_requested_at?.trim() &&
-    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started");
+    (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started") &&
+    !suppressSurrenderlessOwnedManualUi;
   const showInlineFtcPracticePrep = shouldShowChatInlineFtcMockPracticePrep({
     isUpdatingExistingCase,
     caseId: activeUuidCaseId,
@@ -5754,6 +5775,7 @@ export default function JusticeChatAiPage() {
   const handlingRequestedForApprovedPrep = Boolean(approvedNextAction?.handling_requested_at?.trim());
   const showInlinePaymentDisputeReadOnlyPrep =
     Boolean(approvedNextAction) &&
+    !suppressSurrenderlessOwnedManualUi &&
     shouldShowChatInlinePaymentDisputeReadOnlyPrep({
       isActiveUuidCase: isActiveUuidCaseChat,
       preparedPacketApproved,
@@ -6838,6 +6860,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showPaymentDisputeFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">Payment dispute filing queued.</span> Surrenderless
+                    has queued your bank/card dispute for operator filing using your prepared dispute
+                    packet. Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showDemandLetterSentNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
@@ -6857,6 +6889,13 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">CFPB filed.</span> Surrenderless recorded your CFPB
                     complaint filing with confirmation on file. Your case will advance to the next
                     approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showPaymentDisputeFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">Payment dispute filed.</span> Surrenderless recorded
+                    your bank/card dispute filing with confirmation on file. Your case will advance to
+                    the next approved step when tracking updates.
                   </p>
                 ) : null}
                 {showMarkStepOpenedVisible ? (

@@ -11,15 +11,24 @@ import {
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  findOpenPaymentDisputeFilingTask,
+  hasPaymentDisputeFilingWithConfirmation,
+} from "@/lib/justice/paymentDisputeFilingTask";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
 } from "@/lib/justice/stateAgFilingTask";
 
 /** Surrenderless-owned fulfillment steps chat can observe completing in place. */
-export type ChatOwnedFulfillmentStepId = "state_ag" | "demand_letter" | "cfpb";
+export type ChatOwnedFulfillmentStepId =
+  | "state_ag"
+  | "demand_letter"
+  | "cfpb"
+  | "payment_dispute";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
   completedStepIds: readonly ChatOwnedFulfillmentStepId[];
@@ -66,6 +75,15 @@ function isCfpbOwnedStepCompleted(observation: ChatEscalationFulfillmentObservat
   return !findOpenCfpbFilingTask(observation.tasks, caseId);
 }
 
+function isPaymentDisputeOwnedStepCompleted(
+  observation: ChatEscalationFulfillmentObservation
+): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasPaymentDisputeFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenPaymentDisputeFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
@@ -78,6 +96,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   }
   if (isCfpbOwnedStepCompleted(observation)) {
     completedStepIds.push("cfpb");
+  }
+  if (isPaymentDisputeOwnedStepCompleted(observation)) {
+    completedStepIds.push("payment_dispute");
   }
   return {
     completedStepIds,
@@ -159,3 +180,7 @@ export const CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF =
 
 /** Approved action href for the CFPB owned step. */
 export const CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF;
+
+/** Approved action href for the payment-dispute owned step. */
+export const CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF =
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF;

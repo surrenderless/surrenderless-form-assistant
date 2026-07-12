@@ -8,6 +8,10 @@ import {
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  parsePaymentDisputeFilingTaskDraft,
+  taskNotesMatchPaymentDisputeFilingMarker,
+} from "@/lib/justice/paymentDisputeFilingTask";
+import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
@@ -50,6 +54,12 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(parseCfpbFilingTaskDraft(notes)).toBe("CFPB body");
   });
 
+  it("recognizes payment dispute operator task notes", () => {
+    const notes = `payment_dispute_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}\ndraft:\nPD body`;
+    expect(taskNotesMatchPaymentDisputeFilingMarker(notes, CASE_ID)).toBe(true);
+    expect(parsePaymentDisputeFilingTaskDraft(notes)).toBe("PD body");
+  });
+
   it("ignores unrelated open tasks", () => {
     const task: JusticeCaseTaskRow = {
       id: "task-1",
@@ -65,6 +75,7 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(taskNotesMatchStateAgFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchDemandLetterFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchCfpbFilingMarker(task.notes, CASE_ID)).toBe(false);
+    expect(taskNotesMatchPaymentDisputeFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(intake.company_name).toBe("Acme Retail");
   });
 });

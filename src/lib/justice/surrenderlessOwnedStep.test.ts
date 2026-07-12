@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
+import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -25,6 +27,11 @@ const demandLetterAction = {
 const cfpbAction = {
   href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   label: "CFPB",
+} as const;
+
+const paymentDisputeAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+  label: "Payment dispute (bank/card)",
 } as const;
 
 function openStateAgTask(): JusticeCaseTaskRow {
@@ -64,6 +71,21 @@ function openCfpbTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "CFPB filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openPaymentDisputeTask(): JusticeCaseTaskRow {
+  const marker = paymentDisputeFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-payment-dispute",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "Payment dispute: Acme Retail",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -274,6 +296,55 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
         approvedAction: cfpbAction,
         caseId: CASE_ID,
         tasks: [{ ...openCfpbTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
+        filings: [],
+      })
+    ).toBe(false);
+  });
+
+  it("suppresses when an open payment dispute human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: paymentDisputeAction,
+        caseId: CASE_ID,
+        tasks: [openPaymentDisputeTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when a confirmed payment dispute filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: paymentDisputeAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "Payment dispute (bank/card)",
+            confirmation_number: "pd-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when payment dispute escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...paymentDisputeAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("does not suppress payment dispute when task is completed and no confirmed filing", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: paymentDisputeAction,
+        caseId: CASE_ID,
+        tasks: [{ ...openPaymentDisputeTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
         filings: [],
       })
     ).toBe(false);

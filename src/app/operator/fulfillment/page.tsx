@@ -71,7 +71,9 @@ export default function OperatorFulfillmentPage() {
           ? "/api/justice/state-ag-filing/complete"
           : item.step === "demand_letter"
             ? "/api/justice/demand-letter-filing/complete"
-            : "/api/justice/cfpb-filing/complete";
+            : item.step === "payment_dispute"
+              ? "/api/justice/payment-dispute-filing/complete"
+              : "/api/justice/cfpb-filing/complete";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -112,7 +114,8 @@ export default function OperatorFulfillmentPage() {
           Operator fulfillment queue
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Surrenderless-owned CFPB, State AG, and demand letter steps queued for manual fulfillment.
+          Surrenderless-owned payment dispute, CFPB, State AG, and demand letter steps queued for
+          manual fulfillment.
         </p>
         {loadError ? (
           <p className="mt-4 text-sm text-red-700 dark:text-red-300" role="alert">

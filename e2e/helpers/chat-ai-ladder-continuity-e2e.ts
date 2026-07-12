@@ -76,9 +76,10 @@ async function resetMockCase(page: Page): Promise<void> {
 async function patchMockCase(
   page: Page,
   data: {
-    intake?: ReturnType<typeof buildPlaywrightMockE2eCaseIntake>;
+    intake?: ReturnType<typeof buildPlaywrightMockE2eCaseIntake> | Record<string, string>;
     timeline?: TimelineEntry[];
     client_state?: Record<string, unknown>;
+    payment_dispute_draft?: unknown;
   }
 ): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
@@ -87,6 +88,9 @@ async function patchMockCase(
       intake: data.intake ?? buildPlaywrightMockE2eCaseIntake(),
       timeline: data.timeline ?? buildCaseStartedTimeline(caseId),
       ...(data.client_state ? { client_state: data.client_state } : {}),
+      ...(Object.prototype.hasOwnProperty.call(data, "payment_dispute_draft")
+        ? { payment_dispute_draft: data.payment_dispute_draft }
+        : {}),
     },
   });
   if (!patchRes.ok()) {
@@ -220,6 +224,56 @@ export async function seedActiveCaseCfpbFilingStep(page: Page): Promise<void> {
   await patchMockCase(page, {
     intake,
     timeline: buildDraftReviewedTimeline(caseId),
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
+/**
+ * Payment dispute approved + packet approved so chat queues Surrenderless-owned
+ * payment-dispute fulfillment. Uses money/date without merchant contact so completion
+ * is terminal (no further prepared destinations) and resolution endgame can run.
+ */
+export async function seedActiveCasePaymentDisputeFilingStep(page: Page): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    problem_category: "charge_dispute",
+    purchase_or_signup: "credit card charge",
+    story: "Unauthorized charge after canceling order.",
+    money_involved: "$49.99",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "Payment dispute (bank/card)",
+    href: "/justice/payment-dispute",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:10.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    payment_dispute_draft: {
+      case_id: caseId,
+      payment_method: "credit_card",
+      charge_date: "2026-01-10",
+      charge_amount: "$49.99",
+      merchant_name: "Acme Retail",
+      dispute_reason: "unauthorized_charge",
+      prior_company_contact: "no",
+      proof_type: "receipt_order_confirmation",
+    },
     client_state: {
       prepared_packet_approved: true,
       approved_next_action: approvedNextAction,

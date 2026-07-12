@@ -21,9 +21,18 @@ import {
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
+import {
+  buildPaymentDisputeFilingTaskNotes,
+  buildPaymentDisputeFilingTaskTitle,
+  parsePaymentDisputeFilingTaskDraft,
+  resolvePaymentDisputeDraftForOperatorPacket,
+  shouldQueuePaymentDisputeFilingTask,
+  taskNotesMatchPaymentDisputeFilingMarker,
+} from "@/lib/justice/paymentDisputeFilingTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import {
   buildStateAgFilingTaskNotes,
@@ -49,6 +58,7 @@ const PLAYWRIGHT_MOCK_TASK_TIMESTAMP = "2026-06-21T00:00:04.000Z";
 export const PLAYWRIGHT_MOCK_STATE_AG_TASK_ID = "00000000-0000-4000-8000-000000000746";
 export const PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID = "00000000-0000-4000-8000-000000000747";
 export const PLAYWRIGHT_MOCK_CFPB_TASK_ID = "00000000-0000-4000-8000-000000000748";
+export const PLAYWRIGHT_MOCK_PAYMENT_DISPUTE_TASK_ID = "00000000-0000-4000-8000-000000000749";
 
 const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
   "__playwrightMockHumanFulfillmentTasksByCaseId__";
@@ -139,7 +149,8 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   caseId: string,
   userId: string,
   clientState: unknown,
-  intake: unknown
+  intake: unknown,
+  paymentDisputeDraft?: unknown
 ): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
   if (!isJusticeIntakePayload(intake)) return;
@@ -180,6 +191,23 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
         caseId: trimmedCaseId,
         title: buildCfpbFilingTaskTitle(justiceIntake),
         notes: buildCfpbFilingTaskNotes(trimmedCaseId, justiceIntake),
+      })
+    );
+  }
+
+  if (shouldQueuePaymentDisputeFilingTask(clientState)) {
+    const draft = resolvePaymentDisputeDraftForOperatorPacket(
+      trimmedCaseId,
+      justiceIntake,
+      paymentDisputeDraft
+    );
+    tasks.push(
+      buildOpenTask({
+        id: PLAYWRIGHT_MOCK_PAYMENT_DISPUTE_TASK_ID,
+        userId,
+        caseId: trimmedCaseId,
+        title: buildPaymentDisputeFilingTaskTitle(justiceIntake),
+        notes: buildPaymentDisputeFilingTaskNotes(trimmedCaseId, justiceIntake, draft),
       })
     );
   }
@@ -280,7 +308,8 @@ export function completePlaywrightMockStateAgOperatorFiling(
     caseId,
     input.userId,
     patched.client_state,
-    patched.intake
+    patched.intake,
+    patched.payment_dispute_draft
   );
 
   return {
@@ -357,7 +386,8 @@ export function completePlaywrightMockDemandLetterOperatorFiling(
     caseId,
     input.userId,
     patched.client_state,
-    patched.intake
+    patched.intake,
+    patched.payment_dispute_draft
   );
 
   return {
@@ -434,7 +464,86 @@ export function completePlaywrightMockCfpbOperatorFiling(
     caseId,
     input.userId,
     patched.client_state,
-    patched.intake
+    patched.intake,
+    patched.payment_dispute_draft
+  );
+
+  return {
+    ok: true,
+    filing,
+    task: { ...task, completed_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP, updated_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP },
+    client_state: patched.client_state,
+    timeline: filing.timeline,
+    advanced,
+  };
+}
+
+export function completePlaywrightMockPaymentDisputeOperatorFiling(
+  input: PlaywrightMockOperatorFilingCompleteInput
+): PlaywrightMockOperatorFilingCompleteResult {
+  const caseId = input.caseId.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  if (!isJusticeIntakePayload(snapshot.intake)) {
+    return { ok: false, error: "Case intake is invalid", status: 400 };
+  }
+  const intake = snapshot.intake as JusticeIntake;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const task = tasks.find((row) => row.id === input.taskId.trim());
+  if (!task || !taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "Payment dispute operator task not found", status: 404 };
+  }
+
+  const filing = buildPlaywrightMockJusticeFilingPostResponse(caseId, input.userId, {
+    destination: input.destination.trim(),
+    filed_at: input.filedAt.trim(),
+    confirmation_number: input.confirmationNumber.trim(),
+    notes: input.notes ?? null,
+  });
+
+  const parsedClientState = parseJusticeCaseClientState(snapshot.client_state);
+  const approvedNext = parsedClientState.approved_next_action;
+  let clientState: Record<string, unknown> = (snapshot.client_state ?? {}) as Record<string, unknown>;
+  let advanced = false;
+
+  if (
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF &&
+    approvedNext.status !== "completed"
+  ) {
+    const completedHref = approvedNext.href.trim();
+    const completedWithTracking = buildCompletedApprovedNextAction(approvedNext);
+    const advancedAction = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
+      existing: completedWithTracking,
+    });
+    const nextApprovedNext =
+      advancedAction?.href?.trim() &&
+      advancedAction.href.trim() !== completedHref &&
+      advancedAction.status === "approved"
+        ? omitClearedHandlingRequestNoteFromApprovedNextAction(advancedAction)
+        : completedWithTracking;
+    advanced = Boolean(
+      advancedAction?.href?.trim() &&
+        advancedAction.href.trim() !== completedHref &&
+        advancedAction.status === "approved"
+    );
+    clientState = mergeClientStateWithApprovedNextAction(snapshot.client_state, nextApprovedNext);
+    const resolutionMerged = mergeResolutionTrackingIntoClientState(clientState, intake);
+    if (resolutionMerged) {
+      clientState = resolutionMerged;
+    }
+  }
+
+  const patched = buildPlaywrightMockCasePatchResponse(caseId, { client_state: clientState });
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    input.userId,
+    patched.client_state,
+    patched.intake,
+    patched.payment_dispute_draft
   );
 
   return {
@@ -490,7 +599,8 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
       caseId,
       consumerUserId,
       snapshot.client_state,
-      snapshot.intake
+      snapshot.intake,
+      snapshot.payment_dispute_draft
     );
   }
 
@@ -539,6 +649,19 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseCfpbFilingTaskDraft(task.notes).slice(0, 400),
+      });
+      continue;
+    }
+    if (taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "payment_dispute",
+        task_title: task.title?.trim() || "Payment dispute",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parsePaymentDisputeFilingTaskDraft(task.notes).slice(0, 400),
       });
     }
   }
