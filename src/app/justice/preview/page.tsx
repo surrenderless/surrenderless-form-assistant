@@ -34,6 +34,7 @@ import {
   hydrateApprovedNextActionForDisplay,
 } from "@/lib/justice/approvedNextActionState";
 import { readAndClearPreviewChatUpdateSummary } from "@/lib/justice/previewChatUpdateHandoff";
+import { requestJusticePreviewDraft } from "@/lib/justice/requestJusticePreviewDraft";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffLegacyLadderPage } from "@/lib/justice/useRedirectConsumerActiveCaseOffLegacyLadderPage";
 
@@ -225,40 +226,26 @@ export default function JusticePreviewPage() {
     try {
       const cid = typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID) ?? "" : "";
       const timeline = typeof window !== "undefined" && cid ? readTimeline(cid) : [];
-      const timeline_summary = timeline.slice(-60).map((e) => ({
-        type: e.type,
-        label: e.label,
-        ts: e.ts,
-        ...(e.detail?.trim() ? { detail: e.detail.trim() } : {}),
-      }));
-      const evidence_items = evidence.map((e) => ({
-        title: e.title,
-        evidence_type: e.evidence_type,
-        ...(e.description?.trim() ? { description: e.description.trim() } : {}),
-        ...(e.evidence_date != null && e.evidence_date !== "" ? { evidence_date: e.evidence_date } : {}),
-      }));
-      const res = await fetch("/api/justice/preview-draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          intake,
-          destination_id: selectedDestination.id,
-          destination_label: selectedDestination.label,
-          ...(cid && isUuid(cid) ? { case_id: cid } : {}),
-          evidence_items,
-          timeline_summary,
-        }),
+      const result = await requestJusticePreviewDraft({
+        intake,
+        destinationId: selectedDestination.id,
+        destinationLabel: selectedDestination.label,
+        ...(cid && isUuid(cid) ? { caseId: cid } : {}),
+        evidenceItems: evidence.map((e) => ({
+          title: e.title,
+          evidence_type: e.evidence_type,
+          ...(e.description?.trim() ? { description: e.description.trim() } : {}),
+          ...(e.evidence_date != null && e.evidence_date !== ""
+            ? { evidence_date: e.evidence_date }
+            : {}),
+        })),
+        timeline,
       });
-      const data = (await res.json().catch(() => ({}))) as { draft?: string; error?: string };
-      if (!res.ok) {
-        setAiError(data.error ?? "Could not generate AI-assisted draft.");
+      if (!result.ok) {
+        setAiError(result.error);
         return;
       }
-      if (typeof data.draft === "string" && data.draft.trim()) {
-        setAiDraft(data.draft.trim());
-      } else {
-        setAiError("Empty response from draft service.");
-      }
+      setAiDraft(result.draft);
     } catch {
       setAiError("Could not generate AI-assisted draft.");
     } finally {

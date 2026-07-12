@@ -7,6 +7,7 @@ import type { JusticeApprovedNextAction, TimelineEntry } from "@/lib/justice/typ
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { buildPlaywrightMockE2eCaseIntake } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 
 export const CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID = PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
 
@@ -47,6 +48,9 @@ function buildDraftReviewedTimeline(caseId: string): TimelineEntry[] {
 }
 
 async function resetMockCase(page: Page): Promise<void> {
+  // Ensure the browser has a live Clerk session before authenticated API seeding.
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
   const intake = buildPlaywrightMockE2eCaseIntake();
   const resetRes = await page.request.post("/api/justice/cases", {
     data: { intake, timeline: [] },
@@ -295,7 +299,9 @@ export function packetReadinessChecklist(page: Page): Locator {
 export async function seedActiveCaseForPacketNotApprovedResume(page: Page): Promise<void> {
   await seedActiveCasePacketNotApproved(page);
   await page.goto("/justice/packet");
-  await page.locator("main").getByRole("heading", { name: "Case packet" }).waitFor({
+  // Signed-in consumers with a resumable case are redirected into chat for inline approval.
+  await page.waitForURL(/\/justice\/chat-ai/, { timeout: 30_000 });
+  await page.locator("#chat-ai-inline-prepared-packet-approval").waitFor({
     state: "visible",
     timeout: 30_000,
   });
@@ -304,7 +310,8 @@ export async function seedActiveCaseForPacketNotApprovedResume(page: Page): Prom
 export async function seedActiveCaseForPacketHandlingResume(page: Page): Promise<void> {
   await seedActiveCaseStateAgQueued(page);
   await page.goto("/justice/packet");
-  await page.locator("main").getByRole("heading", { name: "Case packet" }).waitFor({
+  await page.waitForURL(/\/justice\/chat-ai/, { timeout: 30_000 });
+  await page.locator("#chat-ai-approved-action-tracking").waitFor({
     state: "visible",
     timeout: 30_000,
   });

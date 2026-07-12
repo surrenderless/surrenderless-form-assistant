@@ -18,6 +18,7 @@ import {
   resolveConsumerActiveCaseResumeChatAiHref,
   shouldBlockChatAiOffChatNavigation,
   shouldKeepSignedInChatAiActiveCaseInChat,
+  shouldSuppressChatInlineMainLadderHubEscapeLinks,
 } from "@/lib/justice/chatAiLadderNavigation";
 
 describe("chatAiLadderNavigation", () => {
@@ -307,11 +308,17 @@ describe("chatAiLadderNavigation", () => {
       hasResumableCase: true,
     } as const;
 
-    it("redirects signed-in resumable consumers off preview and handling pages", () => {
+    it("redirects signed-in resumable consumers off preview, packet, and handling pages", () => {
       expect(
         shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
           ...activeCaseInput,
           legacyPageHref: "/justice/preview",
+        })
+      ).toBe(true);
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          ...activeCaseInput,
+          legacyPageHref: "/justice/packet",
         })
       ).toBe(true);
       expect(
@@ -358,10 +365,20 @@ describe("chatAiLadderNavigation", () => {
       expect(resolveConsumerActiveCaseLegacyLadderRedirectHref("/justice/preview")).toBe(
         `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID}`
       );
+      expect(resolveConsumerActiveCaseLegacyLadderRedirectHref("/justice/packet")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID}`
+      );
       expect(resolveConsumerActiveCaseLegacyLadderRedirectHref("/justice/handling")).toBe(
         CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
       );
       expect(redirectConsumerActiveCaseOffChatHref("/justice/state-ag")).toBe("/justice/state-ag");
+    });
+  });
+
+  describe("shouldSuppressChatInlineMainLadderHubEscapeLinks", () => {
+    it("suppresses optional preview/packet hub escapes when the ladder stays in chat", () => {
+      expect(shouldSuppressChatInlineMainLadderHubEscapeLinks({ keepInChat: true })).toBe(true);
+      expect(shouldSuppressChatInlineMainLadderHubEscapeLinks({ keepInChat: false })).toBe(false);
     });
   });
 });
