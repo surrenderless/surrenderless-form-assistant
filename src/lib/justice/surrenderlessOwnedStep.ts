@@ -1,9 +1,14 @@
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
 import { isDownstreamHumanFulfillmentEscalationAction } from "@/lib/justice/escalationLadderResolution";
+import {
+  findOpenCfpbFilingTask,
+  hasCfpbFilingWithConfirmation,
+} from "@/lib/justice/cfpbFilingTask";
 import {
   findOpenDemandLetterFilingTask,
   hasDemandLetterFilingWithConfirmation,
@@ -58,6 +63,18 @@ function isDemandLetterStepOwnedBySurrenderless(
   return false;
 }
 
+function isCfpbStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams): boolean {
+  if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF) {
+    return false;
+  }
+  const caseId = params.caseId.trim();
+  if (!caseId) return false;
+  if (findOpenCfpbFilingTask(params.tasks, caseId)) return true;
+  if (hasCfpbFilingWithConfirmation(params.filings)) return true;
+  if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  return false;
+}
+
 /**
  * True when Surrenderless owns the active approved step (human-fulfillment queue or confirmed filing).
  * Suppresses conflicting copy/paste prep and manual filing capture in chat for that step.
@@ -66,6 +83,8 @@ export function shouldSuppressChatManualActionForSurrenderlessOwnedStep(
   params: SurrenderlessOwnedStepCheckParams
 ): boolean {
   return (
-    isStateAgStepOwnedBySurrenderless(params) || isDemandLetterStepOwnedBySurrenderless(params)
+    isStateAgStepOwnedBySurrenderless(params) ||
+    isDemandLetterStepOwnedBySurrenderless(params) ||
+    isCfpbStepOwnedBySurrenderless(params)
   );
 }

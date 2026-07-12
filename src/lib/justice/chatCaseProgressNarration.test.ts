@@ -63,6 +63,52 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["bbb_filed", "state_ag_queued"]);
   });
 
+  it("derives CFPB queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "CFPB",
+          href: "/justice/cfpb",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-cfpb",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "CFPB filing: Acme",
+            due_date: null,
+            notes: `cfpb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["cfpb_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "CFPB",
+          href: "/justice/cfpb",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "CFPB",
+            confirmation_number: "cfpb-123",
+          },
+        ],
+      })
+    ).toEqual(["cfpb_confirmed"]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

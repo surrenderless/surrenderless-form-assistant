@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
@@ -18,6 +20,11 @@ const stateAgAction = {
 const demandLetterAction = {
   href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   label: "Small claims / demand letter",
+} as const;
+
+const cfpbAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+  label: "CFPB",
 } as const;
 
 function openStateAgTask(): JusticeCaseTaskRow {
@@ -42,6 +49,21 @@ function openDemandLetterTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "Demand letter: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openCfpbTask(): JusticeCaseTaskRow {
+  const marker = cfpbFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-cfpb",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "CFPB filing: Acme Retail",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -204,6 +226,55 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
             confirmation_number: null,
           },
         ],
+      })
+    ).toBe(false);
+  });
+
+  it("suppresses when an open CFPB human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: cfpbAction,
+        caseId: CASE_ID,
+        tasks: [openCfpbTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when a confirmed CFPB filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: cfpbAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "CFPB",
+            confirmation_number: "cfpb-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when CFPB escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...cfpbAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("does not suppress CFPB when task is completed and no confirmed filing", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: cfpbAction,
+        caseId: CASE_ID,
+        tasks: [{ ...openCfpbTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
+        filings: [],
       })
     ).toBe(false);
   });

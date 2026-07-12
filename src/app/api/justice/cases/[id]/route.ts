@@ -29,6 +29,7 @@ import {
   ensureDemandLetterFilingTask,
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
+import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
@@ -439,6 +440,24 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     const intakePayload = data.intake;
     if (isJusticeIntakePayload(intakePayload)) {
       const taskResult = await ensureDemandLetterFilingTask(
+        supabase,
+        userId,
+        id,
+        intakePayload as JusticeIntake
+      );
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    shouldQueueCfpbFilingTask(patch.client_state)
+  ) {
+    const intakePayload = data.intake;
+    if (isJusticeIntakePayload(intakePayload)) {
+      const taskResult = await ensureCfpbFilingTask(
         supabase,
         userId,
         id,

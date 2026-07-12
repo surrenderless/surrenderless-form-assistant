@@ -1,5 +1,6 @@
 ﻿import { parseApprovedNextActionFromClientState } from "@/lib/justice/approvedNextActionState";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
@@ -12,6 +13,7 @@ import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 const OWNED_HUMAN_FULFILLMENT_HREFS = new Set([
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
 ]);
 
 export const REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE =

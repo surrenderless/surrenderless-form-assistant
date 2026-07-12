@@ -23,6 +23,14 @@ const intake: JusticeIntake = {
   already_contacted: "no",
 };
 
+const fccStarted: JusticeApprovedNextAction = {
+  label: "FCC",
+  href: "/justice/fcc",
+  status: "started",
+  approved_at: "2026-06-15T10:00:00.000Z",
+  started_at: "2026-06-15T11:00:00.000Z",
+};
+
 const cfpbStarted: JusticeApprovedNextAction = {
   label: "CFPB",
   href: "/justice/cfpb",
@@ -33,16 +41,16 @@ const cfpbStarted: JusticeApprovedNextAction = {
 
 describe("buildDefaultOutcomeNoteAfterManualFilingConfirmation", () => {
   it("builds a lane-aware case-derived note", () => {
-    expect(buildDefaultOutcomeNoteAfterManualFilingConfirmation(intake, cfpbStarted)).toBe(
-      "CFPB filing recorded for Acme Retail (web order). Confirmation on file. Awaiting response."
+    expect(buildDefaultOutcomeNoteAfterManualFilingConfirmation(intake, fccStarted)).toBe(
+      "FCC filing recorded for Acme Retail (web order). Confirmation on file. Awaiting response."
     );
   });
 });
 
 describe("buildDefaultHandlingRequestNoteAfterManualFilingConfirmation", () => {
   it("builds a lane-aware handling note", () => {
-    expect(buildDefaultHandlingRequestNoteAfterManualFilingConfirmation(intake, cfpbStarted)).toBe(
-      "CFPB recorded for Acme Retail (web order). Monitor responses and guide next steps."
+    expect(buildDefaultHandlingRequestNoteAfterManualFilingConfirmation(intake, fccStarted)).toBe(
+      "FCC recorded for Acme Retail (web order). Monitor responses and guide next steps."
     );
   });
 });
@@ -51,18 +59,18 @@ describe("shouldRunManualFilingConfirmationEndgame", () => {
   it("requires confirmation on file", () => {
     expect(
       shouldRunManualFilingConfirmationEndgame({
-        approvedAction: cfpbStarted,
+        approvedAction: fccStarted,
         caseId: CASE_ID,
         tasks: [],
-        filings: [{ destination: "CFPB" }],
+        filings: [{ destination: "FCC" }],
       })
     ).toBe(false);
     expect(
       shouldRunManualFilingConfirmationEndgame({
-        approvedAction: cfpbStarted,
+        approvedAction: fccStarted,
         caseId: CASE_ID,
         tasks: [],
-        filings: [{ destination: "CFPB", confirmation_number: "CFPB-1" }],
+        filings: [{ destination: "FCC", confirmation_number: "FCC-1" }],
       })
     ).toBe(true);
   });
@@ -99,6 +107,18 @@ describe("shouldRunManualFilingConfirmationEndgame", () => {
       })
     ).toBe(false);
   });
+
+  it("skips owned CFPB steps", () => {
+    expect(
+      shouldRunManualFilingConfirmationEndgame({
+        approvedAction: cfpbStarted,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [{ destination: "CFPB", confirmation_number: "CFPB-1" }],
+        confirmationNumber: "CFPB-1",
+      })
+    ).toBe(false);
+  });
 });
 
 describe("autoEndgameAfterManualFilingConfirmation", () => {
@@ -107,7 +127,7 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ client_state: { approved_next_action: cfpbStarted } }),
+        json: async () => ({ client_state: { approved_next_action: fccStarted } }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -121,17 +141,17 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
     const result = await autoEndgameAfterManualFilingConfirmation({
       caseId: CASE_ID,
       intake,
-      approvedAction: cfpbStarted,
+      approvedAction: fccStarted,
       tasks: [],
-      filings: [{ destination: "CFPB", confirmation_number: "CFPB-99" }],
-      confirmationNumber: "CFPB-99",
+      filings: [{ destination: "FCC", confirmation_number: "FCC-99" }],
+      confirmationNumber: "FCC-99",
       fetchFn: fetchFn as unknown as typeof fetch,
       applyTimeline,
     });
 
     expect(result.status).toBe("completed");
     expect(result.handling_requested_at?.trim()).toBeTruthy();
-    expect(result.outcome_note).toContain("CFPB filing recorded");
+    expect(result.outcome_note).toContain("FCC filing recorded");
     expect(result.follow_up_needed).toBe(true);
     expect(result.handling_acknowledged_at?.trim()).toBeTruthy();
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -143,9 +163,24 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
     const result = await autoEndgameAfterManualFilingConfirmation({
       caseId: CASE_ID,
       intake,
+      approvedAction: fccStarted,
+      tasks: [],
+      filings: [{ destination: "FCC" }],
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    expect(result).toEqual(fccStarted);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for owned CFPB", async () => {
+    const fetchFn = vi.fn();
+    const result = await autoEndgameAfterManualFilingConfirmation({
+      caseId: CASE_ID,
+      intake,
       approvedAction: cfpbStarted,
       tasks: [],
-      filings: [{ destination: "CFPB" }],
+      filings: [{ destination: "CFPB", confirmation_number: "CFPB-99" }],
+      confirmationNumber: "CFPB-99",
       fetchFn: fetchFn as unknown as typeof fetch,
     });
     expect(result).toEqual(cfpbStarted);

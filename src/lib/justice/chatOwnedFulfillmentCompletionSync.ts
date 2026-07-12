@@ -1,10 +1,15 @@
 import type { ChatEscalationFulfillmentObservation } from "@/lib/justice/chatEscalationFulfillmentSync";
 import { observeChatEscalationFulfillmentPending } from "@/lib/justice/chatEscalationFulfillmentSync";
 import {
+  findOpenCfpbFilingTask,
+  hasCfpbFilingWithConfirmation,
+} from "@/lib/justice/cfpbFilingTask";
+import {
   findOpenDemandLetterFilingTask,
   hasDemandLetterFilingWithConfirmation,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -14,7 +19,7 @@ import {
 } from "@/lib/justice/stateAgFilingTask";
 
 /** Surrenderless-owned fulfillment steps chat can observe completing in place. */
-export type ChatOwnedFulfillmentStepId = "state_ag" | "demand_letter";
+export type ChatOwnedFulfillmentStepId = "state_ag" | "demand_letter" | "cfpb";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
   completedStepIds: readonly ChatOwnedFulfillmentStepId[];
@@ -54,6 +59,13 @@ function isDemandLetterOwnedStepCompleted(
   return !findOpenDemandLetterFilingTask(observation.tasks, caseId);
 }
 
+function isCfpbOwnedStepCompleted(observation: ChatEscalationFulfillmentObservation): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasCfpbFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenCfpbFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
@@ -63,6 +75,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   }
   if (isDemandLetterOwnedStepCompleted(observation)) {
     completedStepIds.push("demand_letter");
+  }
+  if (isCfpbOwnedStepCompleted(observation)) {
+    completedStepIds.push("cfpb");
   }
   return {
     completedStepIds,
@@ -141,3 +156,6 @@ export const CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF =
 /** Approved action href for the demand-letter owned step. */
 export const CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF =
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF;
+
+/** Approved action href for the CFPB owned step. */
+export const CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF;

@@ -6,6 +6,10 @@ import {
 import { isChatPendingHumanFulfillmentEscalation } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
 import {
+  hasCfpbFilingWithConfirmation,
+  isApprovedCfpbFilingAction,
+} from "@/lib/justice/cfpbFilingTask";
+import {
   hasDemandLetterFilingWithConfirmation,
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
@@ -22,6 +26,8 @@ const BBB_TRACKING_ACTION = {
 } as const;
 
 export type ChatCaseProgressMilestone =
+  | "cfpb_queued"
+  | "cfpb_confirmed"
   | "bbb_filed"
   | "state_ag_queued"
   | "state_ag_confirmed"
@@ -30,6 +36,8 @@ export type ChatCaseProgressMilestone =
   | "resolution_ready";
 
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
+  "cfpb_queued",
+  "cfpb_confirmed",
   "bbb_filed",
   "state_ag_queued",
   "state_ag_confirmed",
@@ -63,6 +71,23 @@ export function deriveSatisfiedChatCaseProgressMilestones(
 
   const action = input.approvedAction;
   const satisfied: ChatCaseProgressMilestone[] = [];
+
+  if (
+    isApprovedCfpbFilingAction(action) &&
+    action.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: action,
+      caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    satisfied.push("cfpb_queued");
+  }
+
+  if (hasCfpbFilingWithConfirmation(input.filings)) {
+    satisfied.push("cfpb_confirmed");
+  }
 
   if (hasBbbFilingWithConfirmation(input.filings)) {
     satisfied.push("bbb_filed");
@@ -122,6 +147,10 @@ export function buildChatCaseProgressNarrationMessage(
   milestone: ChatCaseProgressMilestone
 ): string {
   switch (milestone) {
+    case "cfpb_queued":
+      return "I've queued your CFPB complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "cfpb_confirmed":
+      return "Your CFPB filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_filed":
       return "Your Better Business Bureau complaint is on file with confirmation recorded. Surrenderless will carry your case to the next escalation step — you can stay in this chat.";
     case "state_ag_queued":
