@@ -109,3 +109,42 @@ export async function restoreArchivedJusticeCaseOnServer(
   });
   return res.ok;
 }
+
+async function fetchJusticeCaseListRows(
+  archived: boolean,
+  signal?: AbortSignal
+): Promise<JusticeCaseListRow[]> {
+  const qs = archived
+    ? "archived=1&limit=20&offset=0"
+    : "limit=20&offset=0";
+  const res = await fetch(`/api/justice/cases?${qs}`, { signal });
+  if (!res.ok) return [];
+  const body = (await res.json()) as unknown;
+  const env = parseJusticeCasesListEnvelope(body);
+  const list = env?.cases ?? [];
+  return Array.isArray(list) ? (list as JusticeCaseListRow[]) : [];
+}
+
+/** GET active + archived case lists for chat-native multi-case selection. */
+export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): Promise<{
+  activeRows: JusticeCaseListRow[];
+  archivedRows: JusticeCaseListRow[];
+}> {
+  const [activeRows, archivedRows] = await Promise.all([
+    fetchJusticeCaseListRows(false, signal),
+    fetchJusticeCaseListRows(true, signal),
+  ]);
+  return { activeRows, archivedRows };
+}
+
+/** GET a single owned case by id for chat hydrate after selection/restore. */
+export async function fetchJusticeCaseById(
+  caseId: string,
+  signal?: AbortSignal
+): Promise<JusticeCaseListRow | null> {
+  const id = caseId.trim();
+  if (!id || !isUuid(id)) return null;
+  const res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, { signal });
+  if (!res.ok) return null;
+  return (await res.json()) as JusticeCaseListRow;
+}

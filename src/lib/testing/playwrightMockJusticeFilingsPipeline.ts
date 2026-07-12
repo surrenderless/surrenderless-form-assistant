@@ -1,4 +1,5 @@
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import {
   buildPlaywrightMockCaseGetResponse,
   buildPlaywrightMockCasePatchResponse,
@@ -58,7 +59,11 @@ export function isPlaywrightMockJusticeFilingsPipelineEnabled(): boolean {
 
 /** True when /api/justice/filings should use the deterministic Playwright mock. */
 export function isPlaywrightMockJusticeFilingsCaseId(caseId: string): boolean {
-  return caseId.trim() === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+  const trimmed = caseId.trim();
+  return (
+    trimmed === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID ||
+    trimmed === PLAYWRIGHT_MOCK_SECOND_CASE_ID
+  );
 }
 
 /** Clears cumulative mock filing rows — for unit tests only. */

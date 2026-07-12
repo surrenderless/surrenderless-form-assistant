@@ -32,10 +32,11 @@ describe("playwrightMockIntakeCaseHydrationPipeline", () => {
     expect(isPlaywrightMockIntakeCaseHydrationPipelineEnabled()).toBe(false);
   });
 
-  it("matches only the deterministic E2E case id", () => {
+  it("matches the deterministic primary and second E2E case ids", () => {
     expect(isPlaywrightMockIntakeCaseHydrationCaseId(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID)).toBe(
       true
     );
+    expect(isPlaywrightMockIntakeCaseHydrationCaseId("00000000-0000-4000-8000-000000000748")).toBe(true);
     expect(isPlaywrightMockIntakeCaseHydrationCaseId("00000000-0000-4000-8000-000000000001")).toBe(false);
   });
 

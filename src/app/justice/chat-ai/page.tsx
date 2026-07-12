@@ -103,6 +103,24 @@ import {
   parseChatCaseRestoreMessage,
 } from "@/lib/justice/chatCaseRestoreGates";
 import {
+  buildChatCaseSelectionAmbiguousMatchResponse,
+  buildChatCaseSelectionAssistantResponse,
+  buildChatCaseSelectionGateContext,
+  buildChatCaseSelectionNotFoundResponse,
+  buildChatCaseSelectionOpenedResponse,
+  parseChatCaseSelectionMessage,
+} from "@/lib/justice/chatCaseSelectionGates";
+import {
+  buildChatCaseSelectionList,
+  clearChatCaseSelectionOffer,
+  formatChatCaseSelectionListMessage,
+  readChatCaseSelectionOffer,
+  resolveChatCaseSelectionChoice,
+  resolveChatCaseSelectionLiveStatus,
+  writeChatCaseSelectionOffer,
+  type ChatCaseSelectionListEntry,
+} from "@/lib/justice/chatCaseSelectionList";
+import {
   buildChatCaseClosureAssistantResponse,
   buildChatCaseClosureGateContext,
   parseChatCaseClosureMessage,
@@ -231,6 +249,8 @@ import {
 } from "@/lib/justice/buildJusticeIntake";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import {
+  fetchJusticeCaseById,
+  fetchJusticeCasesForChatSelection,
   fetchMostRecentlyArchivedEligibleJusticeCase,
   hydrateSessionFromCaseListRow,
   restoreArchivedJusticeCaseOnServer,
@@ -2570,6 +2590,9 @@ export default function JusticeChatAiPage() {
   }, []);
 
   const appendChatCaseProgressNarration = useCallback((observation: ChatCaseProgressObservation) => {
+    // Re-sync from the visible transcript so restore/switch hydrates do not re-narrate
+    // milestones already present in messages (including after a later context refresh).
+    syncChatProgressNarrationFromTranscript(observation.caseId, messagesRef.current);
     const narrationMessages = collectNewChatCaseProgressNarrationMessages(observation);
     if (narrationMessages.length === 0) return;
     const turns = narrationMessages.map((text) => ({
@@ -2692,6 +2715,53 @@ export default function JusticeChatAiPage() {
     }
   }
 
+  async function hydrateChatFromJusticeCaseRow(freshCase: JusticeCaseListRow): Promise<{
+    ok: boolean;
+    companyName?: string;
+  }> {
+    const caseId = freshCase.id?.trim() ?? "";
+    if (!caseId || !isUuid(caseId)) return { ok: false };
+
+    const intake = hydrateSessionFromCaseListRow(freshCase);
+    if (!intake) return { ok: false };
+
+    const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(intake);
+    sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
+    setParts(hydratedParts);
+    setIsUpdatingExistingCase(true);
+    setArchiveCaseError(null);
+
+    const hydratedAction = hydrateApprovedNextActionForDisplay(caseId, freshCase.client_state);
+    if (hydratedAction) writeSessionApprovedNextAction(caseId, hydratedAction);
+    setApprovedNextAction(hydratedAction);
+    const serverPacketApproved =
+      parseJusticeCaseClientState(freshCase.client_state).prepared_packet_approved === true;
+    setPreparedPacketApproved(readSessionPreparedPacketApproved(caseId) || serverPacketApproved);
+    legalConsentTrackedCaseIdRef.current = caseId;
+
+    // Claim the case id before awaiting fetch so the transcript useEffect does not
+    // race and overwrite a successful hydrate with a stale/empty load.
+    transcriptCaseIdRef.current = caseId;
+    const loaded = await fetchCaseChatTranscript(caseId);
+    persistedTurnIdsRef.current = new Set(loaded.map((turn) => turn.id));
+    if (loaded.length > 0) {
+      messagesRef.current = loaded;
+      setMessages(loaded);
+      syncChatProgressNarrationFromTranscript(caseId, loaded);
+    } else {
+      const greeting = { id: msgId(), role: "assistant" as const, text: UPDATE_GREETING };
+      messagesRef.current = [greeting];
+      setMessages(messagesRef.current);
+    }
+
+    await refreshFullChatCaseContextFromServer(caseId, {
+      // Transcript already carries prior progress narrations; don't re-append on switch/restore.
+      skipProgressNarration: loaded.length > 0,
+    });
+
+    return { ok: true, companyName: intake.company_name?.trim() || undefined };
+  }
+
   async function handleRestoreMostRecentArchivedCaseFromChat(): Promise<{
     ok: boolean;
     companyName?: string;
@@ -2711,48 +2781,125 @@ export default function JusticeChatAiPage() {
       const restored = await restoreArchivedJusticeCaseOnServer(archivedRow.id);
       if (!restored) return { ok: false };
 
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(archivedRow.id)}`);
-      if (!getRes.ok) return { ok: false };
-      const freshCase = (await getRes.json()) as JusticeCaseListRow;
+      const freshCase = await fetchJusticeCaseById(archivedRow.id);
+      if (!freshCase) return { ok: false };
 
-      const intake = hydrateSessionFromCaseListRow(freshCase);
-      if (!intake) return { ok: false };
-
-      const caseId = archivedRow.id;
-      const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(intake);
-      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
-      setParts(hydratedParts);
-      setIsUpdatingExistingCase(true);
-      setArchiveCaseError(null);
-
-      const hydratedAction = hydrateApprovedNextActionForDisplay(caseId, freshCase.client_state);
-      if (hydratedAction) writeSessionApprovedNextAction(caseId, hydratedAction);
-      setApprovedNextAction(hydratedAction);
-      const serverPacketApproved =
-        parseJusticeCaseClientState(freshCase.client_state).prepared_packet_approved === true;
-      setPreparedPacketApproved(readSessionPreparedPacketApproved(caseId) || serverPacketApproved);
-      legalConsentTrackedCaseIdRef.current = caseId;
-
-      transcriptCaseIdRef.current = "";
-      const loaded = await fetchCaseChatTranscript(caseId);
-      transcriptCaseIdRef.current = caseId;
-      persistedTurnIdsRef.current = new Set(loaded.map((turn) => turn.id));
-      if (loaded.length > 0) {
-        messagesRef.current = loaded;
-        setMessages(loaded);
-        syncChatProgressNarrationFromTranscript(caseId, loaded);
-      } else {
-        const greeting = { id: msgId(), role: "assistant" as const, text: UPDATE_GREETING };
-        messagesRef.current = [greeting];
-        setMessages(messagesRef.current);
-      }
-
-      await refreshFullChatCaseContextFromServer(caseId);
-
-      return { ok: true, companyName: intake.company_name?.trim() || undefined };
+      return await hydrateChatFromJusticeCaseRow(freshCase);
     } catch (e) {
       console.warn("justice chat-ai: restore archived case error", e);
       return { ok: false };
+    }
+  }
+
+  async function handleListCasesForChatSelection(): Promise<string> {
+    if (!isLoaded || !isSignedIn) {
+      return "Sign in to see your cases in chat.";
+    }
+    try {
+      const { activeRows, archivedRows } = await fetchJusticeCasesForChatSelection();
+      const entries = buildChatCaseSelectionList({ activeRows, archivedRows });
+      writeChatCaseSelectionOffer(entries);
+      return formatChatCaseSelectionListMessage(entries);
+    } catch (e) {
+      console.warn("justice chat-ai: list cases for selection error", e);
+      return "I couldn't load your cases right now. Try again in a moment.";
+    }
+  }
+
+  async function handleSelectCaseFromChat(query: string): Promise<{
+    ok: boolean;
+    assistantText: string;
+  }> {
+    if (!isLoaded || !isSignedIn) {
+      return { ok: false, assistantText: "Sign in to switch cases in chat." };
+    }
+
+    try {
+      // Offer is identity/order only — never trust stored active/archived status.
+      let offerEntries = readChatCaseSelectionOffer();
+      if (offerEntries.length === 0) {
+        const { activeRows, archivedRows } = await fetchJusticeCasesForChatSelection();
+        offerEntries = buildChatCaseSelectionList({ activeRows, archivedRows });
+        writeChatCaseSelectionOffer(offerEntries);
+      }
+
+      const resolved = resolveChatCaseSelectionChoice(query, offerEntries);
+      if (resolved.kind === "ambiguous") {
+        return { ok: false, assistantText: buildChatCaseSelectionAmbiguousMatchResponse() };
+      }
+      if (resolved.kind === "none") {
+        return { ok: false, assistantText: buildChatCaseSelectionNotFoundResponse() };
+      }
+
+      const entry: ChatCaseSelectionListEntry = resolved.entry;
+
+      const { activeRows, archivedRows } = await fetchJusticeCasesForChatSelection();
+      const liveStatus = resolveChatCaseSelectionLiveStatus({
+        caseId: entry.id,
+        activeRows,
+        archivedRows,
+      });
+      if (!liveStatus) {
+        clearChatCaseSelectionOffer();
+        return { ok: false, assistantText: buildChatCaseSelectionNotFoundResponse() };
+      }
+
+      const activeCaseId =
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+      if (activeCaseId === entry.id && liveStatus === "active") {
+        clearChatCaseSelectionOffer();
+        return {
+          ok: true,
+          assistantText: buildChatCaseSelectionOpenedResponse({
+            companyName: entry.companyName,
+            alreadyActive: true,
+          }),
+        };
+      }
+
+      let restoredFromArchive = false;
+      if (liveStatus === "archived") {
+        const restored = await restoreArchivedJusticeCaseOnServer(entry.id);
+        if (!restored) {
+          return {
+            ok: false,
+            assistantText:
+              "I couldn't restore that archived case right now. Try again in a moment.",
+          };
+        }
+        restoredFromArchive = true;
+      }
+
+      const freshCase = await fetchJusticeCaseById(entry.id);
+      if (!freshCase) {
+        return {
+          ok: false,
+          assistantText: "I couldn't load that case right now. Try again in a moment.",
+        };
+      }
+
+      const hydrated = await hydrateChatFromJusticeCaseRow(freshCase);
+      if (!hydrated.ok) {
+        return {
+          ok: false,
+          assistantText: "I couldn't open that case in chat right now. Try again in a moment.",
+        };
+      }
+
+      clearChatCaseSelectionOffer();
+      return {
+        ok: true,
+        assistantText: buildChatCaseSelectionOpenedResponse({
+          companyName: hydrated.companyName || entry.companyName,
+          restoredFromArchive,
+        }),
+      };
+    } catch (e) {
+      console.warn("justice chat-ai: select case from chat error", e);
+      return {
+        ok: false,
+        assistantText: "I couldn't switch cases right now. Try again in a moment.",
+      };
     }
   }
 
@@ -2778,6 +2925,9 @@ export default function JusticeChatAiPage() {
     setFtcPracticeError(null);
     setFtcPracticeLastAssistedSubmissionAttempt(null);
     setArchiveCaseError(null);
+    const emptyParts = defaultBuildJusticeIntakeParts();
+    sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(emptyParts);
+    setParts(emptyParts);
     legalConsentTrackedCaseIdRef.current = null;
     merchantContactAutopilotCaseRef.current = null;
     wasPendingHumanFulfillmentEscalationRef.current = false;
@@ -3624,7 +3774,8 @@ export default function JusticeChatAiPage() {
 
   const loadSavedEvidencePreview = useCallback(async (
     signal?: AbortSignal,
-    background = false
+    background = false,
+    options?: { skipProgressNarration?: boolean }
   ): Promise<{ tasks: JusticeCaseTaskRow[]; filings: JusticeCaseFilingRow[] } | null> => {
     const generation = evidencePreviewFetchGenerationRef.current;
     const caseId =
@@ -3667,12 +3818,14 @@ export default function JusticeChatAiPage() {
       setSavedTasks(tasks);
       setSavedEvidenceRows(rows);
       setRecentEvidenceRows(rows.slice(0, CHAT_RECENT_EVIDENCE_MAX));
-      appendChatCaseProgressNarration({
-        caseId,
-        approvedAction: approvedNextActionRef.current,
-        tasks,
-        filings,
-      });
+      if (!options?.skipProgressNarration) {
+        appendChatCaseProgressNarration({
+          caseId,
+          approvedAction: approvedNextActionRef.current,
+          tasks,
+          filings,
+        });
+      }
       return { tasks, filings };
     } catch {
       if (generation !== evidencePreviewFetchGenerationRef.current || signal?.aborted) return null;
@@ -3758,6 +3911,7 @@ export default function JusticeChatAiPage() {
       options?: {
         signal?: AbortSignal;
         ftcSnapshotFallback?: LastAssistedSubmissionAttemptSnapshot | null;
+        skipProgressNarration?: boolean;
       }
     ) => {
       const runRefresh = async () => {
@@ -3766,7 +3920,9 @@ export default function JusticeChatAiPage() {
           skipEvidenceRefresh: true,
         });
         if (options?.signal?.aborted) return;
-        let preview = await loadSavedEvidencePreview(options?.signal, true);
+        let preview = await loadSavedEvidencePreview(options?.signal, true, {
+          skipProgressNarration: options?.skipProgressNarration,
+        });
         if (!preview || options?.signal?.aborted) return;
 
         let observation = {
@@ -3808,7 +3964,9 @@ export default function JusticeChatAiPage() {
               skipEvidenceRefresh: true,
             });
             if (options?.signal?.aborted) return;
-            preview = (await loadSavedEvidencePreview(options?.signal, true)) ?? preview;
+            preview = (await loadSavedEvidencePreview(options?.signal, true, {
+              skipProgressNarration: options?.skipProgressNarration,
+            })) ?? preview;
             if (preview) {
               observation = {
                 caseId,
@@ -3833,7 +3991,9 @@ export default function JusticeChatAiPage() {
             skipEvidenceRefresh: true,
           });
           if (options?.signal?.aborted) return;
-          preview = (await loadSavedEvidencePreview(options?.signal, true)) ?? preview;
+          preview = (await loadSavedEvidencePreview(options?.signal, true, {
+            skipProgressNarration: options?.skipProgressNarration,
+          })) ?? preview;
           if (preview) {
             observation = {
               caseId,
@@ -3853,12 +4013,14 @@ export default function JusticeChatAiPage() {
         ownedFulfillmentSnapshotRef.current = fulfillmentSync.currentSnapshot;
 
         if (options?.signal?.aborted || !preview) return;
-        appendChatCaseProgressNarration({
-          caseId,
-          approvedAction: approvedAction ?? approvedNextActionRef.current,
-          tasks: preview.tasks,
-          filings: preview.filings,
-        });
+        if (!options?.skipProgressNarration) {
+          appendChatCaseProgressNarration({
+            caseId,
+            approvedAction: approvedAction ?? approvedNextActionRef.current,
+            tasks: preview.tasks,
+            filings: preview.filings,
+          });
+        }
       };
 
       const previous = pendingChatContextRefreshRef.current;
@@ -4513,6 +4675,48 @@ export default function JusticeChatAiPage() {
     if (!trimmed) return;
     if (trimmed.length > MAX_INTAKE_CHAT_USER_MESSAGE) {
       setApiError("Message is too long. Please shorten it and try again.");
+      return;
+    }
+
+    const selectionContext = buildChatCaseSelectionGateContext({
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      hasOfferedList: readChatCaseSelectionOffer().length > 0,
+    });
+    const parsedSelection = parseChatCaseSelectionMessage(trimmed, selectionContext);
+    if (parsedSelection.kind !== "none") {
+      sendInFlightRef.current = true;
+      setLoading(true);
+      setInputValue("");
+      const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
+      try {
+        let assistantText = "";
+        if (parsedSelection.kind === "list_cases") {
+          assistantText = await handleListCasesForChatSelection();
+        } else if (parsedSelection.kind === "select_case") {
+          const selectResult = await handleSelectCaseFromChat(parsedSelection.query);
+          assistantText = selectResult.assistantText;
+        } else {
+          if (parsedSelection.kind === "decline") {
+            clearChatCaseSelectionOffer();
+          }
+          assistantText = buildChatCaseSelectionAssistantResponse(parsedSelection);
+        }
+        const selectedCaseId =
+          typeof window !== "undefined"
+            ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
+            : "";
+        addChatMessages(
+          [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+          {
+            caseId: selectedCaseId || undefined,
+            source: "case_selection_gate",
+          }
+        );
+      } finally {
+        sendInFlightRef.current = false;
+        setLoading(false);
+      }
       return;
     }
 

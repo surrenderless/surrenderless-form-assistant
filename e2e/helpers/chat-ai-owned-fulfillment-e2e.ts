@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page, type Request } from "@playwright/test";
 import {
   PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE,
@@ -19,9 +19,23 @@ import {
   CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
 } from "@/lib/justice/chatCaseClosureGates";
 import { CHAT_CASE_RESTORE_MOST_RECENT_ARCHIVED_MESSAGE } from "@/lib/justice/chatCaseRestoreGates";
+import {
+  CHAT_CASE_SELECTION_LIST_MESSAGE,
+  CHAT_CASE_SELECTION_OPEN_CASE_NUMBER_MESSAGE,
+} from "@/lib/justice/chatCaseSelectionGates";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 import { expectUrlStaysOnChatAi } from "./chat-ai-ladder-continuity-e2e";
+
+/** Deterministic second-case intake messages for multi-case selection E2E. */
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_USER_MESSAGE =
+  "I ordered a gadget from Beta Corp for $19.99. They charged me twice and never refunded.";
+
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_SECOND_USER_MESSAGE =
+  "My email is e2e-chat@example.com and my name is Jordan Lee. I emailed Beta Corp on 2026-01-20 and they refused a refund.";
+
 
 export const OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE =
   "Escalation complete for Acme Retail (widget order). BBB, State AG, and demand letter steps recorded. Awaiting responses.";
@@ -438,7 +452,7 @@ export async function expectConsumerChatCaseRestoredActive(page: Page): Promise<
   await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
     timeout: 30_000,
   });
-  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).toBeVisible({
+  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE).last()).toBeVisible({
     timeout: 15_000,
   });
   const actionTracking = chatAiActionTracking(page);
@@ -483,4 +497,284 @@ export async function expectConsumerChatStaysRestoredAfterReload(page: Page): Pr
   expect(await chatTranscript.getByText(demandLetterSent).count()).toBe(1);
   expect(await chatTranscript.getByText(resolutionReady).count()).toBe(1);
   expect(await chatTranscript.getByText(CHAT_CASE_RESTORE_MOST_RECENT_ARCHIVED_MESSAGE).count()).toBe(1);
+}
+
+/** After archive, start a second Beta Corp case via chat intake commit (real UI path). */
+export async function startSecondBetaCaseViaChatAfterArchive(page: Page): Promise<void> {
+  const chatInput = chatAiInput(page);
+  const chatTranscript = chatAiTranscript(page);
+
+  await expect(chatInput).toBeVisible({ timeout: 30_000 });
+  await waitForClerkBrowserApiSession(page);
+
+  await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_USER_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_USER_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(
+    chatTranscript.getByText("Thanks — I've noted Beta Corp. What email should we use for updates on this case?")
+  ).toBeVisible({ timeout: 15_000 });
+
+  const continueButton = page.getByRole("button", { name: "Save and continue in chat" });
+  await expect(continueButton).toBeDisabled();
+
+  await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_SECOND_USER_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(
+    chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_SECOND_USER_MESSAGE)
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(continueButton).toBeEnabled({ timeout: 15_000 });
+
+  const intakeCommitResponse = page.waitForResponse(
+    (res) => res.request().method() === "POST" && res.url().includes("/api/justice/cases"),
+    { timeout: 30_000 }
+  );
+  await chatInput.fill(CHAT_INTAKE_COMMIT_MESSAGE);
+  await page.getByRole("button", { name: "Send" }).click();
+  const created = await intakeCommitResponse;
+  expect(created.ok()).toBeTruthy();
+  const createdBody = (await created.json()) as { id?: string; intake?: { company_name?: string } };
+  expect(createdBody.id).toBe(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+  expect(createdBody.intake?.company_name).toBe("Beta Corp");
+
+  await expect(page.getByText("I've saved your case.")).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+      { timeout: 30_000 }
+    )
+    .toBe(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Ask chat to list active + archived cases (real Send; waits for list GETs). */
+export async function listCasesViaChat(
+  page: Page,
+  expectedLinePatterns: RegExp[] = [/Beta Corp.*active/, /Acme Retail.*archived/]
+): Promise<void> {
+  const activeListResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "GET" &&
+      /\/api\/justice\/cases(?:\?|$)/.test(res.url()) &&
+      !res.url().includes("archived=1"),
+    { timeout: 30_000 }
+  );
+  const archivedListResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "GET" &&
+      res.url().includes("/api/justice/cases") &&
+      res.url().includes("archived=1"),
+    { timeout: 30_000 }
+  );
+  await sendChatClosureMessage(page, CHAT_CASE_SELECTION_LIST_MESSAGE);
+  expect((await activeListResponse).ok()).toBeTruthy();
+  expect((await archivedListResponse).ok()).toBeTruthy();
+
+  const chatTranscript = chatAiTranscript(page);
+  await expect(chatTranscript.getByText(CHAT_CASE_SELECTION_LIST_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatTranscript.getByText("Here are your cases:")).toBeVisible({ timeout: 30_000 });
+  for (const pattern of expectedLinePatterns) {
+    await expect(chatTranscript.getByText(pattern)).toBeVisible({ timeout: 15_000 });
+  }
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Assert selection never navigates to cases hub or other justice hubs. */
+async function expectCaseSelectionStaysOnChatWithoutHubNav(
+  page: Page,
+  action: () => Promise<void>
+): Promise<void> {
+  const forbiddenPaths: string[] = [];
+  const onNav = (frame: { url: () => string }) => {
+    if (frame !== page.mainFrame()) return;
+    let pathname = "";
+    try {
+      pathname = new URL(frame.url()).pathname;
+    } catch {
+      return;
+    }
+    if (
+      pathname === "/justice/cases" ||
+      pathname.startsWith("/justice/cases/") ||
+      pathname === "/justice/preview" ||
+      pathname === "/justice/packet" ||
+      pathname === "/justice/handling"
+    ) {
+      forbiddenPaths.push(pathname);
+    }
+  };
+  page.on("framenavigated", onNav);
+  try {
+    await action();
+    await expectUrlStaysOnChatAi(page);
+    expect(new URL(page.url()).pathname).toBe("/justice/chat-ai");
+    expect(forbiddenPaths, `unexpected hub navigation: ${forbiddenPaths.join(", ")}`).toEqual([]);
+  } finally {
+    page.off("framenavigated", onNav);
+  }
+}
+
+/**
+ * After listing both cases as active (offer still says Acme is active), archive Acme via chat
+ * without re-listing, then open Acme by company. Live status must restore via PATCH before hydration.
+ */
+export async function selectStaleListedAcmeCaseViaChatCompanyAfterArchive(
+  page: Page
+): Promise<void> {
+  await archiveCaseViaChat(page);
+  await expectConsumerChatCaseArchivedClosed(page);
+
+  await expectCaseSelectionStaysOnChatWithoutHubNav(page, async () => {
+    const restoreResponse = page.waitForResponse(
+      (res) =>
+        res.request().method() === "PATCH" &&
+        res.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`) &&
+        res.request().postDataJSON()?.archived_at === null,
+      { timeout: 30_000 }
+    );
+    await sendChatClosureMessage(page, "Please open my Acme Retail case in chat.");
+    const restorePatch = await restoreResponse;
+    expect(restorePatch.ok()).toBeTruthy();
+
+    await expect
+      .poll(
+        async () =>
+          page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+        { timeout: 30_000 }
+      )
+      .toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+
+    const chatTranscript = chatAiTranscript(page);
+    await expect(
+      chatTranscript
+        .getByText(
+          "I've restored your archived case for Acme Retail and opened it here in chat."
+        )
+        .last()
+    ).toBeVisible({ timeout: 30_000 });
+  });
+}
+
+/**
+ * Select archived Acme (case 2 in dual-case list) via chat — real PATCH restore + hydrate.
+ * Assumes list was offered with Beta active (#1) and Acme archived (#2).
+ */
+export async function selectArchivedAcmeCaseViaChatNumber(page: Page): Promise<void> {
+  const transcriptProbe = await page.evaluate(async (caseId) => {
+    const res = await fetch(`/api/justice/chat-messages?case_id=${encodeURIComponent(caseId)}`);
+    const text = await res.text();
+    return { status: res.status, text };
+  }, PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+  expect(
+    transcriptProbe.status,
+    `Acme transcript probe failed: ${transcriptProbe.status} ${transcriptProbe.text}`
+  ).toBe(200);
+  const transcriptBody = JSON.parse(transcriptProbe.text) as { messages?: unknown[] };
+  expect(Array.isArray(transcriptBody.messages)).toBeTruthy();
+  expect((transcriptBody.messages ?? []).length).toBeGreaterThan(0);
+
+  await expectCaseSelectionStaysOnChatWithoutHubNav(page, async () => {
+    const restoreResponse = page.waitForResponse(
+      (res) =>
+        res.request().method() === "PATCH" &&
+        res.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`) &&
+        res.request().postDataJSON()?.archived_at === null,
+      { timeout: 30_000 }
+    );
+    await sendChatClosureMessage(page, CHAT_CASE_SELECTION_OPEN_CASE_NUMBER_MESSAGE);
+    const restorePatch = await restoreResponse;
+    expect(restorePatch.ok()).toBeTruthy();
+
+    await expect
+      .poll(
+        async () =>
+          page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+        { timeout: 30_000 }
+      )
+      .toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+
+    const chatTranscript = chatAiTranscript(page);
+    await expect(
+      chatTranscript.getByText(
+        "I've restored your archived case for Acme Retail and opened it here in chat."
+      )
+    ).toBeVisible({ timeout: 30_000 });
+  });
+}
+
+/** Select active Beta Corp case by company name while Acme is loaded in chat. */
+export async function selectActiveBetaCaseViaChatCompany(page: Page): Promise<void> {
+  const betaRestorePatches: string[] = [];
+  const onRequest = (req: Request) => {
+    if (req.method() !== "PATCH") return;
+    if (!req.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_SECOND_CASE_ID}`)) return;
+    const body = req.postDataJSON() as { archived_at?: unknown } | null;
+    if (body && body.archived_at === null) {
+      betaRestorePatches.push(req.url());
+    }
+  };
+  page.on("request", onRequest);
+
+  try {
+    await expectCaseSelectionStaysOnChatWithoutHubNav(page, async () => {
+      const getBetaResponse = page.waitForResponse(
+        (res) =>
+          res.request().method() === "GET" &&
+          res.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_SECOND_CASE_ID}`),
+        { timeout: 30_000 }
+      );
+      await sendChatClosureMessage(page, "Please open my Beta Corp case in chat.");
+      expect((await getBetaResponse).ok()).toBeTruthy();
+
+      await expect
+        .poll(
+          async () =>
+            page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+          { timeout: 30_000 }
+        )
+        .toBe(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+
+      const chatTranscript = chatAiTranscript(page);
+      await expect(
+        chatTranscript.getByText("I've opened your Beta Corp case here in chat.")
+      ).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(
+        chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_USER_MESSAGE)
+      ).toBeVisible({
+        timeout: 30_000,
+      });
+    });
+    expect(betaRestorePatches, "active Beta select must not send restore PATCH").toEqual([]);
+  } finally {
+    page.off("request", onRequest);
+  }
+}
+
+/** Reload after multi-case selection and confirm Acme stays active without duplicate narration. */
+export async function expectConsumerChatStaysOnSelectedAcmeAfterReload(page: Page): Promise<void> {
+  const chatTranscript = chatAiTranscript(page);
+  const demandLetterSent = buildChatCaseProgressNarrationMessage("demand_letter_sent");
+  const resolutionReady = buildChatCaseProgressNarrationMessage("resolution_ready");
+
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+      { timeout: 30_000 }
+    )
+    .toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+
+  await expectConsumerChatCaseRestoredActive(page);
+  expect(await chatTranscript.getByText(demandLetterSent).count()).toBe(1);
+  expect(await chatTranscript.getByText(resolutionReady).count()).toBe(1);
+  expect(await chatTranscript.getByText(CHAT_CASE_SELECTION_OPEN_CASE_NUMBER_MESSAGE).count()).toBe(1);
 }

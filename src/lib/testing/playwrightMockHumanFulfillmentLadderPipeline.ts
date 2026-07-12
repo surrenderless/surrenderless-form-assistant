@@ -41,27 +41,60 @@ const PLAYWRIGHT_MOCK_TASK_TIMESTAMP = "2026-06-21T00:00:04.000Z";
 export const PLAYWRIGHT_MOCK_STATE_AG_TASK_ID = "00000000-0000-4000-8000-000000000746";
 export const PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID = "00000000-0000-4000-8000-000000000747";
 
-const playwrightMockHumanFulfillmentTasksByCaseId = new Map<
-  string,
-  PlaywrightMockJusticeTaskRow[]
->();
+const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
+  "__playwrightMockHumanFulfillmentTasksByCaseId__";
+const PLAYWRIGHT_MOCK_CASE_OWNER_GLOBAL_KEY = "__playwrightMockCaseOwnerUserIdByCaseId__";
 
-const playwrightMockCaseOwnerUserIdByCaseId = new Map<string, string>();
+type TasksMap = Map<string, PlaywrightMockJusticeTaskRow[]>;
+type OwnerMap = Map<string, string>;
+
+function getPlaywrightMockHumanFulfillmentTasksByCaseId(): TasksMap {
+  const globalStore = globalThis as typeof globalThis & {
+    [PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY]?: TasksMap;
+  };
+  if (!globalStore[PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY]) {
+    globalStore[PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY] = new Map();
+  }
+  return globalStore[PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY]!;
+}
+
+function getPlaywrightMockCaseOwnerUserIdByCaseId(): OwnerMap {
+  const globalStore = globalThis as typeof globalThis & {
+    [PLAYWRIGHT_MOCK_CASE_OWNER_GLOBAL_KEY]?: OwnerMap;
+  };
+  if (!globalStore[PLAYWRIGHT_MOCK_CASE_OWNER_GLOBAL_KEY]) {
+    globalStore[PLAYWRIGHT_MOCK_CASE_OWNER_GLOBAL_KEY] = new Map();
+  }
+  return globalStore[PLAYWRIGHT_MOCK_CASE_OWNER_GLOBAL_KEY]!;
+}
 
 export function setPlaywrightMockCaseOwnerUserId(caseId: string, userId: string): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
-  playwrightMockCaseOwnerUserIdByCaseId.set(caseId.trim(), userId.trim());
+  const trimmedCaseId = caseId.trim();
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) return;
+  const ownerMap = getPlaywrightMockCaseOwnerUserIdByCaseId();
+  const existing = ownerMap.get(trimmedCaseId)?.trim();
+  // Mock GET/hydration syncs with a synthetic user id — do not clobber the real Clerk owner.
+  if (
+    existing &&
+    existing !== "playwright_e2e_user" &&
+    trimmedUserId === "playwright_e2e_user"
+  ) {
+    return;
+  }
+  ownerMap.set(trimmedCaseId, trimmedUserId);
 }
 
 export function resetPlaywrightMockHumanFulfillmentLadderForTests(): void {
-  playwrightMockHumanFulfillmentTasksByCaseId.clear();
-  playwrightMockCaseOwnerUserIdByCaseId.clear();
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().clear();
+  getPlaywrightMockCaseOwnerUserIdByCaseId().clear();
 }
 
 export function resetPlaywrightMockHumanFulfillmentLadderForCase(caseId: string): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
-  playwrightMockHumanFulfillmentTasksByCaseId.delete(caseId.trim());
-  playwrightMockCaseOwnerUserIdByCaseId.delete(caseId.trim());
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().delete(caseId.trim());
+  getPlaywrightMockCaseOwnerUserIdByCaseId().delete(caseId.trim());
 }
 
 function buildOpenTask(input: {
@@ -130,7 +163,7 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
     );
   }
 
-  playwrightMockHumanFulfillmentTasksByCaseId.set(trimmedCaseId, tasks);
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(trimmedCaseId, tasks);
   if (userId.trim()) {
     setPlaywrightMockCaseOwnerUserId(trimmedCaseId, userId.trim());
   }
@@ -141,7 +174,7 @@ export function getPlaywrightMockHumanFulfillmentTasks(
   userId: string
 ): PlaywrightMockJusticeTaskRow[] {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return [];
-  const rows = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId.trim()) ?? [];
+  const rows = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId.trim()) ?? [];
   return rows.map((row) => ({ ...row, user_id: userId }));
 }
 
@@ -180,7 +213,7 @@ export function completePlaywrightMockStateAgOperatorFiling(
   }
   const intake = snapshot.intake as JusticeIntake;
 
-  const tasks = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId) ?? [];
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
   const task = tasks.find((row) => row.id === input.taskId.trim());
   if (!task || !taskNotesMatchStateAgFilingMarker(task.notes, caseId)) {
     return { ok: false, error: "State AG operator task not found", status: 404 };
@@ -253,7 +286,7 @@ export function completePlaywrightMockDemandLetterOperatorFiling(
   }
   const intake = snapshot.intake as JusticeIntake;
 
-  const tasks = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId) ?? [];
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
   const task = tasks.find((row) => row.id === input.taskId.trim());
   if (!task || !taskNotesMatchDemandLetterFilingMarker(task.notes, caseId)) {
     return { ok: false, error: "Demand letter operator task not found", status: 404 };
@@ -318,11 +351,17 @@ export function completePlaywrightMockDemandLetterOperatorFiling(
 
 export function resolvePlaywrightMockCaseOwnerUserId(caseId: string): string | null {
   const trimmedCaseId = caseId.trim();
-  const tasks = playwrightMockHumanFulfillmentTasksByCaseId.get(trimmedCaseId) ?? [];
-  const ownerFromTask = tasks.find((task) => task.user_id?.trim())?.user_id?.trim();
+  const ownerFromMap = getPlaywrightMockCaseOwnerUserIdByCaseId().get(trimmedCaseId)?.trim();
+  if (ownerFromMap && ownerFromMap !== "playwright_e2e_user") {
+    return ownerFromMap;
+  }
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(trimmedCaseId) ?? [];
+  const ownerFromTask = tasks
+    .map((task) => task.user_id?.trim() ?? "")
+    .find((id) => id.length > 0 && id !== "playwright_e2e_user");
   if (ownerFromTask) return ownerFromTask;
-  const ownerFromMap = playwrightMockCaseOwnerUserIdByCaseId.get(trimmedCaseId)?.trim();
-  return ownerFromMap && ownerFromMap.length > 0 ? ownerFromMap : null;
+  if (ownerFromMap) return ownerFromMap;
+  return null;
 }
 
 /** Whether operator filing mock routes should handle the fixed E2E case. */
@@ -346,7 +385,7 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return [];
 
   const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
-  const storedTasks = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId) ?? [];
+  const storedTasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
   const consumerUserId = storedTasks.find((task) => task.user_id?.trim())?.user_id?.trim() ?? "";
   if (consumerUserId) {
     syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
@@ -360,7 +399,7 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
   if (!isJusticeIntakePayload(snapshot.intake)) return [];
 
   const intake = snapshot.intake as JusticeIntake;
-  const tasks = playwrightMockHumanFulfillmentTasksByCaseId.get(caseId) ?? [];
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
   const items: import("@/lib/justice/operatorFulfillmentQueue").OperatorFulfillmentQueueItem[] = [];
 
   for (const task of tasks) {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
+  buildPlaywrightMockCaseGetResponse,
   buildPlaywrightMockCasePatchResponse,
   resetPlaywrightMockCaseHydrationSnapshotsForTests,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
@@ -46,6 +47,7 @@ describe("playwrightMockJusticeSavedCasesListPipeline", () => {
   });
 
   it("returns the fixed E2E case when hydration snapshot is active (archived_at null)", () => {
+    buildPlaywrightMockCaseGetResponse(caseId);
     const result = buildPlaywrightMockSavedCasesListResponse(10, 0);
 
     expect(result.cases).toHaveLength(1);
@@ -56,6 +58,7 @@ describe("playwrightMockJusticeSavedCasesListPipeline", () => {
   });
 
   it("returns an empty saved list after archive PATCH on the hydration snapshot", () => {
+    buildPlaywrightMockCaseGetResponse(caseId);
     buildPlaywrightMockCasePatchResponse(caseId, {
       archived_at: "2026-06-21T00:00:02.000Z",
     });
@@ -69,6 +72,7 @@ describe("playwrightMockJusticeSavedCasesListPipeline", () => {
   });
 
   it("returns the fixed E2E case again after restore PATCH clears archived_at", () => {
+    buildPlaywrightMockCaseGetResponse(caseId);
     buildPlaywrightMockCasePatchResponse(caseId, {
       archived_at: "2026-06-21T00:00:02.000Z",
     });

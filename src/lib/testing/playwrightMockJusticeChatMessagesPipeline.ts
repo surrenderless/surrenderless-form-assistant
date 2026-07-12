@@ -13,8 +13,20 @@ import {
 export { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 
 const PLAYWRIGHT_MOCK_CHAT_MESSAGE_TIMESTAMP = "2026-06-21T00:00:02.000Z";
+const PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_GLOBAL_KEY =
+  "__playwrightMockJusticeChatMessagesByCaseId__";
 
-const playwrightMockJusticeChatMessagesByCaseId = new Map<string, JusticeCaseChatMessageRow[]>();
+type ChatMessagesMap = Map<string, JusticeCaseChatMessageRow[]>;
+
+function getPlaywrightMockJusticeChatMessagesByCaseId(): ChatMessagesMap {
+  const globalStore = globalThis as typeof globalThis & {
+    [PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_GLOBAL_KEY]?: ChatMessagesMap;
+  };
+  if (!globalStore[PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_GLOBAL_KEY]) {
+    globalStore[PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_GLOBAL_KEY] = new Map();
+  }
+  return globalStore[PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_GLOBAL_KEY]!;
+}
 
 /** Enabled only when Playwright webServer sets PLAYWRIGHT_MOCK_JUSTICE_CHAT_MESSAGES_PIPELINE=1. */
 export function isPlaywrightMockJusticeChatMessagesPipelineEnabled(): boolean {
@@ -36,13 +48,13 @@ export function isPlaywrightMockJusticeChatMessagesCaseId(caseId: string): boole
 }
 
 export function resetPlaywrightMockJusticeChatMessagesForTests(): void {
-  playwrightMockJusticeChatMessagesByCaseId.clear();
+  getPlaywrightMockJusticeChatMessagesByCaseId().clear();
   resetPlaywrightMockSecondCaseChatOwnerForTests();
 }
 
 export function resetPlaywrightMockJusticeChatMessagesForCase(caseId: string): void {
   if (!isPlaywrightMockJusticeChatMessagesCaseId(caseId)) return;
-  playwrightMockJusticeChatMessagesByCaseId.delete(caseId.trim());
+  getPlaywrightMockJusticeChatMessagesByCaseId().delete(caseId.trim());
   resetPlaywrightMockSecondCaseChatOwnerForCase(caseId);
 }
 
@@ -75,7 +87,7 @@ export function buildPlaywrightMockJusticeChatMessagesGetResponse(
   if (!userOwnsMockJusticeChatMessagesCase(caseId, userId)) {
     return null;
   }
-  const rows = playwrightMockJusticeChatMessagesByCaseId.get(caseId.trim()) ?? [];
+  const rows = getPlaywrightMockJusticeChatMessagesByCaseId().get(caseId.trim()) ?? [];
   return rows.map((row) => ({ ...row }));
 }
 
@@ -88,7 +100,8 @@ export function buildPlaywrightMockJusticeChatMessagesAppendResponse(
     return null;
   }
   const trimmedCaseId = caseId.trim();
-  const existing = playwrightMockJusticeChatMessagesByCaseId.get(trimmedCaseId) ?? [];
+  const store = getPlaywrightMockJusticeChatMessagesByCaseId();
+  const existing = store.get(trimmedCaseId) ?? [];
   const byClientTurnId = new Map(existing.map((row) => [row.client_turn_id, row]));
   let index = existing.length;
   const appended: JusticeCaseChatMessageRow[] = [];
@@ -104,6 +117,6 @@ export function buildPlaywrightMockJusticeChatMessagesAppendResponse(
   }
 
   const merged = sortRows([...byClientTurnId.values()]);
-  playwrightMockJusticeChatMessagesByCaseId.set(trimmedCaseId, merged);
+  store.set(trimmedCaseId, merged);
   return appended.map((row) => ({ ...row }));
 }
