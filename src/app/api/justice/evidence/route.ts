@@ -2,6 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { isJusticeEvidenceType, JUSTICE_EVIDENCE_TYPE_LABELS } from "@/lib/justice/evidence";
+import {
+  JUSTICE_EVIDENCE_API_SELECT,
+  omitEvidenceFilePathFromApiRow,
+  omitEvidenceFilePathFromApiRows,
+} from "@/lib/justice/evidenceFileAccess";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 import {
@@ -10,8 +15,7 @@ import {
   isPlaywrightMockJusticeEvidencePipelineEnabled,
 } from "@/lib/testing/playwrightMockJusticeEvidencePipeline";
 
-const EVIDENCE_SELECT =
-  "id, user_id, case_id, title, evidence_type, evidence_date, description, source_url, storage_note, created_at, updated_at" as const;
+const EVIDENCE_SELECT = JUSTICE_EVIDENCE_API_SELECT;
 
 const MAX_TITLE = 500;
 const MAX_EVIDENCE_DATE = 200;
@@ -150,7 +154,14 @@ export async function GET(req: NextRequest) {
     isPlaywrightMockJusticeEvidencePipelineEnabled() &&
     isPlaywrightMockJusticeEvidenceCaseId(caseId)
   ) {
-    return NextResponse.json(buildPlaywrightMockJusticeEvidenceGetResponse(caseId, userId));
+    return NextResponse.json(
+      omitEvidenceFilePathFromApiRows(
+        buildPlaywrightMockJusticeEvidenceGetResponse(caseId, userId) as unknown as Record<
+          string,
+          unknown
+        >[]
+      )
+    );
   }
 
   const supabase = getSupabaseAdmin();
@@ -172,7 +183,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data ?? []);
+  return NextResponse.json(
+    omitEvidenceFilePathFromApiRows((data ?? []) as unknown as Record<string, unknown>[])
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -271,5 +284,9 @@ export async function POST(req: NextRequest) {
     detail: `${data.title} — ${typeLabel}`,
   });
 
-  return NextResponse.json(timeline ? { ...data, timeline } : data);
+  return NextResponse.json(
+    timeline
+      ? { ...omitEvidenceFilePathFromApiRow(data as unknown as Record<string, unknown>), timeline }
+      : omitEvidenceFilePathFromApiRow(data as unknown as Record<string, unknown>)
+  );
 }

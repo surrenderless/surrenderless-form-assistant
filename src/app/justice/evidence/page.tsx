@@ -8,9 +8,11 @@ import {
   isJusticeEvidenceType,
   JUSTICE_EVIDENCE_TYPE_LABELS,
   JUSTICE_EVIDENCE_TYPES,
+  justiceEvidenceRowHasUploadedFile,
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import { buildPrivateEvidenceFileAccessPath, isPublicSupabaseStorageObjectUrl } from "@/lib/justice/evidenceFileAccess";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
@@ -533,7 +535,26 @@ export default function JusticeEvidencePage() {
                               {row.description}
                             </p>
                           ) : null}
-                          {row.source_url?.trim() ? (
+                          {justiceEvidenceRowHasUploadedFile(row) ? (
+                            <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                              File: {row.file_name}
+                              {row.mime_type ? ` (${row.mime_type})` : ""}
+                              {buildPrivateEvidenceFileAccessPath(row.id) ? (
+                                <>
+                                  {" · "}
+                                  <a
+                                    href={buildPrivateEvidenceFileAccessPath(row.id)!}
+                                    className="font-medium text-neutral-800 underline underline-offset-2 dark:text-neutral-200"
+                                  >
+                                    Download file
+                                  </a>
+                                </>
+                              ) : null}
+                            </p>
+                          ) : null}
+                          {row.source_url?.trim() &&
+                          !isPublicSupabaseStorageObjectUrl(row.source_url) &&
+                          !justiceEvidenceRowHasUploadedFile(row) ? (
                             <p className="mt-2 text-xs break-all text-blue-600 dark:text-blue-400">
                               <a
                                 href={row.source_url.trim()}

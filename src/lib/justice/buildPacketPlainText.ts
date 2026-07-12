@@ -1,8 +1,13 @@
 import {
   JUSTICE_EVIDENCE_TYPE_LABELS,
+  justiceEvidenceRowHasUploadedFile,
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import {
+  buildPacketEvidenceFileLines,
+  isPublicSupabaseStorageObjectUrl,
+} from "@/lib/justice/evidenceFileAccess";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
@@ -120,17 +125,26 @@ export function buildPacketPlainText(
     }
   }
 
-  lines.push("", "SAVED EVIDENCE (notes)", "----------------------");
+  lines.push("", "SAVED EVIDENCE", "---------------");
   if (evidence.length === 0) {
     lines.push("(No saved evidence records yet.)");
   } else {
     evidence.forEach((row, i) => {
+      const sourceUrl = row.source_url?.trim() ?? "";
+      // Never include public storage object URLs or internal private storage keys in the packet.
+      const safeSourceUrl =
+        sourceUrl &&
+        !isPublicSupabaseStorageObjectUrl(sourceUrl) &&
+        !justiceEvidenceRowHasUploadedFile(row)
+          ? sourceUrl
+          : "";
       lines.push(
         `${i + 1}. ${row.title}`,
         `   Type: ${evidenceTypeLabel(row.evidence_type)}`,
         row.evidence_date ? `   Date: ${row.evidence_date}` : "",
         row.description?.trim() ? `   Description: ${row.description.trim()}` : "",
-        row.source_url?.trim() ? `   Source URL: ${row.source_url.trim()}` : "",
+        ...buildPacketEvidenceFileLines(row),
+        safeSourceUrl ? `   Source URL: ${safeSourceUrl}` : "",
         row.storage_note?.trim() ? `   Storage: ${row.storage_note.trim()}` : "",
         `   Recorded: ${formatEvidenceAdded(row.created_at)}`,
         ""

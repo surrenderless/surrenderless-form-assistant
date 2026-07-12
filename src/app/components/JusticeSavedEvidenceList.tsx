@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   JUSTICE_EVIDENCE_TYPE_LABELS,
+  justiceEvidenceRowHasUploadedFile,
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import { buildPrivateEvidenceFileAccessPath, isPublicSupabaseStorageObjectUrl } from "@/lib/justice/evidenceFileAccess";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
 const cardCls =
@@ -153,7 +155,25 @@ export default function JusticeSavedEvidenceList() {
                 {row.description ? (
                   <p className="mt-1 whitespace-pre-wrap text-xs text-neutral-700 dark:text-neutral-300">{row.description}</p>
                 ) : null}
-                {row.source_url?.trim() ? (
+                {justiceEvidenceRowHasUploadedFile(row) ? (
+                  <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+                    File: {row.file_name}
+                    {buildPrivateEvidenceFileAccessPath(row.id) ? (
+                      <>
+                        {" · "}
+                        <a
+                          href={buildPrivateEvidenceFileAccessPath(row.id)!}
+                          className="font-medium text-neutral-800 underline underline-offset-2 dark:text-neutral-200"
+                        >
+                          Download file
+                        </a>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
+                {row.source_url?.trim() &&
+                !isPublicSupabaseStorageObjectUrl(row.source_url) &&
+                !justiceEvidenceRowHasUploadedFile(row) ? (
                   <p className="mt-1 text-xs break-all text-blue-600 dark:text-blue-400">
                     <a href={row.source_url.trim()} target="_blank" rel="noopener noreferrer" className="underline">
                       {row.source_url.trim()}
