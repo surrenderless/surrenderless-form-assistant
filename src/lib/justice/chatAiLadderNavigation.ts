@@ -172,7 +172,10 @@ export function redirectConsumerActiveCaseOffChatHref(targetHref: string): strin
     : trimmed;
 }
 
-export type ConsumerLegacyLadderPageHref = "/justice/preview" | "/justice/handling";
+export type ConsumerLegacyLadderPageHref =
+  | "/justice/preview"
+  | "/justice/packet"
+  | "/justice/handling";
 
 /** Direct URL entry guard for legacy consumer ladder detour pages. */
 export function shouldRedirectConsumerActiveCaseOffLegacyLadderPage(input: {
@@ -203,7 +206,22 @@ export function resolveConsumerActiveCaseLegacyLadderRedirectHref(
       CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID
     );
   }
+  if (legacyPageHref === "/justice/packet") {
+    return resolveConsumerActiveCaseResumeChatAiHref(
+      CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID
+    );
+  }
   return CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
+}
+
+/**
+ * When the signed-in active-case ladder stays in chat, suppress optional
+ * /justice/preview and /justice/packet hub escapes — review/approve happen inline.
+ */
+export function shouldSuppressChatInlineMainLadderHubEscapeLinks(input: {
+  keepInChat: boolean;
+}): boolean {
+  return input.keepInChat;
 }
 
 export function resolveConsumerActiveCaseChecklistDraftReviewNavigate(): {

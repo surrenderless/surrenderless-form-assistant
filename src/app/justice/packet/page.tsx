@@ -9,6 +9,7 @@ import Header from "@/app/components/Header";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import JusticeCaseTasks from "@/app/components/JusticeCaseTasks";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
+import { useRedirectConsumerActiveCaseOffLegacyLadderPage } from "@/lib/justice/useRedirectConsumerActiveCaseOffLegacyLadderPage";
 import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
 import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import { buildPrivateEvidenceFileAccessPath, isPublicSupabaseStorageObjectUrl } from "@/lib/justice/evidenceFileAccess";
@@ -570,11 +571,23 @@ export default function JusticePacketPage() {
     window.print();
   }
 
+  const redirectOffPacket = useRedirectConsumerActiveCaseOffLegacyLadderPage({
+    legacyPageHref: "/justice/packet",
+    caseId,
+    hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
+    sessionReady,
+  });
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (!sessionReady || hydrationStatus === "loading" || hydrationStatus === "redirecting") {
+  if (
+    !sessionReady ||
+    hydrationStatus === "loading" ||
+    hydrationStatus === "redirecting" ||
+    redirectOffPacket
+  ) {
     return (
       <>
         <Header />

@@ -280,12 +280,14 @@ import {
   scrollChatAiInlineElementWithHydrationWait,
   shouldBlockChatAiOffChatNavigation,
   shouldKeepSignedInChatAiActiveCaseInChat,
+  shouldSuppressChatInlineMainLadderHubEscapeLinks,
 } from "@/lib/justice/chatAiLadderNavigation";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
   clearPreviewChatUpdateSummary,
   writePreviewChatUpdateSummary,
 } from "@/lib/justice/previewChatUpdateHandoff";
+import { requestJusticePreviewDraft } from "@/lib/justice/requestJusticePreviewDraft";
 import {
   cloneBuildJusticeIntakeParts,
   summarizeBuildJusticeIntakePartsSessionChanges,
@@ -610,6 +612,7 @@ function resolveChatPreviewDestination(intake: JusticeIntake): JusticeDestinatio
 
 function ChatInlineSubmissionDraftReviewBlock({
   draftText,
+  aiDraftText,
   destinationLabel,
   checked,
   onCheckedChange,
@@ -618,8 +621,15 @@ function ChatInlineSubmissionDraftReviewBlock({
   saving,
   error,
   onSubmit,
+  suppressHubLink,
+  copyHint,
+  onCopyDraft,
+  aiLoading,
+  aiError,
+  onGenerateAiDraft,
 }: {
   draftText: string;
+  aiDraftText: string | null;
   destinationLabel?: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -628,16 +638,27 @@ function ChatInlineSubmissionDraftReviewBlock({
   saving: boolean;
   error: string | null;
   onSubmit: () => void;
+  suppressHubLink: boolean;
+  copyHint: string | null;
+  onCopyDraft: () => void;
+  aiLoading: boolean;
+  aiError: string | null;
+  onGenerateAiDraft: () => void;
 }) {
-  const canTruncate = draftText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
+  const reviewSourceText = aiDraftText?.trim() || draftText;
+  const canTruncate = reviewSourceText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
   const displayText =
-    expanded || !canTruncate ? draftText : `${draftText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
+    expanded || !canTruncate
+      ? reviewSourceText
+      : `${reviewSourceText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
 
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-blue-300/80 bg-blue-50/60 px-3 py-2.5 dark:border-blue-800/60 dark:bg-blue-950/30">
       <p className="text-xs font-medium text-blue-950 dark:text-blue-100">Review submission draft</p>
       <p className="text-[11px] leading-relaxed text-blue-900/90 dark:text-blue-100/90">
-        Deterministic draft for your review — not filed or sent automatically.
+        {aiDraftText
+          ? "AI-assisted draft for your review — not filed or sent automatically."
+          : "Deterministic draft for your review — not filed or sent automatically."}
         {destinationLabel ? (
           <>
             {" "}
@@ -659,6 +680,32 @@ function ChatInlineSubmissionDraftReviewBlock({
               {expanded ? "Show less" : "Show more"}
             </button>
           ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!reviewSourceText}
+              onClick={() => onCopyDraft()}
+              className="inline-flex rounded-lg border border-blue-400/80 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+            >
+              Copy draft
+            </button>
+            <button
+              type="button"
+              disabled={aiLoading || !draftText}
+              onClick={() => void onGenerateAiDraft()}
+              className="inline-flex rounded-lg border border-blue-500/80 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-600 dark:hover:bg-blue-500"
+            >
+              {aiLoading
+                ? "Generating…"
+                : aiDraftText
+                  ? "Regenerate AI-assisted draft"
+                  : "Generate AI-assisted draft"}
+            </button>
+            {copyHint ? (
+              <span className="text-[11px] text-blue-800 dark:text-blue-200">{copyHint}</span>
+            ) : null}
+          </div>
+          {aiError ? <p className="text-[11px] text-red-700 dark:text-red-300">{aiError}</p> : null}
         </>
       ) : (
         <p className="text-[11px] text-blue-900/90 dark:text-blue-100/90">
@@ -687,19 +734,21 @@ function ChatInlineSubmissionDraftReviewBlock({
       >
         {saving ? "Saving…" : "Mark draft reviewed"}
       </button>
-      <p className="text-xs text-blue-800 dark:text-blue-200">
-        <Link
-          href="/justice/preview"
-          prefetch={false}
-          className="font-medium underline underline-offset-2 hover:text-blue-950 dark:text-blue-300 dark:hover:text-blue-100"
-        >
-          Open full submission preview
-        </Link>
-        <span className="text-[11px] text-blue-900/80 dark:text-blue-100/80">
-          {" "}
-          (optional — includes AI-assisted draft)
-        </span>
-      </p>
+      {!suppressHubLink ? (
+        <p className="text-xs text-blue-800 dark:text-blue-200">
+          <Link
+            href="/justice/preview"
+            prefetch={false}
+            className="font-medium underline underline-offset-2 hover:text-blue-950 dark:text-blue-300 dark:hover:text-blue-100"
+          >
+            Open full submission preview
+          </Link>
+          <span className="text-[11px] text-blue-900/80 dark:text-blue-100/80">
+            {" "}
+            (optional — includes AI-assisted draft)
+          </span>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -713,6 +762,9 @@ function ChatInlinePreparedPacketApprovalBlock({
   onExpandedChange,
   approving,
   onSubmit,
+  suppressHubLink,
+  copyHint,
+  onCopyPacket,
 }: {
   packetText: string;
   loading: boolean;
@@ -722,6 +774,9 @@ function ChatInlinePreparedPacketApprovalBlock({
   onExpandedChange: (expanded: boolean) => void;
   approving: boolean;
   onSubmit: () => void;
+  suppressHubLink: boolean;
+  copyHint: string | null;
+  onCopyPacket: () => void;
 }) {
   const canTruncate = packetText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
   const displayText =
@@ -750,6 +805,19 @@ function ChatInlinePreparedPacketApprovalBlock({
               {expanded ? "Show less" : "Show more"}
             </button>
           ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!packetText}
+              onClick={() => onCopyPacket()}
+              className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+            >
+              Copy packet
+            </button>
+            {copyHint ? (
+              <span className="text-[11px] text-emerald-800 dark:text-emerald-200">{copyHint}</span>
+            ) : null}
+          </div>
         </>
       ) : (
         <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
@@ -777,19 +845,21 @@ function ChatInlinePreparedPacketApprovalBlock({
       >
         {approving ? "Saving…" : "Approve prepared packet"}
       </button>
-      <p className="text-xs text-emerald-800 dark:text-emerald-200">
-        <Link
-          href="/justice/packet"
-          prefetch={false}
-          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-        >
-          Open full packet page
-        </Link>
-        <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
-          {" "}
-          (optional — print and copy tools)
-        </span>
-      </p>
+      {!suppressHubLink ? (
+        <p className="text-xs text-emerald-800 dark:text-emerald-200">
+          <Link
+            href="/justice/packet"
+            prefetch={false}
+            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+          >
+            Open full packet page
+          </Link>
+          <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
+            {" "}
+            (optional — print and copy tools)
+          </span>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -2485,6 +2555,11 @@ export default function JusticeChatAiPage() {
   const [packetPreviewExpanded, setPacketPreviewExpanded] = useState(false);
   const [prepMessageExpanded, setPrepMessageExpanded] = useState(false);
   const [prepCopyHint, setPrepCopyHint] = useState<string | null>(null);
+  const [inlineDraftCopyHint, setInlineDraftCopyHint] = useState<string | null>(null);
+  const [inlinePacketCopyHint, setInlinePacketCopyHint] = useState<string | null>(null);
+  const [chatAiDraftText, setChatAiDraftText] = useState<string | null>(null);
+  const [chatAiDraftLoading, setChatAiDraftLoading] = useState(false);
+  const [chatAiDraftError, setChatAiDraftError] = useState<string | null>(null);
   const [merchantDocContactMethod, setMerchantDocContactMethod] =
     useState<NonNullable<BuildJusticeIntakeParts["contact_method"]>>("email");
   const [merchantDocContactDate, setMerchantDocContactDate] = useState("");
@@ -2644,7 +2719,7 @@ export default function JusticeChatAiPage() {
           body: JSON.stringify({
             case_id: caseId,
             ...(destinationLabel ? { destination_label: destinationLabel } : {}),
-            used_ai: false,
+            used_ai: Boolean(chatAiDraftText?.trim()),
           }),
         });
         const data = (await res.json().catch(() => ({}))) as { timeline?: unknown; error?: string };
@@ -2665,7 +2740,7 @@ export default function JusticeChatAiPage() {
       } else {
         appendSubmissionDraftReviewedOnce(caseId, {
           destinationLabel,
-          usedAi: false,
+          usedAi: Boolean(chatAiDraftText?.trim()),
         });
       }
 
@@ -2673,12 +2748,58 @@ export default function JusticeChatAiPage() {
       setSubmissionDraftReviewOverride(true);
       setSubmissionDraftReviewChecked(false);
       setDraftPreviewExpanded(false);
+      setChatAiDraftText(null);
+      setChatAiDraftError(null);
       return true;
     } catch {
       setSubmissionDraftReviewError("Could not save draft review. Please try again.");
       return false;
     } finally {
       setMarkingSubmissionDraftReviewed(false);
+    }
+  }
+
+  async function handleGenerateChatAiAssistedDraft(): Promise<void> {
+    if (!isLoaded || !isSignedIn) {
+      setChatAiDraftError("Sign in to generate an AI-assisted draft.");
+      return;
+    }
+    const destination = chatPreviewDestination;
+    if (!destination || !chatSubmissionDraftText) {
+      setChatAiDraftError("Draft is not ready yet.");
+      return;
+    }
+    setChatAiDraftLoading(true);
+    setChatAiDraftError(null);
+    try {
+      const caseId =
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+      const timeline = caseId ? readTimeline(caseId) : [];
+      const result = await requestJusticePreviewDraft({
+        intake: chatPreviewIntake,
+        destinationId: destination.id,
+        destinationLabel: destination.label,
+        ...(caseId && isUuid(caseId) ? { caseId } : {}),
+        evidenceItems: recentEvidenceRows.map((row) => ({
+          title: row.title,
+          evidence_type: row.evidence_type,
+          ...(row.description?.trim() ? { description: row.description.trim() } : {}),
+          ...(row.evidence_date != null && row.evidence_date !== ""
+            ? { evidence_date: row.evidence_date }
+            : {}),
+        })),
+        timeline,
+      });
+      if (!result.ok) {
+        setChatAiDraftError(result.error);
+        return;
+      }
+      setChatAiDraftText(result.draft);
+      setDraftPreviewExpanded(true);
+    } catch {
+      setChatAiDraftError("Could not generate AI-assisted draft.");
+    } finally {
+      setChatAiDraftLoading(false);
     }
   }
 
@@ -4207,6 +4328,11 @@ export default function JusticeChatAiPage() {
     });
   }, [chatPreviewIntake, chatPreviewDestination, recentEvidenceRows]);
 
+  useEffect(() => {
+    setChatAiDraftText(null);
+    setChatAiDraftError(null);
+  }, [chatSubmissionDraftText]);
+
   const activeUuidCaseId =
     typeof window !== "undefined"
       ? (() => {
@@ -5713,6 +5839,9 @@ export default function JusticeChatAiPage() {
       ? null
       : { href: "/justice/preview", label: "Submission preview" };
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
+  const suppressInlineMainLadderHubLinks = shouldSuppressChatInlineMainLadderHubEscapeLinks({
+    keepInChat: chatAiKeepInChatLadder,
+  });
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
   const chatFirstActiveCaseBreadcrumbContinuity =
     isUpdatingExistingCase && Boolean(activeUuidCaseId);
@@ -5912,6 +6041,7 @@ export default function JusticeChatAiPage() {
               <div id="chat-ai-inline-submission-draft-review">
                 <ChatInlineSubmissionDraftReviewBlock
                 draftText={chatSubmissionDraftText}
+                aiDraftText={chatAiDraftText}
                 destinationLabel={chatPreviewDestination?.label}
                 checked={submissionDraftReviewChecked}
                 onCheckedChange={setSubmissionDraftReviewChecked}
@@ -5920,6 +6050,24 @@ export default function JusticeChatAiPage() {
                 saving={markingSubmissionDraftReviewed}
                 error={submissionDraftReviewError}
                 onSubmit={() => void handleMarkSubmissionDraftReviewedFromChat()}
+                suppressHubLink={suppressInlineMainLadderHubLinks}
+                copyHint={inlineDraftCopyHint}
+                onCopyDraft={() => {
+                  void (async () => {
+                    const text = (chatAiDraftText?.trim() || chatSubmissionDraftText).trim();
+                    if (!text) return;
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setInlineDraftCopyHint("Copied to clipboard.");
+                      window.setTimeout(() => setInlineDraftCopyHint(null), 2500);
+                    } catch {
+                      setInlineDraftCopyHint("Copy failed — select the text and copy manually.");
+                    }
+                  })();
+                }}
+                aiLoading={chatAiDraftLoading}
+                aiError={chatAiDraftError}
+                onGenerateAiDraft={() => void handleGenerateChatAiAssistedDraft()}
                 />
               </div>
             ) : null}
@@ -5934,6 +6082,21 @@ export default function JusticeChatAiPage() {
                 onExpandedChange={setPacketPreviewExpanded}
                 approving={approvingPreparedPacket}
                 onSubmit={() => void handleApprovePreparedPacketFromChat()}
+                suppressHubLink={suppressInlineMainLadderHubLinks}
+                copyHint={inlinePacketCopyHint}
+                onCopyPacket={() => {
+                  void (async () => {
+                    const text = chatPacketPlainText;
+                    if (!text) return;
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      setInlinePacketCopyHint("Copied to clipboard.");
+                      window.setTimeout(() => setInlinePacketCopyHint(null), 2500);
+                    } catch {
+                      setInlinePacketCopyHint("Copy failed — select the text and copy manually.");
+                    }
+                  })();
+                }}
                 />
               </div>
             ) : null}
@@ -6294,9 +6457,17 @@ export default function JusticeChatAiPage() {
                   messageText={chatPacketPlainText}
                   helperText="Review your prepared case packet below. Mark step opened when ready — Surrenderless does not submit, file, or contact anyone."
                   copyButtonLabel="Copy packet"
-                  optionalPageHref={CHAT_INLINE_PACKET_FALLBACK_PREP_HREF}
-                  optionalPageLabel="Open full packet page"
-                  optionalPageNote="optional — print and copy tools"
+                  optionalPageHref={
+                    suppressInlineMainLadderHubLinks
+                      ? undefined
+                      : CHAT_INLINE_PACKET_FALLBACK_PREP_HREF
+                  }
+                  optionalPageLabel={
+                    suppressInlineMainLadderHubLinks ? undefined : "Open full packet page"
+                  }
+                  optionalPageNote={
+                    suppressInlineMainLadderHubLinks ? undefined : "optional — print and copy tools"
+                  }
                   expanded={packetPreviewExpanded}
                   onExpandedChange={setPacketPreviewExpanded}
                   copyHint={prepCopyHint}

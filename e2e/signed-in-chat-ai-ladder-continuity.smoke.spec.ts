@@ -38,6 +38,11 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expect(reviewBelow).toBeVisible();
     await clickAndAssertStaysOnChatAi(page, () => reviewBelow.click());
     await expect(page.locator("#chat-ai-inline-submission-draft-review")).toBeVisible();
+    await expect(
+      page.locator("#chat-ai-inline-submission-draft-review").getByRole("link", {
+        name: "Open full submission preview",
+      })
+    ).toHaveCount(0);
 
     await seedActiveCasePacketNotApproved(page);
     await waitForClerkBrowserApiSession(page);
@@ -51,6 +56,11 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expect(approveBelow).toBeVisible();
     await clickAndAssertStaysOnChatAi(page, () => approveBelow.click());
     await expect(page.locator("#chat-ai-inline-prepared-packet-approval")).toBeVisible();
+    await expect(
+      page.locator("#chat-ai-inline-prepared-packet-approval").getByRole("link", {
+        name: "Open full packet page",
+      })
+    ).toHaveCount(0);
     await expectUrlStaysOnChatAi(page);
   });
 
