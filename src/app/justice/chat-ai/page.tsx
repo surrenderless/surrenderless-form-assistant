@@ -48,6 +48,7 @@ import {
   mergeClientStateWithAcknowledgedHandling,
   mergeClientStateWithApprovedNextAction,
   mergeClientStateWithClearedFollowUp,
+  readSessionApprovedNextAction,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
@@ -82,6 +83,7 @@ import type { JusticeCaseChatMessageSource } from "@/lib/justice/justiceCaseChat
 import {
   appendCaseChatTranscriptTurns,
   fetchCaseChatTranscript,
+  type JusticeCaseChatPersistTurn,
   type JusticeCaseChatUiMessage,
 } from "@/lib/justice/justiceCaseChatTranscriptClient";
 import { syncChatProgressNarrationFromTranscript } from "@/lib/justice/syncChatProgressNarrationFromTranscript";
@@ -95,6 +97,11 @@ import {
   readChatBbbAccuracyConsented,
   resolvePendingChatLegalConsentGate,
 } from "@/lib/justice/chatLegalConsentGates";
+import {
+  buildChatCaseRestoreAssistantResponse,
+  buildChatCaseRestoreGateContext,
+  parseChatCaseRestoreMessage,
+} from "@/lib/justice/chatCaseRestoreGates";
 import {
   buildChatCaseClosureAssistantResponse,
   buildChatCaseClosureGateContext,
@@ -223,6 +230,12 @@ import {
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import {
+  fetchMostRecentlyArchivedEligibleJusticeCase,
+  hydrateSessionFromCaseListRow,
+  restoreArchivedJusticeCaseOnServer,
+  type JusticeCaseListRow,
+} from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
   commitIntakeToSessionAndServer,
   shouldRouteToChatAiAfterIntakeCommit,
@@ -2632,7 +2645,7 @@ export default function JusticeChatAiPage() {
 
   async function handleArchiveActiveCase(
     archiveCaseId: string,
-    options?: { fromChat?: boolean }
+    options?: { fromChat?: boolean; transcriptTurns?: JusticeCaseChatPersistTurn[] }
   ): Promise<boolean> {
     if (!isLoaded) return false;
     const caseId = archiveCaseId.trim();
@@ -2641,6 +2654,17 @@ export default function JusticeChatAiPage() {
     setArchivingCase(true);
     setArchiveCaseError(null);
     try {
+      // Persist closure turns while the case is still active/owned, then archive.
+      if (options?.transcriptTurns?.length) {
+        try {
+          await appendCaseChatTranscriptTurns(caseId, options.transcriptTurns);
+          options.transcriptTurns.forEach((turn) => {
+            persistedTurnIdsRef.current.add(turn.clientTurnId);
+          });
+        } catch (error) {
+          console.warn("justice chat-ai: archive transcript persist failed", error);
+        }
+      }
       const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -2665,6 +2689,70 @@ export default function JusticeChatAiPage() {
       return false;
     } finally {
       setArchivingCase(false);
+    }
+  }
+
+  async function handleRestoreMostRecentArchivedCaseFromChat(): Promise<{
+    ok: boolean;
+    companyName?: string;
+  }> {
+    if (!isLoaded || !isSignedIn) return { ok: false };
+
+    const activeCaseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (activeCaseId && isUuid(activeCaseId)) return { ok: false };
+
+    try {
+      const archivedRow = await fetchMostRecentlyArchivedEligibleJusticeCase();
+      if (!archivedRow?.id || !isUuid(archivedRow.id)) {
+        return { ok: false };
+      }
+
+      const restored = await restoreArchivedJusticeCaseOnServer(archivedRow.id);
+      if (!restored) return { ok: false };
+
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(archivedRow.id)}`);
+      if (!getRes.ok) return { ok: false };
+      const freshCase = (await getRes.json()) as JusticeCaseListRow;
+
+      const intake = hydrateSessionFromCaseListRow(freshCase);
+      if (!intake) return { ok: false };
+
+      const caseId = archivedRow.id;
+      const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(intake);
+      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
+      setParts(hydratedParts);
+      setIsUpdatingExistingCase(true);
+      setArchiveCaseError(null);
+
+      const hydratedAction = hydrateApprovedNextActionForDisplay(caseId, freshCase.client_state);
+      if (hydratedAction) writeSessionApprovedNextAction(caseId, hydratedAction);
+      setApprovedNextAction(hydratedAction);
+      const serverPacketApproved =
+        parseJusticeCaseClientState(freshCase.client_state).prepared_packet_approved === true;
+      setPreparedPacketApproved(readSessionPreparedPacketApproved(caseId) || serverPacketApproved);
+      legalConsentTrackedCaseIdRef.current = caseId;
+
+      transcriptCaseIdRef.current = "";
+      const loaded = await fetchCaseChatTranscript(caseId);
+      transcriptCaseIdRef.current = caseId;
+      persistedTurnIdsRef.current = new Set(loaded.map((turn) => turn.id));
+      if (loaded.length > 0) {
+        messagesRef.current = loaded;
+        setMessages(loaded);
+        syncChatProgressNarrationFromTranscript(caseId, loaded);
+      } else {
+        const greeting = { id: msgId(), role: "assistant" as const, text: UPDATE_GREETING };
+        messagesRef.current = [greeting];
+        setMessages(messagesRef.current);
+      }
+
+      await refreshFullChatCaseContextFromServer(caseId);
+
+      return { ok: true, companyName: intake.company_name?.trim() || undefined };
+    } catch (e) {
+      console.warn("justice chat-ai: restore archived case error", e);
+      return { ok: false };
     }
   }
 
@@ -3403,6 +3491,7 @@ export default function JusticeChatAiPage() {
     const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, cleared);
     const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
     setApprovedNextAction(local);
+    approvedNextActionRef.current = local;
 
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
@@ -3538,18 +3627,11 @@ export default function JusticeChatAiPage() {
     background = false
   ): Promise<{ tasks: JusticeCaseTaskRow[]; filings: JusticeCaseFilingRow[] } | null> => {
     const generation = evidencePreviewFetchGenerationRef.current;
-    if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) {
-      setSavedEvidenceCount(null);
-      setSavedFilings([]);
-      setSavedTasks([]);
-      setChatHandlingReadinessLoading(false);
-      setSavedEvidenceRows([]);
-      setRecentEvidenceRows([]);
-      return null;
-    }
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    if (!caseId || !isUuid(caseId)) {
+    // Gate on session case id (not React isUpdatingExistingCase) so restore/hydrate
+    // can load evidence in the same turn as setIsUpdatingExistingCase(true).
+    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) {
       setSavedEvidenceCount(null);
       setSavedFilings([]);
       setSavedTasks([]);
@@ -3605,7 +3687,7 @@ export default function JusticeChatAiPage() {
         setChatHandlingReadinessLoading(false);
       }
     }
-  }, [isUpdatingExistingCase, isLoaded, isSignedIn, appendChatCaseProgressNarration]);
+  }, [isLoaded, isSignedIn, appendChatCaseProgressNarration]);
 
   const requestSavedEvidencePreviewRefresh = useCallback(() => {
     evidencePreviewFetchGenerationRef.current += 1;
@@ -4434,6 +4516,57 @@ export default function JusticeChatAiPage() {
       return;
     }
 
+    const restoreContext = buildChatCaseRestoreGateContext({
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      activeCaseId:
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "",
+    });
+    const parsedRestore = parseChatCaseRestoreMessage(trimmed, restoreContext);
+    if (parsedRestore.kind !== "none") {
+      sendInFlightRef.current = true;
+      setLoading(true);
+      setInputValue("");
+      const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
+      try {
+        if (parsedRestore.kind === "restore_most_recent_archived") {
+          const restoreResult = await handleRestoreMostRecentArchivedCaseFromChat();
+          const assistantText = restoreResult.ok
+            ? buildChatCaseRestoreAssistantResponse(parsedRestore, {
+                companyName: restoreResult.companyName,
+              })
+            : "I could not restore your most recently archived case. If you still have an archived case, try again in a moment.";
+          const restoredCaseId =
+            typeof window !== "undefined"
+              ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
+              : "";
+          addChatMessages(
+            [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+            {
+              caseId: restoredCaseId || undefined,
+              source: "case_restore_gate",
+            }
+          );
+        } else {
+          addChatMessages(
+            [
+              userTurn,
+              {
+                id: msgId(),
+                role: "assistant",
+                text: buildChatCaseRestoreAssistantResponse(parsedRestore),
+              },
+            ],
+            { source: "case_restore_gate" }
+          );
+        }
+      } finally {
+        sendInFlightRef.current = false;
+        setLoading(false);
+      }
+      return;
+    }
+
     const basicsMissingForCommit = getPreviewBasicsMissing(parts);
     const contactProofCheckForCommit = validateContactProofForIntake({
       already_contacted: parts.already_contacted,
@@ -4603,10 +4736,14 @@ export default function JusticeChatAiPage() {
         }
       }
 
+      const closureApprovedAction =
+        readSessionApprovedNextAction(consentCaseId) ??
+        approvedNextActionRef.current ??
+        approvedNextAction;
       const resolutionFlowExposed =
-        Boolean(approvedNextAction) &&
+        Boolean(closureApprovedAction) &&
         shouldExposeCaseResolutionFlow({
-          approvedAction: approvedNextAction,
+          approvedAction: closureApprovedAction,
           caseId: consentCaseId,
           tasks: savedTasks,
           filings: savedFilings,
@@ -4615,14 +4752,14 @@ export default function JusticeChatAiPage() {
         chatHandlingReadinessLoading ||
         (Boolean(consentCaseId) && savedEvidenceCount === null);
       const handlingTrackingStep =
-        approvedNextAction
+        closureApprovedAction
           ? deriveChatHandlingTrackingLine({
               basicsReady: isBasicCaseInfoReadyForEscalation(buildJusticeIntakeFromParts(parts)),
               draftReviewed: submissionDraftReviewed,
               preparedPacketApproved,
               evidenceCount: savedEvidenceCount ?? 0,
               filings: savedFilings,
-              next: approvedNextAction,
+              next: closureApprovedAction,
               canCaptureFilingInline: Boolean(consentCaseId) && isLoaded && Boolean(isSignedIn),
               caseId: consentCaseId,
               tasks: savedTasks,
@@ -4631,7 +4768,7 @@ export default function JusticeChatAiPage() {
       const closureContext = buildChatCaseClosureGateContext({
         caseId: consentCaseId,
         resolutionFlowExposed,
-        followUpNeeded: approvedNextAction?.follow_up_needed === true,
+        followUpNeeded: closureApprovedAction?.follow_up_needed === true,
         handlingTrackingStep,
         readinessLoading: closureReadinessLoading,
       });
@@ -4662,14 +4799,14 @@ export default function JusticeChatAiPage() {
               );
             } else if (parsedClosure.kind === "archive_case") {
               const assistantTurn = { id: msgId(), role: "assistant" as const, text: assistantText };
-              await appendCaseChatTranscriptTurns(
-                consentCaseId,
-                uiMessagesToPersistTurns([userTurn, assistantTurn], "closure_gate")
+              const archiveTranscriptTurns = uiMessagesToPersistTurns(
+                [userTurn, assistantTurn],
+                "closure_gate"
               );
-              persistedTurnIdsRef.current.add(userTurn.id);
-              persistedTurnIdsRef.current.add(assistantTurn.id);
-
-              const ok = await handleArchiveActiveCase(consentCaseId, { fromChat: true });
+              const ok = await handleArchiveActiveCase(consentCaseId, {
+                fromChat: true,
+                transcriptTurns: archiveTranscriptTurns,
+              });
               if (!ok) {
                 assistantText =
                   "I could not archive your case on the server. Please try again or use the Archive case button below.";
