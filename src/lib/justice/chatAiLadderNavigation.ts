@@ -4,6 +4,7 @@ export const CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID =
   "chat-ai-inline-prepared-packet-approval";
 export const CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID = "chat-ai-approved-action-tracking";
 export const CHAT_AI_INLINE_FILING_CAPTURE_ELEMENT_ID = "chat-ai-inline-filing-capture";
+export const CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID = "chat-ai-proof-evidence-panel";
 
 export const CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS = [
   "/justice/preview",
@@ -11,11 +12,32 @@ export const CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS = [
   "/justice/handling",
 ] as const;
 
+/** Optional evidence + destination-prep hubs kept off the signed-in keep-in-chat path. */
+export const CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS = [
+  "/justice/evidence",
+  "/justice/merchant",
+  "/justice/cfpb",
+  "/justice/fcc",
+  "/justice/bbb",
+  "/justice/state-ag",
+  "/justice/dot",
+  "/justice/demand-letter",
+  "/justice/payment-dispute",
+  "/justice/ftc-review",
+] as const;
+
 export type ChatAiMainLadderOffChatHref = (typeof CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS)[number];
 
 export function isChatAiMainLadderOffChatHref(href: string | null | undefined): boolean {
   const trimmed = href?.trim() ?? "";
   return (CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS as readonly string[]).includes(trimmed);
+}
+
+export type ChatAiOptionalHubEscapeHref = (typeof CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS)[number];
+
+export function isChatAiOptionalHubEscapeHref(href: string | null | undefined): boolean {
+  const trimmed = href?.trim() ?? "";
+  return (CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS as readonly string[]).includes(trimmed);
 }
 
 /** Signed-in chat-ai consumers updating an existing case stay on the in-chat ladder. */
@@ -215,13 +237,58 @@ export function resolveConsumerActiveCaseLegacyLadderRedirectHref(
 }
 
 /**
- * When the signed-in active-case ladder stays in chat, suppress optional
- * /justice/preview and /justice/packet hub escapes — review/approve happen inline.
+ * When the signed-in active-case ladder stays in chat, suppress optional hub escapes
+ * (preview/packet, Organize evidence, and destination-prep pages) — work happens inline.
  */
 export function shouldSuppressChatInlineMainLadderHubEscapeLinks(input: {
   keepInChat: boolean;
 }): boolean {
   return input.keepInChat;
+}
+
+export type ChatInlineOptionalHubEscapeLinkProps = {
+  optionalPageHref?: string;
+  optionalPageLabel?: string;
+  optionalPageNote?: string;
+};
+
+/** Drop optional hub escape link props when keep-in-chat suppresses destination/evidence hubs. */
+export function resolveChatInlineOptionalHubEscapeLinkProps(input: {
+  suppress: boolean;
+  href: string;
+  label: string;
+  note?: string;
+}): ChatInlineOptionalHubEscapeLinkProps {
+  if (input.suppress) return {};
+  return {
+    optionalPageHref: input.href,
+    optionalPageLabel: input.label,
+    ...(input.note !== undefined ? { optionalPageNote: input.note } : {}),
+  };
+}
+
+export type ConsumerOptionalHubEscapePageHref = ChatAiOptionalHubEscapeHref;
+
+/** Direct URL entry guard for evidence + destination-prep hubs. */
+export function shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage(input: {
+  escapePageHref: ConsumerOptionalHubEscapePageHref;
+  isSignedIn: boolean;
+  isLoaded: boolean;
+  caseId: string;
+  hasResumableCase: boolean;
+}): boolean {
+  if (!isChatAiOptionalHubEscapeHref(input.escapePageHref)) return false;
+  if (!input.isLoaded || !input.isSignedIn || !input.hasResumableCase) return false;
+  return Boolean(input.caseId.trim());
+}
+
+export function resolveConsumerActiveCaseOptionalHubEscapeRedirectHref(
+  escapePageHref: ConsumerOptionalHubEscapePageHref
+): string {
+  if (escapePageHref === "/justice/evidence") {
+    return resolveConsumerActiveCaseResumeChatAiHref(CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID);
+  }
+  return resolveConsumerActiveCaseResumeChatAiHref(CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID);
 }
 
 export function resolveConsumerActiveCaseChecklistDraftReviewNavigate(): {

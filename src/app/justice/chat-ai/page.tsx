@@ -975,6 +975,7 @@ function ChatInlinePaymentDisputePrepBlock({
   saving,
   saveSuccess,
   onSubmit,
+  suppressOptionalPageLink = false,
 }: {
   letterText: string;
   letterExpanded: boolean;
@@ -1000,6 +1001,7 @@ function ChatInlinePaymentDisputePrepBlock({
   saving: boolean;
   saveSuccess: string | null;
   onSubmit: (e: FormEvent) => void;
+  suppressOptionalPageLink?: boolean;
 }) {
   const canTruncateLetter = letterText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
   const displayLetter =
@@ -1171,15 +1173,17 @@ function ChatInlinePaymentDisputePrepBlock({
       >
         {saving ? "Saving…" : "Save checklist"}
       </button>
-      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        <Link
-          href={CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF}
-          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-        >
-          Open full payment dispute page
-        </Link>
-        <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
-      </p>
+      {!suppressOptionalPageLink ? (
+        <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+          <Link
+            href={CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF}
+            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+          >
+            Open full payment dispute page
+          </Link>
+          <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
+        </p>
+      ) : null}
     </form>
   );
 }
@@ -1217,6 +1221,7 @@ function ChatInlineAssistedPracticeBlock({
   lastAssistedSubmissionAttempt,
   approvedHref,
   onRunPractice,
+  suppressOptionalPageLink = false,
 }: {
   laneId: AssistedMockPracticeLaneId;
   summaryLines: string[];
@@ -1229,6 +1234,7 @@ function ChatInlineAssistedPracticeBlock({
   lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
   approvedHref: string | undefined;
   onRunPractice: () => void;
+  suppressOptionalPageLink?: boolean;
 }) {
   const ui = assistedMockPracticeUi(laneId);
   return (
@@ -1276,7 +1282,7 @@ function ChatInlineAssistedPracticeBlock({
       ) ? (
         <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt!} />
       ) : null}
-      {ui.optionalPageHref && ui.optionalPageLabel ? (
+      {!suppressOptionalPageLink && ui.optionalPageHref && ui.optionalPageLabel ? (
         <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
           <Link
             href={ui.optionalPageHref}
@@ -1303,6 +1309,7 @@ function ChatInlineRealBbbComplaintBlock({
   approvedHref,
   onRunComplaint,
   copyDraftFallback,
+  suppressOptionalPageLink = false,
 }: {
   summaryLines: string[];
   confirmed: boolean;
@@ -1319,6 +1326,7 @@ function ChatInlineRealBbbComplaintBlock({
     onCopy: () => void;
     copyHint: string | null;
   };
+  suppressOptionalPageLink?: boolean;
 }) {
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
@@ -1384,15 +1392,17 @@ function ChatInlineRealBbbComplaintBlock({
           ) : null}
         </div>
       ) : null}
-      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        <Link
-          href={CHAT_INLINE_BBB_PREP_HREF}
-          className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-        >
-          Open full BBB prep page
-        </Link>
-        <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence checklist)</span>
-      </p>
+      {!suppressOptionalPageLink ? (
+        <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+          <Link
+            href={CHAT_INLINE_BBB_PREP_HREF}
+            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
+          >
+            Open full BBB prep page
+          </Link>
+          <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence checklist)</span>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -2161,6 +2171,7 @@ function ChatHandlingTrackingStatusReadOnly({
   markAcknowledgedOnScreen = false,
   prepInlineInChat = false,
   suppressOwnedStepManualNavigation = false,
+  suppressDestinationPrepHubEscapes = false,
   canCaptureFiling = false,
   caseId = "",
   onFilingsSaved,
@@ -2180,6 +2191,7 @@ function ChatHandlingTrackingStatusReadOnly({
   markAcknowledgedOnScreen?: boolean;
   prepInlineInChat?: boolean;
   suppressOwnedStepManualNavigation?: boolean;
+  suppressDestinationPrepHubEscapes?: boolean;
   canCaptureFiling?: boolean;
   caseId?: string;
   onFilingsSaved?: () => void;
@@ -2270,6 +2282,7 @@ function ChatHandlingTrackingStatusReadOnly({
             markAcknowledgedOnScreen={markAcknowledgedOnScreen}
             prepInlineInChat={prepInlineInChat}
             suppressOwnedStepManualNavigation={suppressOwnedStepManualNavigation}
+            suppressDestinationPrepHubEscapes={suppressDestinationPrepHubEscapes}
             inlineFilingCaptureInChat={showInlineFilingCapture}
           />
           <ChatAiFilingStepInChatGuidance
@@ -5842,6 +5855,7 @@ export default function JusticeChatAiPage() {
   const suppressInlineMainLadderHubLinks = shouldSuppressChatInlineMainLadderHubEscapeLinks({
     keepInChat: chatAiKeepInChatLadder,
   });
+  const suppressInlineOptionalHubEscapeLinks = suppressInlineMainLadderHubLinks;
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
   const chatFirstActiveCaseBreadcrumbContinuity =
     isUpdatingExistingCase && Boolean(activeUuidCaseId);
@@ -6106,9 +6120,21 @@ export default function JusticeChatAiPage() {
                 messageText={chatInlineApprovedPrepContent.messageText}
                 helperText={chatInlineApprovedPrepContent.helperText}
                 copyButtonLabel={chatInlineApprovedPrepContent.copyButtonLabel}
-                optionalPageHref={chatInlineApprovedPrepContent.optionalPageHref}
-                optionalPageLabel={chatInlineApprovedPrepContent.optionalPageLabel}
-                optionalPageNote={chatInlineApprovedPrepContent.optionalPageNote}
+                optionalPageHref={
+                  suppressInlineOptionalHubEscapeLinks
+                    ? undefined
+                    : chatInlineApprovedPrepContent.optionalPageHref
+                }
+                optionalPageLabel={
+                  suppressInlineOptionalHubEscapeLinks
+                    ? undefined
+                    : chatInlineApprovedPrepContent.optionalPageLabel
+                }
+                optionalPageNote={
+                  suppressInlineOptionalHubEscapeLinks
+                    ? undefined
+                    : chatInlineApprovedPrepContent.optionalPageNote
+                }
                 expanded={prepMessageExpanded}
                 onExpandedChange={setPrepMessageExpanded}
                 copyHint={prepCopyHint}
@@ -6171,9 +6197,19 @@ export default function JusticeChatAiPage() {
                 messageText={paymentDisputeReadOnlyLetterText}
                 helperText="Copy the bank letter below for your dispute. Surrenderless does not submit disputes for you."
                 copyButtonLabel="Copy letter"
-                optionalPageHref={CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF}
-                optionalPageLabel="Open full payment dispute page"
-                optionalPageNote="optional — evidence checklist"
+                optionalPageHref={
+                  suppressInlineOptionalHubEscapeLinks
+                    ? undefined
+                    : CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF
+                }
+                optionalPageLabel={
+                  suppressInlineOptionalHubEscapeLinks
+                    ? undefined
+                    : "Open full payment dispute page"
+                }
+                optionalPageNote={
+                  suppressInlineOptionalHubEscapeLinks ? undefined : "optional — evidence checklist"
+                }
                 expanded={paymentDisputeLetterExpanded}
                 onExpandedChange={setPaymentDisputeLetterExpanded}
                 copyHint={paymentDisputeCopyHint}
@@ -6229,6 +6265,7 @@ export default function JusticeChatAiPage() {
                 saving={savingPaymentDisputeChecklist}
                 saveSuccess={paymentDisputeSaveSuccess}
                 onSubmit={(e) => void handleSavePaymentDisputeChecklistFromChat(e)}
+                suppressOptionalPageLink={suppressInlineOptionalHubEscapeLinks}
               />
             ) : null}
             {showInlineFtcReadOnlyPrep ? (
@@ -6238,9 +6275,19 @@ export default function JusticeChatAiPage() {
                   messageText={ftcPracticeSummaryLines.join("\n")}
                   helperText="Practice complaint summary from your case — copy for reference. This is not a real government submission. Surrenderless does not file for you."
                   copyButtonLabel="Copy summary"
-                  optionalPageHref={CHAT_INLINE_FTC_REVIEW_PREP_HREF}
-                  optionalPageLabel="Open full FTC practice page"
-                  optionalPageNote="optional — evidence list"
+                  optionalPageHref={
+                    suppressInlineOptionalHubEscapeLinks
+                      ? undefined
+                      : CHAT_INLINE_FTC_REVIEW_PREP_HREF
+                  }
+                  optionalPageLabel={
+                    suppressInlineOptionalHubEscapeLinks
+                      ? undefined
+                      : "Open full FTC practice page"
+                  }
+                  optionalPageNote={
+                    suppressInlineOptionalHubEscapeLinks ? undefined : "optional — evidence list"
+                  }
                   expanded={prepMessageExpanded}
                   onExpandedChange={setPrepMessageExpanded}
                   copyHint={prepCopyHint}
@@ -6309,9 +6356,17 @@ export default function JusticeChatAiPage() {
                   messageText={ftcPracticeSummaryLines.join("\n")}
                   helperText="Complaint summary from your case — copy for reference. Verify the correct business profile on BBB.org before submitting."
                   copyButtonLabel="Copy summary"
-                  optionalPageHref={CHAT_INLINE_BBB_PREP_HREF}
-                  optionalPageLabel="Open full BBB prep page"
-                  optionalPageNote="optional — evidence checklist"
+                  optionalPageHref={
+                    suppressInlineOptionalHubEscapeLinks ? undefined : CHAT_INLINE_BBB_PREP_HREF
+                  }
+                  optionalPageLabel={
+                    suppressInlineOptionalHubEscapeLinks ? undefined : "Open full BBB prep page"
+                  }
+                  optionalPageNote={
+                    suppressInlineOptionalHubEscapeLinks
+                      ? undefined
+                      : "optional — evidence checklist"
+                  }
                   expanded={prepMessageExpanded}
                   onExpandedChange={setPrepMessageExpanded}
                   copyHint={prepCopyHint}
@@ -6359,6 +6414,7 @@ export default function JusticeChatAiPage() {
                 }
                 approvedHref={approvedNextAction?.href}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
+                suppressOptionalPageLink={suppressInlineOptionalHubEscapeLinks}
               />
             ) : null}
             {showInlineBbbPracticePrep ? (
@@ -6381,6 +6437,7 @@ export default function JusticeChatAiPage() {
                 }
                 approvedHref={approvedNextAction?.href}
                 onRunPractice={() => void handleRunFtcPracticeFromChat()}
+                suppressOptionalPageLink={suppressInlineOptionalHubEscapeLinks}
               />
             ) : null}
             {showInlineRealBbbComplaintPrep ? (
@@ -6402,6 +6459,7 @@ export default function JusticeChatAiPage() {
                 }
                 approvedHref={approvedNextAction?.href}
                 onRunComplaint={() => void handleRunFtcPracticeFromChat()}
+                suppressOptionalPageLink={suppressInlineOptionalHubEscapeLinks}
                 copyDraftFallback={
                   chatInlineApprovedPrepContent?.kind === "bbb_complaint"
                     ? {
@@ -6809,6 +6867,7 @@ export default function JusticeChatAiPage() {
                       markAcknowledgedOnScreen={false}
                       prepInlineInChat={prepInlineInChat}
                       suppressOwnedStepManualNavigation={suppressSurrenderlessOwnedManualUi}
+                      suppressDestinationPrepHubEscapes={suppressInlineOptionalHubEscapeLinks}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
@@ -6871,6 +6930,7 @@ export default function JusticeChatAiPage() {
                       markAcknowledgedOnScreen={showChatAcknowledgment}
                       prepInlineInChat={prepInlineInChat}
                       suppressOwnedStepManualNavigation={suppressSurrenderlessOwnedManualUi}
+                      suppressDestinationPrepHubEscapes={suppressInlineOptionalHubEscapeLinks}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
                       onFilingsSaved={refreshChatFilings}
@@ -7463,26 +7523,28 @@ export default function JusticeChatAiPage() {
                 <p className="mt-3 text-xs text-red-600 dark:text-red-400">{stagedProofFlushError}</p>
               ) : null}
               {canAddProofNoteInChat ? (
-                <p className="mt-3 text-xs text-neutral-700 dark:text-neutral-300">
-                  <Link
-                    href="/justice/evidence"
-                    className="font-medium underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
-                  >
-                    Organize evidence
-                  </Link>
-                  <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    {" "}
-                    (optional — full list and links)
-                  </span>
-                </p>
-              ) : (
+                !suppressInlineOptionalHubEscapeLinks ? (
+                  <p className="mt-3 text-xs text-neutral-700 dark:text-neutral-300">
+                    <Link
+                      href="/justice/evidence"
+                      className="font-medium underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                    >
+                      Organize evidence
+                    </Link>
+                    <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      {" "}
+                      (optional — full list and links)
+                    </span>
+                  </p>
+                ) : null
+              ) : !suppressInlineOptionalHubEscapeLinks ? (
                 <Link
                   href="/justice/evidence"
                   className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-blue-600 bg-white px-4 py-2 text-sm font-semibold text-blue-600 shadow-sm transition hover:bg-blue-50 dark:border-blue-500 dark:bg-neutral-900 dark:text-blue-400 dark:hover:bg-neutral-800"
                 >
                   Organize evidence
                 </Link>
-              )}
+              ) : null}
             </div>
 
             {basicsMissing.length === 0 && !contactProofCheck.ok ? (

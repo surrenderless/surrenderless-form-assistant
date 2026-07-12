@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
-import type { JusticeIntake } from "@/lib/justice/types";
+import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import {
   buildDotAviationComplaintDraft,
   DOT_AIR_CONSUMER_URL,
@@ -17,6 +17,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -37,11 +38,23 @@ export default function JusticeDotAviationPrepPage() {
     }
   }
 
+
+  const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOptionalHubEscapeCaseId(sessionStorage.getItem(STORAGE_CASE_ID) ?? "");
+  }, [hydrationStatus]);
+  const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+    escapePageHref: "/justice/dot",
+    caseId: optionalHubEscapeCaseId,
+    hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
+  });
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake) {
+  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
     return (
       <>
         <Header />

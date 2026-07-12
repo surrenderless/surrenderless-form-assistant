@@ -163,6 +163,27 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
+  it("suppresses destination-prep open-step escapes on chat-ai when keep-in-chat hubs are suppressed", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: CHAT_INLINE_MERCHANT_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: false,
+        suppressDestinationPrepHubEscapes: true,
+      })
+    ).toBeNull();
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: CHAT_INLINE_BBB_PREP_HREF },
+        surface: "chat-ai",
+        prepInlineInChat: false,
+        suppressDestinationPrepHubEscapes: true,
+      })
+    ).toBeNull();
+  });
+
   it("suppresses open-step link on chat-ai when demand letter prep is inline", () => {
     expect(
       resolveHandlingTrackingContextualLink({

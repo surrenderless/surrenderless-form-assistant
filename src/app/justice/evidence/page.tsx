@@ -15,6 +15,7 @@ import {
 import { buildPrivateEvidenceFileAccessPath, isPublicSupabaseStorageObjectUrl } from "@/lib/justice/evidenceFileAccess";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -235,7 +236,14 @@ export default function JusticeEvidencePage() {
 
   const noCase = !caseId;
 
-  if (!sessionReady) {
+  const redirectOffEvidence = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+    escapePageHref: "/justice/evidence",
+    caseId,
+    hasResumableCase: Boolean(isSignedIn) && Boolean(caseId),
+    sessionReady,
+  });
+
+  if (!sessionReady || redirectOffEvidence) {
     return (
       <>
         <Header />

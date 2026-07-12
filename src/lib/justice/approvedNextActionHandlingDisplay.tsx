@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 import { isChatInlinePrepHref } from "@/lib/justice/chatInlineApprovedPrep";
-import { isChatAiMainLadderOffChatHref } from "@/lib/justice/chatAiLadderNavigation";
+import {
+  isChatAiMainLadderOffChatHref,
+  isChatAiOptionalHubEscapeHref,
+} from "@/lib/justice/chatAiLadderNavigation";
 import { resolveAssistedSubmissionLaneForApprovedHref } from "@/lib/justice/assistedSubmissionLane";
 
 /** Read-only / interactive copy for approved-next-action handling request tracking. */
@@ -124,6 +127,8 @@ export function resolveHandlingTrackingContextualLink(input: {
   suppressOwnedStepManualNavigation?: boolean;
   /** When filing capture form is shown in chat-ai, suppress packet filing link. */
   inlineFilingCaptureInChat?: boolean;
+  /** When keep-in-chat suppresses destination-prep hubs, hide optional open-step escapes. */
+  suppressDestinationPrepHubEscapes?: boolean;
 }): HandlingTrackingContextualLink | null {
   const { derivedStep } = input;
 
@@ -158,6 +163,9 @@ export function resolveHandlingTrackingContextualLink(input: {
         return null;
       }
       if (input.prepInlineInChat && isChatInlinePrepHref(href)) {
+        return null;
+      }
+      if (input.suppressDestinationPrepHubEscapes && isChatAiOptionalHubEscapeHref(href)) {
         return null;
       }
       if (isChatAiMainLadderOffChatHref(href)) {
@@ -233,6 +241,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   prepInlineInChat = false,
   suppressOwnedStepManualNavigation = false,
   inlineFilingCaptureInChat = false,
+  suppressDestinationPrepHubEscapes = false,
   onNavigate,
   tone = "emerald",
   className = "mt-1 text-xs",
@@ -246,6 +255,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
   prepInlineInChat?: boolean;
   suppressOwnedStepManualNavigation?: boolean;
   inlineFilingCaptureInChat?: boolean;
+  suppressDestinationPrepHubEscapes?: boolean;
   onNavigate?: (href: string) => void;
   tone?: "emerald" | "neutral";
   className?: string;
@@ -260,6 +270,7 @@ export function ApprovedNextActionHandlingTrackingContextualLink({
     prepInlineInChat,
     suppressOwnedStepManualNavigation,
     inlineFilingCaptureInChat,
+    suppressDestinationPrepHubEscapes,
   });
   if (!link) return null;
   const linkCls =

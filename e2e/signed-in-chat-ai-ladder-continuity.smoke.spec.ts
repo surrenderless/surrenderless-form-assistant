@@ -9,6 +9,7 @@ import {
   activeCaseBanner,
   activeCaseChecklist,
   clickAndAssertStaysOnChatAi,
+  expectNoOptionalDestinationPrepOrEvidenceHubLinks,
   expectNoRequiredMainLadderOffChatLinks,
   expectUrlStaysOnChatAi,
   seedActiveCaseDraftNotReviewed,
@@ -104,10 +105,34 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expect(tracking.getByRole("link", { name: /Open filing records/i })).toHaveCount(0);
     await expect(tracking.locator('a[href="/justice/packet"]')).toHaveCount(0);
     await expect(tracking.locator('a[href*="/justice/packet"]')).toHaveCount(0);
+    await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));
 
     const filingForm = tracking.getByRole("form", { name: "Record manual filing" });
     await expect(filingForm).toBeVisible({ timeout: 30_000 });
     await expect(page.locator("#chat-ai-inline-filing-capture")).toBeVisible();
+    await expectUrlStaysOnChatAi(page);
+  });
+
+  test("evidence and merchant hubs redirect signed-in resumable consumers into chat-ai", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+
+    await seedActiveCaseMerchantFilingStep(page);
+    await waitForClerkBrowserApiSession(page);
+
+    await page.goto("/justice/evidence");
+    await page.waitForURL(/\/justice\/chat-ai/, { timeout: 30_000 });
+    await expect(page.locator("#chat-ai-proof-evidence-panel")).toBeVisible({ timeout: 30_000 });
+    await expectUrlStaysOnChatAi(page);
+    await expect(page.getByRole("link", { name: "Organize evidence" })).toHaveCount(0);
+
+    await page.goto("/justice/merchant");
+    await page.waitForURL(/\/justice\/chat-ai/, { timeout: 30_000 });
+    await expect(page.locator("#chat-ai-approved-action-tracking")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));
     await expectUrlStaysOnChatAi(page);
   });
 });
