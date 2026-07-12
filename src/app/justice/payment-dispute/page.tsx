@@ -22,6 +22,10 @@ import {
 } from "@/lib/justice/preparePaymentDisputeChecklist";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 
 const cardCls =
@@ -334,7 +338,11 @@ export default function JusticePaymentDisputePage() {
           </p>
         </div>
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
+          )}
+        />
       </main>
     </>
   );

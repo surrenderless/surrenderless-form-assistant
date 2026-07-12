@@ -21,6 +21,10 @@ import {
   readTimeline,
   syncCaseTimelineToServer,
 } from "@/lib/justice/timeline";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 
@@ -292,7 +296,11 @@ export default function JusticeCfpbPrepPage() {
           </p>
         </div>
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF
+          )}
+        />
       </main>
     </>
   );

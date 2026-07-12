@@ -62,6 +62,7 @@ import {
   handlingClosureAcknowledgmentVisible,
   shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
 } from "@/lib/justice/handlingTrackingProgress";
+import { autoEndgameAfterManualFilingConfirmation } from "@/lib/justice/autoEndgameAfterManualFilingConfirmation";
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
   isChatPendingHumanFulfillmentEscalation,
@@ -1716,9 +1717,9 @@ function deriveChatManualActionNextStep(input: {
   if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
     return "Review follow-up timing and mark follow-up handled when complete.";
   }
-  if (input.resolutionFlowExposed === false) {
-    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
-  }
+  // Mid-ladder manual steps (filing+confirmation done, not yet terminal) stay on
+  // "tracking complete" so consumers can mark the step handled — do not reuse the
+  // owned-operator awaiting copy (pendingHumanFulfillmentEscalation is checked above).
   return HANDLING_TRACKING_STEP_COMPLETE;
 }
 
@@ -1809,7 +1810,7 @@ function ChatManualFilingCaptureForm({
   caseId: string;
   approvedNextAction: JusticeApprovedNextAction;
   filings: JusticeCaseFilingRow[];
-  onSaved: () => void;
+  onSaved: (result: { hasConfirmation: boolean }) => void | Promise<void>;
 }) {
   const confirmationTarget = findApprovedActionFilingMissingConfirmation(
     filings,
@@ -1875,7 +1876,7 @@ function ChatManualFilingCaptureForm({
       setFiledAt("");
       setConfirmationNumber("");
       setNotes("");
-      onSaved();
+      await onSaved({ hasConfirmation: Boolean(cn) });
     } catch {
       setError("Could not save filing record.");
     } finally {
@@ -1919,9 +1920,12 @@ function ChatManualFilingCaptureForm({
         return;
       }
       applyServerTimelineFromResponse(caseId, payload);
+      const confirmationOnFile = Boolean(
+        (cn || confirmationTarget.confirmation_number?.trim() || "").trim()
+      );
       setConfirmationNumber("");
       setNotes("");
-      onSaved();
+      await onSaved({ hasConfirmation: confirmationOnFile });
     } catch {
       setError("Could not update filing record.");
     } finally {
@@ -2194,7 +2198,7 @@ function ChatHandlingTrackingStatusReadOnly({
   suppressDestinationPrepHubEscapes?: boolean;
   canCaptureFiling?: boolean;
   caseId?: string;
-  onFilingsSaved?: () => void;
+  onFilingsSaved?: (result: { hasConfirmation: boolean }) => void | Promise<void>;
   canArchiveCase?: boolean;
   onArchiveCase?: (caseId: string) => void;
   archiving?: boolean;
@@ -3312,6 +3316,48 @@ export default function JusticeChatAiPage() {
         logLabel: "justice chat-ai",
       });
       setPaymentDisputeSaveSuccess("Checklist saved on your case timeline.");
+
+      // After checklist save, open the payment-dispute step so inline filing capture
+      // is available without a separate "Mark step opened" detour.
+      if (
+        approvedNextAction?.href?.trim() === CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF &&
+        approvedNextAction.status === "approved"
+      ) {
+        const label = approvedNextAction.label?.trim();
+        const next: JusticeApprovedNextAction = {
+          ...approvedNextAction,
+          ...(label ? { label } : {}),
+          href: approvedNextAction.href,
+          status: "started",
+          started_at: approvedNextAction.started_at ?? new Date().toISOString(),
+          ...(approvedNextAction.approved_at
+            ? { approved_at: approvedNextAction.approved_at }
+            : {}),
+        };
+        const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
+        const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
+        setApprovedNextAction(local);
+        writeSessionApprovedNextAction(caseId, local);
+        if (isLoaded && isSignedIn && isUuid(caseId)) {
+          try {
+            const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+            if (getRes.ok) {
+              const existing = (await getRes.json()) as { client_state?: unknown };
+              const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
+              const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ client_state: merged }),
+              });
+              if (patchRes.ok) {
+                applyServerTimelineFromResponse(caseId, await patchRes.json());
+              }
+            }
+          } catch (err) {
+            console.warn("justice chat-ai: payment dispute auto-open error", err);
+          }
+        }
+      }
     } finally {
       setSavingPaymentDisputeChecklist(false);
     }
@@ -4269,6 +4315,33 @@ export default function JusticeChatAiPage() {
   }, [isUpdatingExistingCase, isLoaded, isSignedIn, requestSavedEvidencePreviewRefresh]);
 
   const refreshChatFilings = requestSavedEvidencePreviewRefresh;
+
+  async function handleChatManualFilingsSaved(result: { hasConfirmation: boolean }) {
+    refreshChatFilings();
+    if (!result.hasConfirmation) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId) || !approvedNextAction) return;
+    if (!isLoaded || !isSignedIn) return;
+
+    const intake = buildJusticeIntakeFromParts(parts);
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const next = await autoEndgameAfterManualFilingConfirmation({
+      caseId,
+      intake,
+      approvedAction: approvedNextAction,
+      tasks: savedTasks,
+      filings: savedFilings,
+      confirmationNumber: "confirmed",
+      manualFtc,
+      logLabel: "justice chat-ai",
+    });
+    if (next === approvedNextAction) return;
+    setApprovedNextAction(next);
+    writeSessionApprovedNextAction(caseId, next);
+    requestSavedEvidencePreviewRefresh();
+  }
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
@@ -6870,7 +6943,7 @@ export default function JusticeChatAiPage() {
                       suppressDestinationPrepHubEscapes={suppressInlineOptionalHubEscapeLinks}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
-                      onFilingsSaved={refreshChatFilings}
+                      onFilingsSaved={handleChatManualFilingsSaved}
                       canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
@@ -6933,7 +7006,7 @@ export default function JusticeChatAiPage() {
                       suppressDestinationPrepHubEscapes={suppressInlineOptionalHubEscapeLinks}
                       canCaptureFiling={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       caseId={activeUuidCaseId}
-                      onFilingsSaved={refreshChatFilings}
+                      onFilingsSaved={handleChatManualFilingsSaved}
                       canArchiveCase={Boolean(activeUuidCaseId) && isLoaded && Boolean(isSignedIn)}
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}

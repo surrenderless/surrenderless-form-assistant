@@ -501,10 +501,35 @@ describe("deriveManualActionTrackingFilingsStateForApprovedAction", () => {
     });
   });
 
-  it("falls back to practice-filtered global gates for unknown routes", () => {
-    const unknownAction = {
+  it("scopes CFPB gates to CFPB filings and ignores prior BBB rows", () => {
+    const cfpbAction = {
       href: "/justice/cfpb",
       label: "CFPB complaint prep",
+    };
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed],
+        cfpbAction
+      )
+    ).toEqual({
+      hasFilingRecord: false,
+      hasConfirmationOnFile: false,
+    });
+    expect(
+      deriveManualActionTrackingFilingsStateForApprovedAction(
+        [realBbbFilingConfirmed, { destination: "CFPB", confirmation_number: "CFPB-1" }],
+        cfpbAction
+      )
+    ).toEqual({
+      hasFilingRecord: true,
+      hasConfirmationOnFile: true,
+    });
+  });
+
+  it("falls back to practice-filtered global gates for unknown routes", () => {
+    const unknownAction = {
+      href: "/justice/unknown-lane",
+      label: "Unknown prep",
     };
     expect(
       deriveManualActionTrackingFilingsStateForApprovedAction(
@@ -800,10 +825,19 @@ describe("canonicalFilingDestinationForApprovedActionHref", () => {
     expect(
       canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF)
     ).toBe("Small claims / demand letter");
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/cfpb")).toBe("CFPB");
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/fcc")).toBe("FCC");
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/payment-dispute")).toBe(
+      "Payment dispute (bank/card)"
+    );
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/merchant")).toBe("Merchant contact");
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/ftc-review")).toBe(
+      "FTC (consumer complaint)"
+    );
   });
 
   it("returns undefined for unknown hrefs", () => {
-    expect(canonicalFilingDestinationForApprovedActionHref("/justice/cfpb")).toBeUndefined();
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/unknown-lane")).toBeUndefined();
     expect(canonicalFilingDestinationForApprovedActionHref(undefined)).toBeUndefined();
     expect(canonicalFilingDestinationForApprovedActionHref("   ")).toBeUndefined();
   });
@@ -859,10 +893,27 @@ describe("isHandlingWorkbenchPostExternalConfirmationFollowUp", () => {
     ).toBe(false);
   });
 
-  it("uses practice-filtered global filings for unknown hrefs", () => {
+  it("requires step-scoped filings for mapped CFPB hrefs", () => {
     expect(
       isHandlingWorkbenchPostExternalConfirmationFollowUp(
         { href: "/justice/cfpb", label: "CFPB complaint prep", status: "started" },
+        [realBbbFilingConfirmed],
+        true
+      )
+    ).toBe(true);
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        { href: "/justice/cfpb", label: "CFPB complaint prep", status: "started" },
+        [{ destination: "CFPB", confirmation_number: "CFPB-99" }],
+        true
+      )
+    ).toBe(false);
+  });
+
+  it("uses practice-filtered global filings for unknown hrefs", () => {
+    expect(
+      isHandlingWorkbenchPostExternalConfirmationFollowUp(
+        { href: "/justice/unknown-lane", label: "Unknown prep", status: "started" },
         [realBbbFilingConfirmed],
         true
       )

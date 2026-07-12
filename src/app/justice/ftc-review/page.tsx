@@ -16,6 +16,10 @@ import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { validate as isUuid } from "uuid";
 
 export default function JusticeFtcReviewPage() {
@@ -197,7 +201,11 @@ export default function JusticeFtcReviewPage() {
           </div>
         )}
 
-        <JusticeFilingRecords />
+        <JusticeFilingRecords
+          lockedDestination={canonicalFilingDestinationForApprovedActionHref(
+            MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_PREP_HREF
+          )}
+        />
       </main>
     </>
   );

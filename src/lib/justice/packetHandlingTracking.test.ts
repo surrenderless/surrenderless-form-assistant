@@ -115,7 +115,7 @@ describe("derivePacketHandlingTrackingLine", () => {
     ).toBe(true);
   });
 
-  it("uses practice-filtered global filings for unknown hrefs", () => {
+  it("scopes CFPB packet tracking away from BBB filings", () => {
     expect(
       derivePacketHandlingTrackingLine({
         ...readyPacketInput,
@@ -123,6 +123,20 @@ describe("derivePacketHandlingTrackingLine", () => {
         next: {
           href: "/justice/cfpb",
           label: "CFPB complaint prep",
+          status: "started",
+        },
+      })
+    ).toBe("Add filing records from the case packet after external submission.");
+  });
+
+  it("uses practice-filtered global filings for unknown hrefs", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [{ destination: "Better Business Bureau", confirmation_number: null }],
+        next: {
+          href: "/justice/unknown-lane",
+          label: "Unknown prep",
           status: "started",
         },
       })
