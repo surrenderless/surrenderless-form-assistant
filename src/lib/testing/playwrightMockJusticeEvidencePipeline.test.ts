@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { omitEvidenceFilePathFromApiRow } from "@/lib/justice/evidenceFileAccess";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
+  appendPlaywrightMockJusticeEvidenceUpload,
   buildPlaywrightMockJusticeEvidenceGetResponse,
+  findPlaywrightMockJusticeEvidenceById,
   isPlaywrightMockJusticeEvidenceCaseId,
   isPlaywrightMockJusticeEvidencePipelineEnabled,
   resetPlaywrightMockJusticeEvidenceForCase,
@@ -52,8 +55,57 @@ describe("playwrightMockJusticeEvidencePipeline", () => {
       title: "Acme Retail refund denial email",
       evidence_type: "email",
       evidence_date: "2026-01-15",
+      file_path: null,
+      file_name: null,
+      mime_type: null,
+      file_size_bytes: null,
     });
     expect(rows[0]?.description).toContain("Acme Retail refused a refund");
+    expect(
+      omitEvidenceFilePathFromApiRow(rows[0] as unknown as Record<string, unknown>)
+    ).not.toHaveProperty("file_path");
+  });
+
+  it("appends uploaded file metadata into the mock evidence list", () => {
+    buildPlaywrightMockJusticeEvidenceGetResponse(caseId, userId);
+    const uploaded = appendPlaywrightMockJusticeEvidenceUpload({
+      userId,
+      caseId,
+      title: "Denial screenshot",
+      evidenceType: "screenshot",
+      filePath: "justice-evidence/u/c/obj-denial.png",
+      fileName: "denial.png",
+      mimeType: "image/png",
+      fileSizeBytes: 2048,
+      storageNote: "Uploaded file: denial.png",
+    });
+    expect(uploaded.file_name).toBe("denial.png");
+    expect(uploaded.source_url).toBeNull();
+    expect(uploaded.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    const rows = buildPlaywrightMockJusticeEvidenceGetResponse(caseId, userId);
+    expect(rows[0]?.id).toBe(uploaded.id);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("finds uploaded rows by id for private file-access ownership checks", () => {
+    buildPlaywrightMockJusticeEvidenceGetResponse(caseId, userId);
+    const uploaded = appendPlaywrightMockJusticeEvidenceUpload({
+      userId,
+      caseId,
+      title: "Denial screenshot",
+      evidenceType: "screenshot",
+      filePath: "justice-evidence/u/c/obj-denial.png",
+      fileName: "denial.png",
+      mimeType: "image/png",
+      fileSizeBytes: 2048,
+    });
+    expect(findPlaywrightMockJusticeEvidenceById(uploaded.id)?.user_id).toBe(userId);
+    expect(findPlaywrightMockJusticeEvidenceById(uploaded.id)?.file_path).toBe(
+      "justice-evidence/u/c/obj-denial.png"
+    );
+    expect(findPlaywrightMockJusticeEvidenceById("00000000-0000-4000-8000-000000000099")).toBeNull();
   });
 
   it("re-seeds default evidence rows after reset for the fixed E2E case id", () => {

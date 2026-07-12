@@ -32,6 +32,25 @@ export type JusticeCaseEvidenceRow = {
   description: string | null;
   source_url: string | null;
   storage_note: string | null;
+  file_path?: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+  file_size_bytes: number | null;
   created_at: string;
   updated_at: string;
 };
+
+/** True when an evidence row has a persisted uploaded file attachment.
+ * Uses client-safe metadata only (file_path is never returned by evidence APIs).
+ */
+export function justiceEvidenceRowHasUploadedFile(row: Pick<
+  JusticeCaseEvidenceRow,
+  "file_name" | "mime_type" | "file_size_bytes"
+> & { file_path?: string | null }): boolean {
+  return Boolean(
+    row.file_name?.trim() &&
+      row.mime_type?.trim() &&
+      typeof row.file_size_bytes === "number" &&
+      row.file_size_bytes > 0
+  );
+}

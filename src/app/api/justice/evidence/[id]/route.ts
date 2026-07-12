@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { isJusticeEvidenceType } from "@/lib/justice/evidence";
+import {
+  JUSTICE_EVIDENCE_API_SELECT,
+  omitEvidenceFilePathFromApiRow,
+} from "@/lib/justice/evidenceFileAccess";
 import { getUserOr401 } from "@/server/requireUser";
 
 function getSupabaseAdmin(): SupabaseClient | null {
@@ -22,8 +26,7 @@ function supabaseUnavailableResponse() {
   );
 }
 
-const SELECT =
-  "id, user_id, case_id, title, evidence_type, evidence_date, description, source_url, storage_note, created_at, updated_at" as const;
+const SELECT = JUSTICE_EVIDENCE_API_SELECT;
 
 const MAX_TITLE = 500;
 const MAX_EVIDENCE_DATE = 200;
@@ -140,7 +143,9 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json(data);
+  return NextResponse.json(
+    omitEvidenceFilePathFromApiRow(data as unknown as Record<string, unknown>)
+  );
 }
 
 export async function DELETE(req: NextRequest, context: RouteCtx) {
@@ -173,5 +178,8 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ ok: true, deleted: data[0] });
+  return NextResponse.json({
+    ok: true,
+    deleted: omitEvidenceFilePathFromApiRow(data[0] as unknown as Record<string, unknown>),
+  });
 }

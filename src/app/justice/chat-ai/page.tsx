@@ -141,11 +141,20 @@ import {
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
   isJusticeEvidenceType,
+  justiceEvidenceRowHasUploadedFile,
   JUSTICE_EVIDENCE_TYPE_LABELS,
   JUSTICE_EVIDENCE_TYPES,
   type JusticeCaseEvidenceRow,
   type JusticeEvidenceType,
 } from "@/lib/justice/evidence";
+import {
+  buildChatEvidenceUploadFailureMessage,
+  buildChatEvidenceUploadProgressMessage,
+  buildChatEvidenceUploadSuccessMessage,
+  JUSTICE_EVIDENCE_UPLOAD_MAX_BYTES,
+} from "@/lib/justice/chatEvidenceUpload";
+import { buildPrivateEvidenceFileAccessPath } from "@/lib/justice/evidenceFileAccess";
+import { uploadJusticeEvidenceFile } from "@/lib/justice/uploadJusticeEvidenceFile";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftPreview";
 import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
@@ -2456,6 +2465,13 @@ export default function JusticeChatAiPage() {
   const [proofNoteDetailsOpen, setProofNoteDetailsOpen] = useState(false);
   const [stagedProofNotes, setStagedProofNotes] = useState<StagedProofNote[]>([]);
   const [stagedProofFlushError, setStagedProofFlushError] = useState<string | null>(null);
+  const [evidenceUploadFileName, setEvidenceUploadFileName] = useState<string | null>(null);
+  const [evidenceUploadProgress, setEvidenceUploadProgress] = useState<number | null>(null);
+  const [uploadingEvidenceFile, setUploadingEvidenceFile] = useState(false);
+  const [evidenceUploadError, setEvidenceUploadError] = useState<string | null>(null);
+  const [evidenceUploadSuccess, setEvidenceUploadSuccess] = useState<string | null>(null);
+  const evidenceFileInputRef = useRef<HTMLInputElement | null>(null);
+  const evidenceUploadProgressTurnIdRef = useRef<string | null>(null);
   const [archivingCase, setArchivingCase] = useState(false);
   const [archiveCaseError, setArchiveCaseError] = useState<string | null>(null);
   const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
@@ -4376,6 +4392,93 @@ export default function JusticeChatAiPage() {
       setProofNoteError("Could not save proof note.");
     } finally {
       setSavingProofNote(false);
+    }
+  }
+
+  async function handleUploadEvidenceFile(fileList: FileList | null) {
+    setEvidenceUploadError(null);
+    setEvidenceUploadSuccess(null);
+    const file = fileList?.[0] ?? null;
+    if (evidenceFileInputRef.current) {
+      evidenceFileInputRef.current.value = "";
+    }
+    if (!file) return;
+    if (!isLoaded || !isSignedIn || !canAddProofNoteInChat) {
+      setEvidenceUploadError("Save your case in chat before attaching evidence files.");
+      return;
+    }
+    const caseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+    if (!caseId || !isUuid(caseId)) {
+      setEvidenceUploadError("No active case is loaded in chat.");
+      return;
+    }
+
+    setUploadingEvidenceFile(true);
+    setEvidenceUploadFileName(file.name);
+    setEvidenceUploadProgress(0);
+    const progressTurnId = msgId();
+    evidenceUploadProgressTurnIdRef.current = progressTurnId;
+    addChatMessages(
+      [{ id: progressTurnId, role: "assistant", text: buildChatEvidenceUploadProgressMessage(0) }],
+      { caseId, source: "evidence_upload" }
+    );
+
+    const updateProgressTurn = (percent: number) => {
+      setEvidenceUploadProgress(percent);
+      const text = buildChatEvidenceUploadProgressMessage(percent);
+      messagesRef.current = messagesRef.current.map((turn) =>
+        turn.id === progressTurnId ? { ...turn, text } : turn
+      );
+      setMessages(messagesRef.current);
+    };
+
+    try {
+      const result = await uploadJusticeEvidenceFile({
+        caseId,
+        file,
+        title: file.name.replace(/\.[^.]+$/, "") || file.name,
+        onProgress: updateProgressTurn,
+      });
+      if (!result.ok) {
+        const failureText = buildChatEvidenceUploadFailureMessage(result.error);
+        setEvidenceUploadError(result.error);
+        addChatMessages([{ id: msgId(), role: "assistant", text: failureText }], {
+          caseId,
+          source: "evidence_upload",
+        });
+        return;
+      }
+
+      applyServerTimelineFromResponse(caseId, result.row);
+      setSavedEvidenceCount((prev) => (prev ?? 0) + 1);
+      setSavedEvidenceRows((prev) => [result.row, ...prev.filter((row) => row.id !== result.row.id)]);
+      setRecentEvidenceRows((prev) =>
+        [result.row, ...prev.filter((row) => row.id !== result.row.id)].slice(
+          0,
+          CHAT_RECENT_EVIDENCE_MAX
+        )
+      );
+      const successText = buildChatEvidenceUploadSuccessMessage({
+        title: result.row.title,
+        fileName: result.row.file_name ?? file.name,
+      });
+      setEvidenceUploadSuccess(successText);
+      setEvidenceUploadProgress(100);
+      addChatMessages([{ id: msgId(), role: "assistant", text: successText }], {
+        caseId,
+        source: "evidence_upload",
+      });
+      requestSavedEvidencePreviewRefresh();
+    } catch {
+      const failureText = buildChatEvidenceUploadFailureMessage();
+      setEvidenceUploadError(failureText);
+      addChatMessages([{ id: msgId(), role: "assistant", text: failureText }], {
+        caseId,
+        source: "evidence_upload",
+      });
+    } finally {
+      setUploadingEvidenceFile(false);
+      evidenceUploadProgressTurnIdRef.current = null;
     }
   }
 
@@ -6796,8 +6899,8 @@ export default function JusticeChatAiPage() {
                       : ` (${recentEvidenceRows.length})`}
                   </summary>
                   <p className="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
-                    Metadata only — descriptions are shortened in the list. Edit or delete recent notes here. Use
-                    Organize evidence for the full list and optional links.
+                    Recent notes and uploaded files. Descriptions are shortened in the list. Edit or delete recent notes
+                    here.
                   </p>
                   {recentEvidenceEditSuccess ? (
                     <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-300">
@@ -6945,6 +7048,23 @@ export default function JusticeChatAiPage() {
                               <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
                                 {chatEvidenceTypeLabel(row.evidence_type)}
                               </p>
+                              {justiceEvidenceRowHasUploadedFile(row) ? (
+                                <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
+                                  File: {row.file_name}
+                                  {row.mime_type ? ` (${row.mime_type})` : ""}
+                                  {buildPrivateEvidenceFileAccessPath(row.id) ? (
+                                    <>
+                                      {" · "}
+                                      <a
+                                        href={buildPrivateEvidenceFileAccessPath(row.id)!}
+                                        className="font-medium text-neutral-800 underline underline-offset-2 dark:text-neutral-200"
+                                      >
+                                        Download file
+                                      </a>
+                                    </>
+                                  ) : null}
+                                </p>
+                              ) : null}
                               {row.evidence_date ? (
                                 <p className="mt-0.5 text-[11px] text-neutral-600 dark:text-neutral-400">
                                   {row.evidence_date}
@@ -6990,21 +7110,57 @@ export default function JusticeChatAiPage() {
                 </details>
               ) : null}
               <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
-                As we build your case in this chat, Surrenderless can organize proof that strengthens it â€” for example
+                As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
                 screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
-                transcripts. Add short notes (and optional links) for what you have on file; file uploads are not
-                available yet.
+                transcripts. Attach image or PDF files here, or add short proof notes for what you already have on file.
               </p>
               <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
                 You can continue in chat without proof for now. Review your submission draft in the Active case
-                checklist when ready. Before you escalate or submit complaints, saving at least one proof note helps —
+                checklist when ready. Before you escalate or submit complaints, saving at least one proof item helps —
                 nothing is filed automatically from this app yet.
               </p>
+              {canAddProofNoteInChat ? (
+                <div className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
+                  <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+                    Attach evidence file
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
+                    JPEG, PNG, WebP, GIF, or PDF up to {JUSTICE_EVIDENCE_UPLOAD_MAX_BYTES / (1024 * 1024)} MB.
+                    Files stay on this case for packet and later steps.
+                  </p>
+                  <input
+                    ref={evidenceFileInputRef}
+                    id="chat-ai-evidence-file"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.jpg,.jpeg,.png,.webp,.gif,.pdf"
+                    className="mt-2 block w-full text-xs text-neutral-700 file:mr-3 file:rounded-lg file:border file:border-neutral-300 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-neutral-800 dark:text-neutral-300 dark:file:border-neutral-600 dark:file:bg-neutral-900 dark:file:text-neutral-200"
+                    disabled={uploadingEvidenceFile}
+                    onChange={(e) => void handleUploadEvidenceFile(e.target.files)}
+                  />
+                  {uploadingEvidenceFile ? (
+                    <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300" role="status">
+                      Uploading
+                      {evidenceUploadFileName ? ` ${evidenceUploadFileName}` : ""}
+                      {typeof evidenceUploadProgress === "number"
+                        ? `… ${Math.round(evidenceUploadProgress)}%`
+                        : "…"}
+                    </p>
+                  ) : null}
+                  {evidenceUploadError ? (
+                    <p className="mt-2 text-xs text-red-600 dark:text-red-400">{evidenceUploadError}</p>
+                  ) : null}
+                  {evidenceUploadSuccess ? (
+                    <p className="mt-2 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                      {evidenceUploadSuccess}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {canAddProofNoteInChat && showProofKeywordNudge ? (
                 <div className="mt-3 rounded-lg border border-amber-200/90 bg-amber-50/80 px-3 py-2 dark:border-amber-800/60 dark:bg-amber-950/30">
                   <p className="text-[11px] leading-relaxed text-amber-950 dark:text-amber-100">
-                    You mentioned records that could support your case. Add a short proof note below — title,
-                    type, optional date/description. This saves metadata only, not a file upload.
+                    You mentioned records that could support your case. Attach a file above or add a short proof note
+                    below.
                   </p>
                   <button
                     type="button"
@@ -7027,8 +7183,8 @@ export default function JusticeChatAiPage() {
                   <form className="mt-2 space-y-2" onSubmit={(e) => void handleAddProofNote(e)}>
                     <p className="text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400">
                       {canStageProofNoteInChat
-                        ? "Stage metadata about what you have on file (not a file upload). Staged on this device until you save your case in chat."
-                        : "Save metadata about what you have on file (not a file upload)."}
+                        ? "Stage metadata about what you have on file. Staged on this device until you save your case in chat. After the case is saved, you can also attach image or PDF files above."
+                        : "Save metadata about what you have on file, or attach an image/PDF with Attach evidence file above."}
                     </p>
                     <div>
                       <label className={labelCls} htmlFor="chat-ai-proof-title">
