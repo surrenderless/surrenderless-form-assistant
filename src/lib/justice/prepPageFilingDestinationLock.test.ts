@@ -13,6 +13,11 @@ const PREP_PAGE_LOCKED_FILING_DESTINATIONS = [
   [MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF, "State Attorney General (consumer)"],
   [MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF, "USDOT / aviation consumer"],
   [MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF, "Small claims / demand letter"],
+  ["/justice/cfpb", "CFPB"],
+  ["/justice/fcc", "FCC"],
+  ["/justice/payment-dispute", "Payment dispute (bank/card)"],
+  ["/justice/merchant", "Merchant contact"],
+  ["/justice/ftc-review", "FTC (consumer complaint)"],
 ] as const;
 
 describe("prep page filing destination lock", () => {

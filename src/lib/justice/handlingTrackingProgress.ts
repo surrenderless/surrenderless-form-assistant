@@ -59,6 +59,21 @@ export const MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF = "/justice/dot";
 /** Approved-action href for real demand-letter manual filing tracking. */
 export const MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF = "/justice/demand-letter";
 
+/** Approved-action href for CFPB manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF = "/justice/cfpb";
+
+/** Approved-action href for FCC manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF = "/justice/fcc";
+
+/** Approved-action href for payment-dispute manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF = "/justice/payment-dispute";
+
+/** Approved-action href for merchant-contact manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF = "/justice/merchant";
+
+/** Approved-action href for FTC consumer-complaint manual filing tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_PREP_HREF = "/justice/ftc-review";
+
 /** Filing row destinations that count for real BBB manual-action tracking. */
 export const MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS = [
   "Better Business Bureau",
@@ -80,6 +95,31 @@ export const MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_FILING_DESTINATIONS = [
   "Small claims / demand letter",
 ] as const;
 
+/** Filing row destinations that count for CFPB manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_CFPB_FILING_DESTINATIONS = ["CFPB"] as const;
+
+/** Filing row destinations that count for FCC manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_FCC_FILING_DESTINATIONS = ["FCC"] as const;
+
+/** Filing row destinations that count for payment-dispute manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_FILING_DESTINATIONS = [
+  "Payment dispute (bank/card)",
+] as const;
+
+/** Filing row destinations that count for merchant-contact manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_MERCHANT_FILING_DESTINATIONS = [
+  "Merchant contact",
+  "Company contact",
+  "Merchant contact & proof",
+  "Company contact & proof",
+  "Contact merchant",
+] as const;
+
+/** Filing row destinations that count for FTC consumer-complaint manual-action tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_FILING_DESTINATIONS = [
+  "FTC (consumer complaint)",
+] as const;
+
 const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
   Record<string, readonly string[]>
 > = {
@@ -89,6 +129,14 @@ const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
   [MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF]: MANUAL_ACTION_TRACKING_REAL_DOT_FILING_DESTINATIONS,
   [MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF]:
     MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF]: MANUAL_ACTION_TRACKING_REAL_CFPB_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF]: MANUAL_ACTION_TRACKING_REAL_FCC_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF]:
+    MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF]:
+    MANUAL_ACTION_TRACKING_REAL_MERCHANT_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_PREP_HREF]:
+    MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_FILING_DESTINATIONS,
 };
 
 function normalizedFilingDestination(destination: string | null | undefined): string {
