@@ -254,7 +254,7 @@ export function mergeApprovedNextActionTrackingFields(
   if (incoming.follow_up_needed === true) {
     merged.follow_up_needed = true;
   } else if (incoming.follow_up_needed === false) {
-    delete merged.follow_up_needed;
+    merged.follow_up_needed = false;
     delete merged.follow_up_at;
   } else if (base?.follow_up_needed === true) {
     merged.follow_up_needed = true;
@@ -590,7 +590,7 @@ export function mergeClientStateWithApprovedNextAction(
         ...(approvedNext.follow_up_needed === true
           ? { follow_up_needed: true }
           : approvedNext.follow_up_needed === false
-            ? {}
+            ? { follow_up_needed: false as const }
             : prev.follow_up_needed === true
               ? { follow_up_needed: true }
               : {}),

@@ -18,6 +18,7 @@ import {
   CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE,
   CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
 } from "@/lib/justice/chatCaseClosureGates";
+import { CHAT_CASE_RESTORE_MOST_RECENT_ARCHIVED_MESSAGE } from "@/lib/justice/chatCaseRestoreGates";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 import { expectUrlStaysOnChatAi } from "./chat-ai-ladder-continuity-e2e";
@@ -252,6 +253,7 @@ export function chatAiInput(page: Page): Locator {
 async function sendChatClosureMessage(page: Page, message: string): Promise<void> {
   const chatInput = chatAiInput(page);
   await expect(chatInput).toBeEnabled({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Send" })).toHaveText("Send", { timeout: 30_000 });
   await chatInput.click();
   await chatInput.fill(message);
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 15_000 });
@@ -341,6 +343,14 @@ export async function archiveCaseViaChat(page: Page): Promise<void> {
   const archivePatch = await archiveResponse;
   expect(archivePatch.ok()).toBeTruthy();
 
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+      { timeout: 15_000 }
+    )
+    .toBeNull();
+
   await expectUrlStaysOnChatAi(page);
 }
 
@@ -383,4 +393,94 @@ export async function expectConsumerChatStaysArchivedAfterReload(page: Page): Pr
   ).toBe(0);
   expect(await chatTranscript.getByText(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE).count()).toBe(0);
   expect(await chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE).count()).toBe(0);
+}
+
+/** Restore the most recently archived case via chat restore gate (real Send, not request.post). */
+export async function restoreMostRecentArchivedCaseViaChat(page: Page): Promise<void> {
+  const restoreResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "PATCH" &&
+      res.url().includes("/api/justice/cases/") &&
+      res.request().postDataJSON()?.archived_at === null,
+    { timeout: 30_000 }
+  );
+  await sendChatClosureMessage(page, CHAT_CASE_RESTORE_MOST_RECENT_ARCHIVED_MESSAGE);
+  const restorePatch = await restoreResponse;
+  expect(restorePatch.ok()).toBeTruthy();
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+      { timeout: 30_000 }
+    )
+    .toBeTruthy();
+
+  const chatTranscript = chatAiTranscript(page);
+  await expect(chatTranscript.getByText(CHAT_CASE_RESTORE_MOST_RECENT_ARCHIVED_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatTranscript.getByText("I've restored your archived case for Acme Retail.")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Assert the restored case is active in chat with persisted transcript and tracking UI. */
+export async function expectConsumerChatCaseRestoredActive(page: Page): Promise<void> {
+  const restoredCaseId = await page.evaluate(
+    (caseIdKey) => sessionStorage.getItem(caseIdKey),
+    STORAGE_CASE_ID
+  );
+  expect(restoredCaseId).toBeTruthy();
+
+  const chatTranscript = chatAiTranscript(page);
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+  const actionTracking = chatAiActionTracking(page);
+  await expect(actionTracking).toBeVisible({ timeout: 30_000 });
+  // Follow-up was cleared before archive; restored case must not reopen the outcome form.
+  await expect(page.getByRole("form", { name: "Outcome and follow-up tracking" })).not.toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(chatAiHandlingTrackingLine(page)).toContainText("Tracking complete for now.", {
+    timeout: 30_000,
+  });
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(actionTracking.getByText(`Outcome: ${OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE}`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expectUrlStaysOnChatAi(page);
+
+  expect(
+    await chatTranscript
+      .getByText(buildChatCaseProgressNarrationMessage("demand_letter_sent"))
+      .count()
+  ).toBe(1);
+  expect(
+    await chatTranscript
+      .getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
+      .count()
+  ).toBe(1);
+}
+
+/** Reload chat and confirm restored case stays active without duplicate narration. */
+export async function expectConsumerChatStaysRestoredAfterReload(page: Page): Promise<void> {
+  const chatTranscript = chatAiTranscript(page);
+  const demandLetterSent = buildChatCaseProgressNarrationMessage("demand_letter_sent");
+  const resolutionReady = buildChatCaseProgressNarrationMessage("resolution_ready");
+
+  await page.reload();
+  await waitForClerkBrowserApiSession(page);
+
+  await expectConsumerChatCaseRestoredActive(page);
+  expect(await chatTranscript.getByText(demandLetterSent).count()).toBe(1);
+  expect(await chatTranscript.getByText(resolutionReady).count()).toBe(1);
+  expect(await chatTranscript.getByText(CHAT_CASE_RESTORE_MOST_RECENT_ARCHIVED_MESSAGE).count()).toBe(1);
 }

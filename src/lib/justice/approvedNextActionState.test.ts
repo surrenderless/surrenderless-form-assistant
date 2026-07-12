@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  mergeApprovedNextActionTrackingFields,
   parseApprovedNextAction,
   readSessionApprovedNextAction,
   resolveApprovedNextAction,
@@ -54,5 +55,23 @@ describe("resolveApprovedNextAction follow-up merge", () => {
 
     expect(resolved?.follow_up_needed).toBe(false);
     sessionStorage.removeItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+  });
+});
+
+describe("mergeApprovedNextActionTrackingFields follow-up clear", () => {
+  it("preserves explicit follow_up_needed false for session and PATCH payloads", () => {
+    const flagged = {
+      label: "Small claims / demand letter",
+      href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+      status: "completed" as const,
+      follow_up_needed: true as const,
+      outcome_note: "Escalation complete.",
+    };
+    const merged = mergeApprovedNextActionTrackingFields(flagged, {
+      ...flagged,
+      follow_up_needed: false,
+    });
+    expect(merged.follow_up_needed).toBe(false);
+    expect(merged.follow_up_at).toBeUndefined();
   });
 });
