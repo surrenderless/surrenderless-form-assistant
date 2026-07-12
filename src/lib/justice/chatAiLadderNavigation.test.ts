@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID,
   CHAT_AI_INLINE_FILING_CAPTURE_ELEMENT_ID,
   CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID,
   CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID,
   CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS,
+  CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID,
   CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
   isChatAiMainLadderOffChatHref,
+  isChatAiOptionalHubEscapeHref,
   redirectConsumerActiveCaseOffChatHref,
+  resolveChatInlineOptionalHubEscapeLinkProps,
   resolveConsumerActiveCaseLegacyLadderRedirectHref,
+  resolveConsumerActiveCaseOptionalHubEscapeRedirectHref,
   shouldRedirectConsumerActiveCaseOffLegacyLadderPage,
+  shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage,
   resolveChatAiActiveCaseWorkHref,
   resolveChatAiChecklistDraftReviewAction,
   resolveChatAiChecklistPacketApprovalAction,
@@ -379,6 +385,89 @@ describe("chatAiLadderNavigation", () => {
     it("suppresses optional preview/packet hub escapes when the ladder stays in chat", () => {
       expect(shouldSuppressChatInlineMainLadderHubEscapeLinks({ keepInChat: true })).toBe(true);
       expect(shouldSuppressChatInlineMainLadderHubEscapeLinks({ keepInChat: false })).toBe(false);
+    });
+  });
+
+  describe("optional destination-prep and evidence hub escapes", () => {
+    it("recognizes evidence and destination-prep optional hub escapes", () => {
+      expect(isChatAiOptionalHubEscapeHref("/justice/evidence")).toBe(true);
+      expect(isChatAiOptionalHubEscapeHref("/justice/merchant")).toBe(true);
+      expect(isChatAiOptionalHubEscapeHref("/justice/bbb")).toBe(true);
+      expect(isChatAiOptionalHubEscapeHref("/justice/payment-dispute")).toBe(true);
+      expect(isChatAiOptionalHubEscapeHref("/justice/ftc-review")).toBe(true);
+      expect(isChatAiOptionalHubEscapeHref("/justice/preview")).toBe(false);
+      expect(isChatAiOptionalHubEscapeHref("/justice/handling")).toBe(false);
+    });
+
+    it("resolves optional hub escape link props only when not suppressed", () => {
+      expect(
+        resolveChatInlineOptionalHubEscapeLinkProps({
+          suppress: true,
+          href: "/justice/merchant",
+          label: "Open full merchant contact page",
+          note: "optional",
+        })
+      ).toEqual({});
+      expect(
+        resolveChatInlineOptionalHubEscapeLinkProps({
+          suppress: false,
+          href: "/justice/merchant",
+          label: "Open full merchant contact page",
+          note: "optional",
+        })
+      ).toEqual({
+        optionalPageHref: "/justice/merchant",
+        optionalPageLabel: "Open full merchant contact page",
+        optionalPageNote: "optional",
+      });
+    });
+
+    it("redirects signed-in resumable consumers off evidence and destination-prep hubs", () => {
+      expect(
+        shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+          escapePageHref: "/justice/evidence",
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "case-1",
+          hasResumableCase: true,
+        })
+      ).toBe(true);
+      expect(
+        shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+          escapePageHref: "/justice/bbb",
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "case-1",
+          hasResumableCase: true,
+        })
+      ).toBe(true);
+      expect(
+        shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+          escapePageHref: "/justice/merchant",
+          isSignedIn: false,
+          isLoaded: true,
+          caseId: "case-1",
+          hasResumableCase: true,
+        })
+      ).toBe(false);
+      expect(
+        shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+          escapePageHref: "/justice/merchant",
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "case-1",
+          hasResumableCase: false,
+        })
+      ).toBe(false);
+    });
+
+    it("resolves optional hub escape redirects into chat-ai focus targets", () => {
+      expect(resolveConsumerActiveCaseOptionalHubEscapeRedirectHref("/justice/evidence")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID}`
+      );
+      expect(resolveConsumerActiveCaseOptionalHubEscapeRedirectHref("/justice/merchant")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}`
+      );
     });
   });
 });

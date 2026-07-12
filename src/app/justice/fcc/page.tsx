@@ -21,6 +21,7 @@ import {
   syncCaseTimelineToServer,
 } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 
 const FCC_COMPLAINT_URL = "https://consumercomplaints.fcc.gov/";
 
@@ -73,11 +74,23 @@ export default function JusticeFccPrepPage() {
     }
   }
 
+
+  const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOptionalHubEscapeCaseId(sessionStorage.getItem(STORAGE_CASE_ID) ?? "");
+  }, [hydrationStatus]);
+  const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+    escapePageHref: "/justice/fcc",
+    caseId: optionalHubEscapeCaseId,
+    hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
+  });
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake) {
+  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
     return (
       <>
         <Header />

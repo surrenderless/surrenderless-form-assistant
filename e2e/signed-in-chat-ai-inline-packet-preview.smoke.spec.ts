@@ -6,6 +6,7 @@ import {
   waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
 import {
+  expectNoOptionalDestinationPrepOrEvidenceHubLinks,
   expectNoRequiredMainLadderOffChatLinks,
   expectUrlStaysOnChatAi,
 } from "./helpers/chat-ai-ladder-continuity-e2e";
@@ -69,6 +70,7 @@ test("after evidence upload, consumer reviews draft and approves packet without 
   await expect(packetApproval.getByRole("button", { name: "Copy packet" })).toBeVisible();
   await expect(packetApproval.getByRole("link", { name: "Open full packet page" })).toHaveCount(0);
   await expect(packetApproval.locator('a[href="/justice/packet"]')).toHaveCount(0);
+  await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));
 
   const checklist = page.getByRole("status", { name: "Active case" }).locator("ul").first();
   await expectNoRequiredMainLadderOffChatLinks(checklist);
@@ -83,6 +85,7 @@ test("after evidence upload, consumer reviews draft and approves packet without 
     timeout: 30_000,
   });
   await expectUrlStaysOnChatAi(page);
+  await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));
   expect(page.url()).not.toContain("/justice/preview");
   expect(page.url()).not.toContain("/justice/packet");
 });

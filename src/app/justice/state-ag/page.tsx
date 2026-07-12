@@ -26,6 +26,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
@@ -97,6 +98,11 @@ export default function JusticeStateAgPrepPage() {
     }
   }
 
+  const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+    escapePageHref: "/justice/state-ag",
+    caseId,
+    hasResumableCase: hydrationStatus === "ready" && Boolean(hydratedIntake),
+  });
 
   if (ownedPrepPage.status === "owned") {
     return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
@@ -106,8 +112,7 @@ export default function JusticeStateAgPrepPage() {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-
-  if (hydrationStatus !== "ready" || !intake) {
+  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
     return (
       <>
         <Header />

@@ -26,6 +26,7 @@ test("consumer uploads evidence file in chat, private access works, reload retai
   await expectPrivateEvidenceFileAccess(page, evidenceId);
   await expectEvidenceFilePersistsAfterReload(page);
   await expectUrlStaysOnChatAi(page);
+  await expect(page.getByRole("link", { name: "Organize evidence" })).toHaveCount(0);
   expect(page.url()).not.toContain("/justice/evidence");
   expect(page.url()).not.toContain("/justice/packet");
   expect(page.url()).not.toContain("/justice/handling");

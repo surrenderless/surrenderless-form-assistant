@@ -43,22 +43,20 @@ test.describe("signed-in legacy ladder direct-entry guards", () => {
     await expectUrlStaysOnChatAi(page);
   });
 
-  test("prep page /justice/state-ag still loads for active case", async ({ page }) => {
+  test("prep page /justice/state-ag redirects signed-in resumable consumers into chat-ai", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
 
     await seedActiveCaseStateAgQueued(page);
     await waitForClerkBrowserApiSession(page);
 
     await page.goto(MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF);
-    await expect(page).toHaveURL(
-      new RegExp(`${MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF.replace("/", "\\/")}(?:#.*)?$`),
-      { timeout: 30_000 }
-    );
-    expect(page.url()).not.toContain("/justice/chat-ai");
-    await expect(
-      page.getByRole("heading", {
-        name: /State AG complaint prep|Surrenderless is handling this step/i,
-      })
-    ).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(/\/justice\/chat-ai(?:#.*)?$/, { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: /State AG complaint prep/i })).toHaveCount(0);
+    await expect(page.locator("#chat-ai-approved-action-tracking")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expectUrlStaysOnChatAi(page);
   });
 });

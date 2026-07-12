@@ -15,6 +15,7 @@ import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
+import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 import { validate as isUuid } from "uuid";
 
 export default function JusticeFtcReviewPage() {
@@ -39,11 +40,23 @@ export default function JusticeFtcReviewPage() {
     setIntake(hydratedIntake);
   }, [hydrationStatus, hydratedIntake, router]);
 
+
+  const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOptionalHubEscapeCaseId(sessionStorage.getItem(STORAGE_CASE_ID) ?? "");
+  }, [hydrationStatus]);
+  const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+    escapePageHref: "/justice/ftc-review",
+    caseId: optionalHubEscapeCaseId,
+    hasResumableCase: hydrationStatus === "ready" && Boolean(hydratedIntake),
+  });
+
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake) {
+  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
     return (
       <>
         <Header />

@@ -22,6 +22,19 @@ export const CHAT_AI_MAIN_LADDER_OFF_CHAT_PATHS = [
   "/justice/handling",
 ] as const;
 
+export const CHAT_AI_OPTIONAL_HUB_ESCAPE_PATHS = [
+  "/justice/evidence",
+  "/justice/merchant",
+  "/justice/cfpb",
+  "/justice/fcc",
+  "/justice/bbb",
+  "/justice/state-ag",
+  "/justice/dot",
+  "/justice/demand-letter",
+  "/justice/payment-dispute",
+  "/justice/ftc-review",
+] as const;
+
 function buildCaseStartedTimeline(caseId: string): TimelineEntry[] {
   return [
     {
@@ -239,9 +252,24 @@ export async function expectNoRequiredMainLadderOffChatLinks(scope: Locator): Pr
   ).toHaveCount(0);
 }
 
+/** Assert keep-in-chat UI offers no evidence or destination-prep hub escapes. */
+export async function expectNoOptionalDestinationPrepOrEvidenceHubLinks(
+  scope: Locator
+): Promise<void> {
+  for (const href of CHAT_AI_OPTIONAL_HUB_ESCAPE_PATHS) {
+    await expect(scope.locator(`a[href="${href}"]`)).toHaveCount(0);
+  }
+  await expect(scope.getByRole("link", { name: "Organize evidence" })).toHaveCount(0);
+  await expect(scope.getByRole("link", { name: /Open full .+ page/i })).toHaveCount(0);
+  await expect(scope.getByRole("link", { name: /Open approved step/i })).toHaveCount(0);
+}
+
 export async function expectUrlStaysOnChatAi(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   for (const path of CHAT_AI_MAIN_LADDER_OFF_CHAT_PATHS) {
+    expect(page.url()).not.toContain(path);
+  }
+  for (const path of CHAT_AI_OPTIONAL_HUB_ESCAPE_PATHS) {
     expect(page.url()).not.toContain(path);
   }
 }
