@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseCfpbFilingTaskDraft,
+  taskNotesMatchCfpbFilingMarker,
+} from "@/lib/justice/cfpbFilingTask";
+import {
   parseDemandLetterFilingTaskDraft,
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
@@ -40,6 +44,12 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(parseDemandLetterFilingTaskDraft(notes)).toBe("Letter body");
   });
 
+  it("recognizes CFPB operator task notes", () => {
+    const notes = `cfpb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}\ndraft:\nCFPB body`;
+    expect(taskNotesMatchCfpbFilingMarker(notes, CASE_ID)).toBe(true);
+    expect(parseCfpbFilingTaskDraft(notes)).toBe("CFPB body");
+  });
+
   it("ignores unrelated open tasks", () => {
     const task: JusticeCaseTaskRow = {
       id: "task-1",
@@ -54,6 +64,7 @@ describe("operatorFulfillmentQueue markers", () => {
     };
     expect(taskNotesMatchStateAgFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchDemandLetterFilingMarker(task.notes, CASE_ID)).toBe(false);
+    expect(taskNotesMatchCfpbFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(intake.company_name).toBe("Acme Retail");
   });
 });

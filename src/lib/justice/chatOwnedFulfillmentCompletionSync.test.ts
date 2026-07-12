@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF,
   observeChatOwnedFulfillmentCompletionSync,
@@ -257,5 +258,72 @@ describe("observeChatOwnedFulfillmentCompletionSync", () => {
     expect(result.approvedActionAdvanced).toBe(false);
     expect(result.shouldRehydrateCase).toBe(false);
     expect(result.currentSnapshot.completedStepIds).toEqual(["state_ag", "demand_letter"]);
+  });
+
+  it("detects CFPB owned-step completion transition and requests rehydrate", () => {
+    const openCfpbTask = {
+      id: "task-cfpb-open",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "CFPB filing",
+      due_date: null,
+      notes: `cfpb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    const completedCfpbTask = {
+      ...openCfpbTask,
+      id: "task-cfpb-done",
+      completed_at: "2026-06-22T12:00:00.000Z",
+      updated_at: "2026-06-22T12:00:00.000Z",
+    };
+    const cfpbConfirmedFilings = [
+      {
+        destination: "CFPB",
+        confirmation_number: "cfpb-confirmed-789",
+      },
+    ];
+
+    const pendingObservation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "CFPB",
+        href: CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
+        status: "approved" as const,
+      },
+      tasks: [openCfpbTask],
+      filings: [],
+    };
+
+    const pendingSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: pendingObservation,
+      previousSnapshot: null,
+      wasPending: false,
+    });
+    expect(pendingSync.isPending).toBe(true);
+    expect(pendingSync.currentSnapshot.completedStepIds).toEqual([]);
+
+    const completedSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: {
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "CFPB",
+          href: CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
+          status: "completed" as const,
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [completedCfpbTask],
+        filings: cfpbConfirmedFilings,
+      },
+      previousSnapshot: pendingSync.currentSnapshot,
+      wasPending: true,
+    });
+
+    expect(completedSync.ownedStepsNewlyCompleted).toEqual(["cfpb"]);
+    expect(completedSync.terminalTransitioned).toBe(true);
+    expect(completedSync.shouldRehydrateCase).toBe(true);
+    expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
+    expect(completedSync.currentSnapshot.completedStepIds).toEqual(["cfpb"]);
   });
 });

@@ -313,6 +313,11 @@ import {
   hasDemandLetterFilingWithConfirmation,
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
+import {
+  findOpenCfpbFilingTask,
+  hasCfpbFilingWithConfirmation,
+  isApprovedCfpbFilingAction,
+} from "@/lib/justice/cfpbFilingTask";
 
 type UiMessage = {
   id: string;
@@ -5675,6 +5680,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showCfpbFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedCfpbFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
@@ -5685,6 +5700,11 @@ export default function JusticeChatAiPage() {
     isApprovedStateAgFilingAction(approvedNextAction) &&
     !findOpenStateAgFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasStateAgFilingWithConfirmation(savedFilings);
+  const showCfpbFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedCfpbFilingAction(approvedNextAction) &&
+    !findOpenCfpbFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasCfpbFilingWithConfirmation(savedFilings);
   const suppressSurrenderlessOwnedManualUi = suppressSurrenderlessOwnedManualUiEarly;
   const showInlineApprovedPrepVisible =
     showInlineApprovedPrep &&
@@ -6808,6 +6828,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showCfpbFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">CFPB filing queued.</span> Surrenderless has queued
+                    your CFPB complaint for operator filing using your case draft. Nothing has been
+                    filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showDemandLetterSentNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
@@ -6820,6 +6850,13 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">State AG filed.</span> Surrenderless recorded your
                     State Attorney General complaint filing with confirmation on file. Your case will
                     advance to the next approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showCfpbFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">CFPB filed.</span> Surrenderless recorded your CFPB
+                    complaint filing with confirmation on file. Your case will advance to the next
+                    approved step when tracking updates.
                   </p>
                 ) : null}
                 {showMarkStepOpenedVisible ? (

@@ -206,16 +206,15 @@ export async function seedActiveCaseMerchantFilingStep(page: Page): Promise<void
   });
 }
 
-/** CFPB started + packet approved so chat shows locked inline filing capture. */
+/** CFPB approved + packet approved so chat queues Surrenderless-owned CFPB fulfillment. */
 export async function seedActiveCaseCfpbFilingStep(page: Page): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
   const intake = buildPlaywrightMockE2eCaseIntake();
   const approvedNextAction: JusticeApprovedNextAction = {
     label: "CFPB",
     href: "/justice/cfpb",
-    status: "started",
+    status: "approved",
     approved_at: "2026-06-21T00:00:10.000Z",
-    started_at: "2026-06-21T00:00:11.000Z",
   };
   await resetMockCase(page);
   await patchMockCase(page, {

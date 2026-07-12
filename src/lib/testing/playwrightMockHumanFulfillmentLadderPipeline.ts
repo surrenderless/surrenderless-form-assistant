@@ -5,6 +5,13 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
+  buildCfpbFilingTaskNotes,
+  buildCfpbFilingTaskTitle,
+  parseCfpbFilingTaskDraft,
+  shouldQueueCfpbFilingTask,
+  taskNotesMatchCfpbFilingMarker,
+} from "@/lib/justice/cfpbFilingTask";
+import {
   buildDemandLetterFilingTaskNotes,
   buildDemandLetterFilingTaskTitle,
   parseDemandLetterFilingTaskDraft,
@@ -12,6 +19,7 @@ import {
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -40,6 +48,7 @@ import type { PlaywrightMockJusticeTaskRow } from "@/lib/testing/playwrightMockJ
 const PLAYWRIGHT_MOCK_TASK_TIMESTAMP = "2026-06-21T00:00:04.000Z";
 export const PLAYWRIGHT_MOCK_STATE_AG_TASK_ID = "00000000-0000-4000-8000-000000000746";
 export const PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID = "00000000-0000-4000-8000-000000000747";
+export const PLAYWRIGHT_MOCK_CFPB_TASK_ID = "00000000-0000-4000-8000-000000000748";
 
 const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
   "__playwrightMockHumanFulfillmentTasksByCaseId__";
@@ -159,6 +168,18 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
         caseId: trimmedCaseId,
         title: buildDemandLetterFilingTaskTitle(justiceIntake),
         notes: buildDemandLetterFilingTaskNotes(trimmedCaseId, justiceIntake),
+      })
+    );
+  }
+
+  if (shouldQueueCfpbFilingTask(clientState)) {
+    tasks.push(
+      buildOpenTask({
+        id: PLAYWRIGHT_MOCK_CFPB_TASK_ID,
+        userId,
+        caseId: trimmedCaseId,
+        title: buildCfpbFilingTaskTitle(justiceIntake),
+        notes: buildCfpbFilingTaskNotes(trimmedCaseId, justiceIntake),
       })
     );
   }
@@ -349,6 +370,83 @@ export function completePlaywrightMockDemandLetterOperatorFiling(
   };
 }
 
+export function completePlaywrightMockCfpbOperatorFiling(
+  input: PlaywrightMockOperatorFilingCompleteInput
+): PlaywrightMockOperatorFilingCompleteResult {
+  const caseId = input.caseId.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  if (!isJusticeIntakePayload(snapshot.intake)) {
+    return { ok: false, error: "Case intake is invalid", status: 400 };
+  }
+  const intake = snapshot.intake as JusticeIntake;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const task = tasks.find((row) => row.id === input.taskId.trim());
+  if (!task || !taskNotesMatchCfpbFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "CFPB operator task not found", status: 404 };
+  }
+
+  const filing = buildPlaywrightMockJusticeFilingPostResponse(caseId, input.userId, {
+    destination: input.destination.trim(),
+    filed_at: input.filedAt.trim(),
+    confirmation_number: input.confirmationNumber.trim(),
+    notes: input.notes ?? null,
+  });
+
+  const parsedClientState = parseJusticeCaseClientState(snapshot.client_state);
+  const approvedNext = parsedClientState.approved_next_action;
+  let clientState: Record<string, unknown> = (snapshot.client_state ?? {}) as Record<string, unknown>;
+  let advanced = false;
+
+  if (
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF &&
+    approvedNext.status !== "completed"
+  ) {
+    const completedHref = approvedNext.href.trim();
+    const completedWithTracking = buildCompletedApprovedNextAction(approvedNext);
+    const advancedAction = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
+      existing: completedWithTracking,
+    });
+    const nextApprovedNext =
+      advancedAction?.href?.trim() &&
+      advancedAction.href.trim() !== completedHref &&
+      advancedAction.status === "approved"
+        ? omitClearedHandlingRequestNoteFromApprovedNextAction(advancedAction)
+        : completedWithTracking;
+    advanced = Boolean(
+      advancedAction?.href?.trim() &&
+        advancedAction.href.trim() !== completedHref &&
+        advancedAction.status === "approved"
+    );
+    clientState = mergeClientStateWithApprovedNextAction(snapshot.client_state, nextApprovedNext);
+    const resolutionMerged = mergeResolutionTrackingIntoClientState(clientState, intake);
+    if (resolutionMerged) {
+      clientState = resolutionMerged;
+    }
+  }
+
+  const patched = buildPlaywrightMockCasePatchResponse(caseId, { client_state: clientState });
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    input.userId,
+    patched.client_state,
+    patched.intake
+  );
+
+  return {
+    ok: true,
+    filing,
+    task: { ...task, completed_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP, updated_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP },
+    client_state: patched.client_state,
+    timeline: filing.timeline,
+    advanced,
+  };
+}
+
 export function resolvePlaywrightMockCaseOwnerUserId(caseId: string): string | null {
   const trimmedCaseId = caseId.trim();
   const ownerFromMap = getPlaywrightMockCaseOwnerUserIdByCaseId().get(trimmedCaseId)?.trim();
@@ -428,6 +526,19 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseDemandLetterFilingTaskDraft(task.notes).slice(0, 400),
+      });
+      continue;
+    }
+    if (taskNotesMatchCfpbFilingMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "cfpb",
+        task_title: task.title?.trim() || "CFPB filing",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parseCfpbFilingTaskDraft(task.notes).slice(0, 400),
       });
     }
   }

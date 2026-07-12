@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import {
   canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -15,6 +16,62 @@ type RecordInput = {
   notes: string;
 };
 
+function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
+  switch (step) {
+    case "state_ag":
+      return "State Attorney General filing";
+    case "demand_letter":
+      return "Demand letter";
+    case "cfpb":
+      return "CFPB filing";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
+  switch (step) {
+    case "state_ag":
+      return "Record State AG filing";
+    case "demand_letter":
+      return "Record demand letter fulfillment";
+    case "cfpb":
+      return "Record CFPB filing";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"]): string {
+  switch (step) {
+    case "state_ag":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(
+          MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF
+        ) ?? "State Attorney General (consumer)"
+      );
+    case "demand_letter":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(
+          MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+        ) ?? "Small claims / demand letter"
+      );
+    case "cfpb":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF) ??
+        "CFPB"
+      );
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
 function OperatorFulfillmentRecordForm({
   item,
   saving,
@@ -24,12 +81,7 @@ function OperatorFulfillmentRecordForm({
   saving: boolean;
   onSubmit: (input: RecordInput) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
-  const canonicalDestination =
-    item.step === "state_ag"
-      ? canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF) ??
-        "State Attorney General (consumer)"
-      : canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF) ??
-        "Small claims / demand letter";
+  const canonicalDestination = canonicalDestinationForStep(item.step);
   const [filedAt, setFiledAt] = useState("");
   const [confirmationNumber, setConfirmationNumber] = useState("");
   const [notes, setNotes] = useState("");
@@ -63,7 +115,7 @@ function OperatorFulfillmentRecordForm({
       className="mt-3 space-y-2 rounded-lg border border-neutral-200/90 bg-neutral-50/80 p-3 dark:border-neutral-600 dark:bg-neutral-950/40"
     >
       <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
-        {item.step === "state_ag" ? "Record State AG filing" : "Record demand letter fulfillment"}
+        {recordFormTitle(item.step)}
       </p>
       <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
         Destination
@@ -134,7 +186,7 @@ export function OperatorFulfillmentQueuePanel({
   if (items.length === 0) {
     return (
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        No queued State AG or demand letter fulfillment tasks right now.
+        No queued CFPB, State AG, or demand letter fulfillment tasks right now.
       </p>
     );
   }
@@ -150,7 +202,7 @@ export function OperatorFulfillmentQueuePanel({
             {item.company_name}
           </p>
           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-            Step: {item.step === "state_ag" ? "State Attorney General filing" : "Demand letter"}
+            Step: {stepLabel(item.step)}
           </p>
           {item.consumer_us_state ? (
             <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
