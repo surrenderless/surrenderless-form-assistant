@@ -1,4 +1,5 @@
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import {
   getPlaywrightMockHumanFulfillmentTasks,
   resetPlaywrightMockHumanFulfillmentLadderForCase,
@@ -33,7 +34,11 @@ export function isPlaywrightMockJusticeTasksPipelineEnabled(): boolean {
 
 /** True when GET /api/justice/tasks should use the deterministic Playwright mock. */
 export function isPlaywrightMockJusticeTasksCaseId(caseId: string): boolean {
-  return caseId.trim() === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+  const trimmed = caseId.trim();
+  return (
+    trimmed === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID ||
+    trimmed === PLAYWRIGHT_MOCK_SECOND_CASE_ID
+  );
 }
 
 /** Clears mock tasks for unit tests only. */

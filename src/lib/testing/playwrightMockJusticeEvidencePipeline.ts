@@ -1,4 +1,5 @@
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 
 const PLAYWRIGHT_MOCK_EVIDENCE_TIMESTAMP = "2026-06-21T00:00:01.000Z";
 const PLAYWRIGHT_MOCK_EVIDENCE_ROW_ID = "playwright_e2e_merchant_refund_email";
@@ -17,7 +18,7 @@ export type PlaywrightMockJusticeEvidenceRow = {
   updated_at: string;
 };
 
-/** In-process mock evidence rows for the fixed Playwright E2E case id only. */
+/** In-process mock evidence rows for Playwright E2E case ids. */
 const playwrightMockJusticeEvidenceByCaseId = new Map<string, PlaywrightMockJusticeEvidenceRow[]>();
 
 function buildDefaultEvidenceRows(caseId: string, userId: string): PlaywrightMockJusticeEvidenceRow[] {
@@ -53,7 +54,11 @@ export function isPlaywrightMockJusticeEvidencePipelineEnabled(): boolean {
 
 /** True when GET /api/justice/evidence should use the deterministic Playwright mock. */
 export function isPlaywrightMockJusticeEvidenceCaseId(caseId: string): boolean {
-  return caseId.trim() === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+  const trimmed = caseId.trim();
+  return (
+    trimmed === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID ||
+    trimmed === PLAYWRIGHT_MOCK_SECOND_CASE_ID
+  );
 }
 
 /** Clears mock evidence snapshots — for unit tests only. */
@@ -78,6 +83,11 @@ export function buildPlaywrightMockJusticeEvidenceGetResponse(
   const existing = playwrightMockJusticeEvidenceByCaseId.get(caseId);
   if (existing) {
     return existing.map((row) => ({ ...row }));
+  }
+  // Fresh second case starts with no seeded evidence notes.
+  if (caseId.trim() === PLAYWRIGHT_MOCK_SECOND_CASE_ID) {
+    playwrightMockJusticeEvidenceByCaseId.set(caseId, []);
+    return [];
   }
   const seeded = buildDefaultEvidenceRows(caseId, userId);
   playwrightMockJusticeEvidenceByCaseId.set(caseId, seeded);

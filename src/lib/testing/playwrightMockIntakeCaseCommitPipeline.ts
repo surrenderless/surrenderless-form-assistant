@@ -36,10 +36,11 @@ export function buildPlaywrightMockCaseCreateResponse(
   intake: unknown,
   timeline: unknown,
   payment_dispute_draft: unknown = null,
-  client_state: unknown = null
+  client_state: unknown = null,
+  caseId: string = PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID
 ): PlaywrightMockCaseCreateResponse {
   return {
-    id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+    id: caseId.trim() || PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
     intake,
     timeline,
     payment_dispute_draft,

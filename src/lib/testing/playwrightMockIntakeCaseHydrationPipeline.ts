@@ -3,6 +3,7 @@ import {
   type PlaywrightMockCaseCreateResponse,
 } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE } from "@/lib/testing/playwrightMockIntakeChatPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import type { TimelineEntry } from "@/lib/justice/types";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import { syncPlaywrightMockHumanFulfillmentLadderFromCasePatch } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
@@ -50,7 +51,11 @@ export function isPlaywrightMockIntakeCaseHydrationPipelineEnabled(): boolean {
 
 /** True when GET/PATCH /api/justice/cases/[id] should use the deterministic Playwright mock. */
 export function isPlaywrightMockIntakeCaseHydrationCaseId(caseId: string): boolean {
-  return caseId.trim() === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+  const trimmed = caseId.trim();
+  return (
+    trimmed === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID ||
+    trimmed === PLAYWRIGHT_MOCK_SECOND_CASE_ID
+  );
 }
 
 /** Clears cumulative mock snapshots — for unit tests only. */
@@ -62,6 +67,19 @@ export function resetPlaywrightMockCaseHydrationSnapshotsForTests(): void {
 export function resetPlaywrightMockCaseHydrationSnapshotForCase(caseId: string): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
   getPlaywrightMockCaseHydrationSnapshots().delete(caseId.trim());
+}
+
+/** Snapshot rows currently held by the hydration mock (for multi-case list E2E). */
+export function listPlaywrightMockCaseHydrationSnapshots(): PlaywrightMockCaseCreateResponse[] {
+  return Array.from(getPlaywrightMockCaseHydrationSnapshots().values()).map((row) => ({ ...row }));
+}
+
+/** True when the primary E2E case snapshot is present and archived. */
+export function isPlaywrightMockPrimaryCaseArchived(): boolean {
+  const snapshot = getPlaywrightMockCaseHydrationSnapshots().get(
+    PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID
+  );
+  return Boolean(snapshot?.archived_at?.trim());
 }
 
 /** Deterministic intake snapshot for the signed-in chat roundtrip E2E case. */

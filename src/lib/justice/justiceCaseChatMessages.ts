@@ -7,6 +7,7 @@ export const JUSTICE_CASE_CHAT_MESSAGE_SOURCES = [
   "legal_consent_gate",
   "closure_gate",
   "case_restore_gate",
+  "case_selection_gate",
   "progress_narration",
   "greeting",
 ] as const;

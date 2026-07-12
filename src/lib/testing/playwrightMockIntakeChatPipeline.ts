@@ -136,8 +136,14 @@ function buildPlaywrightMockIntakeChatSecondTurnResponse(
     user_display_name,
   });
 
+  const company = parts.company_name.trim();
+  const assistantMessage =
+    company === "Acme Retail"
+      ? PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE
+      : `Got it — I'll use ${user_display_name} (${reply_email}) for case updates. Your basics look ready; you can save and continue in chat when you're ready.`;
+
   return {
-    assistantMessage: PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE,
+    assistantMessage,
     parts: mergeMockMerchantContactFromUserMessage(parts, userMessage),
   };
 }
@@ -163,7 +169,11 @@ export function buildPlaywrightMockIntakeChatResponse(
     company_name: company_name || baselineParts.company_name,
     story: trimmed || baselineParts.story,
     problem_category: "online_purchase",
-    purchase_or_signup: trimmed.toLowerCase().includes("widget") ? "widget order" : baselineParts.purchase_or_signup,
+    purchase_or_signup: trimmed.toLowerCase().includes("widget")
+      ? "widget order"
+      : trimmed.toLowerCase().includes("gadget")
+        ? "gadget order"
+        : baselineParts.purchase_or_signup,
     money_amount: money_amount || baselineParts.money_amount,
     already_contacted: "no",
   });
@@ -171,7 +181,9 @@ export function buildPlaywrightMockIntakeChatResponse(
   const assistantMessage =
     company_name === "Acme Retail"
       ? PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE
-      : `Thanks — I've captured your message${company_name ? ` about ${company_name}` : ""}. What else should I know?`;
+      : company_name
+        ? `Thanks — I've noted ${company_name}. What email should we use for updates on this case?`
+        : `Thanks — I've captured your message. What else should I know?`;
 
   return { assistantMessage, parts };
 }

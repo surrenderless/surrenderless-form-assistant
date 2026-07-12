@@ -1,10 +1,7 @@
+import type { PlaywrightMockCaseCreateResponse } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
-  PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
-  type PlaywrightMockCaseCreateResponse,
-} from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
-import {
-  buildPlaywrightMockCaseGetResponse,
   isPlaywrightMockIntakeCaseHydrationPipelineEnabled,
+  listPlaywrightMockCaseHydrationSnapshots,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 
 export type PlaywrightMockSavedCasesListResponse = {
@@ -29,14 +26,15 @@ export function isPlaywrightMockJusticeSavedCasesListPipelineEnabled(): boolean 
 
 /**
  * Deterministic GET /api/justice/cases response for Playwright E2E.
- * Returns the fixed E2E case only when its hydration snapshot has archived_at null.
+ * Returns hydration snapshots with archived_at null (newest updated_at first).
  */
 export function buildPlaywrightMockSavedCasesListResponse(
   limit: number,
   offset: number
 ): PlaywrightMockSavedCasesListResponse {
-  const snapshot = buildPlaywrightMockCaseGetResponse(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
-  const savedCases = snapshot.archived_at ? [] : [snapshot];
+  const savedCases = listPlaywrightMockCaseHydrationSnapshots()
+    .filter((row) => !row.archived_at)
+    .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
   const window = savedCases.slice(offset, offset + limit);
   const has_more = savedCases.length > offset + limit;
 

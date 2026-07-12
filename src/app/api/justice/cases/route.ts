@@ -10,6 +10,7 @@ import {
 } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
   isPlaywrightMockIntakeCaseHydrationPipelineEnabled,
+  isPlaywrightMockPrimaryCaseArchived,
   resetPlaywrightMockCaseHydrationSnapshotForCase,
   seedPlaywrightMockCaseHydrationFromCreate,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
@@ -29,6 +30,7 @@ import {
   isPlaywrightMockJusticeChatMessagesPipelineEnabled,
   resetPlaywrightMockJusticeChatMessagesForCase,
 } from "@/lib/testing/playwrightMockJusticeChatMessagesPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import { setPlaywrightMockCaseOwnerUserId } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import {
   buildPlaywrightMockArchivedCasesListResponse,
@@ -189,31 +191,62 @@ export async function POST(req: NextRequest) {
   const client_state = b.client_state !== undefined ? b.client_state : null;
 
   if (isPlaywrightMockIntakeCaseCommitPipelineEnabled()) {
+    const intakeCompany =
+      b.intake && typeof b.intake === "object" && !Array.isArray(b.intake)
+        ? String((b.intake as { company_name?: unknown }).company_name ?? "").trim()
+        : "";
+    // Second deterministic case is only for multi-case chat selection E2E (Beta Corp
+    // after Acme is archived). Standard Acme recommits always reset the primary case.
+    const createSecondCase =
+      isPlaywrightMockIntakeCaseHydrationPipelineEnabled() &&
+      isPlaywrightMockPrimaryCaseArchived() &&
+      intakeCompany === "Beta Corp";
+    const createCaseId = createSecondCase
+      ? PLAYWRIGHT_MOCK_SECOND_CASE_ID
+      : PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+
     if (isPlaywrightMockIntakeCaseHydrationPipelineEnabled()) {
-      resetPlaywrightMockCaseHydrationSnapshotForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+      resetPlaywrightMockCaseHydrationSnapshotForCase(createCaseId);
+      if (!createSecondCase) {
+        // Keep single-case E2E isolation: Acme recommit clears any prior Beta snapshot.
+        resetPlaywrightMockCaseHydrationSnapshotForCase(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+      }
     }
     if (isPlaywrightMockJusticeFilingsPipelineEnabled()) {
-      resetPlaywrightMockJusticeFilingsForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+      resetPlaywrightMockJusticeFilingsForCase(createCaseId);
+      if (!createSecondCase) {
+        resetPlaywrightMockJusticeFilingsForCase(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+      }
     }
     if (isPlaywrightMockJusticeEvidencePipelineEnabled()) {
-      resetPlaywrightMockJusticeEvidenceForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+      resetPlaywrightMockJusticeEvidenceForCase(createCaseId);
+      if (!createSecondCase) {
+        resetPlaywrightMockJusticeEvidenceForCase(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+      }
     }
     if (isPlaywrightMockJusticeTasksPipelineEnabled()) {
-      resetPlaywrightMockJusticeTasksForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+      resetPlaywrightMockJusticeTasksForCase(createCaseId);
+      if (!createSecondCase) {
+        resetPlaywrightMockJusticeTasksForCase(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+      }
     }
     if (isPlaywrightMockJusticeChatMessagesPipelineEnabled()) {
-      resetPlaywrightMockJusticeChatMessagesForCase(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+      resetPlaywrightMockJusticeChatMessagesForCase(createCaseId);
+      if (!createSecondCase) {
+        resetPlaywrightMockJusticeChatMessagesForCase(PLAYWRIGHT_MOCK_SECOND_CASE_ID);
+      }
     }
     const created = buildPlaywrightMockCaseCreateResponse(
       b.intake,
       timeline,
       payment_dispute_draft,
-      client_state
+      client_state,
+      createCaseId
     );
     if (isPlaywrightMockIntakeCaseHydrationPipelineEnabled()) {
       seedPlaywrightMockCaseHydrationFromCreate(created);
     }
-    setPlaywrightMockCaseOwnerUserId(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID, userId);
+    setPlaywrightMockCaseOwnerUserId(createCaseId, userId);
     return NextResponse.json(created);
   }
 
