@@ -109,6 +109,52 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["cfpb_confirmed"]);
   });
 
+  it("derives payment dispute queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Payment dispute (bank/card)",
+          href: "/justice/payment-dispute",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-pd",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "Payment dispute: Acme",
+            due_date: null,
+            notes: `payment_dispute_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["payment_dispute_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Payment dispute (bank/card)",
+          href: "/justice/payment-dispute",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "Payment dispute (bank/card)",
+            confirmation_number: "pd-123",
+          },
+        ],
+      })
+    ).toEqual(["payment_dispute_confirmed"]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

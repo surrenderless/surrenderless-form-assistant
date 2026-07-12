@@ -71,7 +71,8 @@ export function buildPlaywrightMockJusticeTasksGetResponse(
     caseId,
     userId,
     snapshot.client_state,
-    snapshot.intake
+    snapshot.intake,
+    snapshot.payment_dispute_draft
   );
   return getPlaywrightMockHumanFulfillmentTasks(caseId, userId);
 }

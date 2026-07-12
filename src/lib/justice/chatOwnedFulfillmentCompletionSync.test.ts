@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF,
+  CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF,
   observeChatOwnedFulfillmentCompletionSync,
   shouldRehydrateCaseAfterOwnedFulfillmentSync,
@@ -325,5 +326,71 @@ describe("observeChatOwnedFulfillmentCompletionSync", () => {
     expect(completedSync.shouldRehydrateCase).toBe(true);
     expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
     expect(completedSync.currentSnapshot.completedStepIds).toEqual(["cfpb"]);
+  });
+
+  it("detects payment dispute owned-step completion transition and requests rehydrate", () => {
+    const openPdTask = {
+      id: "task-pd-open",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "Payment dispute",
+      due_date: null,
+      notes: `payment_dispute_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    const completedPdTask = {
+      ...openPdTask,
+      id: "task-pd-done",
+      completed_at: "2026-06-22T12:00:00.000Z",
+      updated_at: "2026-06-22T12:00:00.000Z",
+    };
+    const pdConfirmedFilings = [
+      {
+        destination: "Payment dispute (bank/card)",
+        confirmation_number: "pd-confirmed-789",
+      },
+    ];
+
+    const pendingObservation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "Payment dispute (bank/card)",
+        href: CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF,
+        status: "approved" as const,
+      },
+      tasks: [openPdTask],
+      filings: [],
+    };
+
+    const pendingSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: pendingObservation,
+      previousSnapshot: null,
+      wasPending: false,
+    });
+    expect(pendingSync.isPending).toBe(true);
+    expect(pendingSync.currentSnapshot.completedStepIds).toEqual([]);
+
+    const completedSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: {
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "CFPB",
+          href: CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
+          status: "approved" as const,
+        },
+        tasks: [completedPdTask],
+        filings: pdConfirmedFilings,
+      },
+      previousSnapshot: pendingSync.currentSnapshot,
+      wasPending: true,
+    });
+
+    expect(completedSync.ownedStepsNewlyCompleted).toEqual(["payment_dispute"]);
+    expect(completedSync.approvedActionAdvanced).toBe(true);
+    expect(completedSync.shouldRehydrateCase).toBe(true);
+    expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
+    expect(completedSync.currentSnapshot.completedStepIds).toEqual(["payment_dispute"]);
   });
 });

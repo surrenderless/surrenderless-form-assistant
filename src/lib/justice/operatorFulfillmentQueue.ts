@@ -9,13 +9,17 @@ import {
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  parsePaymentDisputeFilingTaskDraft,
+  taskNotesMatchPaymentDisputeFilingMarker,
+} from "@/lib/justice/paymentDisputeFilingTask";
+import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
-export type OperatorFulfillmentStep = "state_ag" | "demand_letter" | "cfpb";
+export type OperatorFulfillmentStep = "state_ag" | "demand_letter" | "cfpb" | "payment_dispute";
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -86,6 +90,19 @@ function classifyOpenOperatorTask(
     };
   }
 
+  if (taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "payment_dispute",
+      task_title: task.title?.trim() || "Payment dispute",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parsePaymentDisputeFilingTaskDraft(task.notes)),
+    };
+  }
+
   return null;
 }
 
@@ -131,7 +148,8 @@ export async function listOperatorFulfillmentQueue(
     return (
       taskNotesMatchStateAgFilingMarker(task.notes, caseId) ||
       taskNotesMatchDemandLetterFilingMarker(task.notes, caseId) ||
-      taskNotesMatchCfpbFilingMarker(task.notes, caseId)
+      taskNotesMatchCfpbFilingMarker(task.notes, caseId) ||
+      taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)
     );
   });
 

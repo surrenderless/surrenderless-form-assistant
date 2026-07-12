@@ -181,7 +181,8 @@ export function buildPlaywrightMockCaseGetResponse(caseId: string): PlaywrightMo
     caseId,
     "playwright_e2e_user",
     sanitized.client_state,
-    sanitized.intake
+    sanitized.intake,
+    sanitized.payment_dispute_draft
   );
   return { ...sanitized };
 }
@@ -210,7 +211,8 @@ export function buildPlaywrightMockCasePatchResponse(
       caseId,
       "playwright_e2e_user",
       finalSnapshot.client_state,
-      finalSnapshot.intake
+      finalSnapshot.intake,
+      finalSnapshot.payment_dispute_draft
     );
   }
   return { ...finalSnapshot };
