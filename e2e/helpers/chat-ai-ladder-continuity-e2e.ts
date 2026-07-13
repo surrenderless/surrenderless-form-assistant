@@ -328,6 +328,46 @@ export async function seedActiveCaseFccFilingStep(page: Page): Promise<void> {
   });
 }
 
+/**
+ * DOT approved + packet approved so chat queues Surrenderless-owned DOT fulfillment.
+ * Aviation story without merchant contact so completion is terminal for resolution endgame.
+ */
+export async function seedActiveCaseDotFilingStep(page: Page): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    company_name: "Acme Air",
+    problem_category: "service_failed" as const,
+    purchase_or_signup: "airline flight",
+    story: "Airline canceled my flight and refused a refund for the unused ticket.",
+    money_involved: "$412.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "USDOT / aviation consumer",
+    href: "/justice/dot",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:10.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
 export async function seedActiveCaseStateAgQueued(page: Page): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
   const intake = { ...buildPlaywrightMockE2eCaseIntake(), already_contacted: "yes" as const };

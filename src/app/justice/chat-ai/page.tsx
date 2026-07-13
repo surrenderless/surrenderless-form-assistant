@@ -324,6 +324,11 @@ import {
   isApprovedFccFilingAction,
 } from "@/lib/justice/fccFilingTask";
 import {
+  findOpenDotFilingTask,
+  hasDotFilingWithConfirmation,
+  isApprovedDotFilingAction,
+} from "@/lib/justice/dotFilingTask";
+import {
   findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
@@ -5720,6 +5725,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showDotFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedDotFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
@@ -5745,6 +5760,11 @@ export default function JusticeChatAiPage() {
     isApprovedFccFilingAction(approvedNextAction) &&
     !findOpenFccFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasFccFilingWithConfirmation(savedFilings);
+  const showDotFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedDotFilingAction(approvedNextAction) &&
+    !findOpenDotFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasDotFilingWithConfirmation(savedFilings);
   const suppressSurrenderlessOwnedManualUi = suppressSurrenderlessOwnedManualUiEarly;
   const showInlineApprovedPrepVisible =
     showInlineApprovedPrep &&
@@ -6900,6 +6920,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showDotFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">DOT filing queued.</span> Surrenderless has queued
+                    your USDOT aviation complaint for operator filing using your prepared complaint and
+                    evidence. Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showDemandLetterSentNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
@@ -6933,6 +6963,13 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">FCC filed.</span> Surrenderless recorded your FCC
                     complaint filing with confirmation on file. Your case will advance to the next
                     approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showDotFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">DOT filed.</span> Surrenderless recorded your USDOT
+                    aviation complaint filing with confirmation on file. Your case will advance to the
+                    next approved step when tracking updates.
                   </p>
                 ) : null}
                 {showMarkStepOpenedVisible ? (

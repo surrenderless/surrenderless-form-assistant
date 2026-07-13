@@ -75,7 +75,9 @@ export default function OperatorFulfillmentPage() {
               ? "/api/justice/payment-dispute-filing/complete"
               : item.step === "fcc"
                 ? "/api/justice/fcc-filing/complete"
-                : "/api/justice/cfpb-filing/complete";
+                : item.step === "dot"
+                  ? "/api/justice/dot-filing/complete"
+                  : "/api/justice/cfpb-filing/complete";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -116,7 +118,7 @@ export default function OperatorFulfillmentPage() {
           Operator fulfillment queue
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Surrenderless-owned FCC, payment dispute, CFPB, State AG, and demand letter steps queued for
+          Surrenderless-owned DOT, FCC, payment dispute, CFPB, State AG, and demand letter steps queued for
           manual fulfillment.
         </p>
         {loadError ? (

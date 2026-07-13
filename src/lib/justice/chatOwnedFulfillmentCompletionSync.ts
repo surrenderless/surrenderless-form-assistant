@@ -9,12 +9,17 @@ import {
   hasDemandLetterFilingWithConfirmation,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  findOpenDotFilingTask,
+  hasDotFilingWithConfirmation,
+} from "@/lib/justice/dotFilingTask";
+import {
   findOpenFccFilingTask,
   hasFccFilingWithConfirmation,
 } from "@/lib/justice/fccFilingTask";
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
@@ -34,7 +39,8 @@ export type ChatOwnedFulfillmentStepId =
   | "demand_letter"
   | "cfpb"
   | "payment_dispute"
-  | "fcc";
+  | "fcc"
+  | "dot";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
   completedStepIds: readonly ChatOwnedFulfillmentStepId[];
@@ -97,6 +103,13 @@ function isFccOwnedStepCompleted(observation: ChatEscalationFulfillmentObservati
   return !findOpenFccFilingTask(observation.tasks, caseId);
 }
 
+function isDotOwnedStepCompleted(observation: ChatEscalationFulfillmentObservation): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasDotFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenDotFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
@@ -115,6 +128,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   }
   if (isFccOwnedStepCompleted(observation)) {
     completedStepIds.push("fcc");
+  }
+  if (isDotOwnedStepCompleted(observation)) {
+    completedStepIds.push("dot");
   }
   return {
     completedStepIds,
@@ -203,3 +219,6 @@ export const CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF =
 
 /** Approved action href for the FCC owned step. */
 export const CHAT_OWNED_FULFILLMENT_FCC_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF;
+
+/** Approved action href for the DOT owned step. */
+export const CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF;

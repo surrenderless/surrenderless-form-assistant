@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF,
+  CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_FCC_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF,
@@ -459,5 +460,71 @@ describe("observeChatOwnedFulfillmentCompletionSync", () => {
     expect(completedSync.shouldRehydrateCase).toBe(true);
     expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
     expect(completedSync.currentSnapshot.completedStepIds).toEqual(["fcc"]);
+  });
+
+  it("detects DOT owned-step completion transition and requests rehydrate", () => {
+    const openDotTask = {
+      id: "task-dot-open",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "DOT filing",
+      due_date: null,
+      notes: `dot_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    const completedDotTask = {
+      ...openDotTask,
+      id: "task-dot-done",
+      completed_at: "2026-06-22T12:00:00.000Z",
+      updated_at: "2026-06-22T12:00:00.000Z",
+    };
+    const dotConfirmedFilings = [
+      {
+        destination: "USDOT / aviation consumer",
+        confirmation_number: "dot-confirmed-789",
+      },
+    ];
+
+    const pendingObservation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "USDOT / aviation consumer",
+        href: CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF,
+        status: "approved" as const,
+      },
+      tasks: [openDotTask],
+      filings: [],
+    };
+
+    const pendingSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: pendingObservation,
+      previousSnapshot: null,
+      wasPending: false,
+    });
+    expect(pendingSync.isPending).toBe(true);
+    expect(pendingSync.currentSnapshot.completedStepIds).toEqual([]);
+
+    const completedSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: {
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "CFPB",
+          href: CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
+          status: "approved" as const,
+        },
+        tasks: [completedDotTask],
+        filings: dotConfirmedFilings,
+      },
+      previousSnapshot: pendingSync.currentSnapshot,
+      wasPending: true,
+    });
+
+    expect(completedSync.ownedStepsNewlyCompleted).toEqual(["dot"]);
+    expect(completedSync.approvedActionAdvanced).toBe(true);
+    expect(completedSync.shouldRehydrateCase).toBe(true);
+    expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
+    expect(completedSync.currentSnapshot.completedStepIds).toEqual(["dot"]);
   });
 });

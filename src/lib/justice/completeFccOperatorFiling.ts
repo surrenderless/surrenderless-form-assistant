@@ -15,6 +15,10 @@ import {
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  ensureDotFilingTask,
+  shouldQueueDotFilingTask,
+} from "@/lib/justice/dotFilingTask";
+import {
   completeFccFilingTaskIfOpen,
   fccFilingsForManualTracking,
   hasFccFilingWithConfirmation,
@@ -315,6 +319,12 @@ export async function completeFccOperatorFiling(
     }
     if (shouldQueueDemandLetterFilingTask(clientState)) {
       const queueResult = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
+      if (queueResult.timeline) {
+        timeline = queueResult.timeline;
+      }
+    }
+    if (shouldQueueDotFilingTask(clientState)) {
+      const queueResult = await ensureDotFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }

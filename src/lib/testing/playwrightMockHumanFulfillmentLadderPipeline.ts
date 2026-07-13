@@ -19,6 +19,13 @@ import {
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  buildDotFilingTaskNotes,
+  buildDotFilingTaskTitle,
+  parseDotFilingTaskDraft,
+  shouldQueueDotFilingTask,
+  taskNotesMatchDotFilingMarker,
+} from "@/lib/justice/dotFilingTask";
+import {
   buildFccFilingTaskNotes,
   buildFccFilingTaskTitle,
   parseFccFilingTaskDraft,
@@ -28,6 +35,7 @@ import {
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
@@ -68,6 +76,7 @@ export const PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID = "00000000-0000-4000-8000-00
 export const PLAYWRIGHT_MOCK_CFPB_TASK_ID = "00000000-0000-4000-8000-000000000748";
 export const PLAYWRIGHT_MOCK_PAYMENT_DISPUTE_TASK_ID = "00000000-0000-4000-8000-000000000749";
 export const PLAYWRIGHT_MOCK_FCC_TASK_ID = "00000000-0000-4000-8000-000000000750";
+export const PLAYWRIGHT_MOCK_DOT_TASK_ID = "00000000-0000-4000-8000-000000000751";
 
 const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
   "__playwrightMockHumanFulfillmentTasksByCaseId__";
@@ -229,6 +238,18 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
         caseId: trimmedCaseId,
         title: buildFccFilingTaskTitle(justiceIntake),
         notes: buildFccFilingTaskNotes(trimmedCaseId, justiceIntake),
+      })
+    );
+  }
+
+  if (shouldQueueDotFilingTask(clientState)) {
+    tasks.push(
+      buildOpenTask({
+        id: PLAYWRIGHT_MOCK_DOT_TASK_ID,
+        userId,
+        caseId: trimmedCaseId,
+        title: buildDotFilingTaskTitle(justiceIntake),
+        notes: buildDotFilingTaskNotes(trimmedCaseId, justiceIntake),
       })
     );
   }
@@ -655,6 +676,84 @@ export function completePlaywrightMockFccOperatorFiling(
   };
 }
 
+export function completePlaywrightMockDotOperatorFiling(
+  input: PlaywrightMockOperatorFilingCompleteInput
+): PlaywrightMockOperatorFilingCompleteResult {
+  const caseId = input.caseId.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  if (!isJusticeIntakePayload(snapshot.intake)) {
+    return { ok: false, error: "Case intake is invalid", status: 400 };
+  }
+  const intake = snapshot.intake as JusticeIntake;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const task = tasks.find((row) => row.id === input.taskId.trim());
+  if (!task || !taskNotesMatchDotFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "DOT operator task not found", status: 404 };
+  }
+
+  const filing = buildPlaywrightMockJusticeFilingPostResponse(caseId, input.userId, {
+    destination: input.destination.trim(),
+    filed_at: input.filedAt.trim(),
+    confirmation_number: input.confirmationNumber.trim(),
+    notes: input.notes ?? null,
+  });
+
+  const parsedClientState = parseJusticeCaseClientState(snapshot.client_state);
+  const approvedNext = parsedClientState.approved_next_action;
+  let clientState: Record<string, unknown> = (snapshot.client_state ?? {}) as Record<string, unknown>;
+  let advanced = false;
+
+  if (
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF &&
+    approvedNext.status !== "completed"
+  ) {
+    const completedHref = approvedNext.href.trim();
+    const completedWithTracking = buildCompletedApprovedNextAction(approvedNext);
+    const advancedAction = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
+      existing: completedWithTracking,
+    });
+    const nextApprovedNext =
+      advancedAction?.href?.trim() &&
+      advancedAction.href.trim() !== completedHref &&
+      advancedAction.status === "approved"
+        ? omitClearedHandlingRequestNoteFromApprovedNextAction(advancedAction)
+        : completedWithTracking;
+    advanced = Boolean(
+      advancedAction?.href?.trim() &&
+        advancedAction.href.trim() !== completedHref &&
+        advancedAction.status === "approved"
+    );
+    clientState = mergeClientStateWithApprovedNextAction(snapshot.client_state, nextApprovedNext);
+    const resolutionMerged = mergeResolutionTrackingIntoClientState(clientState, intake);
+    if (resolutionMerged) {
+      clientState = resolutionMerged;
+    }
+  }
+
+  const patched = buildPlaywrightMockCasePatchResponse(caseId, { client_state: clientState });
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    input.userId,
+    patched.client_state,
+    patched.intake,
+    patched.payment_dispute_draft
+  );
+
+  return {
+    ok: true,
+    filing,
+    task: { ...task, completed_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP, updated_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP },
+    client_state: patched.client_state,
+    timeline: filing.timeline,
+    advanced,
+  };
+}
+
 export function resolvePlaywrightMockCaseOwnerUserId(caseId: string): string | null {
   const trimmedCaseId = caseId.trim();
   const ownerFromMap = getPlaywrightMockCaseOwnerUserIdByCaseId().get(trimmedCaseId)?.trim();
@@ -774,6 +873,19 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseFccFilingTaskDraft(task.notes).slice(0, 400),
+      });
+      continue;
+    }
+    if (taskNotesMatchDotFilingMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "dot",
+        task_title: task.title?.trim() || "DOT filing",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parseDotFilingTaskDraft(task.notes).slice(0, 400),
       });
     }
   }
