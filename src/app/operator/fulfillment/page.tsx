@@ -62,26 +62,31 @@ export default function OperatorFulfillmentPage() {
       filedAt: string;
       confirmationNumber: string;
       notes: string;
+      contactMethod?: string;
+      merchantResponseType?: string;
+      recipient?: string;
     }
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     setSavingTaskId(item.task_id);
     try {
       const endpoint =
-        item.step === "state_ag"
-          ? "/api/justice/state-ag-filing/complete"
-          : item.step === "demand_letter"
-            ? "/api/justice/demand-letter-filing/complete"
-            : item.step === "payment_dispute"
-              ? "/api/justice/payment-dispute-filing/complete"
-              : item.step === "fcc"
-                ? "/api/justice/fcc-filing/complete"
-                : item.step === "dot"
-                  ? "/api/justice/dot-filing/complete"
-                  : item.step === "ftc"
-                    ? "/api/justice/ftc-filing/complete"
-                    : item.step === "bbb"
-                      ? "/api/justice/bbb-filing/complete"
-                      : "/api/justice/cfpb-filing/complete";
+        item.step === "merchant_contact"
+          ? "/api/justice/merchant-contact/complete"
+          : item.step === "state_ag"
+            ? "/api/justice/state-ag-filing/complete"
+            : item.step === "demand_letter"
+              ? "/api/justice/demand-letter-filing/complete"
+              : item.step === "payment_dispute"
+                ? "/api/justice/payment-dispute-filing/complete"
+                : item.step === "fcc"
+                  ? "/api/justice/fcc-filing/complete"
+                  : item.step === "dot"
+                    ? "/api/justice/dot-filing/complete"
+                    : item.step === "ftc"
+                      ? "/api/justice/ftc-filing/complete"
+                      : item.step === "bbb"
+                        ? "/api/justice/bbb-filing/complete"
+                        : "/api/justice/cfpb-filing/complete";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,6 +97,13 @@ export default function OperatorFulfillmentPage() {
           filed_at: input.filedAt,
           confirmation_number: input.confirmationNumber,
           notes: input.notes || null,
+          ...(item.step === "merchant_contact"
+            ? {
+                contact_method: input.contactMethod,
+                merchant_response_type: input.merchantResponseType,
+                recipient: input.recipient ?? null,
+              }
+            : {}),
         }),
       });
       const payload: unknown = await res.json().catch(() => null);
@@ -122,8 +134,8 @@ export default function OperatorFulfillmentPage() {
           Operator fulfillment queue
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Surrenderless-owned BBB, DOT, FCC, payment dispute, CFPB, State AG, and demand letter steps
-          queued for manual fulfillment.
+          Surrenderless-owned merchant contact, BBB, DOT, FCC, payment dispute, CFPB, State AG, and
+          demand letter steps queued for manual fulfillment.
         </p>
         {loadError ? (
           <p className="mt-4 text-sm text-red-700 dark:text-red-300" role="alert">

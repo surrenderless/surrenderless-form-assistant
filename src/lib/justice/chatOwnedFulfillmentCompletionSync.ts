@@ -31,9 +31,14 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  findOpenMerchantContactFilingTask,
+  hasMerchantContactFilingWithConfirmation,
+} from "@/lib/justice/merchantContactFilingTask";
 import {
   findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingWithConfirmation,
@@ -45,6 +50,7 @@ import {
 
 /** Surrenderless-owned fulfillment steps chat can observe completing in place. */
 export type ChatOwnedFulfillmentStepId =
+  | "merchant_contact"
   | "state_ag"
   | "demand_letter"
   | "cfpb"
@@ -74,6 +80,15 @@ function normalizeApprovedActionHref(
 ): string | undefined {
   const href = action?.href?.trim();
   return href || undefined;
+}
+
+function isMerchantContactOwnedStepCompleted(
+  observation: ChatEscalationFulfillmentObservation
+): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasMerchantContactFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenMerchantContactFilingTask(observation.tasks, caseId);
 }
 
 function isStateAgOwnedStepCompleted(observation: ChatEscalationFulfillmentObservation): boolean {
@@ -140,6 +155,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
   const completedStepIds: ChatOwnedFulfillmentStepId[] = [];
+  if (isMerchantContactOwnedStepCompleted(observation)) {
+    completedStepIds.push("merchant_contact");
+  }
   if (isStateAgOwnedStepCompleted(observation)) {
     completedStepIds.push("state_ag");
   }
@@ -233,6 +251,10 @@ export function observeChatOwnedFulfillmentCompletionSync(input: {
     shouldRehydrateCase,
   };
 }
+
+/** Approved action href for the merchant-contact owned step. */
+export const CHAT_OWNED_FULFILLMENT_MERCHANT_CONTACT_APPROVED_HREF =
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF;
 
 /** Approved action href for the State AG owned step (for tests and future registry entries). */
 export const CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF =

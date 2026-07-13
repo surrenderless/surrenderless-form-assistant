@@ -339,6 +339,52 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["ftc_confirmed"]);
   });
 
+  it("derives merchant contact queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Merchant contact",
+          href: "/justice/merchant",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-merchant",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "Merchant contact: Acme",
+            due_date: null,
+            notes: `merchant_contact_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["merchant_contact_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Merchant contact",
+          href: "/justice/merchant",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "Merchant contact",
+            confirmation_number: "merchant-123",
+          },
+        ],
+      })
+    ).toEqual(["merchant_contact_confirmed"]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

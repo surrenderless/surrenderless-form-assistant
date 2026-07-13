@@ -46,6 +46,7 @@ import {
   shouldQueueFtcFilingTask,
   taskNotesMatchFtcFilingMarker,
 } from "@/lib/justice/ftcFilingTask";
+import { buildUpdatedIntakeAfterMerchantContact } from "@/lib/justice/documentMerchantContact";
 import {
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
@@ -53,10 +54,18 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
+import {
+  buildMerchantContactFilingTaskNotes,
+  buildMerchantContactFilingTaskTitle,
+  parseMerchantContactFilingTaskDraft,
+  shouldQueueMerchantContactFilingTask,
+  taskNotesMatchMerchantContactFilingMarker,
+} from "@/lib/justice/merchantContactFilingTask";
 import {
   buildPaymentDisputeFilingTaskNotes,
   buildPaymentDisputeFilingTaskTitle,
@@ -73,7 +82,13 @@ import {
   shouldQueueStateAgFilingTask,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
-import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
+import type {
+  ContactMethod,
+  JusticeApprovedNextAction,
+  JusticeIntake,
+  MerchantResponseType,
+  TimelineEntry,
+} from "@/lib/justice/types";
 import {
   buildPlaywrightMockCaseGetResponse,
   buildPlaywrightMockCasePatchResponse,
@@ -95,6 +110,7 @@ export const PLAYWRIGHT_MOCK_FCC_TASK_ID = "00000000-0000-4000-8000-000000000750
 export const PLAYWRIGHT_MOCK_DOT_TASK_ID = "00000000-0000-4000-8000-000000000751";
 export const PLAYWRIGHT_MOCK_BBB_TASK_ID = "00000000-0000-4000-8000-000000000752";
 export const PLAYWRIGHT_MOCK_FTC_TASK_ID = "00000000-0000-4000-8000-000000000753";
+export const PLAYWRIGHT_MOCK_MERCHANT_CONTACT_TASK_ID = "00000000-0000-4000-8000-000000000754";
 
 const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
   "__playwrightMockHumanFulfillmentTasksByCaseId__";
@@ -194,6 +210,18 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   const justiceIntake = intake as JusticeIntake;
   const tasks: PlaywrightMockJusticeTaskRow[] = [];
   const trimmedCaseId = caseId.trim();
+
+  if (shouldQueueMerchantContactFilingTask(clientState)) {
+    tasks.push(
+      buildOpenTask({
+        id: PLAYWRIGHT_MOCK_MERCHANT_CONTACT_TASK_ID,
+        userId,
+        caseId: trimmedCaseId,
+        title: buildMerchantContactFilingTaskTitle(justiceIntake),
+        notes: buildMerchantContactFilingTaskNotes(trimmedCaseId, justiceIntake),
+      })
+    );
+  }
 
   if (shouldQueueStateAgFilingTask(clientState)) {
     tasks.push(
@@ -321,11 +349,30 @@ export type PlaywrightMockOperatorFilingCompleteInput = {
   notes?: string | null;
 };
 
+export type PlaywrightMockMerchantContactOperatorFilingCompleteInput =
+  PlaywrightMockOperatorFilingCompleteInput & {
+    contactMethod: ContactMethod;
+    merchantResponseType: MerchantResponseType;
+    recipient?: string | null;
+  };
+
 export type PlaywrightMockOperatorFilingCompleteResult =
   | {
       ok: true;
       filing: PlaywrightMockJusticeFilingRow;
       task: PlaywrightMockJusticeTaskRow;
+      client_state: unknown;
+      timeline?: TimelineEntry[];
+      advanced: boolean;
+    }
+  | { ok: false; error: string; status: number };
+
+export type PlaywrightMockMerchantContactOperatorFilingCompleteResult =
+  | {
+      ok: true;
+      filing: PlaywrightMockJusticeFilingRow;
+      task: PlaywrightMockJusticeTaskRow;
+      intake: JusticeIntake;
       client_state: unknown;
       timeline?: TimelineEntry[];
       advanced: boolean;
@@ -952,6 +999,103 @@ export function completePlaywrightMockFtcOperatorFiling(
   };
 }
 
+export function completePlaywrightMockMerchantContactOperatorFiling(
+  input: PlaywrightMockMerchantContactOperatorFilingCompleteInput
+): PlaywrightMockMerchantContactOperatorFilingCompleteResult {
+  const caseId = input.caseId.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  if (!isJusticeIntakePayload(snapshot.intake)) {
+    return { ok: false, error: "Case intake is invalid", status: 400 };
+  }
+  const priorIntake = snapshot.intake as JusticeIntake;
+  const recipient =
+    input.recipient?.trim() || priorIntake.company_name.trim() || "merchant/company";
+  const updatedIntake = buildUpdatedIntakeAfterMerchantContact(priorIntake, {
+    contactMethod: input.contactMethod,
+    contactDate: input.filedAt.trim(),
+    merchantResponseType: input.merchantResponseType,
+    contactProofType: "ticket",
+    contactProofText: input.confirmationNumber.trim(),
+  });
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const task = tasks.find((row) => row.id === input.taskId.trim());
+  if (!task || !taskNotesMatchMerchantContactFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "Merchant contact operator task not found", status: 404 };
+  }
+
+  const filingNotes = [
+    `outreach_channel: ${input.contactMethod}`,
+    `recipient: ${recipient}`,
+    ...(input.notes?.trim() ? [`operator_notes: ${input.notes.trim()}`] : []),
+  ].join("\n");
+
+  const filing = buildPlaywrightMockJusticeFilingPostResponse(caseId, input.userId, {
+    destination: input.destination.trim(),
+    filed_at: input.filedAt.trim(),
+    confirmation_number: input.confirmationNumber.trim(),
+    notes: filingNotes,
+  });
+
+  const parsedClientState = parseJusticeCaseClientState(snapshot.client_state);
+  const approvedNext = parsedClientState.approved_next_action;
+  let clientState: Record<string, unknown> = (snapshot.client_state ?? {}) as Record<string, unknown>;
+  let advanced = false;
+
+  if (
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF &&
+    approvedNext.status !== "completed"
+  ) {
+    const completedHref = approvedNext.href.trim();
+    const completedWithTracking = buildCompletedApprovedNextAction(approvedNext);
+    const advancedAction = advanceApprovedNextActionAfterCompleted(updatedIntake, completedHref, {
+      existing: completedWithTracking,
+    });
+    const nextApprovedNext =
+      advancedAction?.href?.trim() &&
+      advancedAction.href.trim() !== completedHref &&
+      advancedAction.status === "approved"
+        ? omitClearedHandlingRequestNoteFromApprovedNextAction(advancedAction)
+        : completedWithTracking;
+    advanced = Boolean(
+      advancedAction?.href?.trim() &&
+        advancedAction.href.trim() !== completedHref &&
+        advancedAction.status === "approved"
+    );
+    clientState = mergeClientStateWithApprovedNextAction(snapshot.client_state, nextApprovedNext);
+    const resolutionMerged = mergeResolutionTrackingIntoClientState(clientState, updatedIntake);
+    if (resolutionMerged) {
+      clientState = resolutionMerged;
+    }
+  }
+
+  const patched = buildPlaywrightMockCasePatchResponse(caseId, {
+    intake: updatedIntake,
+    client_state: clientState,
+  });
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    input.userId,
+    patched.client_state,
+    patched.intake,
+    patched.payment_dispute_draft
+  );
+
+  return {
+    ok: true,
+    filing,
+    task: { ...task, completed_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP, updated_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP },
+    intake: updatedIntake,
+    client_state: patched.client_state,
+    timeline: filing.timeline,
+    advanced,
+  };
+}
+
 export function resolvePlaywrightMockCaseOwnerUserId(caseId: string): string | null {
   const trimmedCaseId = caseId.trim();
   const ownerFromMap = getPlaywrightMockCaseOwnerUserIdByCaseId().get(trimmedCaseId)?.trim();
@@ -1009,6 +1153,19 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
   for (const task of tasks) {
     if (task.completed_at?.trim()) continue;
     const ownerId = task.user_id?.trim() || consumerUserId;
+    if (taskNotesMatchMerchantContactFilingMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "merchant_contact",
+        task_title: task.title?.trim() || "Merchant contact",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parseMerchantContactFilingTaskDraft(task.notes).slice(0, 400),
+      });
+      continue;
+    }
     if (taskNotesMatchStateAgFilingMarker(task.notes, caseId)) {
       items.push({
         case_id: caseId,

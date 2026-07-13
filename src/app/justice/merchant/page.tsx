@@ -8,6 +8,7 @@ import Header from "@/app/components/Header";
 import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
+import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { buildMerchantMessage, cfpbFinancialProductSummary } from "@/lib/justice/buildMerchantContactMessage";
@@ -22,11 +23,16 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
+import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
 export default function JusticeMerchantPage() {
+  const ownedPrepPage = useSurrenderlessOwnedHumanFulfillmentPrepPage(
+    MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF
+  );
+
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const { status: hydrationStatus, intake: hydratedIntake } = useJusticeActionPageHydration();
@@ -105,7 +111,6 @@ export default function JusticeMerchantPage() {
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
-
   const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -115,7 +120,25 @@ export default function JusticeMerchantPage() {
     escapePageHref: "/justice/merchant",
     caseId: optionalHubEscapeCaseId,
     hasResumableCase: hydrationStatus === "ready" && Boolean(hydratedIntake),
+    // Wait for ownership so Surrenderless-owned merchant contact is not redirected to chat.
+    sessionReady:
+      ownedPrepPage.status === "not_owned" || ownedPrepPage.status === "indeterminate",
   });
+
+  if (ownedPrepPage.status === "owned") {
+    return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
+  }
+
+  if (ownedPrepPage.status === "loading") {
+    return (
+      <>
+        <Header />
+        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
+          Loading…
+        </main>
+      </>
+    );
+  }
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;

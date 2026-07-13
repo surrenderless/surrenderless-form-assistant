@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
+import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
 import {
   isManualOwnedHumanFulfillmentStepProgression,
   rejectManualOwnedStepClientStatePatch,
@@ -23,6 +25,12 @@ const stateAgApproved = {
 const demandLetterApproved = {
   label: "Small claims / demand letter",
   href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  status: "approved" as const,
+};
+
+const merchantContactApproved = {
+  label: "Merchant contact",
+  href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   status: "approved" as const,
 };
 
@@ -48,6 +56,21 @@ function openDemandLetterTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "Demand letter filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openMerchantContactTask(): JusticeCaseTaskRow {
+  const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-merchant-contact",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "Merchant contact: Acme Retail",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -281,5 +304,56 @@ describe("rejectManualOwnedStepClientStatePatch", () => {
         filings: [],
       })
     ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("rejects manual start when merchant contact escalation is owned", () => {
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: {
+          approved_next_action: {
+            ...merchantContactApproved,
+            status: "started",
+            started_at: "2026-01-02T00:00:00.000Z",
+          },
+        },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("rejects manual completion when a confirmed merchant-contact filing owns the step", () => {
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: {
+          approved_next_action: {
+            ...merchantContactApproved,
+            status: "completed",
+            completed_at: "2026-01-03T00:00:00.000Z",
+          },
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "Merchant contact",
+            confirmation_number: "merchant-12345",
+          },
+        ],
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("detects merchant contact as owned step progression", () => {
+    expect(
+      isManualOwnedHumanFulfillmentStepProgression(merchantContactApproved, {
+        ...merchantContactApproved,
+        status: "started",
+        started_at: "2026-01-02T00:00:00.000Z",
+      })
+    ).toBe(true);
   });
 });

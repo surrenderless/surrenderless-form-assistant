@@ -1,7 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { STORAGE_APPROVED_NEXT_ACTION_V1 } from "@/lib/justice/approvedNextActionState";
 import { MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
-import { CHAT_INLINE_MERCHANT_PREP_HREF } from "@/lib/justice/chatInlineApprovedPrep";
 import { SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
@@ -185,13 +184,21 @@ export async function seedActiveCasePacketNotApproved(page: Page): Promise<void>
 
 export async function seedActiveCaseMerchantFilingStep(page: Page): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
-  const intake = buildPlaywrightMockE2eCaseIntake();
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    company_name: "Acme Retail",
+    problem_category: "online_purchase" as const,
+    purchase_or_signup: "widget order",
+    story: "Ordered a widget that never arrived and merchant refused a refund.",
+    money_involved: "$89.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+  };
   const approvedNextAction: JusticeApprovedNextAction = {
-    label: "Contact merchant",
-    href: CHAT_INLINE_MERCHANT_PREP_HREF,
-    status: "started",
+    label: "Merchant contact",
+    href: "/justice/merchant",
+    status: "approved",
     approved_at: "2026-06-21T00:00:10.000Z",
-    started_at: "2026-06-21T00:00:11.000Z",
   };
   await resetMockCase(page);
   await patchMockCase(page, {

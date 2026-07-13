@@ -27,9 +27,13 @@ const MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF = "/justice/dot";
 
 const MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF = "/justice/ftc";
 
+const MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF = "/justice/merchant";
+
 
 
 const HUMAN_FULFILLMENT_ESCALATION_HREFS = new Set([
+
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
 
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 
@@ -115,6 +119,14 @@ function ftcFilingTaskNotesMarker(caseId: string): string {
 
 
 
+function merchantContactFilingTaskNotesMarker(caseId: string): string {
+
+  return `merchant_contact_queue:${caseId.trim()}`;
+
+}
+
+
+
 function findOpenStateAgFilingTask(
   tasks: readonly JusticeCaseTaskRow[],
   caseId: string
@@ -183,6 +195,15 @@ function findOpenFtcFilingTask(
   caseId: string
 ): JusticeCaseTaskRow | undefined {
   return findOpenEscalationTask(tasks, caseId, ftcFilingTaskNotesMarker(caseId));
+}
+
+
+
+function findOpenMerchantContactFilingTask(
+  tasks: readonly JusticeCaseTaskRow[],
+  caseId: string
+): JusticeCaseTaskRow | undefined {
+  return findOpenEscalationTask(tasks, caseId, merchantContactFilingTaskNotesMarker(caseId));
 }
 
 
@@ -436,11 +457,33 @@ function shouldQueueFtcFilingFromClientState(clientState: unknown): boolean {
 
 
 
+function shouldQueueMerchantContactFilingFromClientState(clientState: unknown): boolean {
+
+  const parsed = parseJusticeCaseClientState(clientState);
+
+  if (!parsed.prepared_packet_approved) return false;
+
+  const next = parsed.approved_next_action;
+
+  if (!next) return false;
+
+  if (next.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF) return false;
+
+  if (next.status === "completed") return false;
+
+  return true;
+
+}
+
+
+
 /** True when client_state still calls for a pending human-fulfillment operator queue step. */
 
 export function clientStateHasPendingHumanFulfillmentEscalation(clientState: unknown): boolean {
 
   return (
+
+    shouldQueueMerchantContactFilingFromClientState(clientState) ||
 
     shouldQueueStateAgFilingFromClientState(clientState) ||
 
@@ -527,6 +570,12 @@ export function hasPendingHumanFulfillmentEscalation(input: {
   const caseId = input.caseId.trim();
 
   if (caseId) {
+
+    if (findOpenEscalationTask(input.tasks, caseId, merchantContactFilingTaskNotesMarker(caseId))) {
+
+      return true;
+
+    }
 
     if (findOpenEscalationTask(input.tasks, caseId, stateAgFilingTaskNotesMarker(caseId))) {
 
@@ -700,6 +749,14 @@ export function isEscalationLadderTerminalForResolution(
 
 
 
+  if (href === MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF && status === "completed") {
+
+    return true;
+
+  }
+
+
+
   if (status === "completed" && href && !isHumanFulfillmentEscalationHref(href)) {
 
     return true;
@@ -735,6 +792,8 @@ export function isOperatorFulfillmentTerminalFromTasksAndFilings(input: {
   const caseId = input.caseId.trim();
 
   if (!caseId) return false;
+
+  if (findOpenMerchantContactFilingTask(input.tasks, caseId)) return false;
 
   if (findOpenStateAgFilingTask(input.tasks, caseId)) return false;
 

@@ -9,20 +9,46 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
+import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
 
-type RecordInput = {
+export type RecordInput = {
   destination: string;
   filedAt: string;
   confirmationNumber: string;
   notes: string;
+  contactMethod?: ContactMethod;
+  merchantResponseType?: MerchantResponseType;
+  recipient?: string;
 };
+
+const CONTACT_METHOD_OPTIONS: { value: ContactMethod; label: string }[] = [
+  { value: "email", label: "Email" },
+  { value: "chat", label: "Chat" },
+  { value: "phone", label: "Phone" },
+  { value: "form", label: "Web form" },
+  { value: "in_person", label: "In person" },
+  { value: "other", label: "Other" },
+];
+
+const MERCHANT_RESPONSE_OPTIONS: { value: MerchantResponseType; label: string }[] = [
+  { value: "no_response", label: "No response" },
+  { value: "refused_help", label: "Refused help" },
+  { value: "promised_but_did_not_fix", label: "Promised but did not follow through" },
+  { value: "partial_help", label: "Partial help" },
+  { value: "asked_more_info", label: "Asked for more info" },
+  { value: "resolved", label: "Resolved" },
+  { value: "other", label: "Other" },
+];
 
 function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
   switch (step) {
+    case "merchant_contact":
+      return "Merchant contact";
     case "state_ag":
       return "State Attorney General filing";
     case "demand_letter":
@@ -48,6 +74,8 @@ function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
 
 function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
   switch (step) {
+    case "merchant_contact":
+      return "Record merchant contact outreach";
     case "state_ag":
       return "Record State AG filing";
     case "demand_letter":
@@ -73,6 +101,12 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
 
 function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"]): string {
   switch (step) {
+    case "merchant_contact":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(
+          MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF
+        ) ?? "Merchant contact"
+      );
     case "state_ag":
       return (
         canonicalFilingDestinationForApprovedActionHref(
@@ -132,10 +166,15 @@ function OperatorFulfillmentRecordForm({
   saving: boolean;
   onSubmit: (input: RecordInput) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
+  const isMerchant = item.step === "merchant_contact";
   const canonicalDestination = canonicalDestinationForStep(item.step);
   const [filedAt, setFiledAt] = useState("");
   const [confirmationNumber, setConfirmationNumber] = useState("");
   const [notes, setNotes] = useState("");
+  const [contactMethod, setContactMethod] = useState<ContactMethod>("email");
+  const [merchantResponseType, setMerchantResponseType] =
+    useState<MerchantResponseType>("no_response");
+  const [recipient, setRecipient] = useState(item.company_name);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
@@ -143,11 +182,19 @@ function OperatorFulfillmentRecordForm({
     const fa = filedAt.trim();
     const cn = confirmationNumber.trim();
     if (!fa) {
-      setError("Filed date is required.");
+      setError(isMerchant ? "Contact date is required." : "Filed date is required.");
       return;
     }
     if (!cn) {
-      setError("Confirmation number is required.");
+      setError(
+        isMerchant
+          ? "Confirmation or reference number is required."
+          : "Confirmation number is required."
+      );
+      return;
+    }
+    if (isMerchant && !recipient.trim()) {
+      setError("Recipient is required.");
       return;
     }
     setError(null);
@@ -156,6 +203,13 @@ function OperatorFulfillmentRecordForm({
       filedAt: fa,
       confirmationNumber: cn,
       notes: notes.trim(),
+      ...(isMerchant
+        ? {
+            contactMethod,
+            merchantResponseType,
+            recipient: recipient.trim(),
+          }
+        : {}),
     });
     if (!result.ok) setError(result.error);
   }
@@ -177,8 +231,26 @@ function OperatorFulfillmentRecordForm({
           className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
         />
       </label>
+      {isMerchant ? (
+        <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+          Outreach channel
+          <select
+            required
+            disabled={saving}
+            value={contactMethod}
+            onChange={(e) => setContactMethod(e.target.value as ContactMethod)}
+            className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+          >
+            {CONTACT_METHOD_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
-        Filed date
+        {isMerchant ? "Contact date" : "Filed date"}
         <input
           type="date"
           required
@@ -188,18 +260,54 @@ function OperatorFulfillmentRecordForm({
           className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
         />
       </label>
+      {isMerchant ? (
+        <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+          Recipient
+          <input
+            type="text"
+            required
+            disabled={saving}
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="Merchant or company name"
+            className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+          />
+        </label>
+      ) : null}
       <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
-        Confirmation number
+        {isMerchant ? "Confirmation / reference" : "Confirmation number"}
         <input
           type="text"
           required
           disabled={saving}
           value={confirmationNumber}
           onChange={(e) => setConfirmationNumber(e.target.value)}
-          placeholder="Portal confirmation or reference number"
+          placeholder={
+            isMerchant
+              ? "Ticket, email ref, or outreach confirmation"
+              : "Portal confirmation or reference number"
+          }
           className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
         />
       </label>
+      {isMerchant ? (
+        <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+          Merchant response
+          <select
+            required
+            disabled={saving}
+            value={merchantResponseType}
+            onChange={(e) => setMerchantResponseType(e.target.value as MerchantResponseType)}
+            className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 disabled:opacity-60"
+          >
+            {MERCHANT_RESPONSE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
         Notes (optional)
         <textarea
@@ -237,8 +345,8 @@ export function OperatorFulfillmentQueuePanel({
   if (items.length === 0) {
     return (
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        No queued FTC, BBB, DOT, FCC, payment dispute, CFPB, State AG, or demand letter fulfillment
-        tasks right now.
+        No queued merchant contact, FTC, BBB, DOT, FCC, payment dispute, CFPB, State AG, or demand
+        letter fulfillment tasks right now.
       </p>
     );
   }
