@@ -20,6 +20,7 @@ import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJust
 import {
   PLAYWRIGHT_MOCK_BBB_TASK_ID,
   PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID,
+  PLAYWRIGHT_MOCK_FTC_TASK_ID,
   PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
@@ -44,7 +45,7 @@ test.beforeEach(() => {
   );
 });
 
-test("signed-in user completes intake through BBB, human-fulfillment ladder, resolution, and archive in chat", async ({
+test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder, resolution, and archive in chat", async ({
   page,
 }) => {
   test.setTimeout(480_000);
@@ -214,7 +215,7 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     .locator("div.mt-4.rounded-xl")
     .filter({ has: page.getByText("Current action tracking", { exact: true }) });
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
-  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
+  await expect(actionTracking.getByText("Next step:")).toContainText("FTC (consumer complaint)", {
     timeout: 15_000,
   });
   await expect(
@@ -227,6 +228,35 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     actionTracking.getByRole("button", { name: "Record action handled for now" })
   ).not.toBeVisible();
 
+  await expect(page.getByText("FTC filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_queued"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("form", { name: "Record manual filing" })).not.toBeVisible({
+    timeout: 15_000,
+  });
+
+  const operatorContext = await page.context().browser()!.newContext({
+    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
+  });
+  const operatorRequest = operatorContext.request;
+  const ftcCompleteResponse = await operatorRequest.post("/api/justice/ftc-filing/complete", {
+    data: {
+      case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+      task_id: PLAYWRIGHT_MOCK_FTC_TASK_ID,
+      destination: "FTC (consumer complaint)",
+      filed_at: "2026-06-20T12:00:00.000Z",
+      confirmation_number: "e2e-ftc-12345",
+    },
+  });
+  expect(ftcCompleteResponse.ok()).toBeTruthy();
+
+  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
+    timeout: 60_000,
+  });
+  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_confirmed"))).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
@@ -236,10 +266,6 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     timeout: 15_000,
   });
 
-  const operatorContext = await page.context().browser()!.newContext({
-    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
-  });
-  const operatorRequest = operatorContext.request;
   const bbbCompleteResponse = await operatorRequest.post("/api/justice/bbb-filing/complete", {
     data: {
       case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
@@ -257,7 +283,7 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_confirmed"))).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByText("Filing: 1 filing record · confirmation on file")).toBeVisible({
+  await expect(page.getByText("Filing: 2 filing records · confirmation on file")).toBeVisible({
     timeout: 15_000,
   });
 

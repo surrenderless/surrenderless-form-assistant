@@ -21,11 +21,16 @@ import {
   hasFccFilingWithConfirmation,
 } from "@/lib/justice/fccFilingTask";
 import {
+  findOpenFtcFilingTask,
+  hasFtcFilingWithConfirmation,
+} from "@/lib/justice/ftcFilingTask";
+import {
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -46,6 +51,7 @@ export type ChatOwnedFulfillmentStepId =
   | "payment_dispute"
   | "fcc"
   | "dot"
+  | "ftc"
   | "bbb";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
@@ -123,6 +129,13 @@ function isBbbOwnedStepCompleted(observation: ChatEscalationFulfillmentObservati
   return !findOpenBbbFilingTask(observation.tasks, caseId);
 }
 
+function isFtcOwnedStepCompleted(observation: ChatEscalationFulfillmentObservation): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasFtcFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenFtcFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
@@ -144,6 +157,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   }
   if (isDotOwnedStepCompleted(observation)) {
     completedStepIds.push("dot");
+  }
+  if (isFtcOwnedStepCompleted(observation)) {
+    completedStepIds.push("ftc");
   }
   if (isBbbOwnedStepCompleted(observation)) {
     completedStepIds.push("bbb");
@@ -241,3 +257,6 @@ export const CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF = MANUAL_ACTION_TRACKING_R
 
 /** Approved action href for the BBB owned step. */
 export const CHAT_OWNED_FULFILLMENT_BBB_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF;
+
+/** Approved action href for the FTC owned step. */
+export const CHAT_OWNED_FULFILLMENT_FTC_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF;

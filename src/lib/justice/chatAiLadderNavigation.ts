@@ -23,6 +23,7 @@ export const CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS = [
   "/justice/dot",
   "/justice/demand-letter",
   "/justice/payment-dispute",
+  "/justice/ftc",
   "/justice/ftc-review",
 ] as const;
 

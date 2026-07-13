@@ -21,6 +21,10 @@ import {
   taskNotesMatchFccFilingMarker,
 } from "@/lib/justice/fccFilingTask";
 import {
+  parseFtcFilingTaskDraft,
+  taskNotesMatchFtcFilingMarker,
+} from "@/lib/justice/ftcFilingTask";
+import {
   parsePaymentDisputeFilingTaskDraft,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -38,6 +42,7 @@ export type OperatorFulfillmentStep =
   | "payment_dispute"
   | "fcc"
   | "dot"
+  | "ftc"
   | "bbb";
 
 export type OperatorFulfillmentQueueItem = {
@@ -145,6 +150,19 @@ function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseDotFilingTaskDraft(task.notes)),
+    };
+  }
+
+  if (taskNotesMatchFtcFilingMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "ftc",
+      task_title: task.title?.trim() || "FTC filing",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parseFtcFilingTaskDraft(task.notes)),
     };
   }
 

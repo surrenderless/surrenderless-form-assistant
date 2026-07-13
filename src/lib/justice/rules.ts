@@ -247,20 +247,20 @@ export function computeJusticeDestinations(
     if (cfpbRel) {
       ftcStatus = "available";
       ftcRationale = ctx.useCompanyContactLabels
-        ? "Practice complaint flow when company contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step."
-        : "Practice complaint flow when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
+        ? "Surrenderless can file an FTC consumer complaint when company contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step."
+        : "Surrenderless can file an FTC consumer complaint when merchant contact failed; for bank/credit/billing issues, CFPB prep above is usually the stronger next step.";
     } else if (fccRel) {
       ftcStatus = "available";
       ftcRationale = ctx.useCompanyContactLabels
-        ? "Practice complaint flow when company contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step."
-        : "Practice complaint flow when merchant contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step.";
+        ? "Surrenderless can file an FTC consumer complaint when company contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step."
+        : "Surrenderless can file an FTC consumer complaint when merchant contact failed; for phone, internet, cable, or unwanted-call issues, FCC prep above is usually the stronger next step.";
     } else {
       ftcStatus = "recommended";
       ftcRationale = ctx.useCompanyContactLabels
-        ? "Practice complaint flow when company contact failed or was refused."
-        : "Practice complaint flow when merchant contact failed or was refused.";
+        ? "Surrenderless files an FTC consumer complaint when company contact failed or was refused."
+        : "Surrenderless files an FTC consumer complaint when merchant contact failed or was refused.";
     }
-    ftcRoute = "/justice/ftc-review";
+    ftcRoute = "/justice/ftc";
   } else {
     ftcStatus = "later";
     ftcRationale = ctx.useCompanyContactLabels

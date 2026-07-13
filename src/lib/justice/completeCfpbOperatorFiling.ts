@@ -29,6 +29,10 @@ import {
   shouldQueueFccFilingTask,
 } from "@/lib/justice/fccFilingTask";
 import {
+  ensureFtcFilingTask,
+  shouldQueueFtcFilingTask,
+} from "@/lib/justice/ftcFilingTask";
+import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -313,6 +317,12 @@ export async function completeCfpbOperatorFiling(
     }
     if (shouldQueueDotFilingTask(clientState)) {
       const queueResult = await ensureDotFilingTask(supabase, userId, caseId, intake);
+      if (queueResult.timeline) {
+        timeline = queueResult.timeline;
+      }
+    }
+    if (shouldQueueFtcFilingTask(clientState)) {
+      const queueResult = await ensureFtcFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }

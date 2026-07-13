@@ -29,6 +29,10 @@ import {
   shouldQueueFccFilingTask,
 } from "@/lib/justice/fccFilingTask";
 import {
+  ensureFtcFilingTask,
+  shouldQueueFtcFilingTask,
+} from "@/lib/justice/ftcFilingTask";
+import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -317,6 +321,12 @@ export async function completeDotOperatorFiling(
     }
     if (shouldQueueFccFilingTask(clientState)) {
       const queueResult = await ensureFccFilingTask(supabase, userId, caseId, intake);
+      if (queueResult.timeline) {
+        timeline = queueResult.timeline;
+      }
+    }
+    if (shouldQueueFtcFilingTask(clientState)) {
+      const queueResult = await ensureFtcFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }
