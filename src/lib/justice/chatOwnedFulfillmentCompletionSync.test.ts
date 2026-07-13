@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_OWNED_FULFILLMENT_BBB_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF,
@@ -526,5 +527,71 @@ describe("observeChatOwnedFulfillmentCompletionSync", () => {
     expect(completedSync.shouldRehydrateCase).toBe(true);
     expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
     expect(completedSync.currentSnapshot.completedStepIds).toEqual(["dot"]);
+  });
+
+  it("detects BBB owned-step completion transition and requests rehydrate", () => {
+    const openBbbTask = {
+      id: "task-bbb-open",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "BBB filing",
+      due_date: null,
+      notes: `bbb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    const completedBbbTask = {
+      ...openBbbTask,
+      id: "task-bbb-done",
+      completed_at: "2026-06-22T12:00:00.000Z",
+      updated_at: "2026-06-22T12:00:00.000Z",
+    };
+    const bbbConfirmedFilings = [
+      {
+        destination: "Better Business Bureau",
+        confirmation_number: "bbb-confirmed-789",
+      },
+    ];
+
+    const pendingObservation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "Better Business Bureau",
+        href: CHAT_OWNED_FULFILLMENT_BBB_APPROVED_HREF,
+        status: "approved" as const,
+      },
+      tasks: [openBbbTask],
+      filings: [],
+    };
+
+    const pendingSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: pendingObservation,
+      previousSnapshot: null,
+      wasPending: false,
+    });
+    expect(pendingSync.isPending).toBe(true);
+    expect(pendingSync.currentSnapshot.completedStepIds).toEqual([]);
+
+    const completedSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: {
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "State Attorney General (consumer)",
+          href: CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF,
+          status: "approved" as const,
+        },
+        tasks: [completedBbbTask],
+        filings: bbbConfirmedFilings,
+      },
+      previousSnapshot: pendingSync.currentSnapshot,
+      wasPending: true,
+    });
+
+    expect(completedSync.ownedStepsNewlyCompleted).toEqual(["bbb"]);
+    expect(completedSync.approvedActionAdvanced).toBe(true);
+    expect(completedSync.shouldRehydrateCase).toBe(true);
+    expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
+    expect(completedSync.currentSnapshot.completedStepIds).toEqual(["bbb"]);
   });
 });

@@ -7,6 +7,10 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
+  ensureBbbFilingTask,
+  shouldQueueBbbFilingTask,
+} from "@/lib/justice/bbbFilingTask";
+import {
   completeCfpbFilingTaskIfOpen,
   cfpbFilingsForManualTracking,
   hasCfpbFilingWithConfirmation,
@@ -309,6 +313,12 @@ export async function completeCfpbOperatorFiling(
     }
     if (shouldQueueDotFilingTask(clientState)) {
       const queueResult = await ensureDotFilingTask(supabase, userId, caseId, intake);
+      if (queueResult.timeline) {
+        timeline = queueResult.timeline;
+      }
+    }
+    if (shouldQueueBbbFilingTask(clientState)) {
+      const queueResult = await ensureBbbFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }

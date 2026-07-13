@@ -43,7 +43,53 @@ describe("chatCaseProgressNarration", () => {
     });
   });
 
-  it("derives BBB filed and State AG queued milestones from observed state", () => {
+  it("derives BBB queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Better Business Bureau",
+          href: "/justice/bbb",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-bbb",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "BBB filing: Acme",
+            due_date: null,
+            notes: `bbb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["bbb_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Better Business Bureau",
+          href: "/justice/bbb",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "Better Business Bureau",
+            confirmation_number: "bbb-123",
+          },
+        ],
+      })
+    ).toEqual(["bbb_confirmed"]);
+  });
+
+  it("derives BBB confirmed and State AG queued milestones from observed state", () => {
     expect(
       deriveSatisfiedChatCaseProgressMilestones({
         caseId: CASE_ID,
@@ -60,7 +106,7 @@ describe("chatCaseProgressNarration", () => {
           },
         ],
       })
-    ).toEqual(["bbb_filed", "state_ag_queued"]);
+    ).toEqual(["bbb_confirmed", "state_ag_queued"]);
   });
 
   it("derives CFPB queued and confirmed milestones from observed state", () => {
@@ -268,10 +314,10 @@ describe("chatCaseProgressNarration", () => {
     const second = collectNewChatCaseProgressNarrationMessages(observation);
 
     expect(first).toHaveLength(2);
-    expect(first[0]).toBe(buildChatCaseProgressNarrationMessage("bbb_filed"));
+    expect(first[0]).toBe(buildChatCaseProgressNarrationMessage("bbb_confirmed"));
     expect(first[1]).toBe(buildChatCaseProgressNarrationMessage("state_ag_queued"));
     expect(second).toEqual([]);
-    expect(readNarratedChatCaseProgressMilestones(CASE_ID).has("bbb_filed")).toBe(true);
+    expect(readNarratedChatCaseProgressMilestones(CASE_ID).has("bbb_confirmed")).toBe(true);
     expect(sessionStorage.getItem(STORAGE_CHAT_CASE_PROGRESS_NARRATED_V1)).toContain(CASE_ID);
   });
 

@@ -1,6 +1,10 @@
 import type { ChatEscalationFulfillmentObservation } from "@/lib/justice/chatEscalationFulfillmentSync";
 import { observeChatEscalationFulfillmentPending } from "@/lib/justice/chatEscalationFulfillmentSync";
 import {
+  findOpenBbbFilingTask,
+  hasBbbFilingWithConfirmation,
+} from "@/lib/justice/bbbFilingTask";
+import {
   findOpenCfpbFilingTask,
   hasCfpbFilingWithConfirmation,
 } from "@/lib/justice/cfpbFilingTask";
@@ -17,6 +21,7 @@ import {
   hasFccFilingWithConfirmation,
 } from "@/lib/justice/fccFilingTask";
 import {
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
@@ -40,7 +45,8 @@ export type ChatOwnedFulfillmentStepId =
   | "cfpb"
   | "payment_dispute"
   | "fcc"
-  | "dot";
+  | "dot"
+  | "bbb";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
   completedStepIds: readonly ChatOwnedFulfillmentStepId[];
@@ -110,6 +116,13 @@ function isDotOwnedStepCompleted(observation: ChatEscalationFulfillmentObservati
   return !findOpenDotFilingTask(observation.tasks, caseId);
 }
 
+function isBbbOwnedStepCompleted(observation: ChatEscalationFulfillmentObservation): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasBbbFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenBbbFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
@@ -131,6 +144,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   }
   if (isDotOwnedStepCompleted(observation)) {
     completedStepIds.push("dot");
+  }
+  if (isBbbOwnedStepCompleted(observation)) {
+    completedStepIds.push("bbb");
   }
   return {
     completedStepIds,
@@ -222,3 +238,6 @@ export const CHAT_OWNED_FULFILLMENT_FCC_APPROVED_HREF = MANUAL_ACTION_TRACKING_R
 
 /** Approved action href for the DOT owned step. */
 export const CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF;
+
+/** Approved action href for the BBB owned step. */
+export const CHAT_OWNED_FULFILLMENT_BBB_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF;

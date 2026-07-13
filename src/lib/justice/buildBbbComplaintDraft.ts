@@ -21,7 +21,7 @@ export function buildBbbComplaintDraft(intake: JusticeIntake): string {
   const issue = intake.problem_category.replace(/_/g, " ");
   const ask = bbbDesiredResolutionPhrase(intake.problem_category);
   const lines: string[] = [
-    "DRAFT FOR BBB COMPLAINT (copy and paste into BBB.org — this app does not submit for you)",
+    "DRAFT FOR BBB COMPLAINT (operator filing packet — paste into BBB.org portal)",
     "",
     `Business: ${intake.company_name}`,
     intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",

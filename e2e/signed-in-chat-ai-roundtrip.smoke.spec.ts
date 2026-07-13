@@ -18,6 +18,7 @@ import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/pl
 import { buildPlaywrightMockE2eCaseIntake } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesPipeline";
 import {
+  PLAYWRIGHT_MOCK_BBB_TASK_ID,
   PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID,
   PLAYWRIGHT_MOCK_STATE_AG_TASK_ID,
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
@@ -30,7 +31,6 @@ import {
   CHAT_INTAKE_COMMIT_MESSAGE,
 } from "@/lib/justice/chatIntakeCommitGates";
 import {
-  CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE,
   CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
 } from "@/lib/justice/chatLegalConsentGates";
@@ -227,29 +227,34 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
     actionTracking.getByRole("button", { name: "Record action handled for now" })
   ).not.toBeVisible();
 
-  const realBbbAutofillBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB complaint" }),
-    })
-    .filter({ has: page.getByText("www.bbb.org/complain/") });
-  await expect(realBbbAutofillBlock).toBeVisible({ timeout: 15_000 });
-  await expect(realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" })).toBeVisible();
-  await expect(realBbbAutofillBlock.getByRole("button", { name: "Copy draft instead" })).toBeVisible();
-
-  await chatInput.fill(CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE);
-  await page.getByRole("button", { name: "Send" }).click();
-
+  await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
   await expect(
-    chatTranscript.getByText(CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE)
-  ).toBeVisible({ timeout: 15_000 });
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Run BBB autofill" })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Record manual filing" })).not.toBeVisible({
+    timeout: 15_000,
+  });
 
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
+  const operatorContext = await page.context().browser()!.newContext({
+    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
+  });
+  const operatorRequest = operatorContext.request;
+  const bbbCompleteResponse = await operatorRequest.post("/api/justice/bbb-filing/complete", {
+    data: {
+      case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
+      task_id: PLAYWRIGHT_MOCK_BBB_TASK_ID,
+      destination: "Better Business Bureau",
+      filed_at: "2026-06-21T12:00:00.000Z",
+      confirmation_number: "e2e-bbb-12345",
+    },
+  });
+  expect(bbbCompleteResponse.ok()).toBeTruthy();
 
   await expect(actionTracking.getByText("Next step:")).toContainText("State Attorney General", {
     timeout: 60_000,
   });
-  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_filed"))).toBeVisible({
+  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_confirmed"))).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByText("Filing: 1 filing record · confirmation on file")).toBeVisible({
@@ -294,10 +299,6 @@ test("signed-in user completes intake through BBB, human-fulfillment ladder, res
   });
   expect(consumerSelfComplete.status()).toBe(403);
 
-  const operatorContext = await page.context().browser()!.newContext({
-    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
-  });
-  const operatorRequest = operatorContext.request;
   const stateAgCompleteResponse = await operatorRequest.post("/api/justice/state-ag-filing/complete", {
     data: {
       case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,

@@ -7,8 +7,10 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
-  ensureBbbFilingTask,
-  shouldQueueBbbFilingTask,
+  completeBbbFilingTaskIfOpen,
+  bbbFilingsForManualTracking,
+  hasBbbFilingWithConfirmation,
+  taskNotesMatchBbbFilingMarker,
 } from "@/lib/justice/bbbFilingTask";
 import {
   ensureCfpbFilingTask,
@@ -28,15 +30,13 @@ import {
 } from "@/lib/justice/fccFilingTask";
 import {
   canonicalFilingDestinationForApprovedActionHref,
-  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import {
-  completePaymentDisputeFilingTaskIfOpen,
-  hasPaymentDisputeFilingWithConfirmation,
-  paymentDisputeFilingsForManualTracking,
-  taskNotesMatchPaymentDisputeFilingMarker,
+  ensurePaymentDisputeFilingTask,
+  shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import {
@@ -82,7 +82,7 @@ function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNex
   return { withTracking, local };
 }
 
-export type CompletePaymentDisputeOperatorFilingInput = {
+export type CompleteBbbOperatorFilingInput = {
   caseId: string;
   taskId: string;
   destination: string;
@@ -91,7 +91,7 @@ export type CompletePaymentDisputeOperatorFilingInput = {
   notes?: string | null;
 };
 
-export type CompletePaymentDisputeOperatorFilingResult =
+export type CompleteBbbOperatorFilingResult =
   | {
       ok: true;
       filing: JusticeCaseFilingRow;
@@ -103,11 +103,11 @@ export type CompletePaymentDisputeOperatorFilingResult =
     }
   | { ok: false; error: string; status: number };
 
-export async function completePaymentDisputeOperatorFiling(
+export async function completeBbbOperatorFiling(
   supabase: SupabaseClient,
   userId: string,
-  input: CompletePaymentDisputeOperatorFilingInput
-): Promise<CompletePaymentDisputeOperatorFilingResult> {
+  input: CompleteBbbOperatorFilingInput
+): Promise<CompleteBbbOperatorFilingResult> {
   const caseId = input.caseId.trim();
   const taskId = input.taskId.trim();
   const destination = clampLen(input.destination.trim(), MAX_DEST);
@@ -126,11 +126,10 @@ export async function completePaymentDisputeOperatorFiling(
   }
 
   const canonicalDestination =
-    canonicalFilingDestinationForApprovedActionHref(
-      MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
-    ) ?? destination;
+    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF) ??
+    destination;
   if (destination !== canonicalDestination) {
-    return { ok: false, error: "Invalid payment dispute filing destination", status: 400 };
+    return { ok: false, error: "Invalid BBB filing destination", status: 400 };
   }
 
   const { data: caseRow, error: caseErr } = await supabase
@@ -158,12 +157,12 @@ export async function completePaymentDisputeOperatorFiling(
     .maybeSingle();
 
   if (taskErr || !taskRow) {
-    return { ok: false, error: "Payment dispute operator task not found", status: 404 };
+    return { ok: false, error: "BBB operator task not found", status: 404 };
   }
 
   const task = taskRow as JusticeCaseTaskRow;
-  if (!taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)) {
-    return { ok: false, error: "Task is not a payment dispute operator filing task", status: 400 };
+  if (!taskNotesMatchBbbFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "Task is not a BBB operator filing task", status: 400 };
   }
 
   const { data: existingFilings, error: filingsErr } = await supabase
@@ -173,18 +172,16 @@ export async function completePaymentDisputeOperatorFiling(
     .eq("user_id", userId);
 
   if (filingsErr) {
-    console.warn("justice payment dispute operator filing: list filings", filingsErr.message);
+    console.warn("justice bbb operator filing: list filings", filingsErr.message);
     return { ok: false, error: filingsErr.message, status: 500 };
   }
 
-  const paymentDisputeFilings = paymentDisputeFilingsForManualTracking(
-    (existingFilings ?? []) as JusticeCaseFilingRow[]
-  );
-  if (paymentDisputeFilings.length > 0) {
-    if (!hasPaymentDisputeFilingWithConfirmation(paymentDisputeFilings)) {
+  const bbbFilings = bbbFilingsForManualTracking((existingFilings ?? []) as JusticeCaseFilingRow[]);
+  if (bbbFilings.length > 0) {
+    if (!hasBbbFilingWithConfirmation(bbbFilings)) {
       return {
         ok: false,
-        error: "A payment dispute filing record already exists for this case without confirmation",
+        error: "A BBB filing record already exists for this case without confirmation",
         status: 409,
       };
     }
@@ -194,11 +191,11 @@ export async function completePaymentDisputeOperatorFiling(
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (paymentDisputeFilings.length > 0 && task.completed_at?.trim()) {
+  if (bbbFilings.length > 0 && task.completed_at?.trim()) {
     idempotent = true;
-    filing = paymentDisputeFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (paymentDisputeFilings.length > 0) {
-    filing = paymentDisputeFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+    filing = bbbFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+  } else if (bbbFilings.length > 0) {
+    filing = bbbFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
     idempotent = true;
   } else {
     const insertRow: Record<string, unknown> = {
@@ -217,15 +214,8 @@ export async function completePaymentDisputeOperatorFiling(
       .single();
 
     if (insertErr || !inserted) {
-      console.warn(
-        "justice payment dispute operator filing: insert",
-        insertErr?.message ?? "failed"
-      );
-      return {
-        ok: false,
-        error: insertErr?.message ?? "Could not save filing record",
-        status: 500,
-      };
+      console.warn("justice bbb operator filing: insert", insertErr?.message ?? "failed");
+      return { ok: false, error: insertErr?.message ?? "Could not save filing record", status: 500 };
     }
 
     filing = inserted as JusticeCaseFilingRow;
@@ -238,23 +228,18 @@ export async function completePaymentDisputeOperatorFiling(
     });
   }
 
-  const taskResult = await completePaymentDisputeFilingTaskIfOpen(
-    supabase,
-    userId,
-    caseId,
-    taskId
-  );
+  const taskResult = await completeBbbFilingTaskIfOpen(supabase, userId, caseId, taskId);
   if (!taskResult.task) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the payment dispute operator task",
+      error: "Filing saved but could not complete the BBB operator task",
       status: 500,
     };
   }
   if (!taskResult.task.completed_at?.trim()) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the payment dispute operator task",
+      error: "Filing saved but could not complete the BBB operator task",
       status: 500,
     };
   }
@@ -268,7 +253,7 @@ export async function completePaymentDisputeOperatorFiling(
   let nextApprovedNext: JusticeApprovedNextAction | undefined;
 
   if (
-    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF &&
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF &&
     approvedNext.status !== "completed"
   ) {
     const completedHref = approvedNext.href.trim();
@@ -304,7 +289,7 @@ export async function completePaymentDisputeOperatorFiling(
       .eq("user_id", userId);
 
     if (patchErr) {
-      console.warn("justice payment dispute operator filing: patch client_state", patchErr.message);
+      console.warn("justice bbb operator filing: patch client_state", patchErr.message);
       return {
         ok: false,
         error: "Filing recorded but could not advance the approved next action",
@@ -312,6 +297,18 @@ export async function completePaymentDisputeOperatorFiling(
       };
     }
 
+    if (shouldQueuePaymentDisputeFilingTask(clientState)) {
+      const queueResult = await ensurePaymentDisputeFilingTask(
+        supabase,
+        userId,
+        caseId,
+        intake,
+        caseRow.payment_dispute_draft
+      );
+      if (queueResult.timeline) {
+        timeline = queueResult.timeline;
+      }
+    }
     if (shouldQueueCfpbFilingTask(clientState)) {
       const queueResult = await ensureCfpbFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
@@ -326,12 +323,6 @@ export async function completePaymentDisputeOperatorFiling(
     }
     if (shouldQueueDotFilingTask(clientState)) {
       const queueResult = await ensureDotFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueBbbFilingTask(clientState)) {
-      const queueResult = await ensureBbbFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }

@@ -36,7 +36,12 @@ test("consumer queues State AG in chat, operator completes via fulfillment UI, c
   });
   const consumerPage = await consumerContext.newPage();
 
-  await driveConsumerToStateAgQueuedFromChat(consumerPage);
+  const operatorContext = await browser.newContext({
+    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
+  });
+  const operatorPage = await operatorContext.newPage();
+
+  await driveConsumerToStateAgQueuedFromChat(consumerPage, operatorPage);
 
   const actionTracking = chatAiActionTracking(consumerPage);
   await actionTracking.scrollIntoViewIfNeeded();
@@ -45,10 +50,6 @@ test("consumer queues State AG in chat, operator completes via fulfillment UI, c
 
   const chatTranscript = chatAiTranscript(consumerPage);
 
-  const operatorContext = await browser.newContext({
-    storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
-  });
-  const operatorPage = await operatorContext.newPage();
   await operatorPage.goto("/operator/fulfillment");
   await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
     timeout: 30_000,

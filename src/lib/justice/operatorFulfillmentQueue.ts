@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
+  parseBbbFilingTaskDraft,
+  taskNotesMatchBbbFilingMarker,
+} from "@/lib/justice/bbbFilingTask";
+import {
   parseCfpbFilingTaskDraft,
   taskNotesMatchCfpbFilingMarker,
 } from "@/lib/justice/cfpbFilingTask";
@@ -33,7 +37,8 @@ export type OperatorFulfillmentStep =
   | "cfpb"
   | "payment_dispute"
   | "fcc"
-  | "dot";
+  | "dot"
+  | "bbb";
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -143,6 +148,19 @@ function classifyOpenOperatorTask(
     };
   }
 
+  if (taskNotesMatchBbbFilingMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "bbb",
+      task_title: task.title?.trim() || "BBB filing",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parseBbbFilingTaskDraft(task.notes)),
+    };
+  }
+
   return null;
 }
 
@@ -191,7 +209,8 @@ export async function listOperatorFulfillmentQueue(
         taskNotesMatchCfpbFilingMarker(task.notes, caseId) ||
         taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId) ||
         taskNotesMatchFccFilingMarker(task.notes, caseId) ||
-        taskNotesMatchDotFilingMarker(task.notes, caseId)
+        taskNotesMatchDotFilingMarker(task.notes, caseId) ||
+        taskNotesMatchBbbFilingMarker(task.notes, caseId)
       );
   });
 
