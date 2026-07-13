@@ -50,10 +50,10 @@ export function chatAiActionTracking(page: Page): Locator {
 }
 
 /**
- * Drive a signed-in consumer through chat-ai UI until BBB is queued for operator fulfillment.
+ * Drive a signed-in consumer through chat-ai UI until FTC is queued for operator fulfillment.
  * Uses production chat gates and mock pipelines only — no direct client_state patches.
  */
-export async function driveConsumerToBbbQueuedFromChat(page: Page): Promise<void> {
+export async function driveConsumerToFtcQueuedFromChat(page: Page): Promise<void> {
   await page.route("**://www.bbb.org/**", () => {
     throw new Error("Live BBB navigation must not occur during Playwright E2E.");
   });
@@ -120,10 +120,70 @@ export async function driveConsumerToBbbQueuedFromChat(page: Page): Promise<void
 
   const actionTracking = chatAiActionTracking(page);
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
-  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
+  await expect(actionTracking.getByText("Next step:")).toContainText("FTC (consumer complaint)", {
     timeout: 15_000,
   });
 
+  await expect(page.getByText("FTC filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_queued"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(actionTracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
+  await expectUrlStaysOnChatAi(page);
+}
+
+/** Complete FTC fulfillment for Acme Retail via operator fulfillment UI (real click, not request.post). */
+export async function completeFtcFulfillmentViaOperatorUi(operatorPage: Page): Promise<void> {
+  await operatorPage.goto("/operator/fulfillment");
+  await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const ftcItem = operatorPage.locator("li").filter({ hasText: "Acme Retail" }).first();
+  await expect(ftcItem).toBeVisible({ timeout: 30_000 });
+  await expect(ftcItem.getByText("Step: FTC filing")).toBeVisible();
+
+  await ftcItem.locator('input[type="date"]').fill("2026-06-20");
+  await ftcItem.getByPlaceholder("Portal confirmation or reference number").fill("e2e-ui-ftc-888");
+  const completeResponsePromise = operatorPage.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" &&
+      res.url().includes("/api/justice/ftc-filing/complete"),
+    { timeout: 30_000 }
+  );
+  await ftcItem.getByRole("button", { name: "Mark fulfillment complete" }).click();
+  const completeResponse = await completeResponsePromise;
+  expect(completeResponse.ok()).toBeTruthy();
+  const completeBody = (await completeResponse.json()) as { advanced?: boolean };
+  expect(completeBody.advanced).toBe(true);
+
+  await expect(operatorPage.locator("li").filter({ hasText: "FTC filing" })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+  await expect(
+    operatorPage.locator("li").filter({ hasText: "BBB filing" }).filter({ hasText: "Acme Retail" })
+  ).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Drive a signed-in consumer through chat-ai UI until BBB is queued for operator fulfillment.
+ * Completes owned FTC first (normal retail failed-contact ladder now queues FTC before BBB).
+ */
+export async function driveConsumerToBbbQueuedFromChat(
+  page: Page,
+  operatorPage: Page
+): Promise<void> {
+  await driveConsumerToFtcQueuedFromChat(page);
+  await completeFtcFulfillmentViaOperatorUi(operatorPage);
+
+  const actionTracking = chatAiActionTracking(page);
+  const chatTranscript = chatAiTranscript(page);
+  await expect(actionTracking.getByText("Next step:")).toContainText("Better Business Bureau", {
+    timeout: 60_000,
+  });
+  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_confirmed"))).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
@@ -178,7 +238,7 @@ export async function driveConsumerToStateAgQueuedFromChat(
   page: Page,
   operatorPage: Page
 ): Promise<void> {
-  await driveConsumerToBbbQueuedFromChat(page);
+  await driveConsumerToBbbQueuedFromChat(page, operatorPage);
   await completeBbbFulfillmentViaOperatorUi(operatorPage);
 
   const actionTracking = chatAiActionTracking(page);

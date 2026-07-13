@@ -32,6 +32,7 @@ export const CHAT_AI_OPTIONAL_HUB_ESCAPE_PATHS = [
   "/justice/dot",
   "/justice/demand-letter",
   "/justice/payment-dispute",
+  "/justice/ftc",
   "/justice/ftc-review",
 ] as const;
 
@@ -387,6 +388,46 @@ export async function seedActiveCaseBbbFilingStep(page: Page): Promise<void> {
   const approvedNextAction: JusticeApprovedNextAction = {
     label: "Better Business Bureau",
     href: "/justice/bbb",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:10.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
+/**
+ * FTC approved + packet approved so chat queues Surrenderless-owned FTC fulfillment.
+ * Already-contacted no so completion is terminal for resolution endgame.
+ */
+export async function seedActiveCaseFtcFilingStep(page: Page): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    company_name: "Acme Retail",
+    problem_category: "online_purchase" as const,
+    purchase_or_signup: "widget order",
+    story: "Ordered a widget that never arrived and merchant refused a refund.",
+    money_involved: "$89.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "FTC (consumer complaint)",
+    href: "/justice/ftc",
     status: "approved",
     approved_at: "2026-06-21T00:00:10.000Z",
   };

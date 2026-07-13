@@ -393,6 +393,7 @@ describe("chatAiLadderNavigation", () => {
       expect(isChatAiOptionalHubEscapeHref("/justice/evidence")).toBe(true);
       expect(isChatAiOptionalHubEscapeHref("/justice/merchant")).toBe(true);
       expect(isChatAiOptionalHubEscapeHref("/justice/bbb")).toBe(true);
+      expect(isChatAiOptionalHubEscapeHref("/justice/ftc")).toBe(true);
       expect(isChatAiOptionalHubEscapeHref("/justice/payment-dispute")).toBe(true);
       expect(isChatAiOptionalHubEscapeHref("/justice/ftc-review")).toBe(true);
       expect(isChatAiOptionalHubEscapeHref("/justice/preview")).toBe(false);

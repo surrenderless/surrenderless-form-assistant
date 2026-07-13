@@ -20,6 +20,10 @@ import {
   taskNotesMatchFccFilingMarker,
 } from "@/lib/justice/fccFilingTask";
 import {
+  parseFtcFilingTaskDraft,
+  taskNotesMatchFtcFilingMarker,
+} from "@/lib/justice/ftcFilingTask";
+import {
   parsePaymentDisputeFilingTaskDraft,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -90,6 +94,12 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(parseBbbFilingTaskDraft(notes)).toBe("BBB body");
   });
 
+  it("recognizes FTC operator task notes", () => {
+    const notes = `ftc_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}\ndraft:\nFTC body`;
+    expect(taskNotesMatchFtcFilingMarker(notes, CASE_ID)).toBe(true);
+    expect(parseFtcFilingTaskDraft(notes)).toBe("FTC body");
+  });
+
   it("ignores unrelated open tasks", () => {
     const task: JusticeCaseTaskRow = {
       id: "task-1",
@@ -108,6 +118,7 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(taskNotesMatchPaymentDisputeFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchFccFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchDotFilingMarker(task.notes, CASE_ID)).toBe(false);
+    expect(taskNotesMatchFtcFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchBbbFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(intake.company_name).toBe("Acme Retail");
   });

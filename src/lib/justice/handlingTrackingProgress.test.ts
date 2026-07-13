@@ -831,6 +831,9 @@ describe("canonicalFilingDestinationForApprovedActionHref", () => {
       "Payment dispute (bank/card)"
     );
     expect(canonicalFilingDestinationForApprovedActionHref("/justice/merchant")).toBe("Merchant contact");
+    expect(canonicalFilingDestinationForApprovedActionHref("/justice/ftc")).toBe(
+      "FTC (consumer complaint)"
+    );
     expect(canonicalFilingDestinationForApprovedActionHref("/justice/ftc-review")).toBe(
       "FTC (consumer complaint)"
     );

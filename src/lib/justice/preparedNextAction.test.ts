@@ -165,7 +165,7 @@ describe("pickPreparedNextAction", () => {
     });
   });
 
-  it("prefers real BBB over mock practice for failed-contact retail intake", () => {
+  it("prefers owned FTC over mock practice for failed-contact retail intake", () => {
     const destinations = computeJusticeDestinations(failedContactPracticeIntake(), {
       manualFtc: false,
     });
@@ -177,8 +177,8 @@ describe("pickPreparedNextAction", () => {
         destinations,
       })
     ).toEqual({
-      detailHref: "/justice/bbb",
-      stepLabel: "Better Business Bureau",
+      detailHref: "/justice/ftc",
+      stepLabel: "FTC (consumer complaint)",
     });
   });
 
@@ -215,9 +215,12 @@ describe("pickPreparedNextAction", () => {
       status: "recommended",
     });
     expect(destinations.find((d) => d.id === "ftc")).toMatchObject({
-      internalRoute: "/justice/ftc-review",
+      internalRoute: "/justice/ftc",
       status: "recommended",
     });
+    expect(isMockPracticePreparedActionDestination(destinations.find((d) => d.id === "ftc")!)).toBe(
+      false
+    );
     expect(isMockPracticePreparedActionDestination(ftcDest)).toBe(true);
     expect(isMockPracticePreparedActionDestination(bbbPracticeDest)).toBe(true);
     expect(isMockPracticePreparedActionDestination(realBbbDest)).toBe(false);

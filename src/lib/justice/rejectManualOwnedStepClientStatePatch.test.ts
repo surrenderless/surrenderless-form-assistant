@@ -115,9 +115,32 @@ describe("rejectManualOwnedStepClientStatePatch", () => {
     ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
   });
 
-  it("allows manual progression for non-owned FTC steps", () => {
+  it("allows manual progression for non-owned FTC practice steps", () => {
+    const ftcPracticeApproved = {
+      label: "FTC practice",
+      href: "/justice/ftc-review",
+      status: "approved" as const,
+    };
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: ftcPracticeApproved },
+        incomingClientState: {
+          approved_next_action: {
+            ...ftcPracticeApproved,
+            status: "started",
+            started_at: "2026-01-02T00:00:00.000Z",
+          },
+        },
+        tasks: [openStateAgTask()],
+        filings: [],
+      })
+    ).toBeNull();
+  });
+
+  it("rejects manual start when FTC escalation is owned", () => {
     const ftcApproved = {
-      label: "FTC",
+      label: "FTC (consumer complaint)",
       href: "/justice/ftc",
       status: "approved" as const,
     };
@@ -132,10 +155,10 @@ describe("rejectManualOwnedStepClientStatePatch", () => {
             started_at: "2026-01-02T00:00:00.000Z",
           },
         },
-        tasks: [openStateAgTask()],
+        tasks: [],
         filings: [],
       })
-    ).toBeNull();
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
   });
 
   it("rejects manual start when BBB escalation is owned", () => {

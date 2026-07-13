@@ -77,9 +77,11 @@ export default function OperatorFulfillmentPage() {
                 ? "/api/justice/fcc-filing/complete"
                 : item.step === "dot"
                   ? "/api/justice/dot-filing/complete"
-                  : item.step === "bbb"
-                    ? "/api/justice/bbb-filing/complete"
-                    : "/api/justice/cfpb-filing/complete";
+                  : item.step === "ftc"
+                    ? "/api/justice/ftc-filing/complete"
+                    : item.step === "bbb"
+                      ? "/api/justice/bbb-filing/complete"
+                      : "/api/justice/cfpb-filing/complete";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

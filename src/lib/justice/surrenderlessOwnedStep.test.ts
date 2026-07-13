@@ -5,6 +5,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -13,6 +14,7 @@ import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
 import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
+import { ftcFilingTaskNotesMarker } from "@/lib/justice/ftcFilingTask";
 import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
@@ -53,6 +55,11 @@ const dotAction = {
 const bbbAction = {
   href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   label: "Better Business Bureau",
+} as const;
+
+const ftcAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+  label: "FTC (consumer complaint)",
 } as const;
 
 function openStateAgTask(): JusticeCaseTaskRow {
@@ -160,6 +167,21 @@ function openBbbTask(): JusticeCaseTaskRow {
   };
 }
 
+function openFtcTask(): JusticeCaseTaskRow {
+  const marker = ftcFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-ftc",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "FTC filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
   it("suppresses when an open State AG human-fulfillment task exists", () => {
     expect(
@@ -215,10 +237,10 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
     ).toBe(false);
   });
 
-  it("does not suppress for other approved actions", () => {
+  it("does not suppress for other non-owned approved actions", () => {
     expect(
       shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-        approvedAction: { href: "/justice/ftc", label: "FTC" },
+        approvedAction: { href: "/justice/ftc-review", label: "FTC practice" },
         caseId: CASE_ID,
         tasks: [openStateAgTask()],
         filings: [
@@ -264,10 +286,10 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
     ).toBe(false);
   });
 
-  it("does not suppress demand letter for other approved actions", () => {
+  it("does not suppress demand letter for other non-owned approved actions", () => {
     expect(
       shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-        approvedAction: { href: "/justice/ftc", label: "FTC" },
+        approvedAction: { href: "/justice/ftc-review", label: "FTC practice" },
         caseId: CASE_ID,
         tasks: [openDemandLetterTask()],
         filings: [],
@@ -561,5 +583,43 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
         filings: [],
       })
     ).toBe(false);
+  });
+
+  it("suppresses when an open FTC human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: ftcAction,
+        caseId: CASE_ID,
+        tasks: [openFtcTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when a confirmed FTC filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: ftcAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "FTC (consumer complaint)",
+            confirmation_number: "ftc-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when FTC escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...ftcAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
   });
 });

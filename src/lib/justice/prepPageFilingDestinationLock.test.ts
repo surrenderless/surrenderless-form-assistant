@@ -17,6 +17,7 @@ const PREP_PAGE_LOCKED_FILING_DESTINATIONS = [
   ["/justice/fcc", "FCC"],
   ["/justice/payment-dispute", "Payment dispute (bank/card)"],
   ["/justice/merchant", "Merchant contact"],
+  ["/justice/ftc", "FTC (consumer complaint)"],
   ["/justice/ftc-review", "FTC (consumer complaint)"],
 ] as const;
 

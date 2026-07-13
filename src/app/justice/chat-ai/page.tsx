@@ -309,6 +309,11 @@ import {
   isApprovedBbbFilingAction,
 } from "@/lib/justice/bbbFilingTask";
 import {
+  findOpenFtcFilingTask,
+  hasFtcFilingWithConfirmation,
+  isApprovedFtcFilingAction,
+} from "@/lib/justice/ftcFilingTask";
+import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
@@ -5742,6 +5747,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showFtcFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedFtcFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showBbbFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedBbbFilingAction(approvedNextAction) &&
@@ -5782,6 +5797,11 @@ export default function JusticeChatAiPage() {
     isApprovedDotFilingAction(approvedNextAction) &&
     !findOpenDotFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasDotFilingWithConfirmation(savedFilings);
+  const showFtcFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedFtcFilingAction(approvedNextAction) &&
+    !findOpenFtcFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasFtcFilingWithConfirmation(savedFilings);
   const showBbbFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedBbbFilingAction(approvedNextAction) &&
@@ -5810,14 +5830,16 @@ export default function JusticeChatAiPage() {
     !approvedNextAction?.handling_requested_at?.trim() &&
     (approvedNextAction?.status === "approved" || approvedNextAction?.status === "started") &&
     !suppressSurrenderlessOwnedManualUi;
-  const showInlineFtcPracticePrep = shouldShowChatInlineFtcMockPracticePrep({
-    isUpdatingExistingCase,
-    caseId: activeUuidCaseId,
-    isLoaded,
-    isSignedIn: Boolean(isSignedIn),
-    preparedPacketApproved,
-    approvedNextAction,
-  });
+  const showInlineFtcPracticePrep =
+    !suppressSurrenderlessOwnedManualUi &&
+    shouldShowChatInlineFtcMockPracticePrep({
+      isUpdatingExistingCase,
+      caseId: activeUuidCaseId,
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      preparedPacketApproved,
+      approvedNextAction,
+    });
   const showInlineBbbPracticePrep = shouldShowChatInlineBbbMockPracticePrep({
     isUpdatingExistingCase,
     caseId: activeUuidCaseId,
@@ -5847,6 +5869,7 @@ export default function JusticeChatAiPage() {
     });
   const showInlineFtcReadOnlyPrep =
     Boolean(approvedNextAction) &&
+    !suppressSurrenderlessOwnedManualUi &&
     shouldShowChatInlineFtcMockReadOnlyPrep({
       isActiveUuidCase: isActiveUuidCaseChat,
       preparedPacketApproved,
@@ -6954,6 +6977,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showFtcFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">FTC filing queued.</span> Surrenderless has queued
+                    your FTC consumer complaint for operator filing using your case packet and draft.
+                    Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showBbbFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">BBB filing queued.</span> Surrenderless has queued
@@ -7003,6 +7036,13 @@ export default function JusticeChatAiPage() {
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">DOT filed.</span> Surrenderless recorded your USDOT
                     aviation complaint filing with confirmation on file. Your case will advance to the
+                    next approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showFtcFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">FTC filed.</span> Surrenderless recorded your FTC
+                    consumer complaint filing with confirmation on file. Your case will advance to the
                     next approved step when tracking updates.
                   </p>
                 ) : null}

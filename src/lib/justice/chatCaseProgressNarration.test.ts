@@ -293,6 +293,52 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["dot_confirmed"]);
   });
 
+  it("derives FTC queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "FTC (consumer complaint)",
+          href: "/justice/ftc",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-ftc",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "FTC filing: Acme",
+            due_date: null,
+            notes: `ftc_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["ftc_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "FTC (consumer complaint)",
+          href: "/justice/ftc",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "FTC (consumer complaint)",
+            confirmation_number: "ftc-123",
+          },
+        ],
+      })
+    ).toEqual(["ftc_confirmed"]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

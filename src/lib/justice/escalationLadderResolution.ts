@@ -25,6 +25,8 @@ const MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF = "/justice/fcc";
 
 const MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF = "/justice/dot";
 
+const MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF = "/justice/ftc";
+
 
 
 const HUMAN_FULFILLMENT_ESCALATION_HREFS = new Set([
@@ -40,6 +42,8 @@ const HUMAN_FULFILLMENT_ESCALATION_HREFS = new Set([
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
 
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
+
+  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
 
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
 
@@ -98,6 +102,14 @@ function dotFilingTaskNotesMarker(caseId: string): string {
 function bbbFilingTaskNotesMarker(caseId: string): string {
 
   return `bbb_filing_queue:${caseId.trim()}`;
+
+}
+
+
+
+function ftcFilingTaskNotesMarker(caseId: string): string {
+
+  return `ftc_filing_queue:${caseId.trim()}`;
 
 }
 
@@ -162,6 +174,15 @@ function findOpenBbbFilingTask(
   caseId: string
 ): JusticeCaseTaskRow | undefined {
   return findOpenEscalationTask(tasks, caseId, bbbFilingTaskNotesMarker(caseId));
+}
+
+
+
+function findOpenFtcFilingTask(
+  tasks: readonly JusticeCaseTaskRow[],
+  caseId: string
+): JusticeCaseTaskRow | undefined {
+  return findOpenEscalationTask(tasks, caseId, ftcFilingTaskNotesMarker(caseId));
 }
 
 
@@ -395,6 +416,26 @@ function shouldQueueBbbFilingFromClientState(clientState: unknown): boolean {
 
 
 
+function shouldQueueFtcFilingFromClientState(clientState: unknown): boolean {
+
+  const parsed = parseJusticeCaseClientState(clientState);
+
+  if (!parsed.prepared_packet_approved) return false;
+
+  const next = parsed.approved_next_action;
+
+  if (!next) return false;
+
+  if (next.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF) return false;
+
+  if (next.status === "completed") return false;
+
+  return true;
+
+}
+
+
+
 /** True when client_state still calls for a pending human-fulfillment operator queue step. */
 
 export function clientStateHasPendingHumanFulfillmentEscalation(clientState: unknown): boolean {
@@ -412,6 +453,8 @@ export function clientStateHasPendingHumanFulfillmentEscalation(clientState: unk
     shouldQueueFccFilingFromClientState(clientState) ||
 
     shouldQueueDotFilingFromClientState(clientState) ||
+
+    shouldQueueFtcFilingFromClientState(clientState) ||
 
     shouldQueueBbbFilingFromClientState(clientState)
 
@@ -535,6 +578,12 @@ export function hasPendingHumanFulfillmentEscalation(input: {
 
     }
 
+    if (findOpenEscalationTask(input.tasks, caseId, ftcFilingTaskNotesMarker(caseId))) {
+
+      return true;
+
+    }
+
   }
 
 
@@ -636,6 +685,14 @@ export function isEscalationLadderTerminalForResolution(
 
 
   if (href === MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF && status === "completed") {
+
+    return true;
+
+  }
+
+
+
+  if (href === MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF && status === "completed") {
 
     return true;
 

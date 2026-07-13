@@ -71,7 +71,10 @@ export const MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF = "/justice/p
 /** Approved-action href for merchant-contact manual filing tracking. */
 export const MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF = "/justice/merchant";
 
-/** Approved-action href for FTC consumer-complaint manual filing tracking. */
+/** Approved-action href for Surrenderless-owned FTC consumer-complaint filing. */
+export const MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF = "/justice/ftc";
+
+/** Approved-action href for FTC practice / ftc-review (practice-only tracking lock). */
 export const MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_PREP_HREF = "/justice/ftc-review";
 
 /** Filing row destinations that count for real BBB manual-action tracking. */
@@ -120,6 +123,10 @@ export const MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_FILING_DESTINATIONS = [
   "FTC (consumer complaint)",
 ] as const;
 
+/** Alias: owned FTC uses the same destination label as practice tracking. */
+export const MANUAL_ACTION_TRACKING_REAL_FTC_FILING_DESTINATIONS =
+  MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_FILING_DESTINATIONS;
+
 const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
   Record<string, readonly string[]>
 > = {
@@ -135,6 +142,7 @@ const MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF: Readonly<
     MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_FILING_DESTINATIONS,
   [MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF]:
     MANUAL_ACTION_TRACKING_REAL_MERCHANT_FILING_DESTINATIONS,
+  [MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF]: MANUAL_ACTION_TRACKING_REAL_FTC_FILING_DESTINATIONS,
   [MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_PREP_HREF]:
     MANUAL_ACTION_TRACKING_REAL_FTC_REVIEW_FILING_DESTINATIONS,
 };

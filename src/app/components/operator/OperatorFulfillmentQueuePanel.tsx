@@ -8,6 +8,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -34,6 +35,8 @@ function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
       return "FCC filing";
     case "dot":
       return "DOT filing";
+    case "ftc":
+      return "FTC filing";
     case "bbb":
       return "BBB filing";
     default: {
@@ -57,6 +60,8 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Record FCC filing";
     case "dot":
       return "Record DOT filing";
+    case "ftc":
+      return "Record FTC filing";
     case "bbb":
       return "Record BBB filing";
     default: {
@@ -100,6 +105,11 @@ function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"])
       return (
         canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF) ??
         "USDOT / aviation consumer"
+      );
+    case "ftc":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF) ??
+        "FTC (consumer complaint)"
       );
     case "bbb":
       return (
@@ -227,8 +237,8 @@ export function OperatorFulfillmentQueuePanel({
   if (items.length === 0) {
     return (
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        No queued DOT, FCC, payment dispute, CFPB, State AG, or demand letter fulfillment tasks right
-        now.
+        No queued FTC, BBB, DOT, FCC, payment dispute, CFPB, State AG, or demand letter fulfillment
+        tasks right now.
       </p>
     );
   }

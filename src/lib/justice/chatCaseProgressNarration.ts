@@ -20,6 +20,10 @@ import {
   hasFccFilingWithConfirmation,
   isApprovedFccFilingAction,
 } from "@/lib/justice/fccFilingTask";
+import {
+  hasFtcFilingWithConfirmation,
+  isApprovedFtcFilingAction,
+} from "@/lib/justice/ftcFilingTask";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import {
   hasPaymentDisputeFilingWithConfirmation,
@@ -41,6 +45,8 @@ export type ChatCaseProgressMilestone =
   | "dot_confirmed"
   | "cfpb_queued"
   | "cfpb_confirmed"
+  | "ftc_queued"
+  | "ftc_confirmed"
   | "bbb_queued"
   | "bbb_confirmed"
   | "bbb_filed"
@@ -59,6 +65,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "dot_confirmed",
   "cfpb_queued",
   "cfpb_confirmed",
+  "ftc_queued",
+  "ftc_confirmed",
   "bbb_queued",
   "bbb_confirmed",
   "bbb_filed",
@@ -159,6 +167,23 @@ export function deriveSatisfiedChatCaseProgressMilestones(
   }
 
   if (
+    isApprovedFtcFilingAction(action) &&
+    action.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: action,
+      caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    satisfied.push("ftc_queued");
+  }
+
+  if (hasFtcFilingWithConfirmation(input.filings)) {
+    satisfied.push("ftc_confirmed");
+  }
+
+  if (
     isApprovedBbbFilingAction(action) &&
     action.status === "approved" &&
     isChatPendingHumanFulfillmentEscalation({
@@ -245,6 +270,10 @@ export function buildChatCaseProgressNarrationMessage(
       return "I've queued your CFPB complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
     case "cfpb_confirmed":
       return "Your CFPB filing is confirmed on file. Surrenderless is advancing your case to the next step.";
+    case "ftc_queued":
+      return "I've queued your FTC consumer complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "ftc_confirmed":
+      return "Your FTC consumer complaint filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_queued":
       return "I've queued your Better Business Bureau complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
     case "bbb_confirmed":

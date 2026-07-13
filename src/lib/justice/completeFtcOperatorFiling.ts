@@ -23,18 +23,18 @@ import {
   shouldQueueDotFilingTask,
 } from "@/lib/justice/dotFilingTask";
 import {
-  completeFccFilingTaskIfOpen,
-  fccFilingsForManualTracking,
-  hasFccFilingWithConfirmation,
-  taskNotesMatchFccFilingMarker,
+  ensureFccFilingTask,
+  shouldQueueFccFilingTask,
 } from "@/lib/justice/fccFilingTask";
 import {
-  ensureFtcFilingTask,
-  shouldQueueFtcFilingTask,
+  completeFtcFilingTaskIfOpen,
+  ftcFilingsForManualTracking,
+  hasFtcFilingWithConfirmation,
+  taskNotesMatchFtcFilingMarker,
 } from "@/lib/justice/ftcFilingTask";
 import {
   canonicalFilingDestinationForApprovedActionHref,
-  MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
@@ -86,7 +86,7 @@ function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNex
   return { withTracking, local };
 }
 
-export type CompleteFccOperatorFilingInput = {
+export type CompleteFtcOperatorFilingInput = {
   caseId: string;
   taskId: string;
   destination: string;
@@ -95,7 +95,7 @@ export type CompleteFccOperatorFilingInput = {
   notes?: string | null;
 };
 
-export type CompleteFccOperatorFilingResult =
+export type CompleteFtcOperatorFilingResult =
   | {
       ok: true;
       filing: JusticeCaseFilingRow;
@@ -107,11 +107,11 @@ export type CompleteFccOperatorFilingResult =
     }
   | { ok: false; error: string; status: number };
 
-export async function completeFccOperatorFiling(
+export async function completeFtcOperatorFiling(
   supabase: SupabaseClient,
   userId: string,
-  input: CompleteFccOperatorFilingInput
-): Promise<CompleteFccOperatorFilingResult> {
+  input: CompleteFtcOperatorFilingInput
+): Promise<CompleteFtcOperatorFilingResult> {
   const caseId = input.caseId.trim();
   const taskId = input.taskId.trim();
   const destination = clampLen(input.destination.trim(), MAX_DEST);
@@ -130,10 +130,10 @@ export async function completeFccOperatorFiling(
   }
 
   const canonicalDestination =
-    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF) ??
+    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF) ??
     destination;
   if (destination !== canonicalDestination) {
-    return { ok: false, error: "Invalid FCC filing destination", status: 400 };
+    return { ok: false, error: "Invalid FTC filing destination", status: 400 };
   }
 
   const { data: caseRow, error: caseErr } = await supabase
@@ -161,12 +161,12 @@ export async function completeFccOperatorFiling(
     .maybeSingle();
 
   if (taskErr || !taskRow) {
-    return { ok: false, error: "FCC operator task not found", status: 404 };
+    return { ok: false, error: "FTC operator task not found", status: 404 };
   }
 
   const task = taskRow as JusticeCaseTaskRow;
-  if (!taskNotesMatchFccFilingMarker(task.notes, caseId)) {
-    return { ok: false, error: "Task is not an FCC operator filing task", status: 400 };
+  if (!taskNotesMatchFtcFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "Task is not an FTC operator filing task", status: 400 };
   }
 
   const { data: existingFilings, error: filingsErr } = await supabase
@@ -176,16 +176,16 @@ export async function completeFccOperatorFiling(
     .eq("user_id", userId);
 
   if (filingsErr) {
-    console.warn("justice fcc operator filing: list filings", filingsErr.message);
+    console.warn("justice ftc operator filing: list filings", filingsErr.message);
     return { ok: false, error: filingsErr.message, status: 500 };
   }
 
-  const fccFilings = fccFilingsForManualTracking((existingFilings ?? []) as JusticeCaseFilingRow[]);
-  if (fccFilings.length > 0) {
-    if (!hasFccFilingWithConfirmation(fccFilings)) {
+  const ftcFilings = ftcFilingsForManualTracking((existingFilings ?? []) as JusticeCaseFilingRow[]);
+  if (ftcFilings.length > 0) {
+    if (!hasFtcFilingWithConfirmation(ftcFilings)) {
       return {
         ok: false,
-        error: "An FCC filing record already exists for this case without confirmation",
+        error: "An FTC filing record already exists for this case without confirmation",
         status: 409,
       };
     }
@@ -195,11 +195,11 @@ export async function completeFccOperatorFiling(
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (fccFilings.length > 0 && task.completed_at?.trim()) {
+  if (ftcFilings.length > 0 && task.completed_at?.trim()) {
     idempotent = true;
-    filing = fccFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (fccFilings.length > 0) {
-    filing = fccFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+    filing = ftcFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+  } else if (ftcFilings.length > 0) {
+    filing = ftcFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
     idempotent = true;
   } else {
     const insertRow: Record<string, unknown> = {
@@ -218,7 +218,7 @@ export async function completeFccOperatorFiling(
       .single();
 
     if (insertErr || !inserted) {
-      console.warn("justice fcc operator filing: insert", insertErr?.message ?? "failed");
+      console.warn("justice ftc operator filing: insert", insertErr?.message ?? "failed");
       return { ok: false, error: insertErr?.message ?? "Could not save filing record", status: 500 };
     }
 
@@ -232,18 +232,18 @@ export async function completeFccOperatorFiling(
     });
   }
 
-  const taskResult = await completeFccFilingTaskIfOpen(supabase, userId, caseId, taskId);
+  const taskResult = await completeFtcFilingTaskIfOpen(supabase, userId, caseId, taskId);
   if (!taskResult.task) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the FCC operator task",
+      error: "Filing saved but could not complete the FTC operator task",
       status: 500,
     };
   }
   if (!taskResult.task.completed_at?.trim()) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the FCC operator task",
+      error: "Filing saved but could not complete the FTC operator task",
       status: 500,
     };
   }
@@ -257,7 +257,7 @@ export async function completeFccOperatorFiling(
   let nextApprovedNext: JusticeApprovedNextAction | undefined;
 
   if (
-    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF &&
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF &&
     approvedNext.status !== "completed"
   ) {
     const completedHref = approvedNext.href.trim();
@@ -293,7 +293,7 @@ export async function completeFccOperatorFiling(
       .eq("user_id", userId);
 
     if (patchErr) {
-      console.warn("justice fcc operator filing: patch client_state", patchErr.message);
+      console.warn("justice ftc operator filing: patch client_state", patchErr.message);
       return {
         ok: false,
         error: "Filing recorded but could not advance the approved next action",
@@ -319,14 +319,8 @@ export async function completeFccOperatorFiling(
         timeline = queueResult.timeline;
       }
     }
-    if (shouldQueueStateAgFilingTask(clientState)) {
-      const queueResult = await ensureStateAgFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueDemandLetterFilingTask(clientState)) {
-      const queueResult = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
+    if (shouldQueueFccFilingTask(clientState)) {
+      const queueResult = await ensureFccFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }
@@ -337,14 +331,20 @@ export async function completeFccOperatorFiling(
         timeline = queueResult.timeline;
       }
     }
-    if (shouldQueueFtcFilingTask(clientState)) {
-      const queueResult = await ensureFtcFilingTask(supabase, userId, caseId, intake);
+    if (shouldQueueBbbFilingTask(clientState)) {
+      const queueResult = await ensureBbbFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }
     }
-    if (shouldQueueBbbFilingTask(clientState)) {
-      const queueResult = await ensureBbbFilingTask(supabase, userId, caseId, intake);
+    if (shouldQueueStateAgFilingTask(clientState)) {
+      const queueResult = await ensureStateAgFilingTask(supabase, userId, caseId, intake);
+      if (queueResult.timeline) {
+        timeline = queueResult.timeline;
+      }
+    }
+    if (shouldQueueDemandLetterFilingTask(clientState)) {
+      const queueResult = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }

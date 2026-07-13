@@ -5,6 +5,7 @@ import {
   CHAT_OWNED_FULFILLMENT_DEMAND_LETTER_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_DOT_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_FCC_APPROVED_HREF,
+  CHAT_OWNED_FULFILLMENT_FTC_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF,
   CHAT_OWNED_FULFILLMENT_STATE_AG_APPROVED_HREF,
   observeChatOwnedFulfillmentCompletionSync,
@@ -593,5 +594,71 @@ describe("observeChatOwnedFulfillmentCompletionSync", () => {
     expect(completedSync.shouldRehydrateCase).toBe(true);
     expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
     expect(completedSync.currentSnapshot.completedStepIds).toEqual(["bbb"]);
+  });
+
+  it("detects FTC owned-step completion transition and requests rehydrate", () => {
+    const openFtcTask = {
+      id: "task-ftc-open",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "FTC filing",
+      due_date: null,
+      notes: `ftc_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    const completedFtcTask = {
+      ...openFtcTask,
+      id: "task-ftc-done",
+      completed_at: "2026-06-22T12:00:00.000Z",
+      updated_at: "2026-06-22T12:00:00.000Z",
+    };
+    const ftcConfirmedFilings = [
+      {
+        destination: "FTC (consumer complaint)",
+        confirmation_number: "ftc-confirmed-789",
+      },
+    ];
+
+    const pendingObservation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "FTC (consumer complaint)",
+        href: CHAT_OWNED_FULFILLMENT_FTC_APPROVED_HREF,
+        status: "approved" as const,
+      },
+      tasks: [openFtcTask],
+      filings: [],
+    };
+
+    const pendingSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: pendingObservation,
+      previousSnapshot: null,
+      wasPending: false,
+    });
+    expect(pendingSync.isPending).toBe(true);
+    expect(pendingSync.currentSnapshot.completedStepIds).toEqual([]);
+
+    const completedSync = observeChatOwnedFulfillmentCompletionSync({
+      observation: {
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "Better Business Bureau",
+          href: CHAT_OWNED_FULFILLMENT_BBB_APPROVED_HREF,
+          status: "approved" as const,
+        },
+        tasks: [completedFtcTask],
+        filings: ftcConfirmedFilings,
+      },
+      previousSnapshot: pendingSync.currentSnapshot,
+      wasPending: true,
+    });
+
+    expect(completedSync.ownedStepsNewlyCompleted).toEqual(["ftc"]);
+    expect(completedSync.approvedActionAdvanced).toBe(true);
+    expect(completedSync.shouldRehydrateCase).toBe(true);
+    expect(shouldRehydrateCaseAfterOwnedFulfillmentSync(completedSync)).toBe(true);
+    expect(completedSync.currentSnapshot.completedStepIds).toEqual(["ftc"]);
   });
 });
