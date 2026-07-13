@@ -201,6 +201,52 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["fcc_confirmed"]);
   });
 
+  it("derives DOT queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "USDOT / aviation consumer",
+          href: "/justice/dot",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-dot",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "DOT filing: Acme",
+            due_date: null,
+            notes: `dot_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["dot_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "USDOT / aviation consumer",
+          href: "/justice/dot",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "USDOT / aviation consumer",
+            confirmation_number: "dot-123",
+          },
+        ],
+      })
+    ).toEqual(["dot_confirmed"]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

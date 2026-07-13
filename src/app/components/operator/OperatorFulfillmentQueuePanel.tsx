@@ -5,6 +5,7 @@ import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
@@ -30,6 +31,8 @@ function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Payment dispute filing";
     case "fcc":
       return "FCC filing";
+    case "dot":
+      return "DOT filing";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -49,6 +52,8 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Record payment dispute filing";
     case "fcc":
       return "Record FCC filing";
+    case "dot":
+      return "Record DOT filing";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -85,6 +90,11 @@ function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"])
       return (
         canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF) ??
         "FCC"
+      );
+    case "dot":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF) ??
+        "USDOT / aviation consumer"
       );
     default: {
       const _exhaustive: never = step;
@@ -207,7 +217,7 @@ export function OperatorFulfillmentQueuePanel({
   if (items.length === 0) {
     return (
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        No queued FCC, payment dispute, CFPB, State AG, or demand letter fulfillment tasks right
+        No queued DOT, FCC, payment dispute, CFPB, State AG, or demand letter fulfillment tasks right
         now.
       </p>
     );

@@ -8,12 +8,17 @@ import {
   hasDemandLetterFilingWithConfirmation,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  findOpenDotFilingTask,
+  hasDotFilingWithConfirmation,
+} from "@/lib/justice/dotFilingTask";
+import {
   findOpenFccFilingTask,
   hasFccFilingWithConfirmation,
 } from "@/lib/justice/fccFilingTask";
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
@@ -113,6 +118,18 @@ function isFccStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams
   return false;
 }
 
+function isDotStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams): boolean {
+  if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF) {
+    return false;
+  }
+  const caseId = params.caseId.trim();
+  if (!caseId) return false;
+  if (findOpenDotFilingTask(params.tasks, caseId)) return true;
+  if (hasDotFilingWithConfirmation(params.filings)) return true;
+  if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  return false;
+}
+
 /**
  * True when Surrenderless owns the active approved step (human-fulfillment queue or confirmed filing).
  * Suppresses conflicting copy/paste prep and manual filing capture in chat for that step.
@@ -125,6 +142,7 @@ export function shouldSuppressChatManualActionForSurrenderlessOwnedStep(
     isDemandLetterStepOwnedBySurrenderless(params) ||
     isCfpbStepOwnedBySurrenderless(params) ||
     isPaymentDisputeStepOwnedBySurrenderless(params) ||
-    isFccStepOwnedBySurrenderless(params)
+    isFccStepOwnedBySurrenderless(params) ||
+    isDotStepOwnedBySurrenderless(params)
   );
 }

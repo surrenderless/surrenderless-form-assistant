@@ -18,11 +18,16 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
+import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
 
 export default function JusticeDotAviationPrepPage() {
+  const ownedPrepPage = useSurrenderlessOwnedHumanFulfillmentPrepPage(
+    MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF
+  );
   const { status: hydrationStatus, intake } = useJusticeActionPageHydration();
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
@@ -49,6 +54,10 @@ export default function JusticeDotAviationPrepPage() {
     caseId: optionalHubEscapeCaseId,
     hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
   });
+
+  if (ownedPrepPage.status === "owned") {
+    return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
+  }
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
