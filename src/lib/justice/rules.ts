@@ -263,9 +263,8 @@ export function computeJusticeDestinations(
     ftcRoute = "/justice/ftc";
   } else {
     ftcStatus = "later";
-    ftcRationale = ctx.useCompanyContactLabels
-      ? "Unlocks after you document company contact and a failed or refused outcome."
-      : "Unlocks after you document merchant contact and a failed or refused outcome.";
+    ftcRationale =
+      "Unlocks after merchant or company contact is documented and a failed or refused outcome.";
     ftcRoute = undefined;
   }
   push({

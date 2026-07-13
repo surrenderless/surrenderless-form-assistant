@@ -47,6 +47,10 @@ import {
   shouldQueueFtcFilingTask,
 } from "@/lib/justice/ftcFilingTask";
 import {
+  ensureMerchantContactFilingTask,
+  shouldQueueMerchantContactFilingTask,
+} from "@/lib/justice/merchantContactFilingTask";
+import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -431,6 +435,24 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       });
       if (timeline) {
         responseData = { ...responseData, timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    shouldQueueMerchantContactFilingTask(patch.client_state)
+  ) {
+    const intakePayload = data.intake;
+    if (isJusticeIntakePayload(intakePayload)) {
+      const taskResult = await ensureMerchantContactFilingTask(
+        supabase,
+        userId,
+        id,
+        intakePayload as JusticeIntake
+      );
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
       }
     }
   }

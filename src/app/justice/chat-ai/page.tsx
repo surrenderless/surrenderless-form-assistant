@@ -314,6 +314,11 @@ import {
   isApprovedFtcFilingAction,
 } from "@/lib/justice/ftcFilingTask";
 import {
+  findOpenMerchantContactFilingTask,
+  hasMerchantContactFilingWithConfirmation,
+  isApprovedMerchantContactFilingAction,
+} from "@/lib/justice/merchantContactFilingTask";
+import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
@@ -5747,6 +5752,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showMerchantContactQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedMerchantContactFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showFtcFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFtcFilingAction(approvedNextAction) &&
@@ -5797,6 +5812,11 @@ export default function JusticeChatAiPage() {
     isApprovedDotFilingAction(approvedNextAction) &&
     !findOpenDotFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasDotFilingWithConfirmation(savedFilings);
+  const showMerchantContactFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedMerchantContactFilingAction(approvedNextAction) &&
+    !findOpenMerchantContactFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasMerchantContactFilingWithConfirmation(savedFilings);
   const showFtcFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFtcFilingAction(approvedNextAction) &&
@@ -6977,6 +6997,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showMerchantContactQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">Merchant contact queued.</span> Surrenderless has
+                    queued merchant or company outreach for operator contact using your case packet and
+                    draft. Nothing has been sent yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showFtcFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">FTC filing queued.</span> Surrenderless has queued
@@ -7037,6 +7067,13 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">DOT filed.</span> Surrenderless recorded your USDOT
                     aviation complaint filing with confirmation on file. Your case will advance to the
                     next approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showMerchantContactFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">Merchant contact recorded.</span> Surrenderless
+                    recorded merchant or company outreach with confirmation on file. Your case will
+                    advance to the next approved step when tracking updates.
                   </p>
                 ) : null}
                 {showFtcFilingFiledNotice ? (

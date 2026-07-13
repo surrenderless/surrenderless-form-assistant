@@ -26,6 +26,10 @@ import {
 } from "@/lib/justice/ftcFilingTask";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import {
+  hasMerchantContactFilingWithConfirmation,
+  isApprovedMerchantContactFilingAction,
+} from "@/lib/justice/merchantContactFilingTask";
+import {
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -37,6 +41,8 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type ChatCaseProgressMilestone =
+  | "merchant_contact_queued"
+  | "merchant_contact_confirmed"
   | "payment_dispute_queued"
   | "payment_dispute_confirmed"
   | "fcc_queued"
@@ -57,6 +63,8 @@ export type ChatCaseProgressMilestone =
   | "resolution_ready";
 
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
+  "merchant_contact_queued",
+  "merchant_contact_confirmed",
   "payment_dispute_queued",
   "payment_dispute_confirmed",
   "fcc_queued",
@@ -97,6 +105,23 @@ export function deriveSatisfiedChatCaseProgressMilestones(
 
   const action = input.approvedAction;
   const satisfied: ChatCaseProgressMilestone[] = [];
+
+  if (
+    isApprovedMerchantContactFilingAction(action) &&
+    action.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: action,
+      caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    satisfied.push("merchant_contact_queued");
+  }
+
+  if (hasMerchantContactFilingWithConfirmation(input.filings)) {
+    satisfied.push("merchant_contact_confirmed");
+  }
 
   if (
     isApprovedPaymentDisputeFilingAction(action) &&
@@ -254,6 +279,10 @@ export function buildChatCaseProgressNarrationMessage(
   milestone: ChatCaseProgressMilestone
 ): string {
   switch (milestone) {
+    case "merchant_contact_queued":
+      return "I've queued merchant or company contact with Surrenderless for operator outreach. Stay here in chat — I'll update you when outreach is documented.";
+    case "merchant_contact_confirmed":
+      return "Merchant or company contact is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "payment_dispute_queued":
       return "I've queued your payment dispute with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed with your bank or card issuer.";
     case "payment_dispute_confirmed":

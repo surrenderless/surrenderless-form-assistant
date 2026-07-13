@@ -25,6 +25,10 @@ import {
   taskNotesMatchFtcFilingMarker,
 } from "@/lib/justice/ftcFilingTask";
 import {
+  parseMerchantContactFilingTaskDraft,
+  taskNotesMatchMerchantContactFilingMarker,
+} from "@/lib/justice/merchantContactFilingTask";
+import {
   parsePaymentDisputeFilingTaskDraft,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -36,6 +40,7 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 export type OperatorFulfillmentStep =
+  | "merchant_contact"
   | "state_ag"
   | "demand_letter"
   | "cfpb"
@@ -74,6 +79,19 @@ function classifyOpenOperatorTask(
   if (task.completed_at?.trim()) return null;
   const caseId = task.case_id.trim();
   if (!caseId) return null;
+
+  if (taskNotesMatchMerchantContactFilingMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "merchant_contact",
+      task_title: task.title?.trim() || "Merchant contact",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parseMerchantContactFilingTaskDraft(task.notes)),
+    };
+  }
 
   if (taskNotesMatchStateAgFilingMarker(task.notes, caseId)) {
     return {

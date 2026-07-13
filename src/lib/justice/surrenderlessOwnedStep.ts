@@ -24,12 +24,17 @@ import {
   hasFtcFilingWithConfirmation,
 } from "@/lib/justice/ftcFilingTask";
 import {
+  findOpenMerchantContactFilingTask,
+  hasMerchantContactFilingWithConfirmation,
+} from "@/lib/justice/merchantContactFilingTask";
+import {
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   type ManualActionTrackingFiling,
@@ -164,6 +169,20 @@ function isFtcStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams
   return false;
 }
 
+function isMerchantContactStepOwnedBySurrenderless(
+  params: SurrenderlessOwnedStepCheckParams
+): boolean {
+  if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF) {
+    return false;
+  }
+  const caseId = params.caseId.trim();
+  if (!caseId) return false;
+  if (findOpenMerchantContactFilingTask(params.tasks, caseId)) return true;
+  if (hasMerchantContactFilingWithConfirmation(params.filings)) return true;
+  if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  return false;
+}
+
 /**
  * True when Surrenderless owns the active approved step (human-fulfillment queue or confirmed filing).
  * Suppresses conflicting copy/paste prep and manual filing capture in chat for that step.
@@ -172,6 +191,7 @@ export function shouldSuppressChatManualActionForSurrenderlessOwnedStep(
   params: SurrenderlessOwnedStepCheckParams
 ): boolean {
   return (
+    isMerchantContactStepOwnedBySurrenderless(params) ||
     isStateAgStepOwnedBySurrenderless(params) ||
     isDemandLetterStepOwnedBySurrenderless(params) ||
     isCfpbStepOwnedBySurrenderless(params) ||

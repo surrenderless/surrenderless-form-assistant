@@ -82,7 +82,7 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expectUrlStaysOnChatAi(page);
   });
 
-  test("filing step offers in-chat capture without packet detour", async ({ page }) => {
+  test("owned merchant step queues in chat without DIY filing capture", async ({ page }) => {
     test.setTimeout(120_000);
 
     await seedActiveCaseMerchantFilingStep(page);
@@ -95,25 +95,17 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     const tracking = page.locator("#chat-ai-approved-action-tracking");
     await tracking.scrollIntoViewIfNeeded();
     await expect(tracking).toBeVisible({ timeout: 30_000 });
-
-    const handlingTracking = tracking.locator("p").filter({
-      has: page.locator("span.font-medium").filter({ hasText: "Handling tracking:" }),
+    await expect(tracking.getByText("Next step:")).toContainText("Merchant contact", {
+      timeout: 15_000,
     });
-    await expect(handlingTracking).toBeVisible({ timeout: 30_000 });
-    await expect(handlingTracking).toContainText("Add filing records in chat below");
-
-    await expect(tracking.getByRole("link", { name: /Open filing records/i })).toHaveCount(0);
+    await expect(page.getByText("Merchant contact queued.")).toBeVisible({ timeout: 30_000 });
+    await expect(tracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
     await expect(tracking.locator('a[href="/justice/packet"]')).toHaveCount(0);
-    await expect(tracking.locator('a[href*="/justice/packet"]')).toHaveCount(0);
     await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));
-
-    const filingForm = tracking.getByRole("form", { name: "Record manual filing" });
-    await expect(filingForm).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator("#chat-ai-inline-filing-capture")).toBeVisible();
     await expectUrlStaysOnChatAi(page);
   });
 
-  test("evidence and merchant hubs redirect signed-in resumable consumers into chat-ai", async ({
+  test("evidence hub redirects and merchant owned prep stays Surrenderless-owned", async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -128,11 +120,9 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expect(page.getByRole("link", { name: "Organize evidence" })).toHaveCount(0);
 
     await page.goto("/justice/merchant");
-    await page.waitForURL(/\/justice\/chat-ai/, { timeout: 30_000 });
-    await expect(page.locator("#chat-ai-approved-action-tracking")).toBeVisible({
-      timeout: 30_000,
-    });
-    await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));
-    await expectUrlStaysOnChatAi(page);
+    await expect(
+      page.getByRole("heading", { name: "Surrenderless is handling this step" })
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(/\/justice\/merchant/);
   });
 });

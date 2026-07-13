@@ -6,6 +6,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -15,6 +16,7 @@ import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFil
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
 import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
 import { ftcFilingTaskNotesMarker } from "@/lib/justice/ftcFilingTask";
+import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
 import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
@@ -60,6 +62,11 @@ const bbbAction = {
 const ftcAction = {
   href: MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
   label: "FTC (consumer complaint)",
+} as const;
+
+const merchantContactAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+  label: "Merchant contact",
 } as const;
 
 function openStateAgTask(): JusticeCaseTaskRow {
@@ -174,6 +181,21 @@ function openFtcTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "FTC filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openMerchantContactTask(): JusticeCaseTaskRow {
+  const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-merchant-contact",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "Merchant contact: Acme Retail",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -616,6 +638,44 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
     expect(
       shouldSuppressChatManualActionForSurrenderlessOwnedStep({
         approvedAction: { ...ftcAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when an open merchant-contact human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: merchantContactAction,
+        caseId: CASE_ID,
+        tasks: [openMerchantContactTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when a confirmed merchant-contact filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: merchantContactAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "Merchant contact",
+            confirmation_number: "merchant-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when merchant contact is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...merchantContactAction, status: "approved" },
         caseId: CASE_ID,
         tasks: [],
         filings: [],
