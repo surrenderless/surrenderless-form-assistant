@@ -14,6 +14,10 @@ import {
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  hasFccFilingWithConfirmation,
+  isApprovedFccFilingAction,
+} from "@/lib/justice/fccFilingTask";
+import {
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -32,6 +36,8 @@ const BBB_TRACKING_ACTION = {
 export type ChatCaseProgressMilestone =
   | "payment_dispute_queued"
   | "payment_dispute_confirmed"
+  | "fcc_queued"
+  | "fcc_confirmed"
   | "cfpb_queued"
   | "cfpb_confirmed"
   | "bbb_filed"
@@ -44,6 +50,8 @@ export type ChatCaseProgressMilestone =
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
   "payment_dispute_queued",
   "payment_dispute_confirmed",
+  "fcc_queued",
+  "fcc_confirmed",
   "cfpb_queued",
   "cfpb_confirmed",
   "bbb_filed",
@@ -95,6 +103,23 @@ export function deriveSatisfiedChatCaseProgressMilestones(
 
   if (hasPaymentDisputeFilingWithConfirmation(input.filings)) {
     satisfied.push("payment_dispute_confirmed");
+  }
+
+  if (
+    isApprovedFccFilingAction(action) &&
+    action.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: action,
+      caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    satisfied.push("fcc_queued");
+  }
+
+  if (hasFccFilingWithConfirmation(input.filings)) {
+    satisfied.push("fcc_confirmed");
   }
 
   if (
@@ -176,6 +201,10 @@ export function buildChatCaseProgressNarrationMessage(
       return "I've queued your payment dispute with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed with your bank or card issuer.";
     case "payment_dispute_confirmed":
       return "Your payment dispute filing is confirmed on file. Surrenderless is advancing your case to the next step.";
+    case "fcc_queued":
+      return "I've queued your FCC complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "fcc_confirmed":
+      return "Your FCC filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "cfpb_queued":
       return "I've queued your CFPB complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
     case "cfpb_confirmed":

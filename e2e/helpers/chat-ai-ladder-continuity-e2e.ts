@@ -288,6 +288,46 @@ export async function seedActiveCasePaymentDisputeFilingStep(page: Page): Promis
   });
 }
 
+/**
+ * FCC approved + packet approved so chat queues Surrenderless-owned FCC fulfillment.
+ * Telecom story without merchant contact so completion is terminal for resolution endgame.
+ */
+export async function seedActiveCaseFccFilingStep(page: Page): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    company_name: "Acme Wireless",
+    problem_category: "service_failed" as const,
+    purchase_or_signup: "wireless phone plan",
+    story: "Spam robocalls and unauthorized wireless charges after canceling service.",
+    money_involved: "$89.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "FCC",
+    href: "/justice/fcc",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:10.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
 export async function seedActiveCaseStateAgQueued(page: Page): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
   const intake = { ...buildPlaywrightMockE2eCaseIntake(), already_contacted: "yes" as const };

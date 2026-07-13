@@ -319,6 +319,11 @@ import {
   isApprovedCfpbFilingAction,
 } from "@/lib/justice/cfpbFilingTask";
 import {
+  findOpenFccFilingTask,
+  hasFccFilingWithConfirmation,
+  isApprovedFccFilingAction,
+} from "@/lib/justice/fccFilingTask";
+import {
   findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
@@ -5705,6 +5710,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showFccFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedFccFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
@@ -5725,6 +5740,11 @@ export default function JusticeChatAiPage() {
     isApprovedPaymentDisputeFilingAction(approvedNextAction) &&
     !findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasPaymentDisputeFilingWithConfirmation(savedFilings);
+  const showFccFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedFccFilingAction(approvedNextAction) &&
+    !findOpenFccFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasFccFilingWithConfirmation(savedFilings);
   const suppressSurrenderlessOwnedManualUi = suppressSurrenderlessOwnedManualUiEarly;
   const showInlineApprovedPrepVisible =
     showInlineApprovedPrep &&
@@ -6870,6 +6890,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showFccFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">FCC filing queued.</span> Surrenderless has queued
+                    your FCC complaint for operator filing using your prepared complaint and evidence.
+                    Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showDemandLetterSentNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
@@ -6896,6 +6926,13 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">Payment dispute filed.</span> Surrenderless recorded
                     your bank/card dispute filing with confirmation on file. Your case will advance to
                     the next approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showFccFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">FCC filed.</span> Surrenderless recorded your FCC
+                    complaint filing with confirmation on file. Your case will advance to the next
+                    approved step when tracking updates.
                   </p>
                 ) : null}
                 {showMarkStepOpenedVisible ? (

@@ -21,6 +21,8 @@ const MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF = "/justice/cfpb";
 
 const MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF = "/justice/payment-dispute";
 
+const MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF = "/justice/fcc";
+
 
 
 const HUMAN_FULFILLMENT_ESCALATION_HREFS = new Set([
@@ -32,6 +34,8 @@ const HUMAN_FULFILLMENT_ESCALATION_HREFS = new Set([
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
 
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+
+  MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
 
 ]);
 
@@ -69,6 +73,14 @@ function paymentDisputeFilingTaskNotesMarker(caseId: string): string {
 
 
 
+function fccFilingTaskNotesMarker(caseId: string): string {
+
+  return `fcc_filing_queue:${caseId.trim()}`;
+
+}
+
+
+
 function findOpenStateAgFilingTask(
   tasks: readonly JusticeCaseTaskRow[],
   caseId: string
@@ -101,6 +113,15 @@ function findOpenPaymentDisputeFilingTask(
   caseId: string
 ): JusticeCaseTaskRow | undefined {
   return findOpenEscalationTask(tasks, caseId, paymentDisputeFilingTaskNotesMarker(caseId));
+}
+
+
+
+function findOpenFccFilingTask(
+  tasks: readonly JusticeCaseTaskRow[],
+  caseId: string
+): JusticeCaseTaskRow | undefined {
+  return findOpenEscalationTask(tasks, caseId, fccFilingTaskNotesMarker(caseId));
 }
 
 
@@ -274,6 +295,26 @@ function shouldQueuePaymentDisputeFilingFromClientState(clientState: unknown): b
 
 
 
+function shouldQueueFccFilingFromClientState(clientState: unknown): boolean {
+
+  const parsed = parseJusticeCaseClientState(clientState);
+
+  if (!parsed.prepared_packet_approved) return false;
+
+  const next = parsed.approved_next_action;
+
+  if (!next) return false;
+
+  if (next.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF) return false;
+
+  if (next.status === "completed") return false;
+
+  return true;
+
+}
+
+
+
 /** True when client_state still calls for a pending human-fulfillment operator queue step. */
 
 export function clientStateHasPendingHumanFulfillmentEscalation(clientState: unknown): boolean {
@@ -286,7 +327,9 @@ export function clientStateHasPendingHumanFulfillmentEscalation(clientState: unk
 
     shouldQueueCfpbFilingFromClientState(clientState) ||
 
-    shouldQueuePaymentDisputeFilingFromClientState(clientState)
+    shouldQueuePaymentDisputeFilingFromClientState(clientState) ||
+
+    shouldQueueFccFilingFromClientState(clientState)
 
   );
 
@@ -390,6 +433,12 @@ export function hasPendingHumanFulfillmentEscalation(input: {
 
     }
 
+    if (findOpenEscalationTask(input.tasks, caseId, fccFilingTaskNotesMarker(caseId))) {
+
+      return true;
+
+    }
+
   }
 
 
@@ -474,6 +523,14 @@ export function isEscalationLadderTerminalForResolution(
 
 
 
+  if (href === MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF && status === "completed") {
+
+    return true;
+
+  }
+
+
+
   if (href === MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF && status === "completed") {
 
     return true;
@@ -525,6 +582,8 @@ export function isOperatorFulfillmentTerminalFromTasksAndFilings(input: {
   if (findOpenCfpbFilingTask(input.tasks, caseId)) return false;
 
   if (findOpenPaymentDisputeFilingTask(input.tasks, caseId)) return false;
+
+  if (findOpenFccFilingTask(input.tasks, caseId)) return false;
 
   return hasDemandLetterFilingWithConfirmationFromFilings(input.filings);
 
