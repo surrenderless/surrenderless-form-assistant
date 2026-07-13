@@ -1,32 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { REAL_BBB_COMPLAINT_FILING_DESTINATION } from "@/lib/justice/recordRealBbbComplaintFiling";
+import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 import {
-  REAL_BBB_COMPLAINT_SUBMIT_URL,
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
 } from "./helpers/clerk-e2e";
 import {
-  REAL_BBB_COMPLAINT_FILING_CONFIRMATION,
   hydrateChatAiSessionForRealBbbAutofill,
   seedPlaywrightMockCaseForRealBbbChatAutofill,
 } from "./helpers/real-bbb-chat-autofill-e2e";
-
-const REAL_BBB_AUTOFILL_PROBE_USER_DATA = {
-  email: "e2e-real-bbb-chat-autofill@example.com",
-  business_name: "Acme Retail",
-  issue_type: "billing",
-  complaint_description: "Real BBB chat autofill browser auth probe.",
-  incident_date: "2026-01-01",
-  contact_full_name: "Jordan Lee",
-  contact_email: "e2e-chat@example.com",
-};
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in chat Run BBB autofill completes via mocked real-BBB submit-form lane", async ({
+test("signed-in chat suppresses Run BBB autofill when Surrenderless owns BBB fulfillment", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -41,53 +29,10 @@ test("signed-in chat Run BBB autofill completes via mocked real-BBB submit-form 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(page.locator("#chat-ai-input")).toBeVisible({ timeout: 30_000 });
 
-  await expect
-    .poll(
-      async () =>
-        page.evaluate(
-          async ({ url, userData }) => {
-            const res = await fetch("/api/submit-form", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({ url, userData }),
-            });
-            return res.status;
-          },
-          { url: REAL_BBB_COMPLAINT_SUBMIT_URL, userData: REAL_BBB_AUTOFILL_PROBE_USER_DATA }
-        ),
-      { timeout: 30_000 }
-    )
-    .toBe(200);
-
-  const realBbbAutofillBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB complaint" }),
-    })
-    .filter({ has: page.getByText("www.bbb.org/complain/") });
-
-  await expect(realBbbAutofillBlock).toBeVisible({ timeout: 15_000 });
-  await expect(realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" })).toBeVisible();
-  await expect(realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" })).toBeDisabled();
-
-  await realBbbAutofillBlock
-    .getByRole("checkbox", { name: "I confirm this information is accurate to the best of my knowledge." })
-    .check();
-  await realBbbAutofillBlock.getByRole("button", { name: "Run BBB autofill" }).click();
-
-  await expect(page).toHaveURL(/\/justice\/chat-ai/);
-
-  const assistedSubmissionSnapshot = page
-    .locator("div.mt-2.rounded-lg.border")
-    .filter({ has: page.getByText("Last assisted submission attempt", { exact: true }) });
-  await expect(assistedSubmissionSnapshot).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
   await expect(
-    assistedSubmissionSnapshot.getByText(REAL_BBB_COMPLAINT_FILING_DESTINATION, { exact: true })
-  ).toBeVisible();
-  await expect(assistedSubmissionSnapshot).toContainText(
-    `Confirmation: ${REAL_BBB_COMPLAINT_FILING_CONFIRMATION}`
-  );
-  await expect(assistedSubmissionSnapshot).toContainText("Filing id: playwright_e2e_bbb_filing");
-  await expect(assistedSubmissionSnapshot).toContainText("Assisted after packet approval");
+    page.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Run BBB autofill" })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
 });

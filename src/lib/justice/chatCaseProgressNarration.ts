@@ -1,8 +1,7 @@
 import {
-  filingsForApprovedActionManualTracking,
-  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
-  type ManualActionTrackingFiling,
-} from "@/lib/justice/handlingTrackingProgress";
+  hasBbbFilingWithConfirmation,
+  isApprovedBbbFilingAction,
+} from "@/lib/justice/bbbFilingTask";
 import { isChatPendingHumanFulfillmentEscalation } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
 import {
@@ -21,6 +20,7 @@ import {
   hasFccFilingWithConfirmation,
   isApprovedFccFilingAction,
 } from "@/lib/justice/fccFilingTask";
+import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import {
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
@@ -32,11 +32,6 @@ import {
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
-const BBB_TRACKING_ACTION = {
-  href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
-  label: "Better Business Bureau",
-} as const;
-
 export type ChatCaseProgressMilestone =
   | "payment_dispute_queued"
   | "payment_dispute_confirmed"
@@ -46,6 +41,8 @@ export type ChatCaseProgressMilestone =
   | "dot_confirmed"
   | "cfpb_queued"
   | "cfpb_confirmed"
+  | "bbb_queued"
+  | "bbb_confirmed"
   | "bbb_filed"
   | "state_ag_queued"
   | "state_ag_confirmed"
@@ -62,6 +59,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "dot_confirmed",
   "cfpb_queued",
   "cfpb_confirmed",
+  "bbb_queued",
+  "bbb_confirmed",
   "bbb_filed",
   "state_ag_queued",
   "state_ag_confirmed",
@@ -79,13 +78,8 @@ export type ChatCaseProgressObservation = {
   filings: readonly ManualActionTrackingFiling[];
 };
 
-export function hasBbbFilingWithConfirmation(
-  filings: readonly ManualActionTrackingFiling[]
-): boolean {
-  return filingsForApprovedActionManualTracking(filings, BBB_TRACKING_ACTION).some((filing) =>
-    Boolean(filing.confirmation_number?.trim())
-  );
-}
+/** @deprecated Prefer hasBbbFilingWithConfirmation from bbbFilingTask — re-exported for older imports. */
+export { hasBbbFilingWithConfirmation };
 
 export function deriveSatisfiedChatCaseProgressMilestones(
   input: ChatCaseProgressObservation
@@ -164,8 +158,21 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     satisfied.push("cfpb_confirmed");
   }
 
+  if (
+    isApprovedBbbFilingAction(action) &&
+    action.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: action,
+      caseId,
+      tasks: input.tasks,
+      filings: input.filings,
+    })
+  ) {
+    satisfied.push("bbb_queued");
+  }
+
   if (hasBbbFilingWithConfirmation(input.filings)) {
-    satisfied.push("bbb_filed");
+    satisfied.push("bbb_confirmed");
   }
 
   if (
@@ -238,6 +245,10 @@ export function buildChatCaseProgressNarrationMessage(
       return "I've queued your CFPB complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
     case "cfpb_confirmed":
       return "Your CFPB filing is confirmed on file. Surrenderless is advancing your case to the next step.";
+    case "bbb_queued":
+      return "I've queued your Better Business Bureau complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "bbb_confirmed":
+      return "Your Better Business Bureau filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_filed":
       return "Your Better Business Bureau complaint is on file with confirmation recorded. Surrenderless will carry your case to the next escalation step — you can stay in this chat.";
     case "state_ag_queued":

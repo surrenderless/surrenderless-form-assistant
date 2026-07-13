@@ -10,7 +10,6 @@ import {
   CHAT_INTAKE_COMMIT_MESSAGE,
 } from "@/lib/justice/chatIntakeCommitGates";
 import {
-  CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE,
   CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
 } from "@/lib/justice/chatLegalConsentGates";
@@ -51,10 +50,10 @@ export function chatAiActionTracking(page: Page): Locator {
 }
 
 /**
- * Drive a signed-in consumer through chat-ai UI until State AG is queued for operator fulfillment.
+ * Drive a signed-in consumer through chat-ai UI until BBB is queued for operator fulfillment.
  * Uses production chat gates and mock pipelines only — no direct client_state patches.
  */
-export async function driveConsumerToStateAgQueuedFromChat(page: Page): Promise<void> {
+export async function driveConsumerToBbbQueuedFromChat(page: Page): Promise<void> {
   await page.route("**://www.bbb.org/**", () => {
     throw new Error("Live BBB navigation must not occur during Playwright E2E.");
   });
@@ -125,25 +124,69 @@ export async function driveConsumerToStateAgQueuedFromChat(page: Page): Promise<
     timeout: 15_000,
   });
 
-  const realBbbAutofillBlock = page
-    .locator("div.mt-3.space-y-2.rounded-lg.border")
-    .filter({
-      has: page.locator("p.text-xs.font-medium").filter({ hasText: "BBB complaint" }),
-    })
-    .filter({ has: page.getByText("www.bbb.org/complain/") });
-  await expect(realBbbAutofillBlock).toBeVisible({ timeout: 15_000 });
-
-  await chatInput.fill(CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE);
-  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
   await expect(
-    chatTranscript.getByText(CHAT_LEGAL_CONSENT_BBB_ACCURACY_AND_RUN_MESSAGE)
-  ).toBeVisible({ timeout: 15_000 });
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(actionTracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run BBB autofill" })).toHaveCount(0);
   await expectUrlStaysOnChatAi(page);
+}
 
+/** Complete BBB fulfillment for Acme Retail via operator fulfillment UI (real click, not request.post). */
+export async function completeBbbFulfillmentViaOperatorUi(operatorPage: Page): Promise<void> {
+  await operatorPage.goto("/operator/fulfillment");
+  await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const bbbItem = operatorPage.locator("li").filter({ hasText: "Acme Retail" }).first();
+  await expect(bbbItem).toBeVisible({ timeout: 30_000 });
+  await expect(bbbItem.getByText("Step: BBB filing")).toBeVisible();
+
+  await bbbItem.locator('input[type="date"]').fill("2026-06-21");
+  await bbbItem.getByPlaceholder("Portal confirmation or reference number").fill("e2e-ui-bbb-888");
+  const completeResponsePromise = operatorPage.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" &&
+      res.url().includes("/api/justice/bbb-filing/complete"),
+    { timeout: 30_000 }
+  );
+  await bbbItem.getByRole("button", { name: "Mark fulfillment complete" }).click();
+  const completeResponse = await completeResponsePromise;
+  expect(completeResponse.ok()).toBeTruthy();
+  const completeBody = (await completeResponse.json()) as { advanced?: boolean };
+  expect(completeBody.advanced).toBe(true);
+
+  await expect(operatorPage.locator("li").filter({ hasText: "BBB filing" })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+  await expect(
+    operatorPage
+      .locator("li")
+      .filter({ hasText: "State Attorney General filing" })
+      .filter({ hasText: "Acme Retail" })
+  ).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Drive a signed-in consumer through chat-ai UI until State AG is queued for operator fulfillment.
+ * Uses production chat gates and mock pipelines only — no direct client_state patches.
+ * Operator completes owned BBB (consumer autofill is suppressed).
+ */
+export async function driveConsumerToStateAgQueuedFromChat(
+  page: Page,
+  operatorPage: Page
+): Promise<void> {
+  await driveConsumerToBbbQueuedFromChat(page);
+  await completeBbbFulfillmentViaOperatorUi(operatorPage);
+
+  const actionTracking = chatAiActionTracking(page);
+  const chatTranscript = chatAiTranscript(page);
   await expect(actionTracking.getByText("Next step:")).toContainText("State Attorney General", {
     timeout: 60_000,
   });
-  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_filed"))).toBeVisible({
+  await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_confirmed"))).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByText("State AG filing queued.")).toBeVisible({ timeout: 30_000 });
@@ -228,7 +271,7 @@ export async function driveConsumerToDemandLetterQueuedFromChat(
   consumerPage: Page,
   operatorPage: Page
 ): Promise<void> {
-  await driveConsumerToStateAgQueuedFromChat(consumerPage);
+  await driveConsumerToStateAgQueuedFromChat(consumerPage, operatorPage);
 
   const actionTracking = chatAiActionTracking(consumerPage);
   await actionTracking.scrollIntoViewIfNeeded();

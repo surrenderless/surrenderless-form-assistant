@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import {
   canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
@@ -33,6 +34,8 @@ function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
       return "FCC filing";
     case "dot":
       return "DOT filing";
+    case "bbb":
+      return "BBB filing";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -54,6 +57,8 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Record FCC filing";
     case "dot":
       return "Record DOT filing";
+    case "bbb":
+      return "Record BBB filing";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -95,6 +100,11 @@ function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"])
       return (
         canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF) ??
         "USDOT / aviation consumer"
+      );
+    case "bbb":
+      return (
+        canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF) ??
+        "Better Business Bureau"
       );
     default: {
       const _exhaustive: never = step;

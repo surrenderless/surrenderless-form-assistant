@@ -304,6 +304,11 @@ import {
   MAX_INTAKE_CHAT_USER_MESSAGE,
 } from "@/lib/justice/parseIntakeChatAiResponse";
 import {
+  findOpenBbbFilingTask,
+  hasBbbFilingWithConfirmation,
+  isApprovedBbbFilingAction,
+} from "@/lib/justice/bbbFilingTask";
+import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
@@ -5634,20 +5639,6 @@ export default function JusticeChatAiPage() {
       status: approvedNextAction?.status,
       hasPrepContent: Boolean(chatInlineApprovedPrepContent),
     });
-  const showInlineRealBbbComplaintPrep = shouldShowChatInlineRealBbbComplaintPrep({
-    isUpdatingExistingCase,
-    caseId: activeUuidCaseId,
-    isLoaded,
-    isSignedIn: Boolean(isSignedIn),
-    preparedPacketApproved,
-    approvedNextAction,
-  });
-  const showMarkStepOpenedForApprovedAction = shouldShowMarkStepOpenedForApprovedAction({
-    status: approvedNextAction?.status,
-    href: approvedNextAction?.href,
-    label: approvedNextAction?.label,
-    showInlineRealBbbComplaintPrep,
-  });
   const suppressSurrenderlessOwnedManualUiEarly =
     Boolean(activeUuidCaseId) &&
     Boolean(approvedNextAction) &&
@@ -5657,6 +5648,22 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showInlineRealBbbComplaintPrep =
+    !suppressSurrenderlessOwnedManualUiEarly &&
+    shouldShowChatInlineRealBbbComplaintPrep({
+      isUpdatingExistingCase,
+      caseId: activeUuidCaseId,
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      preparedPacketApproved,
+      approvedNextAction,
+    });
+  const showMarkStepOpenedForApprovedAction = shouldShowMarkStepOpenedForApprovedAction({
+    status: approvedNextAction?.status,
+    href: approvedNextAction?.href,
+    label: approvedNextAction?.label,
+    showInlineRealBbbComplaintPrep,
+  });
   const showMarkStepOpenedVisible =
     showMarkStepOpenedForApprovedAction && !suppressSurrenderlessOwnedManualUiEarly;
   const chatCapturedMerchantContactInput = useMemo(
@@ -5735,6 +5742,16 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const showBbbFilingQueuedNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedBbbFilingAction(approvedNextAction) &&
+    approvedNextAction.status === "approved" &&
+    isChatPendingHumanFulfillmentEscalation({
+      approvedAction: approvedNextAction,
+      caseId: activeUuidCaseId ?? "",
+      tasks: savedTasks,
+      filings: savedFilings,
+    });
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
@@ -5765,6 +5782,11 @@ export default function JusticeChatAiPage() {
     isApprovedDotFilingAction(approvedNextAction) &&
     !findOpenDotFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasDotFilingWithConfirmation(savedFilings);
+  const showBbbFilingFiledNotice =
+    Boolean(activeUuidCaseId) &&
+    isApprovedBbbFilingAction(approvedNextAction) &&
+    !findOpenBbbFilingTask(savedTasks, activeUuidCaseId ?? "") &&
+    hasBbbFilingWithConfirmation(savedFilings);
   const suppressSurrenderlessOwnedManualUi = suppressSurrenderlessOwnedManualUiEarly;
   const showInlineApprovedPrepVisible =
     showInlineApprovedPrep &&
@@ -5834,6 +5856,7 @@ export default function JusticeChatAiPage() {
     });
   const showInlineBbbReadOnlyPrep =
     Boolean(approvedNextAction) &&
+    !suppressSurrenderlessOwnedManualUi &&
     shouldShowChatInlineBbbMockReadOnlyPrep({
       isActiveUuidCase: isActiveUuidCaseChat,
       preparedPacketApproved,
@@ -5843,6 +5866,7 @@ export default function JusticeChatAiPage() {
     });
   const showInlineRealBbbReadOnlyPrep =
     Boolean(approvedNextAction) &&
+    !suppressSurrenderlessOwnedManualUi &&
     shouldShowChatInlineRealBbbComplaintReadOnlyPrep({
       isActiveUuidCase: isActiveUuidCaseChat,
       preparedPacketApproved,
@@ -6930,6 +6954,16 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showBbbFilingQueuedNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">BBB filing queued.</span> Surrenderless has queued
+                    your Better Business Bureau complaint for operator filing using your case packet and
+                    draft. Nothing has been filed yet.
+                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                      Stay in this chat — operator updates will appear here.
+                    </span>
+                  </p>
+                ) : null}
                 {showDemandLetterSentNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
@@ -6970,6 +7004,13 @@ export default function JusticeChatAiPage() {
                     <span className="font-medium">DOT filed.</span> Surrenderless recorded your USDOT
                     aviation complaint filing with confirmation on file. Your case will advance to the
                     next approved step when tracking updates.
+                  </p>
+                ) : null}
+                {showBbbFilingFiledNotice ? (
+                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                    <span className="font-medium">BBB filed.</span> Surrenderless recorded your Better
+                    Business Bureau complaint filing with confirmation on file. Your case will advance
+                    to the next approved step when tracking updates.
                   </p>
                 ) : null}
                 {showMarkStepOpenedVisible ? (

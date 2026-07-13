@@ -344,7 +344,7 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildBbbComplaintDraft(intake),
       helperText:
-        "Copy the draft below and paste it into the official BBB.org complaint flow. Verify the correct business profile before submitting. Surrenderless does not file for you.",
+        "Copy the draft below and paste it into the official BBB.org complaint flow. Verify the correct business profile before submitting.",
       copyButtonLabel: "Copy draft",
       optionalPageHref: CHAT_INLINE_BBB_PREP_HREF,
       optionalPageLabel: label

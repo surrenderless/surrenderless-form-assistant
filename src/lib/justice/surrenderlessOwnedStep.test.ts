@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
@@ -7,6 +8,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import { bbbFilingTaskNotesMarker } from "@/lib/justice/bbbFilingTask";
 import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
@@ -46,6 +48,11 @@ const fccAction = {
 const dotAction = {
   href: MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   label: "USDOT / aviation consumer",
+} as const;
+
+const bbbAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+  label: "Better Business Bureau",
 } as const;
 
 function openStateAgTask(): JusticeCaseTaskRow {
@@ -138,6 +145,21 @@ function openDotTask(): JusticeCaseTaskRow {
   };
 }
 
+function openBbbTask(): JusticeCaseTaskRow {
+  const marker = bbbFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-bbb",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "BBB filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
   it("suppresses when an open State AG human-fulfillment task exists", () => {
     expect(
@@ -196,7 +218,7 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
   it("does not suppress for other approved actions", () => {
     expect(
       shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-        approvedAction: { href: "/justice/bbb", label: "Better Business Bureau" },
+        approvedAction: { href: "/justice/ftc", label: "FTC" },
         caseId: CASE_ID,
         tasks: [openStateAgTask()],
         filings: [
@@ -245,7 +267,7 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
   it("does not suppress demand letter for other approved actions", () => {
     expect(
       shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-        approvedAction: { href: "/justice/bbb", label: "Better Business Bureau" },
+        approvedAction: { href: "/justice/ftc", label: "FTC" },
         caseId: CASE_ID,
         tasks: [openDemandLetterTask()],
         filings: [],
@@ -487,6 +509,55 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
         approvedAction: dotAction,
         caseId: CASE_ID,
         tasks: [{ ...openDotTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
+        filings: [],
+      })
+    ).toBe(false);
+  });
+
+  it("suppresses when an open BBB human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: bbbAction,
+        caseId: CASE_ID,
+        tasks: [openBbbTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when a confirmed BBB filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: bbbAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "Better Business Bureau",
+            confirmation_number: "bbb-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when BBB escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...bbbAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("does not suppress BBB when task is completed and no confirmed filing", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: bbbAction,
+        caseId: CASE_ID,
+        tasks: [{ ...openBbbTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
         filings: [],
       })
     ).toBe(false);

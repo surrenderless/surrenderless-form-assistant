@@ -39,6 +39,10 @@ import {
   shouldQueueDotFilingTask,
 } from "@/lib/justice/dotFilingTask";
 import {
+  ensureBbbFilingTask,
+  shouldQueueBbbFilingTask,
+} from "@/lib/justice/bbbFilingTask";
+import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -525,6 +529,24 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     const intakePayload = data.intake;
     if (isJusticeIntakePayload(intakePayload)) {
       const taskResult = await ensureDotFilingTask(
+        supabase,
+        userId,
+        id,
+        intakePayload as JusticeIntake
+      );
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    shouldQueueBbbFilingTask(patch.client_state)
+  ) {
+    const intakePayload = data.intake;
+    if (isJusticeIntakePayload(intakePayload)) {
+      const taskResult = await ensureBbbFilingTask(
         supabase,
         userId,
         id,

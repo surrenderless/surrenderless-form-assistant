@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseBbbFilingTaskDraft,
+  taskNotesMatchBbbFilingMarker,
+} from "@/lib/justice/bbbFilingTask";
+import {
   parseCfpbFilingTaskDraft,
   taskNotesMatchCfpbFilingMarker,
 } from "@/lib/justice/cfpbFilingTask";
@@ -80,6 +84,12 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(parseDotFilingTaskDraft(notes)).toBe("DOT body");
   });
 
+  it("recognizes BBB operator task notes", () => {
+    const notes = `bbb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}\ndraft:\nBBB body`;
+    expect(taskNotesMatchBbbFilingMarker(notes, CASE_ID)).toBe(true);
+    expect(parseBbbFilingTaskDraft(notes)).toBe("BBB body");
+  });
+
   it("ignores unrelated open tasks", () => {
     const task: JusticeCaseTaskRow = {
       id: "task-1",
@@ -98,6 +108,7 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(taskNotesMatchPaymentDisputeFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchFccFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchDotFilingMarker(task.notes, CASE_ID)).toBe(false);
+    expect(taskNotesMatchBbbFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(intake.company_name).toBe("Acme Retail");
   });
 });
