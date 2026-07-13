@@ -31,6 +31,10 @@ import {
 } from "@/lib/justice/demandLetterFilingTask";
 import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
 import {
+  ensureFccFilingTask,
+  shouldQueueFccFilingTask,
+} from "@/lib/justice/fccFilingTask";
+import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -485,6 +489,24 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
         id,
         intakePayload as JusticeIntake,
         data.payment_dispute_draft
+      );
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
+    shouldQueueFccFilingTask(patch.client_state)
+  ) {
+    const intakePayload = data.intake;
+    if (isJusticeIntakePayload(intakePayload)) {
+      const taskResult = await ensureFccFilingTask(
+        supabase,
+        userId,
+        id,
+        intakePayload as JusticeIntake
       );
       if (taskResult.timeline) {
         responseData = { ...responseData, timeline: taskResult.timeline };

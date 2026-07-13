@@ -9,6 +9,10 @@ import {
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  parseFccFilingTaskDraft,
+  taskNotesMatchFccFilingMarker,
+} from "@/lib/justice/fccFilingTask";
+import {
   parsePaymentDisputeFilingTaskDraft,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -19,7 +23,12 @@ import {
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
-export type OperatorFulfillmentStep = "state_ag" | "demand_letter" | "cfpb" | "payment_dispute";
+export type OperatorFulfillmentStep =
+  | "state_ag"
+  | "demand_letter"
+  | "cfpb"
+  | "payment_dispute"
+  | "fcc";
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -103,6 +112,19 @@ function classifyOpenOperatorTask(
     };
   }
 
+  if (taskNotesMatchFccFilingMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "fcc",
+      task_title: task.title?.trim() || "FCC filing",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parseFccFilingTaskDraft(task.notes)),
+    };
+  }
+
   return null;
 }
 
@@ -145,12 +167,13 @@ export async function listOperatorFulfillmentQueue(
   const operatorTasks = candidateTasks.filter((task) => {
     const caseId = task.case_id?.trim() ?? "";
     if (!caseId) return false;
-    return (
-      taskNotesMatchStateAgFilingMarker(task.notes, caseId) ||
-      taskNotesMatchDemandLetterFilingMarker(task.notes, caseId) ||
-      taskNotesMatchCfpbFilingMarker(task.notes, caseId) ||
-      taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)
-    );
+      return (
+        taskNotesMatchStateAgFilingMarker(task.notes, caseId) ||
+        taskNotesMatchDemandLetterFilingMarker(task.notes, caseId) ||
+        taskNotesMatchCfpbFilingMarker(task.notes, caseId) ||
+        taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId) ||
+        taskNotesMatchFccFilingMarker(task.notes, caseId)
+      );
   });
 
   if (operatorTasks.length === 0) return [];

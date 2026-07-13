@@ -26,6 +26,8 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
+import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const FCC_COMPLAINT_URL = "https://consumercomplaints.fcc.gov/";
 
@@ -34,6 +36,9 @@ const cardCls =
 
 export default function JusticeFccPrepPage() {
   const { isSignedIn, isLoaded } = useAuth();
+  const ownedPrepPage = useSurrenderlessOwnedHumanFulfillmentPrepPage(
+    MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF
+  );
   const { status: hydrationStatus, intake } = useJusticeActionPageHydration();
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [caseId, setCaseId] = useState("");
@@ -89,6 +94,10 @@ export default function JusticeFccPrepPage() {
     caseId: optionalHubEscapeCaseId,
     hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
   });
+
+  if (ownedPrepPage.status === "owned") {
+    return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
+  }
 
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;

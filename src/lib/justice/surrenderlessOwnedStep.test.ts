@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
+import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
 import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
@@ -32,6 +34,11 @@ const cfpbAction = {
 const paymentDisputeAction = {
   href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   label: "Payment dispute (bank/card)",
+} as const;
+
+const fccAction = {
+  href: MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
+  label: "FCC",
 } as const;
 
 function openStateAgTask(): JusticeCaseTaskRow {
@@ -86,6 +93,21 @@ function openPaymentDisputeTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "Payment dispute: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openFccTask(): JusticeCaseTaskRow {
+  const marker = fccFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-fcc",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "FCC filing: Acme Wireless",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -345,6 +367,55 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
         approvedAction: paymentDisputeAction,
         caseId: CASE_ID,
         tasks: [{ ...openPaymentDisputeTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
+        filings: [],
+      })
+    ).toBe(false);
+  });
+
+  it("suppresses when an open FCC human-fulfillment task exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: fccAction,
+        caseId: CASE_ID,
+        tasks: [openFccTask()],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when a confirmed FCC filing exists", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: fccAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          {
+            destination: "FCC",
+            confirmation_number: "fcc-12345",
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses when FCC escalation is approved before operator tasks hydrate", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: { ...fccAction, status: "approved" },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(true);
+  });
+
+  it("does not suppress FCC when task is completed and no confirmed filing", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: fccAction,
+        caseId: CASE_ID,
+        tasks: [{ ...openFccTask(), completed_at: "2026-01-02T00:00:00.000Z" }],
         filings: [],
       })
     ).toBe(false);

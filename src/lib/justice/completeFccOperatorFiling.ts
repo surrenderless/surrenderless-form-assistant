@@ -15,20 +15,20 @@ import {
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
-  ensureFccFilingTask,
-  shouldQueueFccFilingTask,
+  completeFccFilingTaskIfOpen,
+  fccFilingsForManualTracking,
+  hasFccFilingWithConfirmation,
+  taskNotesMatchFccFilingMarker,
 } from "@/lib/justice/fccFilingTask";
 import {
   canonicalFilingDestinationForApprovedActionHref,
-  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import {
-  completePaymentDisputeFilingTaskIfOpen,
-  hasPaymentDisputeFilingWithConfirmation,
-  paymentDisputeFilingsForManualTracking,
-  taskNotesMatchPaymentDisputeFilingMarker,
+  ensurePaymentDisputeFilingTask,
+  shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import {
@@ -74,7 +74,7 @@ function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNex
   return { withTracking, local };
 }
 
-export type CompletePaymentDisputeOperatorFilingInput = {
+export type CompleteFccOperatorFilingInput = {
   caseId: string;
   taskId: string;
   destination: string;
@@ -83,7 +83,7 @@ export type CompletePaymentDisputeOperatorFilingInput = {
   notes?: string | null;
 };
 
-export type CompletePaymentDisputeOperatorFilingResult =
+export type CompleteFccOperatorFilingResult =
   | {
       ok: true;
       filing: JusticeCaseFilingRow;
@@ -95,11 +95,11 @@ export type CompletePaymentDisputeOperatorFilingResult =
     }
   | { ok: false; error: string; status: number };
 
-export async function completePaymentDisputeOperatorFiling(
+export async function completeFccOperatorFiling(
   supabase: SupabaseClient,
   userId: string,
-  input: CompletePaymentDisputeOperatorFilingInput
-): Promise<CompletePaymentDisputeOperatorFilingResult> {
+  input: CompleteFccOperatorFilingInput
+): Promise<CompleteFccOperatorFilingResult> {
   const caseId = input.caseId.trim();
   const taskId = input.taskId.trim();
   const destination = clampLen(input.destination.trim(), MAX_DEST);
@@ -118,11 +118,10 @@ export async function completePaymentDisputeOperatorFiling(
   }
 
   const canonicalDestination =
-    canonicalFilingDestinationForApprovedActionHref(
-      MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
-    ) ?? destination;
+    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF) ??
+    destination;
   if (destination !== canonicalDestination) {
-    return { ok: false, error: "Invalid payment dispute filing destination", status: 400 };
+    return { ok: false, error: "Invalid FCC filing destination", status: 400 };
   }
 
   const { data: caseRow, error: caseErr } = await supabase
@@ -150,12 +149,12 @@ export async function completePaymentDisputeOperatorFiling(
     .maybeSingle();
 
   if (taskErr || !taskRow) {
-    return { ok: false, error: "Payment dispute operator task not found", status: 404 };
+    return { ok: false, error: "FCC operator task not found", status: 404 };
   }
 
   const task = taskRow as JusticeCaseTaskRow;
-  if (!taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId)) {
-    return { ok: false, error: "Task is not a payment dispute operator filing task", status: 400 };
+  if (!taskNotesMatchFccFilingMarker(task.notes, caseId)) {
+    return { ok: false, error: "Task is not an FCC operator filing task", status: 400 };
   }
 
   const { data: existingFilings, error: filingsErr } = await supabase
@@ -165,18 +164,16 @@ export async function completePaymentDisputeOperatorFiling(
     .eq("user_id", userId);
 
   if (filingsErr) {
-    console.warn("justice payment dispute operator filing: list filings", filingsErr.message);
+    console.warn("justice fcc operator filing: list filings", filingsErr.message);
     return { ok: false, error: filingsErr.message, status: 500 };
   }
 
-  const paymentDisputeFilings = paymentDisputeFilingsForManualTracking(
-    (existingFilings ?? []) as JusticeCaseFilingRow[]
-  );
-  if (paymentDisputeFilings.length > 0) {
-    if (!hasPaymentDisputeFilingWithConfirmation(paymentDisputeFilings)) {
+  const fccFilings = fccFilingsForManualTracking((existingFilings ?? []) as JusticeCaseFilingRow[]);
+  if (fccFilings.length > 0) {
+    if (!hasFccFilingWithConfirmation(fccFilings)) {
       return {
         ok: false,
-        error: "A payment dispute filing record already exists for this case without confirmation",
+        error: "An FCC filing record already exists for this case without confirmation",
         status: 409,
       };
     }
@@ -186,11 +183,11 @@ export async function completePaymentDisputeOperatorFiling(
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (paymentDisputeFilings.length > 0 && task.completed_at?.trim()) {
+  if (fccFilings.length > 0 && task.completed_at?.trim()) {
     idempotent = true;
-    filing = paymentDisputeFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (paymentDisputeFilings.length > 0) {
-    filing = paymentDisputeFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+    filing = fccFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
+  } else if (fccFilings.length > 0) {
+    filing = fccFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
     idempotent = true;
   } else {
     const insertRow: Record<string, unknown> = {
@@ -209,15 +206,8 @@ export async function completePaymentDisputeOperatorFiling(
       .single();
 
     if (insertErr || !inserted) {
-      console.warn(
-        "justice payment dispute operator filing: insert",
-        insertErr?.message ?? "failed"
-      );
-      return {
-        ok: false,
-        error: insertErr?.message ?? "Could not save filing record",
-        status: 500,
-      };
+      console.warn("justice fcc operator filing: insert", insertErr?.message ?? "failed");
+      return { ok: false, error: insertErr?.message ?? "Could not save filing record", status: 500 };
     }
 
     filing = inserted as JusticeCaseFilingRow;
@@ -230,23 +220,18 @@ export async function completePaymentDisputeOperatorFiling(
     });
   }
 
-  const taskResult = await completePaymentDisputeFilingTaskIfOpen(
-    supabase,
-    userId,
-    caseId,
-    taskId
-  );
+  const taskResult = await completeFccFilingTaskIfOpen(supabase, userId, caseId, taskId);
   if (!taskResult.task) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the payment dispute operator task",
+      error: "Filing saved but could not complete the FCC operator task",
       status: 500,
     };
   }
   if (!taskResult.task.completed_at?.trim()) {
     return {
       ok: false,
-      error: "Filing saved but could not complete the payment dispute operator task",
+      error: "Filing saved but could not complete the FCC operator task",
       status: 500,
     };
   }
@@ -260,7 +245,7 @@ export async function completePaymentDisputeOperatorFiling(
   let nextApprovedNext: JusticeApprovedNextAction | undefined;
 
   if (
-    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF &&
+    approvedNext?.href?.trim() === MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF &&
     approvedNext.status !== "completed"
   ) {
     const completedHref = approvedNext.href.trim();
@@ -296,7 +281,7 @@ export async function completePaymentDisputeOperatorFiling(
       .eq("user_id", userId);
 
     if (patchErr) {
-      console.warn("justice payment dispute operator filing: patch client_state", patchErr.message);
+      console.warn("justice fcc operator filing: patch client_state", patchErr.message);
       return {
         ok: false,
         error: "Filing recorded but could not advance the approved next action",
@@ -304,14 +289,20 @@ export async function completePaymentDisputeOperatorFiling(
       };
     }
 
-    if (shouldQueueCfpbFilingTask(clientState)) {
-      const queueResult = await ensureCfpbFilingTask(supabase, userId, caseId, intake);
+    if (shouldQueuePaymentDisputeFilingTask(clientState)) {
+      const queueResult = await ensurePaymentDisputeFilingTask(
+        supabase,
+        userId,
+        caseId,
+        intake,
+        caseRow.payment_dispute_draft
+      );
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }
     }
-    if (shouldQueueFccFilingTask(clientState)) {
-      const queueResult = await ensureFccFilingTask(supabase, userId, caseId, intake);
+    if (shouldQueueCfpbFilingTask(clientState)) {
+      const queueResult = await ensureCfpbFilingTask(supabase, userId, caseId, intake);
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }

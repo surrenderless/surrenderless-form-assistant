@@ -155,6 +155,52 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["payment_dispute_confirmed"]);
   });
 
+  it("derives FCC queued and confirmed milestones from observed state", () => {
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "FCC",
+          href: "/justice/fcc",
+          status: "approved",
+        },
+        tasks: [
+          {
+            id: "task-fcc",
+            user_id: "user",
+            case_id: CASE_ID,
+            title: "FCC filing: Acme",
+            due_date: null,
+            notes: `fcc_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}`,
+            completed_at: null,
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        filings: [],
+      })
+    ).toEqual(["fcc_queued"]);
+
+    expect(
+      deriveSatisfiedChatCaseProgressMilestones({
+        caseId: CASE_ID,
+        approvedAction: {
+          label: "FCC",
+          href: "/justice/fcc",
+          status: "completed",
+          completed_at: "2026-06-22T12:00:00.000Z",
+        },
+        tasks: [],
+        filings: [
+          {
+            destination: "FCC",
+            confirmation_number: "fcc-123",
+          },
+        ],
+      })
+    ).toEqual(["fcc_confirmed"]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

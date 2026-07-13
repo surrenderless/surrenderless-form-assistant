@@ -39,6 +39,15 @@ const cfpbStarted: JusticeApprovedNextAction = {
   started_at: "2026-06-15T11:00:00.000Z",
 };
 
+/** Non-owned manual lane used for endgame completion tests. */
+const dotStarted: JusticeApprovedNextAction = {
+  label: "DOT",
+  href: "/justice/dot",
+  status: "started",
+  approved_at: "2026-06-15T10:00:00.000Z",
+  started_at: "2026-06-15T11:00:00.000Z",
+};
+
 describe("buildDefaultOutcomeNoteAfterManualFilingConfirmation", () => {
   it("builds a lane-aware case-derived note", () => {
     expect(buildDefaultOutcomeNoteAfterManualFilingConfirmation(intake, fccStarted)).toBe(
@@ -59,18 +68,18 @@ describe("shouldRunManualFilingConfirmationEndgame", () => {
   it("requires confirmation on file", () => {
     expect(
       shouldRunManualFilingConfirmationEndgame({
-        approvedAction: fccStarted,
+        approvedAction: dotStarted,
         caseId: CASE_ID,
         tasks: [],
-        filings: [{ destination: "FCC" }],
+        filings: [{ destination: "USDOT / aviation consumer" }],
       })
     ).toBe(false);
     expect(
       shouldRunManualFilingConfirmationEndgame({
-        approvedAction: fccStarted,
+        approvedAction: dotStarted,
         caseId: CASE_ID,
         tasks: [],
-        filings: [{ destination: "FCC", confirmation_number: "FCC-1" }],
+        filings: [{ destination: "USDOT / aviation consumer", confirmation_number: "DOT-1" }],
       })
     ).toBe(true);
   });
@@ -119,6 +128,18 @@ describe("shouldRunManualFilingConfirmationEndgame", () => {
       })
     ).toBe(false);
   });
+
+  it("skips owned FCC steps", () => {
+    expect(
+      shouldRunManualFilingConfirmationEndgame({
+        approvedAction: fccStarted,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [{ destination: "FCC", confirmation_number: "FCC-1" }],
+        confirmationNumber: "FCC-1",
+      })
+    ).toBe(false);
+  });
 });
 
 describe("autoEndgameAfterManualFilingConfirmation", () => {
@@ -127,7 +148,7 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ client_state: { approved_next_action: fccStarted } }),
+        json: async () => ({ client_state: { approved_next_action: dotStarted } }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -141,17 +162,17 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
     const result = await autoEndgameAfterManualFilingConfirmation({
       caseId: CASE_ID,
       intake,
-      approvedAction: fccStarted,
+      approvedAction: dotStarted,
       tasks: [],
-      filings: [{ destination: "FCC", confirmation_number: "FCC-99" }],
-      confirmationNumber: "FCC-99",
+      filings: [{ destination: "USDOT / aviation consumer", confirmation_number: "DOT-99" }],
+      confirmationNumber: "DOT-99",
       fetchFn: fetchFn as unknown as typeof fetch,
       applyTimeline,
     });
 
     expect(result.status).toBe("completed");
     expect(result.handling_requested_at?.trim()).toBeTruthy();
-    expect(result.outcome_note).toContain("FCC filing recorded");
+    expect(result.outcome_note).toContain("USDOT / aviation consumer filing recorded");
     expect(result.follow_up_needed).toBe(true);
     expect(result.handling_acknowledged_at?.trim()).toBeTruthy();
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -163,12 +184,12 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
     const result = await autoEndgameAfterManualFilingConfirmation({
       caseId: CASE_ID,
       intake,
-      approvedAction: fccStarted,
+      approvedAction: dotStarted,
       tasks: [],
-      filings: [{ destination: "FCC" }],
+      filings: [{ destination: "USDOT / aviation consumer" }],
       fetchFn: fetchFn as unknown as typeof fetch,
     });
-    expect(result).toEqual(fccStarted);
+    expect(result).toEqual(dotStarted);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
@@ -184,6 +205,21 @@ describe("autoEndgameAfterManualFilingConfirmation", () => {
       fetchFn: fetchFn as unknown as typeof fetch,
     });
     expect(result).toEqual(cfpbStarted);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for owned FCC", async () => {
+    const fetchFn = vi.fn();
+    const result = await autoEndgameAfterManualFilingConfirmation({
+      caseId: CASE_ID,
+      intake,
+      approvedAction: fccStarted,
+      tasks: [],
+      filings: [{ destination: "FCC", confirmation_number: "FCC-99" }],
+      confirmationNumber: "FCC-99",
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    expect(result).toEqual(fccStarted);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 });

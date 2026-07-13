@@ -9,8 +9,13 @@ import {
   hasDemandLetterFilingWithConfirmation,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  findOpenFccFilingTask,
+  hasFccFilingWithConfirmation,
+} from "@/lib/justice/fccFilingTask";
+import {
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -28,7 +33,8 @@ export type ChatOwnedFulfillmentStepId =
   | "state_ag"
   | "demand_letter"
   | "cfpb"
-  | "payment_dispute";
+  | "payment_dispute"
+  | "fcc";
 
 export type ChatOwnedFulfillmentObservationSnapshot = {
   completedStepIds: readonly ChatOwnedFulfillmentStepId[];
@@ -84,6 +90,13 @@ function isPaymentDisputeOwnedStepCompleted(
   return !findOpenPaymentDisputeFilingTask(observation.tasks, caseId);
 }
 
+function isFccOwnedStepCompleted(observation: ChatEscalationFulfillmentObservation): boolean {
+  const caseId = observation.caseId.trim();
+  if (!caseId) return false;
+  if (!hasFccFilingWithConfirmation(observation.filings)) return false;
+  return !findOpenFccFilingTask(observation.tasks, caseId);
+}
+
 function buildOwnedFulfillmentObservationSnapshot(
   observation: ChatEscalationFulfillmentObservation
 ): ChatOwnedFulfillmentObservationSnapshot {
@@ -99,6 +112,9 @@ function buildOwnedFulfillmentObservationSnapshot(
   }
   if (isPaymentDisputeOwnedStepCompleted(observation)) {
     completedStepIds.push("payment_dispute");
+  }
+  if (isFccOwnedStepCompleted(observation)) {
+    completedStepIds.push("fcc");
   }
   return {
     completedStepIds,
@@ -184,3 +200,6 @@ export const CHAT_OWNED_FULFILLMENT_CFPB_APPROVED_HREF = MANUAL_ACTION_TRACKING_
 /** Approved action href for the payment-dispute owned step. */
 export const CHAT_OWNED_FULFILLMENT_PAYMENT_DISPUTE_APPROVED_HREF =
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF;
+
+/** Approved action href for the FCC owned step. */
+export const CHAT_OWNED_FULFILLMENT_FCC_APPROVED_HREF = MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF;
