@@ -141,6 +141,12 @@ import {
 } from "@/lib/justice/escalationLadderResolution";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
+  OWNED_STEP_CHAT_STATUS_COPY,
+  OWNED_STEP_HANDLING_TRACKING_COPY,
+  shouldShowChatConsumerManualHandlingControls,
+  shouldShowChatMerchantContactConfirmationControls,
+} from "@/lib/justice/surrenderlessOwnedChatManualUi";
+import {
   isJusticeEvidenceType,
   justiceEvidenceRowHasUploadedFile,
   JUSTICE_EVIDENCE_TYPE_LABELS,
@@ -2299,7 +2305,9 @@ function ChatHandlingTrackingStatusReadOnly({
         {readinessLoading ? "Loading handling tracking context..." : derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        In-app tracking only — not filed or submitted.
+        {filingCaptureSuppressed
+          ? OWNED_STEP_HANDLING_TRACKING_COPY
+          : "In-app tracking only — not filed or submitted."}
       </p>
       {caseId ? (
         <ChatHandlingPersistedStatusReadOnly
@@ -5650,7 +5658,6 @@ export default function JusticeChatAiPage() {
       hasPrepContent: Boolean(chatInlineApprovedPrepContent),
     });
   const suppressSurrenderlessOwnedManualUiEarly =
-    Boolean(activeUuidCaseId) &&
     Boolean(approvedNextAction) &&
     shouldSuppressChatManualActionForSurrenderlessOwnedStep({
       approvedAction: approvedNextAction!,
@@ -5832,8 +5839,11 @@ export default function JusticeChatAiPage() {
     showInlineApprovedPrep &&
     !showInlineRealBbbComplaintPrep &&
     !suppressSurrenderlessOwnedManualUi;
-  const showInlineMerchantContactConfirmation =
-    needsMerchantContactDocumentation && Boolean(chatCapturedMerchantContactInput);
+  const showInlineMerchantContactConfirmation = shouldShowChatMerchantContactConfirmationControls({
+    suppressOwnedManualUi: suppressSurrenderlessOwnedManualUi,
+    needsMerchantContactDocumentation,
+    hasChatCapturedMerchantContactInput: Boolean(chatCapturedMerchantContactInput),
+  });
   const showInlineMerchantContactDocumentation =
     showInlineApprovedPrepVisible &&
     chatInlineApprovedPrepContent?.kind === "merchant_message" &&
@@ -7192,10 +7202,18 @@ export default function JusticeChatAiPage() {
                   approvedNextAction,
                 }) ? (
                   <>
-                    <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                      Approved case packet and next in-app step — not a Surrenderless handling request.
-                      Request handling below when you want internal triage tracking.
-                    </p>
+                    {suppressSurrenderlessOwnedManualUi ? (
+                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                        Surrenderless is carrying this approved step. Queued, in-progress, and
+                        completed updates appear above — stay in chat while operator fulfillment
+                        runs.
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                        Approved case packet and next in-app step — not a Surrenderless handling
+                        request. Request handling below when you want internal triage tracking.
+                      </p>
+                    )}
                     <ChatHandlingTrackingStatusReadOnly
                       readinessLoading={chatHandlingTrackingContextLoading}
                       approvedNextAction={approvedNextAction}
@@ -7219,7 +7237,11 @@ export default function JusticeChatAiPage() {
                     />
                   </>
                 ) : null}
-                {approvedNextAction.handling_requested_at?.trim() ? (
+                {!shouldShowChatConsumerManualHandlingControls(
+                  suppressSurrenderlessOwnedManualUi
+                )
+                  ? null
+                  : approvedNextAction.handling_requested_at?.trim() ? (
                   approvedNextAction.status === "completed" ? (
                     <ApprovedNextActionHandlingRequestedReadOnly
                       requestedAt={approvedNextAction.handling_requested_at.trim()}
@@ -7254,11 +7276,15 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {approvedNextAction.handling_requested_at?.trim() ? (
                   <>
-                    <ApprovedNextActionHandlingQueueStatusReadOnly
-                      handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
-                      handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
-                      className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
-                    />
+                    {shouldShowChatConsumerManualHandlingControls(
+                      suppressSurrenderlessOwnedManualUi
+                    ) ? (
+                      <ApprovedNextActionHandlingQueueStatusReadOnly
+                        handlingRequestedAt={approvedNextAction.handling_requested_at.trim()}
+                        handlingAcknowledgedAt={approvedNextAction.handling_acknowledged_at}
+                        className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90"
+                      />
+                    ) : null}
                     <ChatHandlingTrackingStatusReadOnly
                       readinessLoading={chatHandlingTrackingContextLoading}
                       approvedNextAction={approvedNextAction}
@@ -7268,7 +7294,11 @@ export default function JusticeChatAiPage() {
                       evidenceCount={savedEvidenceCount ?? 0}
                       filings={savedFilings}
                       tasks={savedTasks}
-                      markAcknowledgedOnScreen={showChatAcknowledgment}
+                      markAcknowledgedOnScreen={
+                        shouldShowChatConsumerManualHandlingControls(
+                          suppressSurrenderlessOwnedManualUi
+                        ) && showChatAcknowledgment
+                      }
                       prepInlineInChat={prepInlineInChat}
                       suppressOwnedStepManualNavigation={suppressSurrenderlessOwnedManualUi}
                       suppressDestinationPrepHubEscapes={suppressInlineOptionalHubEscapeLinks}
@@ -7297,10 +7327,14 @@ export default function JusticeChatAiPage() {
                         {approvedNextAction.outcome_note.trim()}
                       </p>
                     ) : null}
-                    {showChatAcknowledgment ? (
+                    {shouldShowChatConsumerManualHandlingControls(
+                      suppressSurrenderlessOwnedManualUi
+                    ) && showChatAcknowledgment ? (
                       <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                     ) : null}
-                    {showChatAcknowledgment ? (
+                    {shouldShowChatConsumerManualHandlingControls(
+                      suppressSurrenderlessOwnedManualUi
+                    ) && showChatAcknowledgment ? (
                       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                         <button
                           type="button"
@@ -7308,7 +7342,7 @@ export default function JusticeChatAiPage() {
                           onClick={() => void handleAcknowledgeHandlingRequest()}
                           className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                         >
-                          {acknowledgingHandling ? "Savingâ€¦" : "Mark acknowledged"}
+                          {acknowledgingHandling ? "Saving…" : "Mark acknowledged"}
                         </button>
                         <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80 sm:max-w-[14rem]">
                           {APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER}
@@ -7365,7 +7399,9 @@ export default function JusticeChatAiPage() {
                   <ChatHandlingWorkbenchInChatNotice />
                 ) : null}
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                  {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
+                  {suppressSurrenderlessOwnedManualUi
+                    ? OWNED_STEP_CHAT_STATUS_COPY
+                    : APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </p>
                 {approvedNextAction.follow_up_needed === true && chatResolutionFlowExposed ? (
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">

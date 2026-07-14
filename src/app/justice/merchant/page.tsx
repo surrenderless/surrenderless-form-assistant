@@ -9,6 +9,7 @@ import JusticeFilingRecords from "@/app/components/JusticeFilingRecords";
 import JusticeSavedEvidenceList from "@/app/components/JusticeSavedEvidenceList";
 import JusticeActionResumeSignInPrompt from "@/app/components/JusticeActionResumeSignInPrompt";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { SurrenderlessOwnedPrepHubLoading } from "@/app/components/SurrenderlessOwnedPrepHubLoading";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { buildMerchantMessage, cfpbFinancialProductSummary } from "@/lib/justice/buildMerchantContactMessage";
@@ -21,6 +22,11 @@ import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  isDiyAllowedOnSurrenderlessOwnedPrepHub,
+  isOptionalHubEscapeSessionReadyForOwnedPrep,
+  shouldShowSurrenderlessOwnedPrepHubOwnershipPending,
+} from "@/lib/justice/surrenderlessOwnedPrepHubGate";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
@@ -119,40 +125,29 @@ export default function JusticeMerchantPage() {
   const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
     escapePageHref: "/justice/merchant",
     caseId: optionalHubEscapeCaseId,
-    hasResumableCase: hydrationStatus === "ready" && Boolean(hydratedIntake),
+    hasResumableCase:
+      Boolean(optionalHubEscapeCaseId.trim()) ||
+      (hydrationStatus === "ready" && Boolean(hydratedIntake)),
     // Wait for ownership so Surrenderless-owned merchant contact is not redirected to chat.
-    sessionReady:
-      ownedPrepPage.status === "not_owned" || ownedPrepPage.status === "indeterminate",
+    sessionReady: isOptionalHubEscapeSessionReadyForOwnedPrep(ownedPrepPage.status),
   });
 
   if (ownedPrepPage.status === "owned") {
     return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
   }
 
-  if (ownedPrepPage.status === "loading") {
-    return (
-      <>
-        <Header />
-        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loading…
-        </main>
-      </>
-    );
-  }
-
   if (hydrationStatus === "needs_sign_in") {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
-    return (
-      <>
-        <Header />
-        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loading…
-        </main>
-      </>
-    );
+  if (
+    shouldShowSurrenderlessOwnedPrepHubOwnershipPending(ownedPrepPage.status) ||
+    !isDiyAllowedOnSurrenderlessOwnedPrepHub(ownedPrepPage.status) ||
+    hydrationStatus !== "ready" ||
+    !intake ||
+    redirectOffOptionalHub
+  ) {
+    return <SurrenderlessOwnedPrepHubLoading />;
   }
 
   const issueSummary = intake.problem_category.replace(/_/g, " ");

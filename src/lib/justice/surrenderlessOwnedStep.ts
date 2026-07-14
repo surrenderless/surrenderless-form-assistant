@@ -71,11 +71,10 @@ function isStateAgStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckPa
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenStateAgFilingTask(params.tasks, caseId)) return true;
-  if (hasStateAgFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasStateAgFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenStateAgFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -85,11 +84,10 @@ function isDemandLetterStepOwnedBySurrenderless(
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenDemandLetterFilingTask(params.tasks, caseId)) return true;
-  if (hasDemandLetterFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasDemandLetterFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenDemandLetterFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -97,11 +95,10 @@ function isCfpbStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParam
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenCfpbFilingTask(params.tasks, caseId)) return true;
-  if (hasCfpbFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasCfpbFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenCfpbFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -113,11 +110,10 @@ function isPaymentDisputeStepOwnedBySurrenderless(
   ) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenPaymentDisputeFilingTask(params.tasks, caseId)) return true;
-  if (hasPaymentDisputeFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasPaymentDisputeFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenPaymentDisputeFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -125,11 +121,10 @@ function isFccStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenFccFilingTask(params.tasks, caseId)) return true;
-  if (hasFccFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasFccFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenFccFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -137,11 +132,10 @@ function isDotStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenDotFilingTask(params.tasks, caseId)) return true;
-  if (hasDotFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasDotFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenDotFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -149,11 +143,10 @@ function isBbbStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenBbbFilingTask(params.tasks, caseId)) return true;
-  if (hasBbbFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasBbbFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenBbbFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -161,11 +154,10 @@ function isFtcStepOwnedBySurrenderless(params: SurrenderlessOwnedStepCheckParams
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenFtcFilingTask(params.tasks, caseId)) return true;
-  if (hasFtcFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasFtcFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenFtcFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 
@@ -175,11 +167,10 @@ function isMerchantContactStepOwnedBySurrenderless(
   if (params.approvedAction.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF) {
     return false;
   }
-  const caseId = params.caseId.trim();
-  if (!caseId) return false;
-  if (findOpenMerchantContactFilingTask(params.tasks, caseId)) return true;
-  if (hasMerchantContactFilingWithConfirmation(params.filings)) return true;
   if (isActiveApprovedHumanFulfillmentEscalation(params.approvedAction)) return true;
+  if (hasMerchantContactFilingWithConfirmation(params.filings)) return true;
+  const caseId = params.caseId.trim();
+  if (caseId && findOpenMerchantContactFilingTask(params.tasks, caseId)) return true;
   return false;
 }
 

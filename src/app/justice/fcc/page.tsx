@@ -27,6 +27,12 @@ import {
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { SurrenderlessOwnedPrepHubLoading } from "@/app/components/SurrenderlessOwnedPrepHubLoading";
+import {
+  isDiyAllowedOnSurrenderlessOwnedPrepHub,
+  isOptionalHubEscapeSessionReadyForOwnedPrep,
+  shouldShowSurrenderlessOwnedPrepHubOwnershipPending,
+} from "@/lib/justice/surrenderlessOwnedPrepHubGate";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const FCC_COMPLAINT_URL = "https://consumercomplaints.fcc.gov/";
@@ -92,7 +98,10 @@ export default function JusticeFccPrepPage() {
   const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
     escapePageHref: "/justice/fcc",
     caseId: optionalHubEscapeCaseId,
-    hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
+    hasResumableCase:
+      Boolean(optionalHubEscapeCaseId.trim()) ||
+      (hydrationStatus === "ready" && Boolean(intake)),
+    sessionReady: isOptionalHubEscapeSessionReadyForOwnedPrep(ownedPrepPage.status),
   });
 
   if (ownedPrepPage.status === "owned") {
@@ -103,15 +112,14 @@ export default function JusticeFccPrepPage() {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
-    return (
-      <>
-        <Header />
-        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loading…
-        </main>
-      </>
-    );
+  if (
+    shouldShowSurrenderlessOwnedPrepHubOwnershipPending(ownedPrepPage.status) ||
+    !isDiyAllowedOnSurrenderlessOwnedPrepHub(ownedPrepPage.status) ||
+    hydrationStatus !== "ready" ||
+    !intake ||
+    redirectOffOptionalHub
+  ) {
+    return <SurrenderlessOwnedPrepHubLoading />;
   }
 
   const issueSummary = likelyFit

@@ -28,6 +28,12 @@ import {
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { SurrenderlessOwnedPrepHubLoading } from "@/app/components/SurrenderlessOwnedPrepHubLoading";
+import {
+  isDiyAllowedOnSurrenderlessOwnedPrepHub,
+  isOptionalHubEscapeSessionReadyForOwnedPrep,
+  shouldShowSurrenderlessOwnedPrepHubOwnershipPending,
+} from "@/lib/justice/surrenderlessOwnedPrepHubGate";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const cardCls =
@@ -42,7 +48,13 @@ export default function JusticeStateAgPrepPage() {
   const [intake, setIntake] = useState<JusticeIntake | null>(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
   const [caseId, setCaseId] = useState("");
+  const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
   const [stateAgComplaintFiled, setStateAgComplaintFiled] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOptionalHubEscapeCaseId(sessionStorage.getItem(STORAGE_CASE_ID) ?? "");
+  }, [hydrationStatus]);
 
   useEffect(() => {
     if (hydrationStatus !== "ready" || !hydratedIntake) return;
@@ -100,8 +112,11 @@ export default function JusticeStateAgPrepPage() {
 
   const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
     escapePageHref: "/justice/state-ag",
-    caseId,
-    hasResumableCase: hydrationStatus === "ready" && Boolean(hydratedIntake),
+    caseId: optionalHubEscapeCaseId,
+    hasResumableCase:
+      Boolean(optionalHubEscapeCaseId.trim()) ||
+      (hydrationStatus === "ready" && Boolean(hydratedIntake)),
+    sessionReady: isOptionalHubEscapeSessionReadyForOwnedPrep(ownedPrepPage.status),
   });
 
   if (ownedPrepPage.status === "owned") {
@@ -112,15 +127,14 @@ export default function JusticeStateAgPrepPage() {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake || redirectOffOptionalHub) {
-    return (
-      <>
-        <Header />
-        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loading…
-        </main>
-      </>
-    );
+  if (
+    shouldShowSurrenderlessOwnedPrepHubOwnershipPending(ownedPrepPage.status) ||
+    !isDiyAllowedOnSurrenderlessOwnedPrepHub(ownedPrepPage.status) ||
+    hydrationStatus !== "ready" ||
+    !intake ||
+    redirectOffOptionalHub
+  ) {
+    return <SurrenderlessOwnedPrepHubLoading />;
   }
 
   const issueSummary = `${intake.company_name} — ${intake.problem_category.replace(/_/g, " ")}`;

@@ -682,4 +682,39 @@ describe("shouldSuppressChatManualActionForSurrenderlessOwnedStep", () => {
       })
     ).toBe(true);
   });
+
+  it("suppresses approved human-fulfillment steps before caseId hydrates", () => {
+    const ownedHrefs = [
+      merchantContactAction,
+      paymentDisputeAction,
+      ftcAction,
+      bbbAction,
+      cfpbAction,
+      fccAction,
+      dotAction,
+      stateAgAction,
+      demandLetterAction,
+    ];
+    for (const action of ownedHrefs) {
+      expect(
+        shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+          approvedAction: { ...action, status: "approved" },
+          caseId: "",
+          tasks: [],
+          filings: [],
+        })
+      ).toBe(true);
+    }
+  });
+
+  it("does not suppress without caseId when action status is not active approved/started", () => {
+    expect(
+      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+        approvedAction: merchantContactAction,
+        caseId: "",
+        tasks: [],
+        filings: [],
+      })
+    ).toBe(false);
+  });
 });

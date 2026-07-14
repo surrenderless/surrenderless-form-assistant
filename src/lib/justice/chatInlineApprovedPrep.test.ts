@@ -922,3 +922,16 @@ describe("shouldResetAssistedPracticeRunUiState", () => {
     ).toBe(false);
   });
 });
+
+describe("not-owned DIY prep copy fallback (preserved when ownership is not_owned)", () => {
+  it("keeps consumer DIY helper text for merchant and regulator prep routes", () => {
+    const intake = baseIntake();
+    const merchant = getChatInlineApprovedPrepContent(CHAT_INLINE_MERCHANT_PREP_HREF, intake);
+    const cfpb = getChatInlineApprovedPrepContent(CHAT_INLINE_CFPB_PREP_HREF, intake);
+    const demand = getChatInlineApprovedPrepContent(CHAT_INLINE_DEMAND_LETTER_PREP_HREF, intake);
+    expect(merchant?.helperText).toMatch(/send it yourself/i);
+    expect(merchant?.helperText).toMatch(/does not contact anyone/i);
+    expect(cfpb?.helperText).toMatch(/does not file for you/i);
+    expect(demand?.helperText).toMatch(/send it yourself/i);
+  });
+});
