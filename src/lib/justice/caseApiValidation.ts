@@ -70,6 +70,9 @@ export function isJusticeIntakePayload(v: unknown): v is JusticeIntake {
   }
   if (o.contact_proof_text !== undefined && typeof o.contact_proof_text !== "string") return false;
   if (o.consumer_us_state !== undefined && typeof o.consumer_us_state !== "string") return false;
+  if (o.company_contact_email !== undefined && typeof o.company_contact_email !== "string") {
+    return false;
+  }
 
   return true;
 }

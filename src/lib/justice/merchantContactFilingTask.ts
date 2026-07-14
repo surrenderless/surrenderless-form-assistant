@@ -114,10 +114,12 @@ export function buildMerchantContactIdentityBlock(intake: JusticeIntake): string
   const website = intake.company_website.trim() || "(none on file)";
   const consumer = intake.user_display_name.trim() || "(consumer name missing)";
   const email = intake.reply_email.trim() || "(reply email missing)";
+  const companyEmail = intake.company_contact_email?.trim() || "(company contact email not set)";
   const state = intake.consumer_us_state?.trim().toUpperCase() || "(state not set)";
   return [
     `merchant/company: ${company}`,
     `website: ${website}`,
+    `company_contact_email: ${companyEmail}`,
     `consumer: ${consumer}`,
     `reply_email: ${email}`,
     `consumer_us_state: ${state}`,

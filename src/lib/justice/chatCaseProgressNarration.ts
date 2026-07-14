@@ -26,9 +26,14 @@ import {
 } from "@/lib/justice/ftcFilingTask";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import {
+  findOpenMerchantContactFilingTask,
   hasMerchantContactFilingWithConfirmation,
   isApprovedMerchantContactFilingAction,
 } from "@/lib/justice/merchantContactFilingTask";
+import {
+  isMerchantContactEmailFailed,
+  isMerchantContactEmailSending,
+} from "@/lib/justice/merchantContactEmailDelivery";
 import {
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
@@ -42,6 +47,8 @@ import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type ChatCaseProgressMilestone =
   | "merchant_contact_queued"
+  | "merchant_contact_sending"
+  | "merchant_contact_send_failed"
   | "merchant_contact_confirmed"
   | "payment_dispute_queued"
   | "payment_dispute_confirmed"
@@ -64,6 +71,8 @@ export type ChatCaseProgressMilestone =
 
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
   "merchant_contact_queued",
+  "merchant_contact_sending",
+  "merchant_contact_send_failed",
   "merchant_contact_confirmed",
   "payment_dispute_queued",
   "payment_dispute_confirmed",
@@ -117,6 +126,13 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     })
   ) {
     satisfied.push("merchant_contact_queued");
+    const openMerchantTask = findOpenMerchantContactFilingTask(input.tasks, caseId);
+    if (isMerchantContactEmailSending(openMerchantTask)) {
+      satisfied.push("merchant_contact_sending");
+    }
+    if (isMerchantContactEmailFailed(openMerchantTask)) {
+      satisfied.push("merchant_contact_send_failed");
+    }
   }
 
   if (hasMerchantContactFilingWithConfirmation(input.filings)) {
@@ -280,7 +296,11 @@ export function buildChatCaseProgressNarrationMessage(
 ): string {
   switch (milestone) {
     case "merchant_contact_queued":
-      return "I've queued merchant or company contact with Surrenderless for operator outreach. Stay here in chat — I'll update you when outreach is documented.";
+      return "I've queued merchant or company contact with Surrenderless. Stay here in chat — I'll update you when outreach is sending or sent.";
+    case "merchant_contact_sending":
+      return "Surrenderless is sending your merchant or company first-contact email now. Stay here in chat for confirmation.";
+    case "merchant_contact_send_failed":
+      return "Automated merchant email delivery did not go through. Surrenderless operators will complete outreach manually — stay here in chat for updates.";
     case "merchant_contact_confirmed":
       return "Merchant or company contact is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "payment_dispute_queued":

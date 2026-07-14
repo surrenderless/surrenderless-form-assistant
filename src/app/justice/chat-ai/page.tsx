@@ -325,6 +325,10 @@ import {
   isApprovedMerchantContactFilingAction,
 } from "@/lib/justice/merchantContactFilingTask";
 import {
+  isMerchantContactEmailFailed,
+  isMerchantContactEmailSending,
+} from "@/lib/justice/merchantContactEmailDelivery";
+import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
@@ -5769,6 +5773,13 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const openMerchantContactTask = activeUuidCaseId
+    ? findOpenMerchantContactFilingTask(savedTasks, activeUuidCaseId)
+    : undefined;
+  const showMerchantContactSendingNotice =
+    showMerchantContactQueuedNotice && isMerchantContactEmailSending(openMerchantContactTask);
+  const showMerchantContactSendFailedNotice =
+    showMerchantContactQueuedNotice && isMerchantContactEmailFailed(openMerchantContactTask);
   const showFtcFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFtcFilingAction(approvedNextAction) &&
@@ -7009,11 +7020,27 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showMerchantContactQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">Merchant contact queued.</span> Surrenderless has
-                    queued merchant or company outreach for operator contact using your case packet and
-                    draft. Nothing has been sent yet.
+                    {showMerchantContactSendingNotice ? (
+                      <>
+                        <span className="font-medium">Merchant contact sending.</span> Surrenderless
+                        is delivering your first-contact email to the company using your case packet
+                        and draft.
+                      </>
+                    ) : showMerchantContactSendFailedNotice ? (
+                      <>
+                        <span className="font-medium">Merchant contact email failed.</span> Automated
+                        delivery did not go through. Operators will complete outreach manually — nothing
+                        is marked sent until delivery succeeds.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">Merchant contact queued.</span> Surrenderless has
+                        queued merchant or company outreach using your case packet and draft. Nothing
+                        has been sent yet.
+                      </>
+                    )}
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — operator updates will appear here.
+                      Stay in this chat — status updates will appear here.
                     </span>
                   </p>
                 ) : null}
@@ -7081,8 +7108,8 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showMerchantContactFiledNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">Merchant contact recorded.</span> Surrenderless
-                    recorded merchant or company outreach with confirmation on file. Your case will
+                    <span className="font-medium">Merchant contact sent.</span> Surrenderless recorded
+                    merchant or company outreach with provider confirmation on file. Your case will
                     advance to the next approved step when tracking updates.
                   </p>
                 ) : null}

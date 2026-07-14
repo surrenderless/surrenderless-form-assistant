@@ -38,6 +38,8 @@ export type JusticeIntake = {
   contact_proof_text?: string;
   /** Two-letter US state code (e.g. CA) for consumer / AG complaint context. */
   consumer_us_state?: string;
+  /** Optional merchant/company outreach email for Surrenderless first-contact delivery. */
+  company_contact_email?: string;
 };
 
 export type DestinationId =

@@ -59,13 +59,22 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
+import { isPlaywrightMockMerchantOutreachEmailEnabled } from "@/lib/email/merchantOutreachEmailEnv";
+import {
+  merchantContactEmailIdempotencyKey,
+  resolveMerchantOutreachRecipientEmail,
+  upsertMerchantContactEmailDeliveryNotes,
+} from "@/lib/justice/merchantContactEmailDelivery";
 import {
   buildMerchantContactFilingTaskNotes,
   buildMerchantContactFilingTaskTitle,
+  findOpenMerchantContactFilingTask,
+  hasMerchantContactFilingWithConfirmation,
   parseMerchantContactFilingTaskDraft,
   shouldQueueMerchantContactFilingTask,
   taskNotesMatchMerchantContactFilingMarker,
 } from "@/lib/justice/merchantContactFilingTask";
+import { buildPlaywrightMockJusticeFilingsGetResponse } from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
 import {
   buildPaymentDisputeFilingTaskNotes,
   buildPaymentDisputeFilingTaskTitle,
@@ -327,6 +336,76 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   getPlaywrightMockHumanFulfillmentTasksByCaseId().set(trimmedCaseId, tasks);
   if (userId.trim()) {
     setPlaywrightMockCaseOwnerUserId(trimmedCaseId, userId.trim());
+  }
+
+  maybeAutoDeliverPlaywrightMockMerchantContactEmail(
+    trimmedCaseId,
+    userId,
+    justiceIntake,
+    clientState
+  );
+}
+
+/**
+ * When Playwright mock email outreach is enabled and a company email is on intake,
+ * accept a deterministic mock provider message and complete merchant contact (no operator UI).
+ */
+let playwrightMockMerchantEmailAutoInFlight = false;
+
+function maybeAutoDeliverPlaywrightMockMerchantContactEmail(
+  caseId: string,
+  userId: string,
+  intake: JusticeIntake,
+  clientState: unknown
+): void {
+  if (playwrightMockMerchantEmailAutoInFlight) return;
+  if (!isPlaywrightMockMerchantOutreachEmailEnabled()) return;
+  if (!shouldQueueMerchantContactFilingTask(clientState)) return;
+
+  const recipient = resolveMerchantOutreachRecipientEmail(intake);
+  if (!recipient) return;
+
+  const filings = buildPlaywrightMockJusticeFilingsGetResponse(caseId);
+  if (hasMerchantContactFilingWithConfirmation(filings)) return;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const openTask = findOpenMerchantContactFilingTask(tasks, caseId);
+  if (!openTask) return;
+
+  const messageId = `mock_resend_${merchantContactEmailIdempotencyKey(caseId).replace(
+    /[^a-zA-Z0-9_-]/g,
+    "_"
+  )}`;
+  const sendingNotes = upsertMerchantContactEmailDeliveryNotes(openTask.notes, {
+    delivery_state: "sending",
+    provider: "mock_resend",
+    recipient,
+    sent_at: new Date().toISOString(),
+  });
+  openTask.notes = sendingNotes;
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(caseId, [...tasks]);
+
+  playwrightMockMerchantEmailAutoInFlight = true;
+  try {
+    completePlaywrightMockMerchantContactOperatorFiling({
+      caseId,
+      userId,
+      taskId: openTask.id,
+      destination: "Merchant contact",
+      filedAt: new Date().toISOString().slice(0, 10),
+      confirmationNumber: messageId,
+      contactMethod: "email",
+      merchantResponseType: "no_response",
+      recipient,
+      notes: [
+        "provider: mock_resend",
+        `provider_message_id: ${messageId}`,
+        "delivery_state: accepted",
+        `sent_at: ${new Date().toISOString()}`,
+      ].join("\n"),
+    });
+  } finally {
+    playwrightMockMerchantEmailAutoInFlight = false;
   }
 }
 

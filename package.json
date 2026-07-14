@@ -26,6 +26,7 @@
     "playwright-core": "^1.54.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "resend": "^6.17.2",
     "stripe": "^18.3.0",
     "uuid": "^11.1.0"
   },
