@@ -35,9 +35,14 @@ import {
   isMerchantContactEmailSending,
 } from "@/lib/justice/merchantContactEmailDelivery";
 import {
+  findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import {
+  isPaymentDisputeEmailFailed,
+  isPaymentDisputeEmailSending,
+} from "@/lib/justice/paymentDisputeEmailDelivery";
 import {
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
@@ -51,6 +56,8 @@ export type ChatCaseProgressMilestone =
   | "merchant_contact_send_failed"
   | "merchant_contact_confirmed"
   | "payment_dispute_queued"
+  | "payment_dispute_sending"
+  | "payment_dispute_send_failed"
   | "payment_dispute_confirmed"
   | "fcc_queued"
   | "fcc_confirmed"
@@ -75,6 +82,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "merchant_contact_send_failed",
   "merchant_contact_confirmed",
   "payment_dispute_queued",
+  "payment_dispute_sending",
+  "payment_dispute_send_failed",
   "payment_dispute_confirmed",
   "fcc_queued",
   "fcc_confirmed",
@@ -150,6 +159,13 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     })
   ) {
     satisfied.push("payment_dispute_queued");
+    const openPaymentDisputeTask = findOpenPaymentDisputeFilingTask(input.tasks, caseId);
+    if (isPaymentDisputeEmailSending(openPaymentDisputeTask)) {
+      satisfied.push("payment_dispute_sending");
+    }
+    if (isPaymentDisputeEmailFailed(openPaymentDisputeTask)) {
+      satisfied.push("payment_dispute_send_failed");
+    }
   }
 
   if (hasPaymentDisputeFilingWithConfirmation(input.filings)) {
@@ -304,7 +320,11 @@ export function buildChatCaseProgressNarrationMessage(
     case "merchant_contact_confirmed":
       return "Merchant or company contact is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "payment_dispute_queued":
-      return "I've queued your payment dispute with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed with your bank or card issuer.";
+      return "I've queued your payment dispute with Surrenderless. Stay here in chat — I'll update you when it's sending or filed with your bank or card issuer.";
+    case "payment_dispute_sending":
+      return "Surrenderless is sending your payment dispute email to your bank or card issuer now. Stay here in chat for confirmation.";
+    case "payment_dispute_send_failed":
+      return "Automated payment dispute email delivery did not go through. Surrenderless operators will complete filing manually — stay here in chat for updates.";
     case "payment_dispute_confirmed":
       return "Your payment dispute filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "fcc_queued":

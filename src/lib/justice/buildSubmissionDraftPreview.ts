@@ -65,6 +65,9 @@ export function buildSubmissionDraftPreview(input: BuildSubmissionDraftPreviewIn
   if (intake.company_contact_email?.trim()) {
     lines.push(`Company contact email: ${intake.company_contact_email.trim()}`);
   }
+  if (intake.card_issuer_contact_email?.trim()) {
+    lines.push(`Card issuer contact email: ${intake.card_issuer_contact_email.trim()}`);
+  }
   lines.push(`Issue category: ${problemCategoryLabel(intake.problem_category)}`);
   lines.push(`Product or service: ${intake.purchase_or_signup.trim() || "—"}`);
   if (intake.order_confirmation_details.trim()) {

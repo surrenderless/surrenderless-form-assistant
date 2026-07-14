@@ -55,6 +55,7 @@ import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
@@ -549,6 +550,27 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       );
       if (taskResult.timeline) {
         responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+      const emailResult = await attemptAutomatedPaymentDisputeEmailDelivery(
+        supabase,
+        userId,
+        id
+      );
+      if (emailResult.status === "accepted" || emailResult.status === "failed") {
+        if (emailResult.timeline) {
+          responseData = { ...responseData, timeline: emailResult.timeline };
+        }
+        if (emailResult.status === "accepted" && emailResult.task) {
+          const { data: refreshed } = await supabase
+            .from("justice_cases")
+            .select(SELECT)
+            .eq("id", id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (refreshed) {
+            responseData = { ...responseData, ...(refreshed as CaseResponse) };
+          }
+        }
       }
     }
   }

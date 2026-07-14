@@ -62,6 +62,8 @@ export type BuildJusticeIntakeParts = {
   consumer_us_state: string;
   /** Optional merchant/company outreach email (empty when unknown). */
   company_contact_email: string;
+  /** Optional bank/card issuer outreach email (empty when unknown). */
+  card_issuer_contact_email: string;
 };
 
 export type ContactProofValidationInput = {
@@ -108,6 +110,7 @@ export function defaultBuildJusticeIntakeParts(): BuildJusticeIntakeParts {
     contact_proof_text: "",
     consumer_us_state: "",
     company_contact_email: "",
+    card_issuer_contact_email: "",
   };
 }
 
@@ -159,6 +162,9 @@ export function justiceIntakeToBuildJusticeIntakeParts(intake: JusticeIntake): B
     contact_proof_text: "",
     consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() ?? "",
     company_contact_email: normalizeCompanyContactEmail(intake.company_contact_email ?? ""),
+    card_issuer_contact_email: normalizeCompanyContactEmail(
+      intake.card_issuer_contact_email ?? ""
+    ),
   };
 
   if (already_contacted === "yes") {
@@ -229,6 +235,11 @@ export function buildJusticeIntakeFromParts(parts: BuildJusticeIntakeParts): Jus
   const companyEmail = normalizeCompanyContactEmail(parts.company_contact_email);
   if (companyEmail) {
     intake.company_contact_email = companyEmail;
+  }
+
+  const issuerEmail = normalizeCompanyContactEmail(parts.card_issuer_contact_email);
+  if (issuerEmail) {
+    intake.card_issuer_contact_email = issuerEmail;
   }
 
   return intake;

@@ -60,11 +60,17 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import { isPlaywrightMockMerchantOutreachEmailEnabled } from "@/lib/email/merchantOutreachEmailEnv";
+import { isPlaywrightMockPaymentDisputeOutreachEmailEnabled } from "@/lib/email/paymentDisputeOutreachEmailEnv";
 import {
   merchantContactEmailIdempotencyKey,
   resolveMerchantOutreachRecipientEmail,
   upsertMerchantContactEmailDeliveryNotes,
 } from "@/lib/justice/merchantContactEmailDelivery";
+import {
+  paymentDisputeEmailIdempotencyKey,
+  resolvePaymentDisputeRecipientEmail,
+  upsertPaymentDisputeEmailDeliveryNotes,
+} from "@/lib/justice/paymentDisputeEmailDelivery";
 import {
   buildMerchantContactFilingTaskNotes,
   buildMerchantContactFilingTaskTitle,
@@ -78,6 +84,8 @@ import { buildPlaywrightMockJusticeFilingsGetResponse } from "@/lib/testing/play
 import {
   buildPaymentDisputeFilingTaskNotes,
   buildPaymentDisputeFilingTaskTitle,
+  findOpenPaymentDisputeFilingTask,
+  hasPaymentDisputeFilingWithConfirmation,
   parsePaymentDisputeFilingTaskDraft,
   resolvePaymentDisputeDraftForOperatorPacket,
   shouldQueuePaymentDisputeFilingTask,
@@ -344,6 +352,12 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
     justiceIntake,
     clientState
   );
+  maybeAutoDeliverPlaywrightMockPaymentDisputeEmail(
+    trimmedCaseId,
+    userId,
+    justiceIntake,
+    clientState
+  );
 }
 
 /**
@@ -406,6 +420,67 @@ function maybeAutoDeliverPlaywrightMockMerchantContactEmail(
     });
   } finally {
     playwrightMockMerchantEmailAutoInFlight = false;
+  }
+}
+
+/**
+ * When Playwright mock payment-dispute email outreach is enabled and a card issuer email
+ * is on intake, accept a deterministic mock provider message and complete the dispute.
+ */
+let playwrightMockPaymentDisputeEmailAutoInFlight = false;
+
+function maybeAutoDeliverPlaywrightMockPaymentDisputeEmail(
+  caseId: string,
+  userId: string,
+  intake: JusticeIntake,
+  clientState: unknown
+): void {
+  if (playwrightMockPaymentDisputeEmailAutoInFlight) return;
+  if (!isPlaywrightMockPaymentDisputeOutreachEmailEnabled()) return;
+  if (!shouldQueuePaymentDisputeFilingTask(clientState)) return;
+
+  const recipient = resolvePaymentDisputeRecipientEmail(intake);
+  if (!recipient) return;
+
+  const filings = buildPlaywrightMockJusticeFilingsGetResponse(caseId);
+  if (hasPaymentDisputeFilingWithConfirmation(filings)) return;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const openTask = findOpenPaymentDisputeFilingTask(tasks, caseId);
+  if (!openTask) return;
+
+  const messageId = `mock_resend_${paymentDisputeEmailIdempotencyKey(caseId).replace(
+    /[^a-zA-Z0-9_-]/g,
+    "_"
+  )}`;
+  const sendingNotes = upsertPaymentDisputeEmailDeliveryNotes(openTask.notes, {
+    delivery_state: "sending",
+    provider: "mock_resend",
+    recipient,
+    sent_at: new Date().toISOString(),
+  });
+  openTask.notes = sendingNotes;
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(caseId, [...tasks]);
+
+  playwrightMockPaymentDisputeEmailAutoInFlight = true;
+  try {
+    completePlaywrightMockPaymentDisputeOperatorFiling({
+      caseId,
+      userId,
+      taskId: openTask.id,
+      destination: "Payment dispute (bank/card)",
+      filedAt: new Date().toISOString().slice(0, 10),
+      confirmationNumber: messageId,
+      notes: [
+        "provider: mock_resend",
+        `provider_message_id: ${messageId}`,
+        "delivery_state: accepted",
+        `recipient: ${recipient}`,
+        `sent_at: ${new Date().toISOString()}`,
+      ].join("\n"),
+    });
+  } finally {
+    playwrightMockPaymentDisputeEmailAutoInFlight = false;
   }
 }
 
