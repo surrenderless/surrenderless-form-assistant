@@ -6924,6 +6924,12 @@ export default function JusticeChatAiPage() {
               <li>
                 <span className="font-medium">Email:</span> {parts.reply_email || "â€”"}
               </li>
+              {parts.company_contact_email.trim() ? (
+                <li>
+                  <span className="font-medium">Company contact email:</span>{" "}
+                  {parts.company_contact_email}
+                </li>
+              ) : null}
             </ul>
             {stillNeededHint ? (
               <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{stillNeededHint}</p>

@@ -4,6 +4,8 @@ import {
   buildPlaywrightMockIntakeChatResponse,
   isPlaywrightMockIntakeChatPipelineEnabled,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE,
+  PLAYWRIGHT_MOCK_INTAKE_CHAT_COMPANY_CONTACT_EMAIL_ASSISTANT_MESSAGE,
+  PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_COMPANY_CONTACT_EMAIL_USER_MESSAGE,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_SECOND_ASSISTANT_MESSAGE,
@@ -59,5 +61,28 @@ describe("playwrightMockIntakeChatPipeline", () => {
     expect(turnTwo.parts.purchase_or_signup).toBe("widget order");
     expect(turnTwo.parts.reply_email).toBe("e2e-chat@example.com");
     expect(turnTwo.parts.user_display_name).toBe("Jordan Lee");
+    expect(turnTwo.parts.company_contact_email).toBe("");
+  });
+
+  it("captures company_contact_email on the dedicated third turn without changing reply_email", () => {
+    const afterTurnOne = buildPlaywrightMockIntakeChatResponse(
+      PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE,
+      defaultBuildJusticeIntakeParts()
+    ).parts;
+    const afterTurnTwo = buildPlaywrightMockIntakeChatResponse(
+      PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE,
+      afterTurnOne
+    ).parts;
+
+    const turnThree = buildPlaywrightMockIntakeChatResponse(
+      PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_COMPANY_CONTACT_EMAIL_USER_MESSAGE,
+      afterTurnTwo
+    );
+
+    expect(turnThree.assistantMessage).toBe(
+      PLAYWRIGHT_MOCK_INTAKE_CHAT_COMPANY_CONTACT_EMAIL_ASSISTANT_MESSAGE
+    );
+    expect(turnThree.parts.reply_email).toBe("e2e-chat@example.com");
+    expect(turnThree.parts.company_contact_email).toBe("support@acme-retail.example");
   });
 });

@@ -1,3 +1,4 @@
+import { normalizeCompanyContactEmail } from "@/lib/justice/normalizeCompanyContactEmail";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 import type {
   ContactMethod,
@@ -59,6 +60,8 @@ export type BuildJusticeIntakeParts = {
   contact_proof_type: NonNullable<JusticeIntake["contact_proof_type"]>;
   contact_proof_text: string;
   consumer_us_state: string;
+  /** Optional merchant/company outreach email (empty when unknown). */
+  company_contact_email: string;
 };
 
 export type ContactProofValidationInput = {
@@ -104,6 +107,7 @@ export function defaultBuildJusticeIntakeParts(): BuildJusticeIntakeParts {
     contact_proof_type: "none",
     contact_proof_text: "",
     consumer_us_state: "",
+    company_contact_email: "",
   };
 }
 
@@ -154,6 +158,7 @@ export function justiceIntakeToBuildJusticeIntakeParts(intake: JusticeIntake): B
     contact_proof_type: defaults.contact_proof_type,
     contact_proof_text: "",
     consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() ?? "",
+    company_contact_email: normalizeCompanyContactEmail(intake.company_contact_email ?? ""),
   };
 
   if (already_contacted === "yes") {
@@ -219,6 +224,11 @@ export function buildJusticeIntakeFromParts(parts: BuildJusticeIntakeParts): Jus
   const st = parts.consumer_us_state.trim().toUpperCase();
   if (/^[A-Z]{2}$/.test(st)) {
     intake.consumer_us_state = st;
+  }
+
+  const companyEmail = normalizeCompanyContactEmail(parts.company_contact_email);
+  if (companyEmail) {
+    intake.company_contact_email = companyEmail;
   }
 
   return intake;
