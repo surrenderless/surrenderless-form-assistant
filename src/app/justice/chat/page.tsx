@@ -14,6 +14,7 @@ import {
   commitIntakeToSessionAndServer,
   shouldRouteToChatAiAfterIntakeCommit,
 } from "@/lib/justice/commitIntakeToSessionAndServer";
+import { normalizeCompanyContactEmail } from "@/lib/justice/normalizeCompanyContactEmail";
 import { normalizeCompanyWebsite } from "@/lib/justice/normalizeCompanyWebsite";
 
 type ChatRole = "assistant" | "user";
@@ -28,6 +29,7 @@ type Step =
   | "opening"
   | "company"
   | "website"
+  | "company_contact_email"
   | "category"
   | "product"
   | "money_amount"
@@ -71,6 +73,8 @@ function assistantPrompt(step: Step): string {
       return "What is the company or seller name?";
     case "website":
       return "Do they have a website? Paste a URL, or type “none” if you don’t have one.";
+    case "company_contact_email":
+      return "Optional: company support or contact email for first outreach (e.g. support@…). Leave blank, or type “none”, if you don’t have one.";
     case "category":
       return "What kind of problem is this? Pick the closest match.";
     case "product":
@@ -115,6 +119,7 @@ function nextStep(current: Step, alreadyContacted: "yes" | "no"): Step {
     "opening",
     "company",
     "website",
+    "company_contact_email",
     "category",
     "product",
     "money_amount",
@@ -160,6 +165,7 @@ export default function JusticeChatPage() {
   const [openingText, setOpeningText] = useState("");
   const [company_name, setCompanyName] = useState("");
   const [company_website, setCompanyWebsite] = useState("");
+  const [company_contact_email, setCompanyContactEmail] = useState("");
   const [problem_category, setProblemCategory] = useState<JusticeIntake["problem_category"]>("online_purchase");
   const [purchase_or_signup, setPurchaseOrSignup] = useState("");
   const [money_amount, setMoneyAmount] = useState("");
@@ -240,6 +246,7 @@ export default function JusticeChatPage() {
       problem_category,
       company_name,
       company_website,
+      company_contact_email,
       purchase_or_signup,
       story,
       money_amount,
@@ -325,6 +332,33 @@ export default function JusticeChatPage() {
       setCompanyWebsite(normalized);
       appendUser(trimmed || "(none)");
       goToStep(nextStep("website", already_contacted));
+      return;
+    }
+
+    if (step === "company_contact_email") {
+      const lower = trimmed.toLowerCase();
+      const isSkip =
+        !trimmed ||
+        lower === "none" ||
+        lower === "n/a" ||
+        lower === "na" ||
+        lower === "-" ||
+        lower === "no" ||
+        lower === "unknown" ||
+        lower === "skip";
+      if (!isSkip) {
+        const normalized = normalizeCompanyContactEmail(trimmed);
+        if (!normalized) {
+          setStepError("Enter a valid company contact email, or leave blank to skip.");
+          return;
+        }
+        setCompanyContactEmail(normalized);
+        appendUser(normalized);
+      } else {
+        setCompanyContactEmail("");
+        appendUser(trimmed || "(skipped)");
+      }
+      goToStep(nextStep("company_contact_email", already_contacted));
       return;
     }
 

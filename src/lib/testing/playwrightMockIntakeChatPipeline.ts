@@ -17,6 +17,14 @@ export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE =
 export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE =
   "My email is e2e-chat@example.com and my name is Jordan Lee. I emailed Acme Retail on 2026-01-15 and they refused a refund.";
 
+/** Canonical third-turn message providing merchant/company outreach email for Playwright E2E. */
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_COMPANY_CONTACT_EMAIL_USER_MESSAGE =
+  "Their company support email is support@acme-retail.example";
+
+/** Deterministic assistant copy returned for the company-contact-email Playwright E2E user message. */
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_COMPANY_CONTACT_EMAIL_ASSISTANT_MESSAGE =
+  "Got it — I've noted support@acme-retail.example as the company contact email for outreach. Your basics look ready; you can save and continue in chat when you're ready.";
+
 /** Enabled only when Playwright webServer sets PLAYWRIGHT_MOCK_INTAKE_CHAT_PIPELINE=1. */
 export function isPlaywrightMockIntakeChatPipelineEnabled(): boolean {
   if (process.env.PLAYWRIGHT_MOCK_INTAKE_CHAT_PIPELINE !== "1") {
@@ -49,6 +57,18 @@ function extractMockEmail(userMessage: string): string {
   return match?.[0] ?? "";
 }
 
+function extractMockCompanyContactEmail(userMessage: string): string {
+  const labeled =
+    userMessage.match(
+      /\b(?:(?:their|the)\s+)?(?:company|merchant|seller)\s+(?:support\s+)?(?:contact\s+)?email\s+is\s+([\w.+-]+@[\w.-]+\.\w+)/i
+    ) ||
+    userMessage.match(/\b(?:their|the)\s+support\s+email\s+is\s+([\w.+-]+@[\w.-]+\.\w+)/i) ||
+    userMessage.match(/\bcompany\s+contact\s+email\s+is\s+([\w.+-]+@[\w.-]+\.\w+)/i);
+  if (labeled?.[1]) return labeled[1].toLowerCase();
+  const supportAddr = userMessage.match(/\b(support@[\w.-]+\.\w+)\b/i);
+  return supportAddr?.[1]?.toLowerCase() ?? "";
+}
+
 function extractMockDisplayName(userMessage: string): string {
   if (userMessage.includes("Jordan Lee")) {
     return "Jordan Lee";
@@ -57,11 +77,27 @@ function extractMockDisplayName(userMessage: string): string {
   return match?.[1]?.trim() ?? "";
 }
 
+function isPlaywrightMockIntakeChatCompanyContactEmailTurnMessage(userMessage: string): boolean {
+  const trimmed = userMessage.trim();
+  if (trimmed === PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_COMPANY_CONTACT_EMAIL_USER_MESSAGE) {
+    return true;
+  }
+  // Avoid treating consumer reply-email turns ("My email is …") as company contact email.
+  return (
+    /\b(?:company|merchant|seller)\s+(?:support\s+)?(?:contact\s+)?email\s+is\b/i.test(trimmed) ||
+    /\b(?:their|the)\s+support\s+email\s+is\b/i.test(trimmed) ||
+    /\bcompany\s+contact\s+email\s+is\b/i.test(trimmed)
+  ) && Boolean(extractMockCompanyContactEmail(trimmed));
+}
+
 function isPlaywrightMockIntakeChatSecondTurnMessage(
   userMessage: string,
   baselineParts: BuildJusticeIntakeParts
 ): boolean {
   const trimmed = userMessage.trim();
+  if (isPlaywrightMockIntakeChatCompanyContactEmailTurnMessage(trimmed)) {
+    return false;
+  }
   if (trimmed === PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE) {
     return true;
   }
@@ -124,6 +160,22 @@ function mergeMockMerchantContactFromUserMessage(
   });
 }
 
+function buildPlaywrightMockIntakeChatCompanyContactEmailTurnResponse(
+  userMessage: string,
+  baselineParts: BuildJusticeIntakeParts
+): { assistantMessage: string; parts: BuildJusticeIntakeParts } {
+  const company_contact_email =
+    extractMockCompanyContactEmail(userMessage) || "support@acme-retail.example";
+  const parts = mergeModelBuildJusticeIntakeParts(baselineParts, {
+    company_contact_email,
+  });
+  const assistantMessage =
+    company_contact_email === "support@acme-retail.example"
+      ? PLAYWRIGHT_MOCK_INTAKE_CHAT_COMPANY_CONTACT_EMAIL_ASSISTANT_MESSAGE
+      : `Got it — I've noted ${company_contact_email} as the company contact email for outreach. Your basics look ready; you can save and continue in chat when you're ready.`;
+  return { assistantMessage, parts };
+}
+
 function buildPlaywrightMockIntakeChatSecondTurnResponse(
   userMessage: string,
   baselineParts: BuildJusticeIntakeParts
@@ -157,6 +209,10 @@ export function buildPlaywrightMockIntakeChatResponse(
   baselineParts: BuildJusticeIntakeParts
 ): { assistantMessage: string; parts: BuildJusticeIntakeParts } {
   const trimmed = userMessage.trim();
+
+  if (isPlaywrightMockIntakeChatCompanyContactEmailTurnMessage(trimmed)) {
+    return buildPlaywrightMockIntakeChatCompanyContactEmailTurnResponse(trimmed, baselineParts);
+  }
 
   if (isPlaywrightMockIntakeChatSecondTurnMessage(trimmed, baselineParts)) {
     return buildPlaywrightMockIntakeChatSecondTurnResponse(trimmed, baselineParts);

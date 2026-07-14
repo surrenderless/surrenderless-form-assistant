@@ -81,6 +81,9 @@ export function buildPacketPlainText(
     "--------------",
     `Company: ${intake.company_name}`,
     `Website: ${intake.company_website.trim() || "—"}`,
+    intake.company_contact_email?.trim()
+      ? `Company contact email: ${intake.company_contact_email.trim()}`
+      : "",
     `Issue category: ${intake.problem_category.replace(/_/g, " ")}`,
     `Product / service: ${intake.purchase_or_signup.trim() || "—"}`,
     `Money involved: ${intake.money_involved}`,

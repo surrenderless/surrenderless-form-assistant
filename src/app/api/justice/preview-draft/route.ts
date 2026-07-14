@@ -91,6 +91,10 @@ function clampIntake(intake: JusticeIntake): JusticeIntake {
       intake.contact_proof_text !== undefined ? clampStr(intake.contact_proof_text, 8000) : undefined,
     consumer_us_state:
       intake.consumer_us_state !== undefined ? clampStr(intake.consumer_us_state, 8) : undefined,
+    company_contact_email:
+      intake.company_contact_email !== undefined
+        ? clampStr(intake.company_contact_email, 320)
+        : undefined,
   };
 }
 

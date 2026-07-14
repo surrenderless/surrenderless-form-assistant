@@ -4,6 +4,7 @@ import {
 } from "@/lib/justice/buildJusticeIntake";
 
 export { defaultBuildJusticeIntakeParts };
+import { normalizeCompanyContactEmail } from "@/lib/justice/normalizeCompanyContactEmail";
 import type {
   ContactMethod,
   ContactProofType,
@@ -61,6 +62,7 @@ const STRING_LIMITS: Record<keyof BuildJusticeIntakeParts, number> = {
   contact_proof_type: 32,
   contact_proof_text: 8000,
   consumer_us_state: 8,
+  company_contact_email: 320,
 };
 
 export const MAX_INTAKE_CHAT_USER_MESSAGE = 8_000;
@@ -122,6 +124,12 @@ function normalizeConsumerUsState(value: string): string {
   return /^[A-Z]{2}$/.test(st) ? st : "";
 }
 
+function coerceCompanyContactEmail(raw: Record<string, unknown>, fallback: string): string {
+  const v = raw.company_contact_email;
+  if (typeof v !== "string") return normalizeCompanyContactEmail(fallback);
+  return normalizeCompanyContactEmail(clampStr(v.trim(), STRING_LIMITS.company_contact_email));
+}
+
 /** Clamp and coerce a partial `parts` object from the request body. */
 export function parseRequestBuildJusticeIntakeParts(v: unknown): BuildJusticeIntakeParts | null {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
@@ -156,6 +164,7 @@ export function parseRequestBuildJusticeIntakeParts(v: unknown): BuildJusticeInt
     consumer_us_state: normalizeConsumerUsState(
       typeof o.consumer_us_state === "string" ? o.consumer_us_state : defaults.consumer_us_state
     ),
+    company_contact_email: coerceCompanyContactEmail(o, defaults.company_contact_email),
   };
 
   return parts;
@@ -201,6 +210,7 @@ export function mergeModelBuildJusticeIntakeParts(
         ? o.consumer_us_state
         : baseline.consumer_us_state
     ),
+    company_contact_email: coerceCompanyContactEmail(o, baseline.company_contact_email),
   };
 }
 
