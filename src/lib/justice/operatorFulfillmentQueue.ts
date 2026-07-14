@@ -240,13 +240,15 @@ export async function listOperatorFulfillmentQueue(
     const caseId = task.case_id?.trim() ?? "";
     if (!caseId) return false;
       return (
+        taskNotesMatchMerchantContactFilingMarker(task.notes, caseId) ||
         taskNotesMatchStateAgFilingMarker(task.notes, caseId) ||
         taskNotesMatchDemandLetterFilingMarker(task.notes, caseId) ||
         taskNotesMatchCfpbFilingMarker(task.notes, caseId) ||
         taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId) ||
         taskNotesMatchFccFilingMarker(task.notes, caseId) ||
         taskNotesMatchDotFilingMarker(task.notes, caseId) ||
-        taskNotesMatchBbbFilingMarker(task.notes, caseId)
+        taskNotesMatchBbbFilingMarker(task.notes, caseId) ||
+        taskNotesMatchFtcFilingMarker(task.notes, caseId)
       );
   });
 

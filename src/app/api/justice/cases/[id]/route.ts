@@ -50,6 +50,7 @@ import {
   ensureMerchantContactFilingTask,
   shouldQueueMerchantContactFilingTask,
 } from "@/lib/justice/merchantContactFilingTask";
+import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merchantContactEmailDelivery";
 import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
@@ -453,6 +454,28 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       );
       if (taskResult.timeline) {
         responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+      const emailResult = await attemptAutomatedMerchantContactEmailDelivery(
+        supabase,
+        userId,
+        id
+      );
+      if (emailResult.status === "accepted" || emailResult.status === "failed") {
+        if (emailResult.timeline) {
+          responseData = { ...responseData, timeline: emailResult.timeline };
+        }
+        if (emailResult.status === "accepted" && emailResult.task) {
+          // Case advanced/completed via completion path — refetch snapshot fields when present.
+          const { data: refreshed } = await supabase
+            .from("justice_cases")
+            .select(SELECT)
+            .eq("id", id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (refreshed) {
+            responseData = { ...responseData, ...(refreshed as CaseResponse) };
+          }
+        }
       }
     }
   }
