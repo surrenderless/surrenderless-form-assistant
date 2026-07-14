@@ -28,13 +28,12 @@ export function SurrenderlessOwnedHumanFulfillmentPrepReadOnly({
             Surrenderless is handling this step
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
-            Your <span className="font-medium">{stepLabel}</span> is owned by Surrenderless operator
-            fulfillment. Copy/paste prep and manual filing are not available on this page while
-            Surrenderless carries the step.
+            Your <span className="font-medium">{stepLabel}</span> is owned by Surrenderless. Stay in
+            chat for queued, in-progress, and completed updates while operator fulfillment runs.
           </p>
           <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-            Check chat for queued or completed status, or open the handling workbench for operator
-            queue details.
+            Consumer copy/paste, contact, submit, mark-filed, and manual-confirm controls are not
+            available on this page for this step.
           </p>
         </div>
       </main>

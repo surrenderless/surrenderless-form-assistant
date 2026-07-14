@@ -120,9 +120,11 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expect(page.getByRole("link", { name: "Organize evidence" })).toHaveCount(0);
 
     await page.goto("/justice/merchant");
-    await expect(
-      page.getByRole("heading", { name: "Surrenderless is handling this step" })
-    ).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(/\/justice\/merchant/);
+    // Owned optional hubs redirect signed-in resumable consumers back to chat —
+    // never DIY prep, never permanent hub stay.
+    await expect(page).toHaveURL(/\/justice\/chat-ai(?:#.*)?$/, { timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: /Merchant contact & proof/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Save contact|Mark .* filed/i })).toHaveCount(0);
+    await expectUrlStaysOnChatAi(page);
   });
 });

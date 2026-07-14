@@ -28,6 +28,12 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { SurrenderlessOwnedPrepHubLoading } from "@/app/components/SurrenderlessOwnedPrepHubLoading";
+import {
+  isDiyAllowedOnSurrenderlessOwnedPrepHub,
+  isOptionalHubEscapeSessionReadyForOwnedPrep,
+  shouldShowSurrenderlessOwnedPrepHubOwnershipPending,
+} from "@/lib/justice/surrenderlessOwnedPrepHubGate";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 const cardCls =
@@ -130,10 +136,19 @@ export default function JusticePaymentDisputePage() {
     "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900 shadow-sm ring-1 ring-neutral-950/[0.03] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/[0.04]";
   const labelCls = "block text-sm font-medium text-neutral-700 dark:text-neutral-300";
 
+  const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOptionalHubEscapeCaseId(sessionStorage.getItem(STORAGE_CASE_ID) ?? "");
+  }, [hydrationStatus]);
+
   const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
     escapePageHref: "/justice/payment-dispute",
-    caseId,
-    hasResumableCase: hydrationStatus === "ready" && Boolean(intake),
+    caseId: optionalHubEscapeCaseId || caseId,
+    hasResumableCase:
+      Boolean((optionalHubEscapeCaseId || caseId).trim()) ||
+      (hydrationStatus === "ready" && Boolean(intake)),
+    sessionReady: isOptionalHubEscapeSessionReadyForOwnedPrep(ownedPrepPage.status),
   });
 
   if (ownedPrepPage.status === "owned") {
@@ -144,15 +159,15 @@ export default function JusticePaymentDisputePage() {
     return <JusticeActionResumeSignInPrompt />;
   }
 
-  if (hydrationStatus !== "ready" || !intake || !formReady || redirectOffOptionalHub) {
-    return (
-      <>
-        <Header />
-        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loading…
-        </main>
-      </>
-    );
+  if (
+    shouldShowSurrenderlessOwnedPrepHubOwnershipPending(ownedPrepPage.status) ||
+    !isDiyAllowedOnSurrenderlessOwnedPrepHub(ownedPrepPage.status) ||
+    hydrationStatus !== "ready" ||
+    !intake ||
+    !formReady ||
+    redirectOffOptionalHub
+  ) {
+    return <SurrenderlessOwnedPrepHubLoading />;
   }
 
   const issueSummary = intake.problem_category.replace(/_/g, " ");

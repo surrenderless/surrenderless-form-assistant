@@ -3,7 +3,9 @@
 import Link from "next/link";
 import Header from "@/app/components/Header";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
+import { SurrenderlessOwnedPrepHubLoading } from "@/app/components/SurrenderlessOwnedPrepHubLoading";
 import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import { shouldShowSurrenderlessOwnedPrepHubOwnershipPending } from "@/lib/justice/surrenderlessOwnedPrepHubGate";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 export default function JusticeFtcPrepPage() {
@@ -13,6 +15,10 @@ export default function JusticeFtcPrepPage() {
 
   if (ownedPrepPage.status === "owned") {
     return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
+  }
+
+  if (shouldShowSurrenderlessOwnedPrepHubOwnershipPending(ownedPrepPage.status)) {
+    return <SurrenderlessOwnedPrepHubLoading />;
   }
 
   return (
@@ -36,7 +42,9 @@ export default function JusticeFtcPrepPage() {
           Surrenderless files FTC consumer complaints for you when this step is queued. Stay in chat
           for updates — this page is a read-only checkpoint when owned.
         </p>
-        <p className="mt-6 text-sm text-neutral-500 dark:text-neutral-400">Loading…</p>
+        <p className="mt-6 text-sm text-neutral-500 dark:text-neutral-400">
+          Return to chat to continue. Consumer DIY filing is not available for this step.
+        </p>
       </main>
     </>
   );
