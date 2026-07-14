@@ -95,6 +95,10 @@ function clampIntake(intake: JusticeIntake): JusticeIntake {
       intake.company_contact_email !== undefined
         ? clampStr(intake.company_contact_email, 320)
         : undefined,
+    card_issuer_contact_email:
+      intake.card_issuer_contact_email !== undefined
+        ? clampStr(intake.card_issuer_contact_email, 320)
+        : undefined,
   };
 }
 

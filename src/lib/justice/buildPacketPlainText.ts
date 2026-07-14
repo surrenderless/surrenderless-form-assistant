@@ -84,6 +84,9 @@ export function buildPacketPlainText(
     intake.company_contact_email?.trim()
       ? `Company contact email: ${intake.company_contact_email.trim()}`
       : "",
+    intake.card_issuer_contact_email?.trim()
+      ? `Card issuer contact email: ${intake.card_issuer_contact_email.trim()}`
+      : "",
     `Issue category: ${intake.problem_category.replace(/_/g, " ")}`,
     `Product / service: ${intake.purchase_or_signup.trim() || "—"}`,
     `Money involved: ${intake.money_involved}`,

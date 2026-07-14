@@ -109,6 +109,9 @@ export function buildPaymentDisputeFilingTaskNotes(
       : null,
     `prior_company_contact: ${draft.prior_company_contact}`,
     `proof_type: ${draft.proof_type}`,
+    intake.card_issuer_contact_email?.trim()
+      ? `card_issuer_contact_email: ${intake.card_issuer_contact_email.trim()}`
+      : `card_issuer_contact_email: (not set)`,
   ].filter(Boolean);
   const header = [
     marker,

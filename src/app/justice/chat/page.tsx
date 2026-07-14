@@ -30,6 +30,7 @@ type Step =
   | "company"
   | "website"
   | "company_contact_email"
+  | "card_issuer_contact_email"
   | "category"
   | "product"
   | "money_amount"
@@ -75,6 +76,8 @@ function assistantPrompt(step: Step): string {
       return "Do they have a website? Paste a URL, or type “none” if you don’t have one.";
     case "company_contact_email":
       return "Optional: company support or contact email for first outreach (e.g. support@…). Leave blank, or type “none”, if you don’t have one.";
+    case "card_issuer_contact_email":
+      return "Optional: bank or card issuer dispute email for payment disputes (e.g. disputes@…). Leave blank, or type “none”, if you don’t have one.";
     case "category":
       return "What kind of problem is this? Pick the closest match.";
     case "product":
@@ -120,6 +123,7 @@ function nextStep(current: Step, alreadyContacted: "yes" | "no"): Step {
     "company",
     "website",
     "company_contact_email",
+    "card_issuer_contact_email",
     "category",
     "product",
     "money_amount",
@@ -166,6 +170,7 @@ export default function JusticeChatPage() {
   const [company_name, setCompanyName] = useState("");
   const [company_website, setCompanyWebsite] = useState("");
   const [company_contact_email, setCompanyContactEmail] = useState("");
+  const [card_issuer_contact_email, setCardIssuerContactEmail] = useState("");
   const [problem_category, setProblemCategory] = useState<JusticeIntake["problem_category"]>("online_purchase");
   const [purchase_or_signup, setPurchaseOrSignup] = useState("");
   const [money_amount, setMoneyAmount] = useState("");
@@ -247,6 +252,7 @@ export default function JusticeChatPage() {
       company_name,
       company_website,
       company_contact_email,
+      card_issuer_contact_email,
       purchase_or_signup,
       story,
       money_amount,
@@ -359,6 +365,33 @@ export default function JusticeChatPage() {
         appendUser(trimmed || "(skipped)");
       }
       goToStep(nextStep("company_contact_email", already_contacted));
+      return;
+    }
+
+    if (step === "card_issuer_contact_email") {
+      const lower = trimmed.toLowerCase();
+      const isSkip =
+        !trimmed ||
+        lower === "none" ||
+        lower === "n/a" ||
+        lower === "na" ||
+        lower === "-" ||
+        lower === "no" ||
+        lower === "unknown" ||
+        lower === "skip";
+      if (!isSkip) {
+        const normalized = normalizeCompanyContactEmail(trimmed);
+        if (!normalized) {
+          setStepError("Enter a valid card issuer contact email, or leave blank to skip.");
+          return;
+        }
+        setCardIssuerContactEmail(normalized);
+        appendUser(normalized);
+      } else {
+        setCardIssuerContactEmail("");
+        appendUser(trimmed || "(skipped)");
+      }
+      goToStep(nextStep("card_issuer_contact_email", already_contacted));
       return;
     }
 

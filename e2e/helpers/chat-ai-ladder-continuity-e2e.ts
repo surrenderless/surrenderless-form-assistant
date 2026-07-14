@@ -336,6 +336,55 @@ export async function seedActiveCasePaymentDisputeFilingStep(page: Page): Promis
   });
 }
 
+/** Payment dispute step with card_issuer_contact_email so mock automated email delivery can run. */
+export async function seedActiveCasePaymentDisputeFilingStepWithIssuerEmail(
+  page: Page
+): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    problem_category: "charge_dispute",
+    purchase_or_signup: "credit card charge",
+    story: "Unauthorized charge after canceling order.",
+    money_involved: "$49.99",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+    card_issuer_contact_email: "disputes@issuer-bank.example",
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "Payment dispute (bank/card)",
+    href: "/justice/payment-dispute",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:10.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    payment_dispute_draft: {
+      case_id: caseId,
+      payment_method: "credit_card",
+      charge_date: "2026-01-10",
+      charge_amount: "$49.99",
+      merchant_name: "Acme Retail",
+      dispute_reason: "unauthorized_charge",
+      prior_company_contact: "no",
+      proof_type: "receipt_order_confirmation",
+    },
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
 /**
  * FCC approved + packet approved so chat queues Surrenderless-owned FCC fulfillment.
  * Telecom story without merchant contact so completion is terminal for resolution endgame.

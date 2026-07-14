@@ -40,6 +40,8 @@ export type JusticeIntake = {
   consumer_us_state?: string;
   /** Optional merchant/company outreach email for Surrenderless first-contact delivery. */
   company_contact_email?: string;
+  /** Optional bank/card issuer contact email for Surrenderless payment-dispute delivery. */
+  card_issuer_contact_email?: string;
 };
 
 export type DestinationId =

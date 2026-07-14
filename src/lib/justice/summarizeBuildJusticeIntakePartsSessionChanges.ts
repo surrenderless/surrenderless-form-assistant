@@ -55,6 +55,9 @@ export function summarizeBuildJusticeIntakePartsSessionChanges(
   if (stringFieldChanged(baseline.company_contact_email, current.company_contact_email)) {
     lines.push("Company contact email — updated");
   }
+  if (stringFieldChanged(baseline.card_issuer_contact_email, current.card_issuer_contact_email)) {
+    lines.push("Card issuer contact email — updated");
+  }
   if (stringFieldChanged(baseline.story, current.story)) {
     lines.push("What happened — updated");
   }

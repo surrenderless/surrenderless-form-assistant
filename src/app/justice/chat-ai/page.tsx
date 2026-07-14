@@ -358,6 +358,10 @@ import {
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import {
+  isPaymentDisputeEmailFailed,
+  isPaymentDisputeEmailSending,
+} from "@/lib/justice/paymentDisputeEmailDelivery";
 
 type UiMessage = {
   id: string;
@@ -5780,6 +5784,13 @@ export default function JusticeChatAiPage() {
     showMerchantContactQueuedNotice && isMerchantContactEmailSending(openMerchantContactTask);
   const showMerchantContactSendFailedNotice =
     showMerchantContactQueuedNotice && isMerchantContactEmailFailed(openMerchantContactTask);
+  const openPaymentDisputeTask = activeUuidCaseId
+    ? findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId)
+    : undefined;
+  const showPaymentDisputeSendingNotice =
+    showPaymentDisputeFilingQueuedNotice && isPaymentDisputeEmailSending(openPaymentDisputeTask);
+  const showPaymentDisputeSendFailedNotice =
+    showPaymentDisputeFilingQueuedNotice && isPaymentDisputeEmailFailed(openPaymentDisputeTask);
   const showFtcFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFtcFilingAction(approvedNextAction) &&
@@ -6930,6 +6941,12 @@ export default function JusticeChatAiPage() {
                   {parts.company_contact_email}
                 </li>
               ) : null}
+              {parts.card_issuer_contact_email.trim() ? (
+                <li>
+                  <span className="font-medium">Card issuer contact email:</span>{" "}
+                  {parts.card_issuer_contact_email}
+                </li>
+              ) : null}
             </ul>
             {stillNeededHint ? (
               <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{stillNeededHint}</p>
@@ -6996,11 +7013,26 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showPaymentDisputeFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">Payment dispute filing queued.</span> Surrenderless
-                    has queued your bank/card dispute for operator filing using your prepared dispute
-                    packet. Nothing has been filed yet.
+                    {showPaymentDisputeSendingNotice ? (
+                      <>
+                        <span className="font-medium">Payment dispute sending.</span> Surrenderless is
+                        delivering your bank/card dispute email using your prepared dispute packet.
+                      </>
+                    ) : showPaymentDisputeSendFailedNotice ? (
+                      <>
+                        <span className="font-medium">Payment dispute email failed.</span> Automated
+                        delivery did not go through. Operators will complete the dispute filing
+                        manually — nothing is marked filed until delivery succeeds.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">Payment dispute filing queued.</span>{" "}
+                        Surrenderless has queued your bank/card dispute using your prepared dispute
+                        packet. Nothing has been filed yet.
+                      </>
+                    )}
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — operator updates will appear here.
+                      Stay in this chat — status updates will appear here.
                     </span>
                   </p>
                 ) : null}
@@ -7093,9 +7125,9 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showPaymentDisputeFilingFiledNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">Payment dispute filed.</span> Surrenderless recorded
-                    your bank/card dispute filing with confirmation on file. Your case will advance to
-                    the next approved step when tracking updates.
+                    <span className="font-medium">Payment dispute sent.</span> Surrenderless recorded
+                    your bank/card dispute filing with provider confirmation on file. Your case will
+                    advance to the next approved step when tracking updates.
                   </p>
                 ) : null}
                 {showFccFilingFiledNotice ? (

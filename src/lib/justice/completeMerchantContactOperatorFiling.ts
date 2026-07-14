@@ -51,6 +51,7 @@ import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { cfpbLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
 import {
@@ -437,6 +438,17 @@ export async function completeMerchantContactOperatorFiling(
       );
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
+      }
+      const emailResult = await attemptAutomatedPaymentDisputeEmailDelivery(
+        supabase,
+        userId,
+        caseId
+      );
+      if (
+        (emailResult.status === "accepted" || emailResult.status === "failed") &&
+        emailResult.timeline
+      ) {
+        timeline = emailResult.timeline;
       }
     }
     if (shouldQueueCfpbFilingTask(clientState)) {

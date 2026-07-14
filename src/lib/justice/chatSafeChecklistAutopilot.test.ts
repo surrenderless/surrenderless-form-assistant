@@ -22,6 +22,7 @@ const baseParts: BuildJusticeIntakeParts = {
   contact_proof_text: "E2E proof",
   consumer_us_state: "CA",
   company_contact_email: "",
+  card_issuer_contact_email: "",
 };
 
 describe("chatSafeChecklistAutopilot", () => {

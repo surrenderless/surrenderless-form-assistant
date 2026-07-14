@@ -63,6 +63,7 @@ const STRING_LIMITS: Record<keyof BuildJusticeIntakeParts, number> = {
   contact_proof_text: 8000,
   consumer_us_state: 8,
   company_contact_email: 320,
+  card_issuer_contact_email: 320,
 };
 
 export const MAX_INTAKE_CHAT_USER_MESSAGE = 8_000;
@@ -130,6 +131,14 @@ function coerceCompanyContactEmail(raw: Record<string, unknown>, fallback: strin
   return normalizeCompanyContactEmail(clampStr(v.trim(), STRING_LIMITS.company_contact_email));
 }
 
+function coerceCardIssuerContactEmail(raw: Record<string, unknown>, fallback: string): string {
+  const v = raw.card_issuer_contact_email;
+  if (typeof v !== "string") return normalizeCompanyContactEmail(fallback);
+  return normalizeCompanyContactEmail(
+    clampStr(v.trim(), STRING_LIMITS.card_issuer_contact_email)
+  );
+}
+
 /** Clamp and coerce a partial `parts` object from the request body. */
 export function parseRequestBuildJusticeIntakeParts(v: unknown): BuildJusticeIntakeParts | null {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
@@ -165,6 +174,7 @@ export function parseRequestBuildJusticeIntakeParts(v: unknown): BuildJusticeInt
       typeof o.consumer_us_state === "string" ? o.consumer_us_state : defaults.consumer_us_state
     ),
     company_contact_email: coerceCompanyContactEmail(o, defaults.company_contact_email),
+    card_issuer_contact_email: coerceCardIssuerContactEmail(o, defaults.card_issuer_contact_email),
   };
 
   return parts;
@@ -211,6 +221,7 @@ export function mergeModelBuildJusticeIntakeParts(
         : baseline.consumer_us_state
     ),
     company_contact_email: coerceCompanyContactEmail(o, baseline.company_contact_email),
+    card_issuer_contact_email: coerceCardIssuerContactEmail(o, baseline.card_issuer_contact_email),
   };
 }
 

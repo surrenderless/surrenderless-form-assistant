@@ -73,6 +73,9 @@ export function isJusticeIntakePayload(v: unknown): v is JusticeIntake {
   if (o.company_contact_email !== undefined && typeof o.company_contact_email !== "string") {
     return false;
   }
+  if (o.card_issuer_contact_email !== undefined && typeof o.card_issuer_contact_email !== "string") {
+    return false;
+  }
 
   return true;
 }
