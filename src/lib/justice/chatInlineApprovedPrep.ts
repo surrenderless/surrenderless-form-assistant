@@ -255,9 +255,9 @@ export type ChatInlineApprovedPrepContent = {
   messageText: string;
   helperText: string;
   copyButtonLabel: string;
-  optionalPageHref: string;
-  optionalPageLabel: string;
-  optionalPageNote: string;
+  optionalPageHref?: string;
+  optionalPageLabel?: string;
+  optionalPageNote?: string;
 };
 
 export function isChatInlinePrepHref(href: string | undefined): boolean {
@@ -293,13 +293,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildMerchantMessage(intake),
       helperText:
-        "Copy the message below and send it yourself. Surrenderless does not contact anyone on your behalf.",
+        "After you approve, Surrenderless can send this outreach for you. Stay in chat for sending status — operators finish delivery when automation is unavailable.",
       copyButtonLabel: "Copy message",
-      optionalPageHref: CHAT_INLINE_MERCHANT_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full merchant contact page",
-      optionalPageNote: "optional — document contact after outreach",
     };
   }
 
@@ -310,13 +305,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildCfpbComplaintDraft(intake),
       helperText:
-        "Copy the draft below and paste it into the official CFPB complaint flow. Surrenderless does not file for you.",
+        "After you approve, Surrenderless queues this CFPB complaint for operator fulfillment. Stay in chat for status updates.",
       copyButtonLabel: "Copy draft",
-      optionalPageHref: CHAT_INLINE_CFPB_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full CFPB prep page",
-      optionalPageNote: "optional — evidence checklist and mark filed",
     };
   }
 
@@ -327,13 +317,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildFccComplaintDraft(intake),
       helperText:
-        "Copy the draft below and paste it into the official FCC consumer complaint flow. Surrenderless does not file for you.",
+        "After you approve, Surrenderless queues this FCC complaint for operator fulfillment. Stay in chat for status updates.",
       copyButtonLabel: "Copy draft",
-      optionalPageHref: CHAT_INLINE_FCC_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full FCC prep page",
-      optionalPageNote: "optional — evidence checklist and mark filed",
     };
   }
 
@@ -344,13 +329,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildBbbComplaintDraft(intake),
       helperText:
-        "Copy the draft below and paste it into the official BBB.org complaint flow. Verify the correct business profile before submitting.",
+        "After you approve, Surrenderless can complete the BBB complaint for you (automation or operators). Stay in chat for status updates.",
       copyButtonLabel: "Copy draft",
-      optionalPageHref: CHAT_INLINE_BBB_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full BBB prep page",
-      optionalPageNote: "optional — evidence checklist and mark filed",
     };
   }
 
@@ -361,13 +341,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildStateAgComplaintDraft(intake),
       helperText:
-        "Copy the draft below and paste it into your state Attorney General or consumer protection office’s official complaint portal. Verify the correct state site before submitting. Surrenderless does not file for you.",
+        "After you approve, Surrenderless queues this State AG complaint for operator fulfillment. Stay in chat for status updates.",
       copyButtonLabel: "Copy draft",
-      optionalPageHref: CHAT_INLINE_STATE_AG_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full State AG prep page",
-      optionalPageNote: "optional — choose state, evidence checklist, and mark filed",
     };
   }
 
@@ -378,13 +353,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildDotAviationComplaintDraft(intake),
       helperText:
-        "Copy the draft below and paste it into the official U.S. Department of Transportation aviation consumer complaint process. Verify categories, company matching, and attachments on the official site. Surrenderless does not file for you.",
+        "After you approve, Surrenderless queues this DOT aviation complaint for operator fulfillment. Stay in chat for status updates.",
       copyButtonLabel: "Copy draft",
-      optionalPageHref: CHAT_INLINE_DOT_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full DOT prep page",
-      optionalPageNote: "optional — evidence checklist and filing records",
     };
   }
 
@@ -395,13 +365,8 @@ export function getChatInlineApprovedPrepContent(
       title,
       messageText: buildDemandLetterDraft(intake),
       helperText:
-        "Copy the letter below, edit as needed, and send it yourself. This is not legal advice. Surrenderless does not mail, file, or submit for you.",
+        "After you approve, Surrenderless can email this demand letter for you when a company contact email is available. Stay in chat for status — operators finish delivery when automation is unavailable. This is not legal advice.",
       copyButtonLabel: "Copy letter",
-      optionalPageHref: CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
-      optionalPageLabel: label
-        ? `Open full ${label.toLowerCase()} page`
-        : "Open full demand letter page",
-      optionalPageNote: "optional — evidence checklist and not-legal-advice reminder",
     };
   }
 

@@ -19,7 +19,7 @@ export function buildIntakeChatAiMessages(
     "",
     "Hard rules:",
     "- This is NOT legal advice. Do not give legal strategy or predict outcomes.",
-    "- Nothing is filed automatically. Do not imply filing, investigation, or agency action.",
+    "- Do not imply that filings already happened. Owned outreach and filings may run after the user approves next steps (automation or operators).",
     "- Use only facts the user stated. Do not invent amounts, dates, ticket numbers, emails, or company details.",
     "- Ask one clear follow-up question at a time when information is missing.",
     "- Keep assistantMessage concise and plain text (no Markdown, no HTML, no links).",

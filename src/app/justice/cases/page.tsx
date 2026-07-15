@@ -1,11 +1,12 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { validate as isUuid } from "uuid";
 import Header from "@/app/components/Header";
+import { isOperatorRole, readClerkRole } from "@/lib/clerkRoles";
 import type {
   JusticeApprovedNextAction,
   JusticeCaseClientState,
@@ -619,6 +620,9 @@ const labelInputCls =
 export default function JusticeCasesPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
+  const { user, isLoaded: userLoaded } = useUser();
+  const showHandlingWorkbenchLink =
+    userLoaded && isOperatorRole(readClerkRole(user?.publicMetadata));
   const [cases, setCases] = useState<CaseRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasMoreCases, setHasMoreCases] = useState(false);
@@ -1204,14 +1208,18 @@ export default function JusticeCasesPage() {
           <Link href="/justice/cases/archived" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
             Archived cases
           </Link>
-          {" · "}
-          <Link href="/justice/handling" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
-            Handling workbench
-          </Link>
+          {showHandlingWorkbenchLink ? (
+            <>
+              {" · "}
+              <Link href="/justice/handling" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+                Handling workbench
+              </Link>
+            </>
+          ) : null}
         </p>
         <p className="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-          Clears this browser&apos;s active case and returns to the Justice workspace, where chat intake is first and
-          form intake is still available.
+          Clears this browser&apos;s active case and returns to the Justice workspace. Start again from
+          chat intake.
         </p>
 
         {!isLoaded ? (

@@ -101,7 +101,7 @@ type PreparedPacketReviewExplainerInput = {
 };
 
 function getPreparedPacketReviewExplainer(input: PreparedPacketReviewExplainerInput): string {
-  return `When you approve below, Surrenderless marks this packet ready for ${input.stepLabel} — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.`;
+  return `When you approve below, Surrenderless marks this packet ready for ${input.stepLabel} — the next in-app step from your reviewed draft. After approval, Surrenderless can fulfill owned outreach and filings in chat (automation or operators).`;
 }
 
 type ApprovedPacketNextStepExplainerInput = {
@@ -1035,7 +1035,7 @@ export default function JusticePacketPage() {
                       When you approve below, Surrenderless marks this packet ready for{" "}
                       <strong>{preparedNextAction.stepLabel}</strong>
                       {" "}
-                      — the next in-app step from your reviewed draft. Surrenderless does not file or submit for you.
+                      — the next in-app step from your reviewed draft. After approval, Surrenderless can fulfill owned outreach and filings in chat (automation or operators).
                     </p>
                     {isSignedIn && !readyToEscalate ? (
                       <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
@@ -1345,7 +1345,7 @@ export default function JusticePacketPage() {
                 approvedNextAction.label ? (
                   <>
                     <p className="mt-2 text-xs leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-                      Opens your in-app {approvedNextAction.label} preparation for tracking — nothing is filed or sent
+                      Opens your in-app {approvedNextAction.label} preparation for tracking — owned fulfillment continues in chat after approval
                       automatically.
                     </p>
                     <button
@@ -1405,7 +1405,7 @@ export default function JusticePacketPage() {
                 </h2>
                 <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
                   Review the case summary, timeline, evidence, and filing records below. When this packet looks right,
-                  approve it so Surrenderless can treat it as ready for your next in-app step — nothing is filed or sent
+                  approve it so Surrenderless can treat it as ready for your next in-app step — owned fulfillment continues in chat after approval
                   automatically.
                 </p>
                 <label className="mt-4 flex cursor-pointer items-start gap-3 text-sm text-neutral-800 dark:text-neutral-200">

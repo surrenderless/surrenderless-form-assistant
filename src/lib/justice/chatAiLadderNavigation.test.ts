@@ -5,8 +5,10 @@ import {
   CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID,
   CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID,
   CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS,
+  CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS,
   CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID,
   CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
+  isChatAiConsumerParallelWorkflowHref,
   isChatAiMainLadderOffChatHref,
   isChatAiOptionalHubEscapeHref,
   redirectConsumerActiveCaseOffChatHref,
@@ -40,7 +42,13 @@ describe("chatAiLadderNavigation", () => {
   });
 
   describe("shouldKeepSignedInChatAiActiveCaseInChat", () => {
-    it("is true only for signed-in active-case updates", () => {
+    it("is true for signed-in users with a case session id or updating-existing flag", () => {
+      expect(
+        shouldKeepSignedInChatAiActiveCaseInChat({
+          isSignedIn: true,
+          caseId: "550e8400-e29b-41d4-a716-446655440000",
+        })
+      ).toBe(true);
       expect(
         shouldKeepSignedInChatAiActiveCaseInChat({
           isSignedIn: true,
@@ -49,13 +57,21 @@ describe("chatAiLadderNavigation", () => {
       ).toBe(true);
       expect(
         shouldKeepSignedInChatAiActiveCaseInChat({
+          isSignedIn: true,
+          caseId: "550e8400-e29b-41d4-a716-446655440000",
+          isUpdatingExistingCase: false,
+        })
+      ).toBe(true);
+      expect(
+        shouldKeepSignedInChatAiActiveCaseInChat({
           isSignedIn: false,
-          isUpdatingExistingCase: true,
+          caseId: "550e8400-e29b-41d4-a716-446655440000",
         })
       ).toBe(false);
       expect(
         shouldKeepSignedInChatAiActiveCaseInChat({
           isSignedIn: true,
+          caseId: "",
           isUpdatingExistingCase: false,
         })
       ).toBe(false);
@@ -249,14 +265,29 @@ describe("chatAiLadderNavigation", () => {
       }
     });
 
-    it("does not block unrelated hrefs or unsigned flows", () => {
+    it("blocks destination-prep navigation for signed-in consumers even without updating-existing", () => {
+      for (const href of CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS) {
+        expect(isChatAiConsumerParallelWorkflowHref(href)).toBe(true);
+        expect(
+          shouldBlockChatAiOffChatNavigation({
+            isSignedIn: true,
+            isUpdatingExistingCase: false,
+            isLoaded: true,
+            caseId: "",
+            targetHref: href,
+          })
+        ).toBe(true);
+      }
+    });
+
+    it("does not block chat-ai itself or unsigned flows", () => {
       expect(
         shouldBlockChatAiOffChatNavigation({
           isSignedIn: true,
           isUpdatingExistingCase: true,
           isLoaded: true,
           caseId: "case-id",
-          targetHref: "/justice/ftc",
+          targetHref: "/justice/chat-ai",
         })
       ).toBe(false);
       expect(
@@ -285,13 +316,18 @@ describe("chatAiLadderNavigation", () => {
       );
     });
 
-    it("redirects main-ladder off-chat hrefs to chat-ai", () => {
+    it("redirects main-ladder and destination-prep off-chat hrefs to chat-ai", () => {
       for (const href of CHAT_AI_MAIN_LADDER_OFF_CHAT_HREFS) {
-        expect(redirectConsumerActiveCaseOffChatHref(href)).toBe(
+        expect(redirectConsumerActiveCaseOffChatHref(href)).toContain(
           CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
         );
       }
-      expect(redirectConsumerActiveCaseOffChatHref("/justice/ftc")).toBe("/justice/ftc");
+      expect(redirectConsumerActiveCaseOffChatHref("/justice/ftc")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}`
+      );
+      expect(redirectConsumerActiveCaseOffChatHref("/justice/bbb")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}`
+      );
     });
 
     it("exposes checklist navigate labels for hub and saved cases", () => {
@@ -314,7 +350,7 @@ describe("chatAiLadderNavigation", () => {
       hasResumableCase: true,
     } as const;
 
-    it("redirects signed-in resumable consumers off preview, packet, and handling pages", () => {
+    it("redirects signed-in consumers off preview, packet, and handling pages", () => {
       expect(
         shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
           ...activeCaseInput,
@@ -333,9 +369,18 @@ describe("chatAiLadderNavigation", () => {
           legacyPageHref: "/justice/handling",
         })
       ).toBe(true);
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "",
+          hasResumableCase: false,
+          legacyPageHref: "/justice/handling",
+        })
+      ).toBe(true);
     });
 
-    it("preserves handling workbench for operator roles with an active session case", () => {
+    it("preserves handling workbench for operator roles", () => {
       expect(
         shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
           ...activeCaseInput,
@@ -344,9 +389,20 @@ describe("chatAiLadderNavigation", () => {
           isOperator: true,
         })
       ).toBe(false);
+      expect(
+        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "",
+          hasResumableCase: false,
+          legacyPageHref: "/justice/handling",
+          allowOperatorAccess: true,
+          isOperator: true,
+        })
+      ).toBe(false);
     });
 
-    it("does not redirect unsigned users or users without a resumable case", () => {
+    it("does not redirect unsigned users", () => {
       expect(
         shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
           legacyPageHref: "/justice/preview",
@@ -354,15 +410,6 @@ describe("chatAiLadderNavigation", () => {
           isLoaded: true,
           caseId: activeCaseInput.caseId,
           hasResumableCase: true,
-        })
-      ).toBe(false);
-      expect(
-        shouldRedirectConsumerActiveCaseOffLegacyLadderPage({
-          legacyPageHref: "/justice/handling",
-          isSignedIn: true,
-          isLoaded: true,
-          caseId: "",
-          hasResumableCase: false,
         })
       ).toBe(false);
     });
@@ -377,7 +424,9 @@ describe("chatAiLadderNavigation", () => {
       expect(resolveConsumerActiveCaseLegacyLadderRedirectHref("/justice/handling")).toBe(
         CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
       );
-      expect(redirectConsumerActiveCaseOffChatHref("/justice/state-ag")).toBe("/justice/state-ag");
+      expect(redirectConsumerActiveCaseOffChatHref("/justice/state-ag")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}`
+      );
     });
   });
 
@@ -423,14 +472,23 @@ describe("chatAiLadderNavigation", () => {
       });
     });
 
-    it("redirects signed-in resumable consumers off evidence and destination-prep hubs", () => {
+    it("redirects all signed-in consumers off evidence and destination-prep hubs", () => {
       expect(
         shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
           escapePageHref: "/justice/evidence",
           isSignedIn: true,
           isLoaded: true,
-          caseId: "case-1",
+          caseId: "case-id",
           hasResumableCase: true,
+        })
+      ).toBe(true);
+      expect(
+        shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+          escapePageHref: "/justice/ftc",
+          isSignedIn: true,
+          isLoaded: true,
+          caseId: "",
+          hasResumableCase: false,
         })
       ).toBe(true);
       expect(
@@ -438,26 +496,17 @@ describe("chatAiLadderNavigation", () => {
           escapePageHref: "/justice/bbb",
           isSignedIn: true,
           isLoaded: true,
-          caseId: "case-1",
-          hasResumableCase: true,
+          caseId: "",
+          hasResumableCase: false,
         })
       ).toBe(true);
       expect(
         shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
-          escapePageHref: "/justice/merchant",
+          escapePageHref: "/justice/evidence",
           isSignedIn: false,
           isLoaded: true,
-          caseId: "case-1",
+          caseId: "case-id",
           hasResumableCase: true,
-        })
-      ).toBe(false);
-      expect(
-        shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage({
-          escapePageHref: "/justice/merchant",
-          isSignedIn: true,
-          isLoaded: true,
-          caseId: "case-1",
-          hasResumableCase: false,
         })
       ).toBe(false);
     });
@@ -467,6 +516,9 @@ describe("chatAiLadderNavigation", () => {
         `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID}`
       );
       expect(resolveConsumerActiveCaseOptionalHubEscapeRedirectHref("/justice/merchant")).toBe(
+        `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}`
+      );
+      expect(resolveConsumerActiveCaseOptionalHubEscapeRedirectHref("/justice/ftc")).toBe(
         `${CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF}#${CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID}`
       );
     });

@@ -63,6 +63,10 @@ export default function JusticeDemandLetterPrepPage() {
     }
   }
 
+  if (redirectOffOptionalHub) {
+    return <SurrenderlessOwnedPrepHubLoading />;
+  }
+
   if (ownedPrepPage.status === "owned") {
     return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
   }

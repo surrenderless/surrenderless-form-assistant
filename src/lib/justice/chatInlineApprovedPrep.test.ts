@@ -91,7 +91,7 @@ describe("isChatInlinePacketFallbackPrepHref", () => {
 });
 
 describe("getChatInlineApprovedPrepContent", () => {
-  it("returns BBB complaint draft content with optional full-page link", () => {
+  it("returns BBB complaint draft content without DIY full-page exit", () => {
     const intake = baseIntake();
     const content = getChatInlineApprovedPrepContent(CHAT_INLINE_BBB_PREP_HREF, intake, "BBB complaint");
 
@@ -101,14 +101,14 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.messageText).toContain("DRAFT FOR BBB COMPLAINT");
     expect(content?.messageText).toContain("Example Retail Co");
     expect(content?.messageText).toContain("Item never arrived after payment.");
-    expect(content?.helperText).toContain("BBB.org");
+    expect(content?.helperText).toMatch(/BBB complaint|Stay in chat|automation or operators/i);
     expect(content?.copyButtonLabel).toBe("Copy draft");
-    expect(content?.optionalPageHref).toBe(CHAT_INLINE_BBB_PREP_HREF);
-    expect(content?.optionalPageLabel).toBe("Open full bbb complaint page");
-    expect(content?.optionalPageNote).toContain("optional");
+    expect(content?.optionalPageHref).toBeUndefined();
+    expect(content?.optionalPageLabel).toBeUndefined();
+    expect(content?.optionalPageNote).toBeUndefined();
   });
 
-  it("returns State AG complaint draft content with optional full-page link", () => {
+  it("returns State AG complaint draft content without DIY full-page exit", () => {
     const intake = baseIntake({ consumer_us_state: "CA" });
     const content = getChatInlineApprovedPrepContent(
       CHAT_INLINE_STATE_AG_PREP_HREF,
@@ -122,14 +122,14 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.messageText).toContain("DRAFT FOR STATE ATTORNEY GENERAL");
     expect(content?.messageText).toContain("California (CA)");
     expect(content?.messageText).toContain("Example Retail Co");
-    expect(content?.helperText).toContain("Attorney General");
+    expect(content?.helperText).toMatch(/operator fulfillment|Stay in chat/i);
     expect(content?.copyButtonLabel).toBe("Copy draft");
-    expect(content?.optionalPageHref).toBe(CHAT_INLINE_STATE_AG_PREP_HREF);
-    expect(content?.optionalPageLabel).toBe("Open full state ag complaint page");
-    expect(content?.optionalPageNote).toContain("optional");
+    expect(content?.optionalPageHref).toBeUndefined();
+    expect(content?.optionalPageLabel).toBeUndefined();
+    expect(content?.optionalPageNote).toBeUndefined();
   });
 
-  it("returns DOT aviation complaint draft content with optional full-page link", () => {
+  it("returns DOT aviation complaint draft content without DIY full-page exit", () => {
     const intake = baseIntake({
       company_name: "Example Airlines",
       purchase_or_signup: "Round-trip flight ORD–LAX",
@@ -147,14 +147,14 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.messageText).toContain("DRAFT FOR USDOT / AVIATION CONSUMER COMPLAINT");
     expect(content?.messageText).toContain("Example Airlines");
     expect(content?.messageText).toContain("Flight was canceled");
-    expect(content?.helperText).toContain("Department of Transportation");
+    expect(content?.helperText).toMatch(/operator fulfillment|Stay in chat/i);
     expect(content?.copyButtonLabel).toBe("Copy draft");
-    expect(content?.optionalPageHref).toBe(CHAT_INLINE_DOT_PREP_HREF);
-    expect(content?.optionalPageLabel).toBe("Open full usdot aviation complaint page");
-    expect(content?.optionalPageNote).toContain("optional");
+    expect(content?.optionalPageHref).toBeUndefined();
+    expect(content?.optionalPageLabel).toBeUndefined();
+    expect(content?.optionalPageNote).toBeUndefined();
   });
 
-  it("returns demand letter draft content with optional full-page link", () => {
+  it("returns demand letter draft content without DIY full-page exit", () => {
     const intake = baseIntake();
     const content = getChatInlineApprovedPrepContent(
       CHAT_INLINE_DEMAND_LETTER_PREP_HREF,
@@ -170,9 +170,9 @@ describe("getChatInlineApprovedPrepContent", () => {
     expect(content?.messageText).toContain("Item never arrived after payment.");
     expect(content?.helperText).toContain("not legal advice");
     expect(content?.copyButtonLabel).toBe("Copy letter");
-    expect(content?.optionalPageHref).toBe(CHAT_INLINE_DEMAND_LETTER_PREP_HREF);
-    expect(content?.optionalPageLabel).toBe("Open full demand letter page");
-    expect(content?.optionalPageNote).toContain("optional");
+    expect(content?.optionalPageHref).toBeUndefined();
+    expect(content?.optionalPageLabel).toBeUndefined();
+    expect(content?.optionalPageNote).toBeUndefined();
   });
 
   it("returns null for routes without inline prep content", () => {
@@ -923,15 +923,20 @@ describe("shouldResetAssistedPracticeRunUiState", () => {
   });
 });
 
-describe("not-owned DIY prep copy fallback (preserved when ownership is not_owned)", () => {
-  it("keeps consumer DIY helper text for merchant and regulator prep routes", () => {
+describe("owned fulfillment prep copy (chat-only consumers)", () => {
+  it("uses owned-fulfillment helper text without DIY exit claims", () => {
     const intake = baseIntake();
     const merchant = getChatInlineApprovedPrepContent(CHAT_INLINE_MERCHANT_PREP_HREF, intake);
     const cfpb = getChatInlineApprovedPrepContent(CHAT_INLINE_CFPB_PREP_HREF, intake);
     const demand = getChatInlineApprovedPrepContent(CHAT_INLINE_DEMAND_LETTER_PREP_HREF, intake);
-    expect(merchant?.helperText).toMatch(/send it yourself/i);
-    expect(merchant?.helperText).toMatch(/does not contact anyone/i);
-    expect(cfpb?.helperText).toMatch(/does not file for you/i);
-    expect(demand?.helperText).toMatch(/send it yourself/i);
+    expect(merchant?.helperText).toMatch(/can send this outreach|Stay in chat/i);
+    expect(merchant?.helperText).not.toMatch(/does not contact anyone|send it yourself/i);
+    expect(cfpb?.helperText).toMatch(/operator fulfillment|Stay in chat/i);
+    expect(cfpb?.helperText).not.toMatch(/does not file for you/i);
+    expect(demand?.helperText).toMatch(/can email this demand letter|Stay in chat/i);
+    expect(demand?.helperText).not.toMatch(/send it yourself|does not mail/i);
+    expect(merchant?.optionalPageHref).toBeUndefined();
+    expect(cfpb?.optionalPageHref).toBeUndefined();
+    expect(demand?.optionalPageHref).toBeUndefined();
   });
 });

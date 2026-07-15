@@ -804,7 +804,7 @@ function ChatInlineSubmissionDraftReviewBlock({
             prefetch={false}
             className="font-medium underline underline-offset-2 hover:text-blue-950 dark:text-blue-300 dark:hover:text-blue-100"
           >
-            Open full submission preview
+            Continue draft review in chat
           </Link>
           <span className="text-[11px] text-blue-900/80 dark:text-blue-100/80">
             {" "}
@@ -915,7 +915,7 @@ function ChatInlinePreparedPacketApprovalBlock({
             prefetch={false}
             className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
           >
-            Open full packet page
+            Continue packet approval in chat
           </Link>
           <span className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80">
             {" "}
@@ -1080,7 +1080,7 @@ function ChatInlinePaymentDisputePrepBlock({
       <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Payment dispute (bank/card)</p>
       <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
         Fill in dispute details, copy the bank letter below, then save to record it on your case timeline.
-        Surrenderless does not submit disputes for you.
+        After you approve, Surrenderless can send payment-dispute outreach for you. Stay in chat for status — operators finish delivery when automation is unavailable.
       </p>
       <div>
         <label className="text-[11px] font-medium text-emerald-900 dark:text-emerald-100">Payment method</label>
@@ -1242,7 +1242,7 @@ function ChatInlinePaymentDisputePrepBlock({
             href={CHAT_INLINE_PAYMENT_DISPUTE_PREP_HREF}
             className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
           >
-            Open full payment dispute page
+            Continue payment dispute in chat
           </Link>
           <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence list)</span>
         </p>
@@ -1268,7 +1268,7 @@ function assistedMockPracticeUi(laneId: AssistedMockPracticeLaneId) {
     mockUrlPath: MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.mockUrlPath,
     notRealLabel: "real government submission",
     optionalPageHref: CHAT_INLINE_FTC_REVIEW_PREP_HREF,
-    optionalPageLabel: "Open full FTC practice page",
+    optionalPageLabel: undefined,
   };
 }
 
@@ -1457,13 +1457,7 @@ function ChatInlineRealBbbComplaintBlock({
       ) : null}
       {!suppressOptionalPageLink ? (
         <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-          <Link
-            href={CHAT_INLINE_BBB_PREP_HREF}
-            className="font-medium underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-          >
-            Open full BBB prep page
-          </Link>
-          <span className="text-emerald-900/80 dark:text-emerald-100/80"> (optional — evidence checklist)</span>
+          Continue BBB progress in chat — destination-prep DIY pages are not used for this step.
         </p>
       ) : null}
     </div>
@@ -3794,9 +3788,12 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     const shouldStayInChat =
-      isUpdatingExistingCase &&
       isLoaded &&
-      isSignedIn &&
+      shouldKeepSignedInChatAiActiveCaseInChat({
+        isSignedIn: Boolean(isSignedIn),
+        caseId,
+        isUpdatingExistingCase,
+      }) &&
       Boolean(caseId) &&
       isUuid(caseId);
     const blockOffChatNavigation = shouldBlockChatAiOffChatNavigation({
@@ -3853,6 +3850,7 @@ export default function JusticeChatAiPage() {
       targetHref: navigateHref,
     });
 
+    // Never send signed-in consumers into destination-prep or legacy DIY pages.
     if (!shouldStayInChat && !blockNavigateOffChat) {
       router.push(navigateHref);
       return;
@@ -6092,6 +6090,7 @@ export default function JusticeChatAiPage() {
   const activeCaseEvidenceReady = showSavedEvidenceCount && (savedEvidenceCount ?? 0) >= 1;
   const chatAiKeepInChatLadder = shouldKeepSignedInChatAiActiveCaseInChat({
     isSignedIn: Boolean(isSignedIn),
+    caseId: activeUuidCaseId,
     isUpdatingExistingCase,
   });
   const activeCaseFocusLine =
@@ -6135,7 +6134,8 @@ export default function JusticeChatAiPage() {
       : { href: "/justice/preview", label: "Submission preview" };
   const chatFirstWorkLinkContinuity = Boolean(isSignedIn) && isUpdatingExistingCase;
   const suppressInlineMainLadderHubLinks = shouldSuppressChatInlineMainLadderHubEscapeLinks({
-    keepInChat: chatAiKeepInChatLadder,
+    // Signed-in consumers never see parallel DIY/prep hub escapes from chat.
+    keepInChat: chatAiKeepInChatLadder || Boolean(isSignedIn),
   });
   const suppressInlineOptionalHubEscapeLinks = suppressInlineMainLadderHubLinks;
   const chatFirstBreadcrumbContinuity = Boolean(isSignedIn);
@@ -6460,7 +6460,7 @@ export default function JusticeChatAiPage() {
               <ChatInlineApprovedPrepActionBlock
                 title={approvedNextAction?.label?.trim() || "Payment dispute (bank/card)"}
                 messageText={paymentDisputeReadOnlyLetterText}
-                helperText="Copy the bank letter below for your dispute. Surrenderless does not submit disputes for you."
+                helperText="Copy the bank letter below for your dispute. After you approve, Surrenderless can send payment-dispute outreach for you. Stay in chat for status — operators finish delivery when automation is unavailable."
                 copyButtonLabel="Copy letter"
                 optionalPageHref={
                   suppressInlineOptionalHubEscapeLinks
@@ -6470,7 +6470,7 @@ export default function JusticeChatAiPage() {
                 optionalPageLabel={
                   suppressInlineOptionalHubEscapeLinks
                     ? undefined
-                    : "Open full payment dispute page"
+                    : "Continue payment dispute in chat"
                 }
                 optionalPageNote={
                   suppressInlineOptionalHubEscapeLinks ? undefined : "optional — evidence checklist"
@@ -6538,7 +6538,7 @@ export default function JusticeChatAiPage() {
                 <ChatInlineApprovedPrepActionBlock
                   title={approvedNextAction?.label?.trim() || "FTC practice complaint"}
                   messageText={ftcPracticeSummaryLines.join("\n")}
-                  helperText="Practice complaint summary from your case — copy for reference. This is not a real government submission. Surrenderless does not file for you."
+                  helperText="Practice complaint summary from your case — copy for reference. This is not a real government submission. Live FTC complaints are fulfilled by Surrenderless after you approve (automation or operators)."
                   copyButtonLabel="Copy summary"
                   optionalPageHref={
                     suppressInlineOptionalHubEscapeLinks
@@ -6548,7 +6548,7 @@ export default function JusticeChatAiPage() {
                   optionalPageLabel={
                     suppressInlineOptionalHubEscapeLinks
                       ? undefined
-                      : "Open full FTC practice page"
+                      : undefined
                   }
                   optionalPageNote={
                     suppressInlineOptionalHubEscapeLinks ? undefined : "optional — evidence list"
@@ -6585,7 +6585,7 @@ export default function JusticeChatAiPage() {
                 <ChatInlineApprovedPrepActionBlock
                   title={approvedNextAction?.label?.trim() || "BBB practice complaint"}
                   messageText={ftcPracticeSummaryLines.join("\n")}
-                  helperText="Practice complaint summary from your case — copy for reference. This is not a real BBB filing. Surrenderless does not file for you."
+                  helperText="Practice complaint summary from your case — copy for reference. This is not a live BBB filing. Live BBB complaints are fulfilled by Surrenderless after you approve (automation or operators)."
                   copyButtonLabel="Copy summary"
                   expanded={prepMessageExpanded}
                   onExpandedChange={setPrepMessageExpanded}
@@ -6625,7 +6625,7 @@ export default function JusticeChatAiPage() {
                     suppressInlineOptionalHubEscapeLinks ? undefined : CHAT_INLINE_BBB_PREP_HREF
                   }
                   optionalPageLabel={
-                    suppressInlineOptionalHubEscapeLinks ? undefined : "Open full BBB prep page"
+                    suppressInlineOptionalHubEscapeLinks ? undefined : undefined
                   }
                   optionalPageNote={
                     suppressInlineOptionalHubEscapeLinks
@@ -6778,7 +6778,7 @@ export default function JusticeChatAiPage() {
                 <ChatInlineApprovedPrepActionBlock
                   title={approvedNextAction?.label?.trim() || "Prepared case review"}
                   messageText={chatPacketPlainText}
-                  helperText="Review your prepared case packet below. Mark step opened when ready — Surrenderless does not submit, file, or contact anyone."
+                  helperText="Review your prepared case packet below. Mark step opened when ready — after approval, Surrenderless can fulfill owned outreach and filings in chat (automation or operators)."
                   copyButtonLabel="Copy packet"
                   optionalPageHref={
                     suppressInlineMainLadderHubLinks
@@ -6786,7 +6786,7 @@ export default function JusticeChatAiPage() {
                       : CHAT_INLINE_PACKET_FALLBACK_PREP_HREF
                   }
                   optionalPageLabel={
-                    suppressInlineMainLadderHubLinks ? undefined : "Open full packet page"
+                    suppressInlineMainLadderHubLinks ? undefined : undefined
                   }
                   optionalPageNote={
                     suppressInlineMainLadderHubLinks ? undefined : "optional — print and copy tools"
