@@ -15,6 +15,7 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
 import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
+import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
 
 export type RecordInput = {
   destination: string;
@@ -369,16 +370,27 @@ export function OperatorFulfillmentQueuePanel({
               Consumer state: {item.consumer_us_state}
             </p>
           ) : null}
-          {item.draft_excerpt ? (
-            <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
-              <span className="font-medium">Draft excerpt:</span> {item.draft_excerpt}
-            </p>
-          ) : null}
-          <OperatorFulfillmentRecordForm
-            item={item}
-            saving={savingTaskId === item.task_id}
-            onSubmit={(input) => onRecordComplete(item, input)}
-          />
+          {item.step === "state_ag" && item.state_ag_workspace ? (
+            <StateAgOperatorFilingWorkspacePanel
+              item={item}
+              workspace={item.state_ag_workspace}
+              saving={savingTaskId === item.task_id}
+              onSubmit={(input) => onRecordComplete(item, input)}
+            />
+          ) : (
+            <>
+              {item.draft_excerpt ? (
+                <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  <span className="font-medium">Draft excerpt:</span> {item.draft_excerpt}
+                </p>
+              ) : null}
+              <OperatorFulfillmentRecordForm
+                item={item}
+                saving={savingTaskId === item.task_id}
+                onSubmit={(input) => onRecordComplete(item, input)}
+              />
+            </>
+          )}
         </li>
       ))}
     </ul>

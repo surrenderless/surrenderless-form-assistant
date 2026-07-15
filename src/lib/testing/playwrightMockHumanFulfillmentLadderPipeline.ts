@@ -113,6 +113,7 @@ import {
   shouldQueueStateAgFilingTask,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
+import { buildStateAgOperatorFilingWorkspace } from "@/lib/justice/stateAgOperatorFilingWorkspace";
 import type {
   ContactMethod,
   JusticeApprovedNextAction,
@@ -1484,6 +1485,11 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseStateAgFilingTaskDraft(task.notes).slice(0, 400),
+        state_ag_workspace: buildStateAgOperatorFilingWorkspace({
+          intake,
+          taskNotes: task.notes,
+          evidence: [],
+        }),
       });
       continue;
     }

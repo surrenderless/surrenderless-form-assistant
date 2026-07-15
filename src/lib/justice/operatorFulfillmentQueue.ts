@@ -36,6 +36,10 @@ import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
+import {
+  buildStateAgOperatorFilingWorkspace,
+  type StateAgOperatorFilingWorkspace,
+} from "@/lib/justice/stateAgOperatorFilingWorkspace";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -59,6 +63,8 @@ export type OperatorFulfillmentQueueItem = {
   company_name: string;
   consumer_us_state: string | null;
   draft_excerpt: string;
+  /** Present only for State AG tasks — full guided filing workspace. */
+  state_ag_workspace?: StateAgOperatorFilingWorkspace;
 };
 
 const TASK_SELECT =
@@ -103,6 +109,11 @@ function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseStateAgFilingTaskDraft(task.notes)),
+      state_ag_workspace: buildStateAgOperatorFilingWorkspace({
+        intake,
+        taskNotes: task.notes,
+        evidence: [],
+      }),
     };
   }
 
@@ -281,5 +292,52 @@ export async function listOperatorFulfillmentQueue(
     if (item) items.push(item);
   }
 
-  return items;
+  const stateAgCaseIds = [
+    ...new Set(items.filter((item) => item.step === "state_ag").map((item) => item.case_id)),
+  ];
+  if (stateAgCaseIds.length === 0) return items;
+
+  const { data: evidenceRows, error: evidenceErr } = await supabase
+    .from("justice_case_evidence")
+    .select("case_id, title, evidence_type, file_name, evidence_date")
+    .in("case_id", stateAgCaseIds)
+    .order("created_at", { ascending: true })
+    .limit(200);
+
+  if (evidenceErr) {
+    console.warn("operator fulfillment: list evidence for State AG workspace", evidenceErr.message);
+    return items;
+  }
+
+  const evidenceByCaseId = new Map<
+    string,
+    { title: string; evidence_type: string; file_name: string | null; evidence_date: string | null }[]
+  >();
+  for (const row of evidenceRows ?? []) {
+    const caseId = String(row.case_id ?? "").trim();
+    if (!caseId) continue;
+    const list = evidenceByCaseId.get(caseId) ?? [];
+    list.push({
+      title: typeof row.title === "string" ? row.title : "",
+      evidence_type: typeof row.evidence_type === "string" ? row.evidence_type : "other",
+      file_name: typeof row.file_name === "string" ? row.file_name : null,
+      evidence_date: typeof row.evidence_date === "string" ? row.evidence_date : null,
+    });
+    evidenceByCaseId.set(caseId, list);
+  }
+
+  return items.map((item) => {
+    if (item.step !== "state_ag" || !item.state_ag_workspace) return item;
+    const intake = intakeByCaseId.get(item.case_id);
+    if (!intake) return item;
+    const task = operatorTasks.find((t) => t.id === item.task_id);
+    return {
+      ...item,
+      state_ag_workspace: buildStateAgOperatorFilingWorkspace({
+        intake,
+        taskNotes: task?.notes,
+        evidence: evidenceByCaseId.get(item.case_id) ?? [],
+      }),
+    };
+  });
 }
