@@ -154,10 +154,6 @@ export default function JusticeDemandLetterPrepPage() {
               Add who the letter should go to from{" "}
               <Link href="/justice/chat-ai" className="underline">
                 chat intake
-              </Link>{" "}
-              or{" "}
-              <Link href="/justice/intake" className="underline">
-                structured form
               </Link>
               .
             </p>

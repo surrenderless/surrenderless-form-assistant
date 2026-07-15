@@ -199,10 +199,6 @@ export default function JusticeBbbPrepPage() {
               <Link href="/justice/chat-ai" className="underline">
                 chat intake
               </Link>{" "}
-              or{" "}
-              <Link href="/justice/intake" className="underline">
-                structured form
-              </Link>{" "}
               so your BBB filing matches the right business.
             </p>
           ) : null}

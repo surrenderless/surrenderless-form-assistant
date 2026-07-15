@@ -892,25 +892,8 @@ export default function JusticeHubWorkspaceBody() {
           <Link href="/justice/chat-ai" className={`${cardCls} text-left`}>
             <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Start with chat intake</span>
             <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-              Describe your issue in a conversation; we&apos;ll collect your case details.
-            </span>
-          </Link>
-        </li>
-        <li>
-          <Link href="/justice/chat" className={`${cardCls} text-left`}>
-            <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-              Use step-by-step chat
-            </span>
-            <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-              Answer scripted questions one at a time instead.
-            </span>
-          </Link>
-        </li>
-        <li>
-          <Link href="/justice/intake" className={`${cardCls} text-left`}>
-            <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Start with form intake</span>
-            <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-400">
-              Fill in the structured intake form.
+              Describe your issue in a conversation; we&apos;ll collect your case details and fulfill owned next steps
+              in chat.
             </span>
           </Link>
         </li>
