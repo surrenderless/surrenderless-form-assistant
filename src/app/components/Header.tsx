@@ -12,9 +12,6 @@ export default function Header() {
         <Link href="/justice/chat-ai" className="text-sm text-blue-600 hover:underline">
           Chat intake
         </Link>
-        <Link href="/justice/intake" className="text-sm text-blue-600 hover:underline">
-          Consumer case
-        </Link>
       </div>
       <SignedIn>
         <UserButton afterSignOutUrl="/" />

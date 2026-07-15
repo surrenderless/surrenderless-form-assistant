@@ -135,6 +135,15 @@ import {
   parseChatIntakeCommitMessage,
 } from "@/lib/justice/chatIntakeCommitGates";
 import {
+  CHAT_AI_ENTRY_DISCLAIMER,
+  CHAT_AI_EVIDENCE_ESCALATION_HINT,
+  CHAT_CONTINUE_HANDOFF_CHAT_FIRST_DRAFT_STEP,
+  CHAT_CONTINUE_HANDOFF_CHAT_FIRST_PACKET_STEP,
+  CHAT_CONTINUE_HANDOFF_CHAT_FIRST_TRACKING_STEP,
+  CHAT_CONTINUE_HANDOFF_POST_PREVIEW_STEP,
+  CHAT_CONTINUE_HANDOFF_PREVIEW_STEP,
+} from "@/lib/justice/chatContinueHandoffCopy";
+import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
@@ -384,16 +393,16 @@ const CATEGORIES: { value: JusticeIntake["problem_category"]; label: string }[] 
     label: "Bank, credit, loan, payment, debt, billing, or financial account issue",
   },
   { value: "subscription", label: "A subscription or recurring charge" },
-  { value: "service_failed", label: "A service that didnâ€™t work as promised" },
-  { value: "charge_dispute", label: "A charge I didnâ€™t agree to" },
+  { value: "service_failed", label: "A service that didn’t work as promised" },
+  { value: "charge_dispute", label: "A charge I didn’t agree to" },
   { value: "something_else", label: "Something else" },
 ];
 
 const OPENING_GREETING =
-  "Hi â€” tell me whatâ€™s going on with your consumer issue. Iâ€™ll ask follow-up questions and keep track of your case details. When weâ€™re done, you can review everything and save and continue in chat.";
+  "Hi — tell me what’s going on with your consumer issue. I’ll ask follow-up questions and keep track of your case details. When we’re done, you can review everything and save and continue in chat.";
 
 const UPDATE_GREETING =
-  "Your current case is loaded in the recap below. Tell me what youâ€™d like to add or change â€” Iâ€™ll update the details as we go. When youâ€™re ready, save and continue in chat.";
+  "Your current case is loaded in the recap below. Tell me what you’d like to add or change — I’ll update the details as we go. When you’re ready, save and continue in chat.";
 
 const RECAP_STORY_MAX_LEN = 120;
 const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
@@ -521,15 +530,11 @@ type ContinueHandoffStepsInput = {
 };
 
 function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
-  const previewStep =
-    "Open submission draft preview to review your case text (nothing is filed automatically).";
-  const postPreviewFunnelStep =
-    "After preview, review your prepared case packet, then continue in chat when ready. Nothing is filed automatically.";
-  const chatFirstDraftStep =
-    "Review your submission draft in the Active case checklist below (nothing is filed automatically).";
-  const chatFirstPacketStep = "Approve your prepared packet in chat when ready.";
-  const chatFirstTrackingStep =
-    "Continue next steps in Current action tracking below. Nothing is filed automatically.";
+  const previewStep = CHAT_CONTINUE_HANDOFF_PREVIEW_STEP;
+  const postPreviewFunnelStep = CHAT_CONTINUE_HANDOFF_POST_PREVIEW_STEP;
+  const chatFirstDraftStep = CHAT_CONTINUE_HANDOFF_CHAT_FIRST_DRAFT_STEP;
+  const chatFirstPacketStep = CHAT_CONTINUE_HANDOFF_CHAT_FIRST_PACKET_STEP;
+  const chatFirstTrackingStep = CHAT_CONTINUE_HANDOFF_CHAT_FIRST_TRACKING_STEP;
   const funnelSteps = input.chatFirstContinuity
     ? [chatFirstDraftStep, chatFirstPacketStep, chatFirstTrackingStep]
     : [previewStep, postPreviewFunnelStep];
@@ -566,11 +571,11 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
   return steps;
 }
 
-function recapStoryDisplay(story: string): string {
+function recapStoryDisplay(story: string): string | null {
   const trimmed = story.trim();
-  if (!trimmed) return "â€”";
+  if (!trimmed) return null;
   if (trimmed.length <= RECAP_STORY_MAX_LEN) return trimmed;
-  return `${trimmed.slice(0, RECAP_STORY_MAX_LEN)}â€¦`;
+  return `${trimmed.slice(0, RECAP_STORY_MAX_LEN)}…`;
 }
 
 function formatIntakeChatApiError(status: number, serverError?: string): string {
@@ -579,14 +584,14 @@ function formatIntakeChatApiError(status: number, serverError?: string): string 
     return "Your session may have expired. Sign in again, then resend your message.";
   }
   if (status === 429) {
-    return "Youâ€™re sending messages too quickly. Wait a moment, then try again.";
+    return "You’re sending messages too quickly. Wait a moment, then try again.";
   }
   if (status === 502) {
-    return "We couldnâ€™t get a usable AI reply. Check your message and try again.";
+    return "We couldn’t get a usable AI reply. Check your message and try again.";
   }
   if (status === 500) {
     if (err.includes("OPENAI_API_KEY")) {
-      return "AI intake isnâ€™t available right now. Please try again later.";
+      return "AI intake isn’t available right now. Please try again later.";
     }
     return "Something went wrong on our side. Please try again.";
   }
@@ -2413,7 +2418,7 @@ function truncateChatEvidenceDescription(text: string | null, max: number): stri
   if (!text?.trim()) return "";
   const trimmed = text.trim();
   if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max)}â€¦`;
+  return `${trimmed.slice(0, max)}…`;
 }
 
 const PROOF_KEYWORD_STRONG =
@@ -5613,6 +5618,7 @@ export default function JusticeChatAiPage() {
   const basicsMissing = getPreviewBasicsMissing(parts);
   const stillNeededHint =
     basicsMissing.length > 0 ? stillNeededBeforePreviewMessage(basicsMissing) : null;
+  const recapStory = recapStoryDisplay(parts.story);
   const contactProofCheck = validateContactProofForIntake({
     already_contacted: parts.already_contacted,
     contact_proof_type: parts.contact_proof_type,
@@ -6149,7 +6155,7 @@ export default function JusticeChatAiPage() {
       <>
         <Header />
         <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
-          Loadingâ€¦
+          Loading…
         </main>
       </>
     );
@@ -6169,10 +6175,6 @@ export default function JusticeChatAiPage() {
               Home
               {" · "}
               {breadcrumbWorkLabel}
-              {" · "}
-              Step-by-step chat
-              {" · "}
-              Structured form
             </>
           ) : (
             <>
@@ -6186,14 +6188,6 @@ export default function JusticeChatAiPage() {
               >
                 {breadcrumbWorkLabel}
               </Link>
-              {" · "}
-              <Link href="/justice/chat" className="text-blue-600 hover:underline">
-                Step-by-step chat
-              </Link>
-              {" · "}
-              <Link href="/justice/intake" className="text-blue-600 hover:underline">
-                Structured form
-              </Link>
             </>
           )}
         </p>
@@ -6204,15 +6198,10 @@ export default function JusticeChatAiPage() {
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           {isUpdatingExistingCase
             ? "Update your loaded case in a conversation — describe what to add or change, then save in chat."
-            : "Tell us what happened in a conversation; we'll ask follow-up questions and track your case details."}{" "}
-          Prefer one question at a time?{" "}
-          <Link href="/justice/chat" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
-            Use step-by-step chat
-          </Link>
-          .
+            : "Tell us what happened in a conversation; we'll ask follow-up questions and track your case details."}
         </p>
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Messages are sent to OpenAI to help collect your case details. Nothing is filed automatically.
+          {CHAT_AI_ENTRY_DISCLAIMER}
         </p>
 
         {isUpdatingExistingCase ? (
@@ -6897,7 +6886,7 @@ export default function JusticeChatAiPage() {
               </div>
             ))}
             {loading ? (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">Thinkingâ€¦</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Thinking…</p>
             ) : null}
           </div>
 
@@ -6928,35 +6917,49 @@ export default function JusticeChatAiPage() {
               onClick={() => void handleSend()}
               className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
             >
-              {loading ? "Sendingâ€¦" : "Send"}
+              {loading ? "Sending…" : "Send"}
             </button>
           </div>
 
           <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
             <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Recap</p>
             <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
-              <li>
-                <span className="font-medium">Company:</span> {parts.company_name || "â€”"}
-              </li>
-              <li>
-                <span className="font-medium">Category:</span> {categoryLabel(parts.problem_category)}
-              </li>
-              <li>
-                <span className="font-medium">Product / service:</span> {parts.purchase_or_signup || "â€”"}
-              </li>
-              <li>
-                <span className="font-medium">What happened:</span> {recapStoryDisplay(parts.story)}
-              </li>
-              <li>
-                <span className="font-medium">Money / outcome:</span>{" "}
-                {[parts.money_amount, parts.desired_resolution].filter(Boolean).join(" â€” ") || "â€”"}
-              </li>
-              <li>
-                <span className="font-medium">Contacted company:</span> {parts.already_contacted}
-              </li>
-              <li>
-                <span className="font-medium">Email:</span> {parts.reply_email || "â€”"}
-              </li>
+              {parts.company_name.trim() ? (
+                <li>
+                  <span className="font-medium">Company:</span> {parts.company_name.trim()}
+                </li>
+              ) : null}
+              {parts.problem_category ? (
+                <li>
+                  <span className="font-medium">Category:</span> {categoryLabel(parts.problem_category)}
+                </li>
+              ) : null}
+              {parts.purchase_or_signup.trim() ? (
+                <li>
+                  <span className="font-medium">Product / service:</span> {parts.purchase_or_signup.trim()}
+                </li>
+              ) : null}
+              {recapStory ? (
+                <li>
+                  <span className="font-medium">What happened:</span> {recapStory}
+                </li>
+              ) : null}
+              {[parts.money_amount, parts.desired_resolution].some((v) => v.trim()) ? (
+                <li>
+                  <span className="font-medium">Money / outcome:</span>{" "}
+                  {[parts.money_amount, parts.desired_resolution].map((v) => v.trim()).filter(Boolean).join(" — ")}
+                </li>
+              ) : null}
+              {parts.already_contacted === "yes" || parts.already_contacted === "no" ? (
+                <li>
+                  <span className="font-medium">Contacted company:</span> {parts.already_contacted}
+                </li>
+              ) : null}
+              {parts.reply_email.trim() ? (
+                <li>
+                  <span className="font-medium">Email:</span> {parts.reply_email.trim()}
+                </li>
+              ) : null}
               {parts.company_contact_email.trim() ? (
                 <li>
                   <span className="font-medium">Company contact email:</span>{" "}
@@ -7528,7 +7531,7 @@ export default function JusticeChatAiPage() {
                       onClick={() => void clearApprovedNextActionFollowUp()}
                       className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                     >
-                      {clearingFollowUp ? "Clearingâ€¦" : "Mark follow-up handled"}
+                      {clearingFollowUp ? "Clearing…" : "Mark follow-up handled"}
                     </button>
                     <p className="text-[11px] text-neutral-600 dark:text-neutral-400 sm:max-w-[14rem]">
                       Clears this from Needs attention on Saved cases. Your outcome note and dates stay saved. Not automatic filing or submission.
@@ -7753,7 +7756,7 @@ export default function JusticeChatAiPage() {
                                   disabled={savingRecentEvidenceEdit || !editRecentEvidenceTitle.trim()}
                                   className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
                                 >
-                                  {savingRecentEvidenceEdit ? "Savingâ€¦" : "Save"}
+                                  {savingRecentEvidenceEdit ? "Saving…" : "Save"}
                                 </button>
                                 <button
                                   type="button"
@@ -7840,9 +7843,7 @@ export default function JusticeChatAiPage() {
                 transcripts. Attach image or PDF files here, or add short proof notes for what you already have on file.
               </p>
               <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
-                You can continue in chat without proof for now. Review your submission draft in the Active case
-                checklist when ready. Before you escalate or submit complaints, saving at least one proof item helps —
-                nothing is filed automatically from this app yet.
+                {CHAT_AI_EVIDENCE_ESCALATION_HINT}
               </p>
               {canAddProofNoteInChat ? (
                 <div className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">

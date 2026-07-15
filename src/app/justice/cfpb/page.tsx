@@ -225,10 +225,6 @@ export default function JusticeCfpbPrepPage() {
               <Link href="/justice/chat-ai" className="underline">
                 chat intake
               </Link>{" "}
-              or{" "}
-              <Link href="/justice/intake" className="underline">
-                structured form
-              </Link>{" "}
               so your
               complaint matches the right business.
             </p>
