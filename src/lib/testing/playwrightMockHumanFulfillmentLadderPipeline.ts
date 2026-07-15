@@ -7,10 +7,17 @@ import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
   buildBbbFilingTaskNotes,
   buildBbbFilingTaskTitle,
+  findOpenBbbFilingTask,
+  hasBbbFilingWithConfirmation,
   parseBbbFilingTaskDraft,
   shouldQueueBbbFilingTask,
   taskNotesMatchBbbFilingMarker,
 } from "@/lib/justice/bbbFilingTask";
+import {
+  bbbOwnedFilingIdempotencyKey,
+  upsertBbbOwnedFilingDeliveryNotes,
+} from "@/lib/justice/bbbOwnedFilingDeliveryState";
+import { REAL_BBB_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
 import {
   buildCfpbFilingTaskNotes,
   buildCfpbFilingTaskTitle,
@@ -112,6 +119,7 @@ import {
   isPlaywrightMockIntakeCaseHydrationCaseId,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { isPlaywrightMockRealBbbBoundedSubmitLoopEnabled } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import {
   buildPlaywrightMockJusticeFilingPostResponse,
   type PlaywrightMockJusticeFilingRow,
@@ -358,6 +366,12 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
     justiceIntake,
     clientState
   );
+  maybeAutoDeliverPlaywrightMockOwnedBbbFiling(
+    trimmedCaseId,
+    userId,
+    justiceIntake,
+    clientState
+  );
 }
 
 /**
@@ -481,6 +495,71 @@ function maybeAutoDeliverPlaywrightMockPaymentDisputeEmail(
     });
   } finally {
     playwrightMockPaymentDisputeEmailAutoInFlight = false;
+  }
+}
+
+/**
+ * Opt-in Playwright marker on intake.order_confirmation_details so operator BBB e2e
+ * stays queued while owned auto-BBB e2e can complete without Browserless.
+ */
+export const PLAYWRIGHT_OWNED_BBB_AUTOFILL_ORDER_REF = "e2e-owned-bbb-autofill";
+
+export function shouldPlaywrightMockOwnedBbbAutofill(intake: JusticeIntake): boolean {
+  return intake.order_confirmation_details?.trim() === PLAYWRIGHT_OWNED_BBB_AUTOFILL_ORDER_REF;
+}
+
+/**
+ * When mock real-BBB bounded submit is enabled and the intake carries the owned autofill
+ * marker, complete BBB with terminal confirmation (no Browserless / live bbb.org).
+ */
+let playwrightMockOwnedBbbAutofillInFlight = false;
+
+function maybeAutoDeliverPlaywrightMockOwnedBbbFiling(
+  caseId: string,
+  userId: string,
+  intake: JusticeIntake,
+  clientState: unknown
+): void {
+  if (playwrightMockOwnedBbbAutofillInFlight) return;
+  if (!isPlaywrightMockRealBbbBoundedSubmitLoopEnabled()) return;
+  if (!shouldPlaywrightMockOwnedBbbAutofill(intake)) return;
+  if (!shouldQueueBbbFilingTask(clientState)) return;
+
+  const filings = buildPlaywrightMockJusticeFilingsGetResponse(caseId);
+  if (hasBbbFilingWithConfirmation(filings)) return;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const openTask = findOpenBbbFilingTask(tasks, caseId);
+  if (!openTask) return;
+
+  const confirmation = REAL_BBB_ASSISTED_SUBMISSION_LANE.filingConfirmation;
+  const submittingNotes = upsertBbbOwnedFilingDeliveryNotes(openTask.notes, {
+    delivery_state: "submitting",
+    provider: "real_bbb_bounded_submit",
+    started_at: new Date().toISOString(),
+  });
+  openTask.notes = submittingNotes;
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(caseId, [...tasks]);
+
+  playwrightMockOwnedBbbAutofillInFlight = true;
+  try {
+    completePlaywrightMockBbbOperatorFiling({
+      caseId,
+      userId,
+      taskId: openTask.id,
+      destination: REAL_BBB_ASSISTED_SUBMISSION_LANE.filingDestination,
+      filedAt: new Date().toISOString().slice(0, 10),
+      confirmationNumber: confirmation,
+      notes: [
+        "provider: real_bbb_bounded_submit",
+        "delivery_state: filed",
+        `confirmation: ${confirmation}`,
+        `idempotency: ${bbbOwnedFilingIdempotencyKey(caseId)}`,
+        `completed_at: ${new Date().toISOString()}`,
+      ].join("\n"),
+    });
+  } finally {
+    playwrightMockOwnedBbbAutofillInFlight = false;
   }
 }
 

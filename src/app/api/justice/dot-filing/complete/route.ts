@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import { maybeAttemptAutomatedBbbFilingForClientState } from "@/lib/justice/bbbOwnedFilingDelivery";
+import {
+  buildBbbOwnedFilingSubmitContextFromRequest,
+  runWithBbbOwnedFilingSubmitContext,
+} from "@/lib/justice/bbbOwnedFilingSubmitContext";
 import { completeDotOperatorFiling } from "@/lib/justice/completeDotOperatorFiling";
 import { resolveCaseOwnerUserIdForOperatorFulfillment } from "@/lib/justice/operatorFulfillmentQueue";
 import { requireOperatorApiAccess } from "@/server/requireOperatorApiAccess";
@@ -78,6 +83,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid notes" }, { status: 400 });
   }
 
+  const destination = b.destination.trim();
+  const filedAt = b.filed_at.trim();
+  const confirmationNumber = b.confirmation_number.trim();
+
   if (
     isPlaywrightMockHumanFulfillmentOperatorFilingEnabled() &&
     isPlaywrightMockHumanFulfillmentOperatorFilingCaseId(caseId)
@@ -93,9 +102,9 @@ export async function POST(req: NextRequest) {
       caseId,
       userId: mockOwnerId,
       taskId,
-      destination: b.destination.trim(),
-      filedAt: b.filed_at.trim(),
-      confirmationNumber: b.confirmation_number.trim(),
+      destination,
+      filedAt,
+      confirmationNumber,
       notes,
     });
     if (!mockResult.ok) {
@@ -119,24 +128,41 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: ownerResult.error }, { status: ownerResult.status });
   }
 
-  const result = await completeDotOperatorFiling(supabase, ownerResult.userId, {
-    caseId,
-    taskId,
-    destination: b.destination.trim(),
-    filedAt: b.filed_at.trim(),
-    confirmationNumber: b.confirmation_number.trim(),
-    notes,
-  });
+  const wrapped = await runWithBbbOwnedFilingSubmitContext(
+    buildBbbOwnedFilingSubmitContextFromRequest(req),
+    async () => {
+      const result = await completeDotOperatorFiling(supabase, ownerResult.userId, {
+        caseId,
+        taskId,
+        destination,
+        filedAt,
+        confirmationNumber,
+        notes,
+      });
+      if (!result.ok) {
+        return { ok: false as const, result };
+      }
+      const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
+        supabase,
+        ownerResult.userId,
+        caseId,
+        result.clientState,
+        result.timeline ?? null
+      );
+      return { ok: true as const, result, bbbAutofill };
+    }
+  );
 
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+  if (!wrapped.ok) {
+    return NextResponse.json({ error: wrapped.result.error }, { status: wrapped.result.status });
   }
 
+  const { result, bbbAutofill } = wrapped;
   return NextResponse.json({
     filing: result.filing,
     task: result.task,
     client_state: result.clientState,
-    timeline: result.timeline,
+    timeline: bbbAutofill.timeline ?? result.timeline,
     advanced: result.advanced,
     idempotent: result.idempotent,
   });

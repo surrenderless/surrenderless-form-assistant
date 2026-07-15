@@ -42,6 +42,11 @@ import {
   ensureBbbFilingTask,
   shouldQueueBbbFilingTask,
 } from "@/lib/justice/bbbFilingTask";
+import { attemptAutomatedBbbFilingAfterEnsure, maybeAttemptAutomatedBbbFilingForClientState } from "@/lib/justice/bbbOwnedFilingDelivery";
+import {
+  buildBbbOwnedFilingSubmitContextFromRequest,
+  runWithBbbOwnedFilingSubmitContext,
+} from "@/lib/justice/bbbOwnedFilingSubmitContext";
 import {
   ensureFtcFilingTask,
   shouldQueueFtcFilingTask,
@@ -60,7 +65,7 @@ import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematu
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
-import type { JusticeIntake } from "@/lib/justice/types";
+import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import {
@@ -180,6 +185,17 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Invalid case id" }, { status: 400 });
   }
 
+  const submitContext = buildBbbOwnedFilingSubmitContextFromRequest(req);
+  return runWithBbbOwnedFilingSubmitContext(submitContext, () =>
+    patchJusticeCase(req, userId, id)
+  );
+}
+
+async function patchJusticeCase(
+  req: NextRequest,
+  userId: string,
+  id: string
+): Promise<NextResponse> {
   let body: unknown;
   try {
     body = await req.json();
@@ -476,6 +492,27 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
           if (refreshed) {
             responseData = { ...responseData, ...(refreshed as CaseResponse) };
           }
+          const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
+            supabase,
+            userId,
+            id,
+            responseData.client_state,
+            (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+          );
+          if (bbbAutofill.timeline) {
+            responseData = { ...responseData, timeline: bbbAutofill.timeline };
+          }
+          if (bbbAutofill.result.status === "accepted") {
+            const { data: afterBbb } = await supabase
+              .from("justice_cases")
+              .select(SELECT)
+              .eq("id", id)
+              .eq("user_id", userId)
+              .maybeSingle();
+            if (afterBbb) {
+              responseData = { ...responseData, ...(afterBbb as CaseResponse) };
+            }
+          }
         }
       }
     }
@@ -570,6 +607,27 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
           if (refreshed) {
             responseData = { ...responseData, ...(refreshed as CaseResponse) };
           }
+          const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
+            supabase,
+            userId,
+            id,
+            responseData.client_state,
+            (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+          );
+          if (bbbAutofill.timeline) {
+            responseData = { ...responseData, timeline: bbbAutofill.timeline };
+          }
+          if (bbbAutofill.result.status === "accepted") {
+            const { data: afterBbb } = await supabase
+              .from("justice_cases")
+              .select(SELECT)
+              .eq("id", id)
+              .eq("user_id", userId)
+              .maybeSingle();
+            if (afterBbb) {
+              responseData = { ...responseData, ...(afterBbb as CaseResponse) };
+            }
+          }
         }
       }
     }
@@ -643,6 +701,26 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
       );
       if (taskResult.timeline) {
         responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+      const autofill = await attemptAutomatedBbbFilingAfterEnsure(
+        supabase,
+        userId,
+        id,
+        (responseData.timeline as typeof taskResult.timeline) ?? null
+      );
+      if (autofill.timeline) {
+        responseData = { ...responseData, timeline: autofill.timeline };
+      }
+      if (autofill.result.status === "accepted" && autofill.result.task) {
+        const { data: refreshed } = await supabase
+          .from("justice_cases")
+          .select(SELECT)
+          .eq("id", id)
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (refreshed) {
+          responseData = { ...responseData, ...(refreshed as CaseResponse) };
+        }
       }
     }
   }

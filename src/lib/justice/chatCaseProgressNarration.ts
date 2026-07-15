@@ -1,7 +1,12 @@
 import {
+  findOpenBbbFilingTask,
   hasBbbFilingWithConfirmation,
   isApprovedBbbFilingAction,
 } from "@/lib/justice/bbbFilingTask";
+import {
+  isBbbOwnedFilingFailed,
+  isBbbOwnedFilingSubmitting,
+} from "@/lib/justice/bbbOwnedFilingDeliveryState";
 import { isChatPendingHumanFulfillmentEscalation } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
 import {
@@ -68,6 +73,8 @@ export type ChatCaseProgressMilestone =
   | "ftc_queued"
   | "ftc_confirmed"
   | "bbb_queued"
+  | "bbb_submitting"
+  | "bbb_submit_failed"
   | "bbb_confirmed"
   | "bbb_filed"
   | "state_ag_queued"
@@ -94,6 +101,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "ftc_queued",
   "ftc_confirmed",
   "bbb_queued",
+  "bbb_submitting",
+  "bbb_submit_failed",
   "bbb_confirmed",
   "bbb_filed",
   "state_ag_queued",
@@ -251,6 +260,13 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     })
   ) {
     satisfied.push("bbb_queued");
+    const openBbbTask = findOpenBbbFilingTask(input.tasks, caseId);
+    if (isBbbOwnedFilingSubmitting(openBbbTask)) {
+      satisfied.push("bbb_submitting");
+    }
+    if (isBbbOwnedFilingFailed(openBbbTask)) {
+      satisfied.push("bbb_submit_failed");
+    }
   }
 
   if (hasBbbFilingWithConfirmation(input.filings)) {
@@ -344,7 +360,11 @@ export function buildChatCaseProgressNarrationMessage(
     case "ftc_confirmed":
       return "Your FTC consumer complaint filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_queued":
-      return "I've queued your Better Business Bureau complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+      return "I've queued your Better Business Bureau complaint with Surrenderless. Stay here in chat — I'll update you when it's filing or filed.";
+    case "bbb_submitting":
+      return "Surrenderless is filing your Better Business Bureau complaint now. Stay here in chat for confirmation.";
+    case "bbb_submit_failed":
+      return "Automated BBB filing did not complete. Surrenderless operators will finish the filing manually — stay here in chat for updates.";
     case "bbb_confirmed":
       return "Your Better Business Bureau filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_filed":

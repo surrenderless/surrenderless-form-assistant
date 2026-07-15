@@ -362,6 +362,10 @@ import {
   isPaymentDisputeEmailFailed,
   isPaymentDisputeEmailSending,
 } from "@/lib/justice/paymentDisputeEmailDelivery";
+import {
+  isBbbOwnedFilingFailed,
+  isBbbOwnedFilingSubmitting,
+} from "@/lib/justice/bbbOwnedFilingDeliveryState";
 
 type UiMessage = {
   id: string;
@@ -5811,6 +5815,13 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const openBbbFilingTask = activeUuidCaseId
+    ? findOpenBbbFilingTask(savedTasks, activeUuidCaseId)
+    : undefined;
+  const showBbbFilingSubmittingNotice =
+    showBbbFilingQueuedNotice && isBbbOwnedFilingSubmitting(openBbbFilingTask);
+  const showBbbFilingSubmitFailedNotice =
+    showBbbFilingQueuedNotice && isBbbOwnedFilingFailed(openBbbFilingTask);
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
@@ -7094,11 +7105,26 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showBbbFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">BBB filing queued.</span> Surrenderless has queued
-                    your Better Business Bureau complaint for operator filing using your case packet and
-                    draft. Nothing has been filed yet.
+                    {showBbbFilingSubmittingNotice ? (
+                      <>
+                        <span className="font-medium">BBB filing submitting.</span> Surrenderless is
+                        filing your Better Business Bureau complaint using your case packet and draft.
+                      </>
+                    ) : showBbbFilingSubmitFailedNotice ? (
+                      <>
+                        <span className="font-medium">BBB filing failed.</span> Automated filing did
+                        not complete. Operators will finish the BBB complaint manually — nothing is
+                        marked filed until confirmation is recorded.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">BBB filing queued.</span> Surrenderless has
+                        queued your Better Business Bureau complaint for filing using your case packet
+                        and draft. Nothing has been filed yet.
+                      </>
+                    )}
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — operator updates will appear here.
+                      Stay in this chat — status updates will appear here.
                     </span>
                   </p>
                 ) : null}
