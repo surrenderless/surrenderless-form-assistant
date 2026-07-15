@@ -103,6 +103,10 @@ export default function JusticeCfpbPrepPage() {
     sessionReady: isOptionalHubEscapeSessionReadyForOwnedPrep(ownedPrepPage.status),
   });
 
+  if (redirectOffOptionalHub) {
+    return <SurrenderlessOwnedPrepHubLoading />;
+  }
+
   if (ownedPrepPage.status === "owned") {
     return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;
   }

@@ -387,7 +387,8 @@ export default function JusticePreviewPage() {
               ))}
             </ul>
             <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-              The draft below reflects your saved case. Nothing is filed automatically.
+              The draft below reflects your saved case. After you approve next steps, Surrenderless
+              can fulfill owned outreach and filings in chat (automation or operators).
             </p>
             <Link
               href="/justice/chat-ai"
@@ -525,7 +526,7 @@ export default function JusticePreviewPage() {
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">AI-assisted draft (optional)</h2>
           <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
             If you use this, Surrenderless sends your case summary (intake, destination, evidence notes, and timeline) to{" "}
-            <strong>OpenAI</strong> to produce an extra draft. Nothing is filed automatically. This is still not legal
+            <strong>OpenAI</strong> to produce an extra draft. After you approve next steps, Surrenderless can fulfill owned outreach and filings in chat (automation or operators). This is still not legal
             advice. Review the deterministic draft above even when using AI.
           </p>
           <button
@@ -574,7 +575,7 @@ export default function JusticePreviewPage() {
             </Link>
           </p>
           <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-            Describe changes in chat, then return here to review your updated draft. Nothing is filed
+            Describe changes in chat, then return here to review your updated draft. After you approve next steps, Surrenderless can fulfill owned outreach and filings
             automatically.
           </p>
           {continueError ? (

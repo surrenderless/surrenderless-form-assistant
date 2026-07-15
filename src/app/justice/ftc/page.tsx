@@ -1,17 +1,40 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import Header from "@/app/components/Header";
 import { SurrenderlessOwnedHumanFulfillmentPrepReadOnly } from "@/app/components/SurrenderlessOwnedHumanFulfillmentPrepReadOnly";
 import { SurrenderlessOwnedPrepHubLoading } from "@/app/components/SurrenderlessOwnedPrepHubLoading";
 import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
-import { shouldShowSurrenderlessOwnedPrepHubOwnershipPending } from "@/lib/justice/surrenderlessOwnedPrepHubGate";
+import {
+  isOptionalHubEscapeSessionReadyForOwnedPrep,
+  shouldShowSurrenderlessOwnedPrepHubOwnershipPending,
+} from "@/lib/justice/surrenderlessOwnedPrepHubGate";
+import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { useRedirectConsumerActiveCaseOffOptionalHubEscapePage } from "@/lib/justice/useRedirectConsumerActiveCaseOffOptionalHubEscapePage";
 import { useSurrenderlessOwnedHumanFulfillmentPrepPage } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 export default function JusticeFtcPrepPage() {
   const ownedPrepPage = useSurrenderlessOwnedHumanFulfillmentPrepPage(
     MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF
   );
+
+  const [optionalHubEscapeCaseId, setOptionalHubEscapeCaseId] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOptionalHubEscapeCaseId(sessionStorage.getItem(STORAGE_CASE_ID) ?? "");
+  }, [ownedPrepPage.status]);
+
+  const redirectOffOptionalHub = useRedirectConsumerActiveCaseOffOptionalHubEscapePage({
+    escapePageHref: "/justice/ftc",
+    caseId: optionalHubEscapeCaseId,
+    hasResumableCase: Boolean(optionalHubEscapeCaseId.trim()),
+    sessionReady: isOptionalHubEscapeSessionReadyForOwnedPrep(ownedPrepPage.status),
+  });
+
+  if (redirectOffOptionalHub) {
+    return <SurrenderlessOwnedPrepHubLoading />;
+  }
 
   if (ownedPrepPage.status === "owned") {
     return <SurrenderlessOwnedHumanFulfillmentPrepReadOnly stepLabel={ownedPrepPage.stepLabel} />;

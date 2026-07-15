@@ -17,10 +17,6 @@ export function SurrenderlessOwnedHumanFulfillmentPrepReadOnly({
           <Link href="/justice/chat-ai" className="text-blue-600 hover:underline dark:text-blue-400">
             Return to chat
           </Link>
-          {" · "}
-          <Link href="/justice/handling" className="text-blue-600 hover:underline dark:text-blue-400">
-            Handling workbench
-          </Link>
         </p>
 
         <div className={`mt-5 ${cardCls}`}>
@@ -29,11 +25,12 @@ export function SurrenderlessOwnedHumanFulfillmentPrepReadOnly({
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-neutral-700 dark:text-neutral-300">
             Your <span className="font-medium">{stepLabel}</span> is owned by Surrenderless. Stay in
-            chat for queued, in-progress, and completed updates while operator fulfillment runs.
+            chat for queued, in-progress, and completed updates while automation or operator
+            fulfillment runs.
           </p>
           <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-            Consumer copy/paste, contact, submit, mark-filed, and manual-confirm controls are not
-            available on this page for this step.
+            Continue case progress in chat — destination-prep DIY controls are not available for
+            this step.
           </p>
         </div>
       </main>

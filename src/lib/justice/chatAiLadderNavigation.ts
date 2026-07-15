@@ -41,12 +41,29 @@ export function isChatAiOptionalHubEscapeHref(href: string | null | undefined): 
   return (CHAT_AI_OPTIONAL_HUB_ESCAPE_HREFS as readonly string[]).includes(trimmed);
 }
 
-/** Signed-in chat-ai consumers updating an existing case stay on the in-chat ladder. */
+/** Any consumer-facing parallel DIY/prep workflow href that must not replace chat-ai. */
+export function isChatAiConsumerParallelWorkflowHref(href: string | null | undefined): boolean {
+  return isChatAiMainLadderOffChatHref(href) || isChatAiOptionalHubEscapeHref(href);
+}
+
+function hasConsumerCaseSession(input: {
+  caseId?: string | null;
+  isUpdatingExistingCase?: boolean;
+}): boolean {
+  return Boolean(input.caseId?.trim()) || Boolean(input.isUpdatingExistingCase);
+}
+
+/**
+ * Signed-in chat-ai consumers with a case session stay on the in-chat ladder.
+ * Case session = active case id and/or updating-existing-case flag.
+ */
 export function shouldKeepSignedInChatAiActiveCaseInChat(input: {
   isSignedIn: boolean;
-  isUpdatingExistingCase: boolean;
+  caseId?: string | null;
+  /** Compat: treated as having a case session when caseId is not yet plumbed. */
+  isUpdatingExistingCase?: boolean;
 }): boolean {
-  return input.isSignedIn && input.isUpdatingExistingCase;
+  return Boolean(input.isSignedIn) && hasConsumerCaseSession(input);
 }
 
 export type ChatAiChecklistStepAction =
@@ -129,16 +146,27 @@ export function resolveChatAiActiveCaseWorkLabel(input: {
   return "Continue in chat";
 }
 
+/**
+ * Block signed-in consumers from navigating into parallel DIY/prep workflows.
+ * Destination-prep hubs are always blocked when signed in; main ladder detours
+ * are blocked whenever a case session exists.
+ */
 export function shouldBlockChatAiOffChatNavigation(input: {
   isSignedIn: boolean;
-  isUpdatingExistingCase: boolean;
   isLoaded: boolean;
   caseId: string;
   targetHref: string;
+  /** Compat: contributes to case-session detection for main-ladder blocks. */
+  isUpdatingExistingCase?: boolean;
 }): boolean {
-  if (!isChatAiMainLadderOffChatHref(input.targetHref)) return false;
-  if (!input.isLoaded || !input.isSignedIn || !input.isUpdatingExistingCase) return false;
-  return Boolean(input.caseId.trim());
+  const trimmed = input.targetHref.trim();
+  if (!isChatAiConsumerParallelWorkflowHref(trimmed)) return false;
+  if (!input.isLoaded || !input.isSignedIn) return false;
+  if (isChatAiOptionalHubEscapeHref(trimmed)) return true;
+  return hasConsumerCaseSession({
+    caseId: input.caseId,
+    isUpdatingExistingCase: input.isUpdatingExistingCase,
+  });
 }
 
 export function scrollChatAiInlineElement(targetElementId: string): boolean {
@@ -190,9 +218,26 @@ export function resolveConsumerActiveCaseResumeChatAiHref(
 
 export function redirectConsumerActiveCaseOffChatHref(targetHref: string): string {
   const trimmed = targetHref.trim();
-  return isChatAiMainLadderOffChatHref(trimmed)
-    ? CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF
-    : trimmed;
+  if (isChatAiMainLadderOffChatHref(trimmed) || isChatAiOptionalHubEscapeHref(trimmed)) {
+    if (trimmed === "/justice/evidence") {
+      return resolveConsumerActiveCaseResumeChatAiHref(CHAT_AI_PROOF_EVIDENCE_PANEL_ELEMENT_ID);
+    }
+    if (trimmed === "/justice/preview") {
+      return resolveConsumerActiveCaseResumeChatAiHref(
+        CHAT_AI_INLINE_SUBMISSION_DRAFT_REVIEW_ELEMENT_ID
+      );
+    }
+    if (trimmed === "/justice/packet") {
+      return resolveConsumerActiveCaseResumeChatAiHref(
+        CHAT_AI_INLINE_PREPARED_PACKET_APPROVAL_ELEMENT_ID
+      );
+    }
+    if (isChatAiOptionalHubEscapeHref(trimmed)) {
+      return resolveConsumerActiveCaseResumeChatAiHref(CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID);
+    }
+    return CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF;
+  }
+  return trimmed;
 }
 
 export type ConsumerLegacyLadderPageHref =
@@ -212,13 +257,12 @@ export function shouldRedirectConsumerActiveCaseOffLegacyLadderPage(input: {
   isOperator?: boolean;
 }): boolean {
   if (input.allowOperatorAccess && input.isOperator) return false;
-  return shouldBlockChatAiOffChatNavigation({
-    isSignedIn: input.isSignedIn,
-    isUpdatingExistingCase: input.hasResumableCase,
-    isLoaded: input.isLoaded,
-    caseId: input.caseId,
-    targetHref: input.legacyPageHref,
-  });
+  if (!input.isLoaded || !input.isSignedIn) return false;
+  // All signed-in consumers are redirected off legacy ladder/DIY surfaces.
+  void input.caseId;
+  void input.hasResumableCase;
+  void input.legacyPageHref;
+  return true;
 }
 
 export function resolveConsumerActiveCaseLegacyLadderRedirectHref(
@@ -279,8 +323,11 @@ export function shouldRedirectConsumerActiveCaseOffOptionalHubEscapePage(input: 
   hasResumableCase: boolean;
 }): boolean {
   if (!isChatAiOptionalHubEscapeHref(input.escapePageHref)) return false;
-  if (!input.isLoaded || !input.isSignedIn || !input.hasResumableCase) return false;
-  return Boolean(input.caseId.trim());
+  if (!input.isLoaded || !input.isSignedIn) return false;
+  // All signed-in consumers leave destination-prep/evidence DIY hubs for chat-ai.
+  void input.caseId;
+  void input.hasResumableCase;
+  return true;
 }
 
 export function resolveConsumerActiveCaseOptionalHubEscapeRedirectHref(
