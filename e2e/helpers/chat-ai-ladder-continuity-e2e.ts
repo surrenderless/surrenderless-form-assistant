@@ -615,6 +615,46 @@ export async function seedActiveCaseStateAgQueued(page: Page): Promise<void> {
   });
 }
 
+/** Demand letter approved with company_contact_email so mock automated email delivery can run. */
+export async function seedActiveCaseDemandLetterFilingStepWithCompanyEmail(
+  page: Page
+): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    company_name: "Acme Retail",
+    company_contact_email: "support@acme-retail.example",
+    problem_category: "online_purchase" as const,
+    purchase_or_signup: "widget order",
+    story: "Ordered a widget that never arrived and merchant refused a refund.",
+    money_involved: "$89.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "yes" as const,
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "Small claims / demand letter",
+    href: "/justice/demand-letter",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:14.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
 export function activeCaseBanner(page: Page): Locator {
   return page.getByRole("status", { name: "Active case" });
 }

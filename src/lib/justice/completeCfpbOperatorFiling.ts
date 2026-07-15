@@ -20,6 +20,7 @@ import {
   ensureDemandLetterFilingTask,
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
+import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
 import {
   ensureDotFilingTask,
   shouldQueueDotFilingTask,
@@ -308,6 +309,13 @@ export async function completeCfpbOperatorFiling(
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }
+      const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
+        supabase,
+        userId,
+        caseId,
+        timeline
+      );
+      timeline = emailAttempt.timeline;
     }
     if (shouldQueueFccFilingTask(clientState)) {
       const queueResult = await ensureFccFilingTask(supabase, userId, caseId, intake);

@@ -28,10 +28,17 @@ import {
 import {
   buildDemandLetterFilingTaskNotes,
   buildDemandLetterFilingTaskTitle,
+  findOpenDemandLetterFilingTask,
+  hasDemandLetterFilingWithConfirmation,
   parseDemandLetterFilingTaskDraft,
   shouldQueueDemandLetterFilingTask,
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
+import {
+  demandLetterEmailIdempotencyKey,
+  resolveDemandLetterRecipientEmail,
+  upsertDemandLetterEmailDeliveryNotes,
+} from "@/lib/justice/demandLetterEmailDelivery";
 import {
   buildDotFilingTaskNotes,
   buildDotFilingTaskTitle,
@@ -372,6 +379,12 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
     justiceIntake,
     clientState
   );
+  maybeAutoDeliverPlaywrightMockDemandLetterEmail(
+    trimmedCaseId,
+    userId,
+    justiceIntake,
+    clientState
+  );
 }
 
 /**
@@ -495,6 +508,68 @@ function maybeAutoDeliverPlaywrightMockPaymentDisputeEmail(
     });
   } finally {
     playwrightMockPaymentDisputeEmailAutoInFlight = false;
+  }
+}
+
+/**
+ * When Playwright mock email outreach is enabled and company_contact_email is on intake,
+ * accept a deterministic mock provider message and complete demand letter (no operator UI).
+ * Reuses PLAYWRIGHT_MOCK_MERCHANT_OUTREACH_EMAIL — same Resend mock stack as merchant outreach.
+ */
+let playwrightMockDemandLetterEmailAutoInFlight = false;
+
+function maybeAutoDeliverPlaywrightMockDemandLetterEmail(
+  caseId: string,
+  userId: string,
+  intake: JusticeIntake,
+  clientState: unknown
+): void {
+  if (playwrightMockDemandLetterEmailAutoInFlight) return;
+  if (!isPlaywrightMockMerchantOutreachEmailEnabled()) return;
+  if (!shouldQueueDemandLetterFilingTask(clientState)) return;
+
+  const recipient = resolveDemandLetterRecipientEmail(intake);
+  if (!recipient) return;
+
+  const filings = buildPlaywrightMockJusticeFilingsGetResponse(caseId);
+  if (hasDemandLetterFilingWithConfirmation(filings)) return;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const openTask = findOpenDemandLetterFilingTask(tasks, caseId);
+  if (!openTask) return;
+
+  const messageId = `mock_resend_${demandLetterEmailIdempotencyKey(caseId).replace(
+    /[^a-zA-Z0-9_-]/g,
+    "_"
+  )}`;
+  const sendingNotes = upsertDemandLetterEmailDeliveryNotes(openTask.notes, {
+    delivery_state: "sending",
+    provider: "mock_resend",
+    recipient,
+    sent_at: new Date().toISOString(),
+  });
+  openTask.notes = sendingNotes;
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(caseId, [...tasks]);
+
+  playwrightMockDemandLetterEmailAutoInFlight = true;
+  try {
+    completePlaywrightMockDemandLetterOperatorFiling({
+      caseId,
+      userId,
+      taskId: openTask.id,
+      destination: "Small claims / demand letter",
+      filedAt: new Date().toISOString().slice(0, 10),
+      confirmationNumber: messageId,
+      notes: [
+        "provider: mock_resend",
+        `provider_message_id: ${messageId}`,
+        "delivery_state: accepted",
+        `recipient: ${recipient}`,
+        `sent_at: ${new Date().toISOString()}`,
+      ].join("\n"),
+    });
+  } finally {
+    playwrightMockDemandLetterEmailAutoInFlight = false;
   }
 }
 

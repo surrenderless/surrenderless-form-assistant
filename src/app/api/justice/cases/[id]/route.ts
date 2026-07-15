@@ -29,6 +29,7 @@ import {
   ensureDemandLetterFilingTask,
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
+import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
 import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
 import {
   ensureFccFilingTask,
@@ -553,6 +554,26 @@ async function patchJusticeCase(
       );
       if (taskResult.timeline) {
         responseData = { ...responseData, timeline: taskResult.timeline };
+      }
+      const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
+        supabase,
+        userId,
+        id,
+        (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+      );
+      if (emailAttempt.timeline) {
+        responseData = { ...responseData, timeline: emailAttempt.timeline };
+      }
+      if (emailAttempt.result.status === "accepted" && emailAttempt.result.task) {
+        const { data: refreshed } = await supabase
+          .from("justice_cases")
+          .select(SELECT)
+          .eq("id", id)
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (refreshed) {
+          responseData = { ...responseData, ...(refreshed as CaseResponse) };
+        }
       }
     }
   }

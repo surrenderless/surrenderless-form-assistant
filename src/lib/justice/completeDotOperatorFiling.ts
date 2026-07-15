@@ -18,6 +18,7 @@ import {
   ensureDemandLetterFilingTask,
   shouldQueueDemandLetterFilingTask,
 } from "@/lib/justice/demandLetterFilingTask";
+import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
 import {
   completeDotFilingTaskIfOpen,
   dotFilingsForManualTracking,
@@ -348,6 +349,13 @@ export async function completeDotOperatorFiling(
       if (queueResult.timeline) {
         timeline = queueResult.timeline;
       }
+      const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
+        supabase,
+        userId,
+        caseId,
+        timeline
+      );
+      timeline = emailAttempt.timeline;
     }
   }
 

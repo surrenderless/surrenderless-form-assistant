@@ -339,6 +339,10 @@ import {
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  isDemandLetterEmailFailed,
+  isDemandLetterEmailSending,
+} from "@/lib/justice/demandLetterEmailDelivery";
+import {
   findOpenCfpbFilingTask,
   hasCfpbFilingWithConfirmation,
   isApprovedCfpbFilingAction,
@@ -5731,6 +5735,13 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const openDemandLetterTask = activeUuidCaseId
+    ? findOpenDemandLetterFilingTask(savedTasks, activeUuidCaseId)
+    : undefined;
+  const showDemandLetterSendingNotice =
+    showDemandLetterQueuedNotice && isDemandLetterEmailSending(openDemandLetterTask);
+  const showDemandLetterSendFailedNotice =
+    showDemandLetterQueuedNotice && isDemandLetterEmailFailed(openDemandLetterTask);
   const showCfpbFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedCfpbFilingAction(approvedNextAction) &&
@@ -7004,11 +7015,26 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showDemandLetterQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">Demand letter queued with Surrenderless.</span>{" "}
-                    Surrenderless has queued your demand letter for operator fulfillment using your
-                    case draft. Nothing has been sent yet.
+                    {showDemandLetterSendingNotice ? (
+                      <>
+                        <span className="font-medium">Demand letter sending.</span> Surrenderless is
+                        delivering your demand letter email to the company using your case draft.
+                      </>
+                    ) : showDemandLetterSendFailedNotice ? (
+                      <>
+                        <span className="font-medium">Demand letter email failed.</span> Automated
+                        delivery did not go through. Operators will complete sending manually — nothing
+                        is marked sent until delivery succeeds.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">Demand letter queued with Surrenderless.</span>{" "}
+                        Surrenderless has queued your demand letter using your case draft. Nothing has
+                        been sent yet.
+                      </>
+                    )}
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — operator updates will appear here.
+                      Stay in this chat — status updates will appear here.
                     </span>
                   </p>
                 ) : null}
