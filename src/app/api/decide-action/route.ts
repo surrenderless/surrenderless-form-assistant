@@ -1,12 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { resolveBbbDecideActionInternalUserId } from "@/lib/justice/bbbOwnedFilingProduction";
 import {
   buildPlaywrightMockRealBbbDecideActionDecision,
   isPlaywrightMockRealBbbBoundedSubmitLoopEnabled,
 } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
+
+/** Enough time for OpenAI decide-action during owned BBB bounded-submit loops. */
+export const maxDuration = 300;
 
 function getOpenAI(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -15,7 +19,7 @@ function getOpenAI(): OpenAI | null {
 }
 
 export async function POST(req: NextRequest) {
-  const userId = getUserOr401(req);
+  const userId = resolveBbbDecideActionInternalUserId(req) ?? getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {

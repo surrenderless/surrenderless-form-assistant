@@ -20,6 +20,7 @@ import {
   isPlaywrightMockRealBbbBoundedSubmitLoopEnabled,
   resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl,
 } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
+import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
 
 export type RealBbbBoundedSubmitFillResult = {
   status: "success";
@@ -297,9 +298,12 @@ export async function runRealBbbBoundedSubmit(
   let page: Page | null = null;
 
   try {
-    const browserlessUrl = process.env.BROWSERLESS_URL;
-    if (browserlessUrl) {
-      browser = await chromium.connectOverCDP(browserlessUrl);
+    const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
+    if (chromiumConnection.mode === "unavailable") {
+      throw new Error(chromiumConnection.error);
+    }
+    if (chromiumConnection.mode === "browserless") {
+      browser = await chromium.connectOverCDP(chromiumConnection.url);
     } else {
       browser = await chromium.launch({ headless: true });
     }
