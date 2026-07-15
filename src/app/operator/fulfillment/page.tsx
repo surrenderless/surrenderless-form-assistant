@@ -129,7 +129,7 @@ export default function OperatorFulfillmentPage() {
   return (
     <>
       <Header />
-      <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-2xl px-4 py-8 sm:px-6">
+      <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-3xl px-4 py-8 sm:px-6">
         <h1 className="text-2xl font-bold text-neutral-900 dark:text-neutral-100">
           Operator fulfillment queue
         </h1>
