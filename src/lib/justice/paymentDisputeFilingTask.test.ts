@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
-import { buildDefaultPaymentDisputeDraft } from "@/lib/justice/buildPaymentDisputeBankLetter";
+import {
+  buildDefaultPaymentDisputeDraft,
+  type PaymentDisputeDraft,
+} from "@/lib/justice/buildPaymentDisputeBankLetter";
 import {
   buildPaymentDisputeEvidenceInventory,
   buildPaymentDisputeFilingTaskNotes,
@@ -12,6 +15,7 @@ import {
   parsePaymentDisputeFilingTaskDraft,
   paymentDisputeFilingTaskCompletedTimelineId,
   paymentDisputeFilingTaskNotesMarker,
+  resolvePaymentDisputeDraftForOperatorPacket,
   shouldQueuePaymentDisputeFilingTask,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
@@ -189,5 +193,55 @@ describe("paymentDisputeFilingTask", () => {
         },
       })
     ).toBe(false);
+  });
+
+  it("queues formal goods-not-received reason for non-delivery intake when no saved draft", () => {
+    const intake = buildJusticeIntakeFromParts({
+      ...defaultBuildJusticeIntakeParts(),
+      problem_category: "online_purchase",
+      company_name: "Laptop World",
+      money_amount: "$1,299.00",
+      pay_or_order_date: "2026-02-01",
+      consumer_us_state: "CA",
+      user_display_name: "Alex River",
+      reply_email: "alex@example.com",
+      story: "I purchased a laptop that never arrived and the seller stopped responding.",
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2026-02-10",
+      merchant_response_type: "no_response",
+      contact_proof_type: "none",
+    });
+    const draft = resolvePaymentDisputeDraftForOperatorPacket(CASE_ID, intake, null);
+    expect(draft.dispute_reason).toBe("goods_not_received");
+    const notes = buildPaymentDisputeFilingTaskNotes(CASE_ID, intake, draft);
+    expect(notes).toContain("I am disputing this charge as: Goods or services not received.");
+    expect(notes).not.toContain("Unauthorized charge");
+  });
+
+  it("does not overwrite a valid saved payment_dispute_draft reason", () => {
+    const intake = buildJusticeIntakeFromParts({
+      ...defaultBuildJusticeIntakeParts(),
+      problem_category: "online_purchase",
+      company_name: "Laptop World",
+      money_amount: "$1,299.00",
+      pay_or_order_date: "2026-02-01",
+      story: "I purchased a laptop that never arrived.",
+      already_contacted: "no",
+    });
+    const saved: PaymentDisputeDraft = {
+      case_id: CASE_ID,
+      payment_method: "debit_card",
+      charge_date: "2026-02-01",
+      charge_amount: "$1,299.00",
+      merchant_name: "Laptop World",
+      dispute_reason: "duplicate_charge",
+      prior_company_contact: "no",
+      proof_type: "bank_statement",
+    };
+    const resolved = resolvePaymentDisputeDraftForOperatorPacket(CASE_ID, intake, saved);
+    expect(resolved.dispute_reason).toBe("duplicate_charge");
+    expect(resolved.payment_method).toBe("debit_card");
+    expect(resolved.proof_type).toBe("bank_statement");
   });
 });
