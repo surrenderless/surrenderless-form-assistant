@@ -198,9 +198,14 @@ describe("attemptAutomatedBbbFiling", () => {
     vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(true);
     vi.mocked(runRealBbbBoundedSubmit).mockReset();
     vi.mocked(completeBbbOperatorFiling).mockReset();
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
+    vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
+    vi.stubEnv("BROWSERLESS_URL", "");
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
   });
 
@@ -208,6 +213,17 @@ describe("attemptAutomatedBbbFiling", () => {
     vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(false);
     const result = await attemptAutomatedBbbFiling(makeSupabase({}), USER_ID, CASE_ID);
     expect(result.status).toBe("skipped");
+    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("skips without submitting when production execution readiness fails", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("BROWSERLESS_URL", "");
+    const result = await attemptAutomatedBbbFiling(makeSupabase({}), USER_ID, CASE_ID);
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: expect.stringContaining("BROWSERLESS_URL"),
+    });
     expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
   });
 
@@ -301,6 +317,14 @@ describe("attemptAutomatedBbbFiling", () => {
 
     expect(result.status).toBe("accepted");
     expect(runRealBbbBoundedSubmit).toHaveBeenCalledTimes(1);
+    expect(runRealBbbBoundedSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        forwardedHeaders: expect.objectContaining({
+          "x-surrenderless-bbb-decide-secret": "test-decide-secret",
+          "x-surrenderless-bbb-user-id": USER_ID,
+        }),
+      })
+    );
     expect(completeBbbOperatorFiling).toHaveBeenCalledTimes(1);
     expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(true);
   });

@@ -14,9 +14,9 @@ import {
 } from "@/lib/justice/bbbFilingTask";
 import {
   getBbbOwnedFilingSubmitContext,
-  resolveAutomatedBbbFilingBase,
   type BbbOwnedFilingSubmitContext,
 } from "@/lib/justice/bbbOwnedFilingSubmitContext";
+import { evaluateOwnedBbbAutofillExecutionReadiness } from "@/lib/justice/bbbOwnedFilingProduction";
 import {
   bbbOwnedFilingIdempotencyKey,
   bbbOwnedFilingTimelineId,
@@ -92,30 +92,6 @@ async function patchBbbTaskNotes(
     return null;
   }
   return data as JusticeCaseTaskRow;
-}
-
-function resolveSubmitContext(
-  override?: BbbOwnedFilingSubmitContext | null
-): BbbOwnedFilingSubmitContext | null {
-  if (override?.base?.trim() && override.forwardedHeaders) {
-    return {
-      base: override.base.trim().replace(/\/$/, ""),
-      forwardedHeaders: override.forwardedHeaders,
-    };
-  }
-  const fromStore = getBbbOwnedFilingSubmitContext();
-  if (fromStore?.base?.trim()) {
-    return {
-      base: fromStore.base.trim().replace(/\/$/, ""),
-      forwardedHeaders: fromStore.forwardedHeaders,
-    };
-  }
-  const base = resolveAutomatedBbbFilingBase();
-  if (!base) return null;
-  return {
-    base,
-    forwardedHeaders: { "Content-Type": "application/json" },
-  };
 }
 
 /**
@@ -243,19 +219,14 @@ export async function attemptAutomatedBbbFiling(
     };
   }
 
-  const resolvedContext = resolveSubmitContext(submitContext ?? null);
-  if (!resolvedContext) {
-    return {
-      status: "skipped",
-      reason: "app base URL unavailable for BBB autofill — operator/manual fallback",
-    };
+  const readiness = evaluateOwnedBbbAutofillExecutionReadiness(userId);
+  if (!readiness.ok) {
+    return { status: "skipped", reason: readiness.reason };
   }
-  if (!resolvedContext.forwardedHeaders.cookie && !resolvedContext.forwardedHeaders.authorization) {
-    return {
-      status: "skipped",
-      reason: "auth context unavailable for BBB decide-action — operator/manual fallback",
-    };
-  }
+
+  const overrideBase = submitContext?.base?.trim() || getBbbOwnedFilingSubmitContext()?.base?.trim();
+  const base = (overrideBase || readiness.base).replace(/\/$/, "");
+  const forwardedHeaders = readiness.forwardedHeaders;
 
   const provider = "real_bbb_bounded_submit";
   const startedAt = new Date().toISOString();
@@ -284,8 +255,8 @@ export async function attemptAutomatedBbbFiling(
     bounded = await runRealBbbBoundedSubmit({
       url: REAL_BBB_COMPLAINT_SUBMISSION_URL,
       userData: intakeToRealBbbUserData(intake),
-      base: resolvedContext.base,
-      forwardedHeaders: resolvedContext.forwardedHeaders,
+      base,
+      forwardedHeaders,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

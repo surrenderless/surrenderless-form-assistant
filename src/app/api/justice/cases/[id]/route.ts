@@ -77,6 +77,9 @@ import {
 import { buildPlaywrightMockJusticeFilingsGetResponse } from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
 import { buildPlaywrightMockJusticeTasksGetResponse } from "@/lib/testing/playwrightMockJusticeTasksPipeline";
 
+/** Owned BBB autofill (Playwright + decide-action) can run during PATCH. */
+export const maxDuration = 300;
+
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();

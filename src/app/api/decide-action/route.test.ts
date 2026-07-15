@@ -63,6 +63,30 @@ describe("POST /api/decide-action", () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it("authenticates via internal BBB decide-action secret without Clerk cookies", async () => {
+    vi.mocked(getUserOr401).mockReturnValue(null);
+    vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "server-secret");
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ fieldsToFill: [] }) } }],
+    });
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/decide-action", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-surrenderless-bbb-decide-secret": "server-secret",
+          "x-surrenderless-bbb-user-id": "user_internal",
+        },
+        body: JSON.stringify({ pageData: { fields: [] }, userData: {} }),
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(rateLimit).toHaveBeenCalledWith("user_internal");
+    expect(mockCreate).toHaveBeenCalledOnce();
+  });
+
   it("returns 429 before calling OpenAI when rate-limited", async () => {
     vi.mocked(rateLimit).mockResolvedValue(true);
 

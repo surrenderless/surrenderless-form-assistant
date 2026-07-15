@@ -6,12 +6,20 @@ import {
 } from "@/lib/justice/assistedSubmissionExternalUrl";
 import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
 import {
+  BBB_DECIDE_ACTION_INTERNAL_SECRET_HEADER,
+  BBB_DECIDE_ACTION_USER_ID_HEADER,
+  getBbbDecideActionInternalSecret,
+} from "@/lib/justice/bbbOwnedFilingProduction";
+import {
   buildPlaywrightMockRealBbbBoundedSubmitFillResult,
   isPlaywrightMockAssistedSubmitPipelineEnabled,
 } from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
 import { isPlaywrightMockRealBbbBoundedSubmitLoopEnabled } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
+
+/** Real BBB bounded submit (Browserless + decide-action loop) needs extended runtime. */
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   // auth
@@ -49,6 +57,11 @@ export async function POST(req: NextRequest) {
     };
     if (cookie) forwardedHeaders.cookie = cookie;
     if (basicAuth) forwardedHeaders.authorization = basicAuth;
+    const decideSecret = getBbbDecideActionInternalSecret();
+    if (decideSecret) {
+      forwardedHeaders[BBB_DECIDE_ACTION_INTERNAL_SECRET_HEADER] = decideSecret;
+      forwardedHeaders[BBB_DECIDE_ACTION_USER_ID_HEADER] = userId;
+    }
 
     if (isAllowedExternalAssistedSubmissionUrl(url)) {
       if (
