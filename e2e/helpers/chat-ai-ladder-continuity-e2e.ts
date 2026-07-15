@@ -6,6 +6,7 @@ import type { JusticeApprovedNextAction, TimelineEntry } from "@/lib/justice/typ
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { buildPlaywrightMockE2eCaseIntake } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+import { PLAYWRIGHT_OWNED_BBB_AUTOFILL_ORDER_REF } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 
 export const CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID = PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
@@ -480,6 +481,48 @@ export async function seedActiveCaseBbbFilingStep(page: Page): Promise<void> {
     money_involved: "$89.00",
     pay_or_order_date: "2026-01-10",
     already_contacted: "no" as const,
+  };
+  const approvedNextAction: JusticeApprovedNextAction = {
+    label: "Better Business Bureau",
+    href: "/justice/bbb",
+    status: "approved",
+    approved_at: "2026-06-21T00:00:10.000Z",
+  };
+  await resetMockCase(page);
+  await patchMockCase(page, {
+    intake,
+    timeline: buildDraftReviewedTimeline(caseId),
+    client_state: {
+      prepared_packet_approved: true,
+      approved_next_action: approvedNextAction,
+    },
+  });
+  await hydrateChatAiSession(page, {
+    caseId,
+    intake,
+    preparedPacketApproved: true,
+    submissionDraftReviewed: true,
+    approvedNextAction,
+  });
+}
+
+/**
+ * BBB step with owned autofill opt-in marker so Playwright mock completes without operator UI.
+ */
+export async function seedActiveCaseBbbFilingStepWithOwnedAutofill(
+  page: Page
+): Promise<void> {
+  const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  const intake = {
+    ...buildPlaywrightMockE2eCaseIntake(),
+    company_name: "Acme Retail",
+    problem_category: "online_purchase" as const,
+    purchase_or_signup: "widget order",
+    story: "Ordered a widget that never arrived and merchant refused a refund.",
+    money_involved: "$89.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "no" as const,
+    order_confirmation_details: PLAYWRIGHT_OWNED_BBB_AUTOFILL_ORDER_REF,
   };
   const approvedNextAction: JusticeApprovedNextAction = {
     label: "Better Business Bureau",
