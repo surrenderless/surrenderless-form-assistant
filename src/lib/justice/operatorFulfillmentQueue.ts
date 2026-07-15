@@ -33,6 +33,10 @@ import {
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
 import {
+  parseFollowUpResponseReviewTaskDraft,
+  taskNotesMatchFollowUpResponseReviewMarker,
+} from "@/lib/justice/followUpResponseReviewTask";
+import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
@@ -52,7 +56,8 @@ export type OperatorFulfillmentStep =
   | "fcc"
   | "dot"
   | "ftc"
-  | "bbb";
+  | "bbb"
+  | "follow_up_response_review";
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -85,6 +90,19 @@ function classifyOpenOperatorTask(
   if (task.completed_at?.trim()) return null;
   const caseId = task.case_id.trim();
   if (!caseId) return null;
+
+  if (taskNotesMatchFollowUpResponseReviewMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "follow_up_response_review",
+      task_title: task.title?.trim() || "Follow-up response review",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parseFollowUpResponseReviewTaskDraft(task.notes)),
+    };
+  }
 
   if (taskNotesMatchMerchantContactFilingMarker(task.notes, caseId)) {
     return {
@@ -251,6 +269,7 @@ export async function listOperatorFulfillmentQueue(
     const caseId = task.case_id?.trim() ?? "";
     if (!caseId) return false;
       return (
+        taskNotesMatchFollowUpResponseReviewMarker(task.notes, caseId) ||
         taskNotesMatchMerchantContactFilingMarker(task.notes, caseId) ||
         taskNotesMatchStateAgFilingMarker(task.notes, caseId) ||
         taskNotesMatchDemandLetterFilingMarker(task.notes, caseId) ||

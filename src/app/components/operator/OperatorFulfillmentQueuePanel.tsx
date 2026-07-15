@@ -66,6 +66,8 @@ function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
       return "FTC filing";
     case "bbb":
       return "BBB filing";
+    case "follow_up_response_review":
+      return "Follow-up response review";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -93,6 +95,8 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Record FTC filing";
     case "bbb":
       return "Record BBB filing";
+    case "follow_up_response_review":
+      return "Response review (no filing confirmation form)";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -151,6 +155,8 @@ function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"])
         canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF) ??
         "Better Business Bureau"
       );
+    case "follow_up_response_review":
+      return "Follow-up response review";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -377,6 +383,22 @@ export function OperatorFulfillmentQueuePanel({
               saving={savingTaskId === item.task_id}
               onSubmit={(input) => onRecordComplete(item, input)}
             />
+          ) : item.step === "follow_up_response_review" ? (
+            <div className="mt-3 space-y-2 rounded-lg border border-amber-200/90 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+              <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                Operator response review
+              </p>
+              <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-100/90">
+                Follow-up date passed with no confirmed resolution. Check agency, merchant, or bank
+                responses. Do not archive or mark the case resolved unless resolution is actually
+                confirmed.
+              </p>
+              {item.draft_excerpt ? (
+                <p className="text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+                  {item.draft_excerpt}
+                </p>
+              ) : null}
+            </div>
           ) : (
             <>
               {item.draft_excerpt ? (
