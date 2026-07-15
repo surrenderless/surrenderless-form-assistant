@@ -14,9 +14,14 @@ import {
   isApprovedCfpbFilingAction,
 } from "@/lib/justice/cfpbFilingTask";
 import {
+  findOpenDemandLetterFilingTask,
   hasDemandLetterFilingWithConfirmation,
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
+import {
+  isDemandLetterEmailFailed,
+  isDemandLetterEmailSending,
+} from "@/lib/justice/demandLetterEmailDelivery";
 import {
   hasDotFilingWithConfirmation,
   isApprovedDotFilingAction,
@@ -80,6 +85,8 @@ export type ChatCaseProgressMilestone =
   | "state_ag_queued"
   | "state_ag_confirmed"
   | "demand_letter_queued"
+  | "demand_letter_sending"
+  | "demand_letter_send_failed"
   | "demand_letter_sent"
   | "resolution_ready";
 
@@ -108,6 +115,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "state_ag_queued",
   "state_ag_confirmed",
   "demand_letter_queued",
+  "demand_letter_sending",
+  "demand_letter_send_failed",
   "demand_letter_sent",
   "resolution_ready",
 ] as const;
@@ -301,6 +310,13 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     })
   ) {
     satisfied.push("demand_letter_queued");
+    const openDemandLetterTask = findOpenDemandLetterFilingTask(input.tasks, caseId);
+    if (isDemandLetterEmailSending(openDemandLetterTask)) {
+      satisfied.push("demand_letter_sending");
+    }
+    if (isDemandLetterEmailFailed(openDemandLetterTask)) {
+      satisfied.push("demand_letter_send_failed");
+    }
   }
 
   if (hasDemandLetterFilingWithConfirmation(input.filings)) {
@@ -374,7 +390,11 @@ export function buildChatCaseProgressNarrationMessage(
     case "state_ag_confirmed":
       return "Your State Attorney General filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "demand_letter_queued":
-      return "Your demand letter is queued with Surrenderless for operator fulfillment. I'll keep you posted here in chat.";
+      return "Your demand letter is queued with Surrenderless. Stay here in chat — I'll update you when it's sending or sent.";
+    case "demand_letter_sending":
+      return "Surrenderless is sending your demand letter email to the company now. Stay here in chat for confirmation.";
+    case "demand_letter_send_failed":
+      return "Automated demand letter email delivery did not go through. Surrenderless operators will complete sending manually — stay here in chat for updates.";
     case "demand_letter_sent":
       return "Your demand letter is sent and confirmed on file. Escalation steps are complete — I'll help you track follow-up next.";
     case "resolution_ready":
