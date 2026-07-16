@@ -14,8 +14,10 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
+import { resolveOperatorFulfillmentPanelKind } from "@/lib/justice/operatorFulfillmentQueue";
 import type { OperatorClosableCaseItem } from "@/lib/justice/operatorOwnedCaseArchive";
 import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
+import { CfpbOperatorFilingWorkspacePanel } from "@/app/components/operator/CfpbOperatorFilingWorkspacePanel";
 import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
 
 export type RecordInput = {
@@ -477,33 +479,52 @@ export function OperatorFulfillmentQueuePanel({
               Consumer state: {item.consumer_us_state}
             </p>
           ) : null}
-          {item.step === "state_ag" && item.state_ag_workspace ? (
-            <StateAgOperatorFilingWorkspacePanel
-              item={item}
-              workspace={item.state_ag_workspace}
-              saving={savingTaskId === item.task_id}
-              onSubmit={(input) => onRecordComplete(item, input)}
-            />
-          ) : item.step === "follow_up_response_review" ? (
-            <FollowUpResponseReviewForm
-              item={item}
-              saving={savingTaskId === item.task_id}
-              onSubmit={(input) => onCompleteResponseReview(item, input)}
-            />
-          ) : (
-            <>
-              {item.draft_excerpt ? (
-                <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
-                  <span className="font-medium">Draft excerpt:</span> {item.draft_excerpt}
-                </p>
-              ) : null}
-              <OperatorFulfillmentRecordForm
-                item={item}
-                saving={savingTaskId === item.task_id}
-                onSubmit={(input) => onRecordComplete(item, input)}
-              />
-            </>
-          )}
+          {(() => {
+            const panelKind = resolveOperatorFulfillmentPanelKind(item);
+            if (panelKind === "state_ag_workspace" && item.state_ag_workspace) {
+              return (
+                <StateAgOperatorFilingWorkspacePanel
+                  item={item}
+                  workspace={item.state_ag_workspace}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              );
+            }
+            if (panelKind === "cfpb_workspace" && item.cfpb_workspace) {
+              return (
+                <CfpbOperatorFilingWorkspacePanel
+                  item={item}
+                  workspace={item.cfpb_workspace}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              );
+            }
+            if (panelKind === "follow_up_response_review") {
+              return (
+                <FollowUpResponseReviewForm
+                  item={item}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onCompleteResponseReview(item, input)}
+                />
+              );
+            }
+            return (
+              <>
+                {item.draft_excerpt ? (
+                  <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                    <span className="font-medium">Draft excerpt:</span> {item.draft_excerpt}
+                  </p>
+                ) : null}
+                <OperatorFulfillmentRecordForm
+                  item={item}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              </>
+            );
+          })()}
         </li>
       ))}
     </ul>

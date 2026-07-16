@@ -41,6 +41,10 @@ import {
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
 import {
+  buildCfpbOperatorFilingWorkspace,
+  type CfpbOperatorFilingWorkspace,
+} from "@/lib/justice/cfpbOperatorFilingWorkspace";
+import {
   buildStateAgOperatorFilingWorkspace,
   type StateAgOperatorFilingWorkspace,
 } from "@/lib/justice/stateAgOperatorFilingWorkspace";
@@ -70,7 +74,25 @@ export type OperatorFulfillmentQueueItem = {
   draft_excerpt: string;
   /** Present only for State AG tasks — full guided filing workspace. */
   state_ag_workspace?: StateAgOperatorFilingWorkspace;
+  /** Present only for CFPB tasks — full guided filing workspace. */
+  cfpb_workspace?: CfpbOperatorFilingWorkspace;
 };
+
+export type OperatorFulfillmentPanelKind =
+  | "state_ag_workspace"
+  | "cfpb_workspace"
+  | "follow_up_response_review"
+  | "record_form";
+
+/** UI branching for /operator/fulfillment — keeps workspace panels scoped by step. */
+export function resolveOperatorFulfillmentPanelKind(
+  item: Pick<OperatorFulfillmentQueueItem, "step" | "state_ag_workspace" | "cfpb_workspace">
+): OperatorFulfillmentPanelKind {
+  if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
+  if (item.step === "cfpb" && item.cfpb_workspace) return "cfpb_workspace";
+  if (item.step === "follow_up_response_review") return "follow_up_response_review";
+  return "record_form";
+}
 
 const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
@@ -83,7 +105,8 @@ function truncateDraft(text: string): string {
   return `${trimmed.slice(0, DRAFT_EXCERPT_MAX - 1)}…`;
 }
 
-function classifyOpenOperatorTask(
+/** Classifies an open operator task into a queue item (exported for focused tests). */
+export function classifyOpenOperatorTask(
   task: JusticeCaseTaskRow,
   intake: JusticeIntake
 ): OperatorFulfillmentQueueItem | null {
@@ -158,6 +181,11 @@ function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseCfpbFilingTaskDraft(task.notes)),
+      cfpb_workspace: buildCfpbOperatorFilingWorkspace({
+        intake,
+        taskNotes: task.notes,
+        evidence: [],
+      }),
     };
   }
 
@@ -311,20 +339,27 @@ export async function listOperatorFulfillmentQueue(
     if (item) items.push(item);
   }
 
-  const stateAgCaseIds = [
-    ...new Set(items.filter((item) => item.step === "state_ag").map((item) => item.case_id)),
+  const workspaceCaseIds = [
+    ...new Set(
+      items
+        .filter((item) => item.step === "state_ag" || item.step === "cfpb")
+        .map((item) => item.case_id)
+    ),
   ];
-  if (stateAgCaseIds.length === 0) return items;
+  if (workspaceCaseIds.length === 0) return items;
 
   const { data: evidenceRows, error: evidenceErr } = await supabase
     .from("justice_case_evidence")
     .select("case_id, title, evidence_type, file_name, evidence_date")
-    .in("case_id", stateAgCaseIds)
+    .in("case_id", workspaceCaseIds)
     .order("created_at", { ascending: true })
     .limit(200);
 
   if (evidenceErr) {
-    console.warn("operator fulfillment: list evidence for State AG workspace", evidenceErr.message);
+    console.warn(
+      "operator fulfillment: list evidence for guided filing workspaces",
+      evidenceErr.message
+    );
     return items;
   }
 
@@ -346,17 +381,33 @@ export async function listOperatorFulfillmentQueue(
   }
 
   return items.map((item) => {
-    if (item.step !== "state_ag" || !item.state_ag_workspace) return item;
     const intake = intakeByCaseId.get(item.case_id);
     if (!intake) return item;
     const task = operatorTasks.find((t) => t.id === item.task_id);
-    return {
-      ...item,
-      state_ag_workspace: buildStateAgOperatorFilingWorkspace({
-        intake,
-        taskNotes: task?.notes,
-        evidence: evidenceByCaseId.get(item.case_id) ?? [],
-      }),
-    };
+    const evidence = evidenceByCaseId.get(item.case_id) ?? [];
+
+    if (item.step === "state_ag" && item.state_ag_workspace) {
+      return {
+        ...item,
+        state_ag_workspace: buildStateAgOperatorFilingWorkspace({
+          intake,
+          taskNotes: task?.notes,
+          evidence,
+        }),
+      };
+    }
+
+    if (item.step === "cfpb" && item.cfpb_workspace) {
+      return {
+        ...item,
+        cfpb_workspace: buildCfpbOperatorFilingWorkspace({
+          intake,
+          taskNotes: task?.notes,
+          evidence,
+        }),
+      };
+    }
+
+    return item;
   });
 }
