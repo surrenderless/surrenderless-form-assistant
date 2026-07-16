@@ -18,6 +18,7 @@ import { resolveOperatorFulfillmentPanelKind } from "@/lib/justice/operatorFulfi
 import type { OperatorClosableCaseItem } from "@/lib/justice/operatorOwnedCaseArchive";
 import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
 import { CfpbOperatorFilingWorkspacePanel } from "@/app/components/operator/CfpbOperatorFilingWorkspacePanel";
+import { DemandLetterOperatorFilingWorkspacePanel } from "@/app/components/operator/DemandLetterOperatorFilingWorkspacePanel";
 import { DotOperatorFilingWorkspacePanel } from "@/app/components/operator/DotOperatorFilingWorkspacePanel";
 import { FccOperatorFilingWorkspacePanel } from "@/app/components/operator/FccOperatorFilingWorkspacePanel";
 import { FtcOperatorFilingWorkspacePanel } from "@/app/components/operator/FtcOperatorFilingWorkspacePanel";
@@ -529,6 +530,16 @@ export function OperatorFulfillmentQueuePanel({
                 <DotOperatorFilingWorkspacePanel
                   item={item}
                   workspace={item.dot_workspace}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              );
+            }
+            if (panelKind === "demand_letter_workspace" && item.demand_letter_workspace) {
+              return (
+                <DemandLetterOperatorFilingWorkspacePanel
+                  item={item}
+                  workspace={item.demand_letter_workspace}
                   saving={savingTaskId === item.task_id}
                   onSubmit={(input) => onRecordComplete(item, input)}
                 />

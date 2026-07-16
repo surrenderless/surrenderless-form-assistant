@@ -45,6 +45,10 @@ import {
   type CfpbOperatorFilingWorkspace,
 } from "@/lib/justice/cfpbOperatorFilingWorkspace";
 import {
+  buildDemandLetterOperatorFilingWorkspace,
+  type DemandLetterOperatorFilingWorkspace,
+} from "@/lib/justice/demandLetterOperatorFilingWorkspace";
+import {
   buildDotOperatorFilingWorkspace,
   type DotOperatorFilingWorkspace,
 } from "@/lib/justice/dotOperatorFilingWorkspace";
@@ -94,6 +98,8 @@ export type OperatorFulfillmentQueueItem = {
   ftc_workspace?: FtcOperatorFilingWorkspace;
   /** Present only for DOT tasks — full guided filing workspace. */
   dot_workspace?: DotOperatorFilingWorkspace;
+  /** Present only for demand-letter tasks — full guided filing workspace. */
+  demand_letter_workspace?: DemandLetterOperatorFilingWorkspace;
 };
 
 export type OperatorFulfillmentPanelKind =
@@ -102,6 +108,7 @@ export type OperatorFulfillmentPanelKind =
   | "fcc_workspace"
   | "ftc_workspace"
   | "dot_workspace"
+  | "demand_letter_workspace"
   | "follow_up_response_review"
   | "record_form";
 
@@ -115,6 +122,7 @@ export function resolveOperatorFulfillmentPanelKind(
     | "fcc_workspace"
     | "ftc_workspace"
     | "dot_workspace"
+    | "demand_letter_workspace"
   >
 ): OperatorFulfillmentPanelKind {
   if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
@@ -122,6 +130,9 @@ export function resolveOperatorFulfillmentPanelKind(
   if (item.step === "fcc" && item.fcc_workspace) return "fcc_workspace";
   if (item.step === "ftc" && item.ftc_workspace) return "ftc_workspace";
   if (item.step === "dot" && item.dot_workspace) return "dot_workspace";
+  if (item.step === "demand_letter" && item.demand_letter_workspace) {
+    return "demand_letter_workspace";
+  }
   if (item.step === "follow_up_response_review") return "follow_up_response_review";
   return "record_form";
 }
@@ -200,6 +211,11 @@ export function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseDemandLetterFilingTaskDraft(task.notes)),
+      demand_letter_workspace: buildDemandLetterOperatorFilingWorkspace({
+        intake,
+        taskNotes: task.notes,
+        evidence: [],
+      }),
     };
   }
 
@@ -395,7 +411,8 @@ export async function listOperatorFulfillmentQueue(
             item.step === "cfpb" ||
             item.step === "fcc" ||
             item.step === "ftc" ||
-            item.step === "dot"
+            item.step === "dot" ||
+            item.step === "demand_letter"
         )
         .map((item) => item.case_id)
     ),
@@ -488,6 +505,17 @@ export async function listOperatorFulfillmentQueue(
       return {
         ...item,
         dot_workspace: buildDotOperatorFilingWorkspace({
+          intake,
+          taskNotes: task?.notes,
+          evidence,
+        }),
+      };
+    }
+
+    if (item.step === "demand_letter" && item.demand_letter_workspace) {
+      return {
+        ...item,
+        demand_letter_workspace: buildDemandLetterOperatorFilingWorkspace({
           intake,
           taskNotes: task?.notes,
           evidence,
