@@ -96,7 +96,8 @@ describe("resolveOperatorFulfillmentPanelKind FTC branching", () => {
 
     expect(resolveOperatorFulfillmentPanelKind(ftcItem)).toBe("ftc_workspace");
     expect(resolveOperatorFulfillmentPanelKind(fccItem)).toBe("fcc_workspace");
-    expect(resolveOperatorFulfillmentPanelKind(dotItem)).toBe("record_form");
+    expect(resolveOperatorFulfillmentPanelKind(dotItem)).toBe("dot_workspace");
+    expect(dotItem.dot_workspace).toBeDefined();
     expect(
       resolveOperatorFulfillmentPanelKind({
         step: "ftc",
