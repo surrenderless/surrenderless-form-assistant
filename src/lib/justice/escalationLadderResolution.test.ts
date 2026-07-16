@@ -9,6 +9,7 @@ import {
   stripResolutionTrackingFromApprovedAction,
 } from "@/lib/justice/escalationLadderResolution";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
+import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
@@ -56,6 +57,46 @@ describe("escalationLadderResolution", () => {
         },
       })
     ).toBe(true);
+  });
+
+  it("blocks consumer resolution while follow-up response review is open", () => {
+    const marker = followUpResponseReviewTaskNotesMarker(CASE_ID);
+    const reviewTask: JusticeCaseTaskRow = {
+      id: "task-response-review",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "Follow-up response review: Acme",
+      due_date: null,
+      notes: marker,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    expect(
+      hasPendingHumanFulfillmentEscalation({
+        caseId: CASE_ID,
+        tasks: [reviewTask],
+        approvedAction: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-01-03T00:00:00.000Z",
+        },
+      })
+    ).toBe(true);
+    expect(
+      shouldExposeCaseResolutionFlow({
+        caseId: CASE_ID,
+        tasks: [reviewTask],
+        approvedAction: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-01-03T00:00:00.000Z",
+          outcome_note: "Awaiting operator review",
+        },
+      })
+    ).toBe(false);
   });
 
   it("treats completed demand letter as escalation terminal", () => {

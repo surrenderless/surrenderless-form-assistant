@@ -4,7 +4,10 @@ import { useAuth, useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import Header from "@/app/components/Header";
-import { OperatorFulfillmentQueuePanel } from "@/app/components/operator/OperatorFulfillmentQueuePanel";
+import {
+  OperatorFulfillmentQueuePanel,
+  type ResponseReviewInput,
+} from "@/app/components/operator/OperatorFulfillmentQueuePanel";
 import { isOperatorRole, readClerkRole } from "@/lib/clerkRoles";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
 
@@ -122,6 +125,38 @@ export default function OperatorFulfillmentPage() {
     }
   }
 
+  async function completeResponseReview(
+    item: OperatorFulfillmentQueueItem,
+    input: ResponseReviewInput
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    setSavingTaskId(item.task_id);
+    try {
+      const res = await fetch("/api/justice/follow-up-response-review/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: item.case_id,
+          task_id: item.task_id,
+          outcome: input.outcome,
+          notes: input.notes || null,
+        }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as { error?: string };
+        return { ok: false, error: err.error ?? "Could not complete response review." };
+      }
+      await loadQueue();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not complete response review." };
+    } finally {
+      setSavingTaskId(null);
+    }
+  }
+
   if (!isLoaded || !isSignedIn || !isOperator) {
     return null;
   }
@@ -134,8 +169,8 @@ export default function OperatorFulfillmentPage() {
           Operator fulfillment queue
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-          Surrenderless-owned merchant contact, BBB, DOT, FCC, payment dispute, CFPB, State AG, and
-          demand letter steps queued for manual fulfillment.
+          Surrenderless-owned merchant contact, BBB, DOT, FCC, payment dispute, CFPB, State AG,
+          demand letter, and follow-up response-review steps queued for operator fulfillment.
         </p>
         {loadError ? (
           <p className="mt-4 text-sm text-red-700 dark:text-red-300" role="alert">
@@ -150,6 +185,7 @@ export default function OperatorFulfillmentPage() {
               items={items}
               savingTaskId={savingTaskId}
               onRecordComplete={recordComplete}
+              onCompleteResponseReview={completeResponseReview}
             />
           )}
         </div>

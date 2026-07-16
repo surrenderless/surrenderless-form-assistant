@@ -27,6 +27,11 @@ export type RecordInput = {
   recipient?: string;
 };
 
+export type ResponseReviewInput = {
+  outcome: "resolved" | "no_resolution" | "further_escalation";
+  notes: string;
+};
+
 const CONTACT_METHOD_OPTIONS: { value: ContactMethod; label: string }[] = [
   { value: "email", label: "Email" },
   { value: "chat", label: "Chat" },
@@ -96,7 +101,7 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
     case "bbb":
       return "Record BBB filing";
     case "follow_up_response_review":
-      return "Response review (no filing confirmation form)";
+      return "Record follow-up response review";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -337,10 +342,101 @@ function OperatorFulfillmentRecordForm({
   );
 }
 
+function FollowUpResponseReviewForm({
+  item,
+  saving,
+  onSubmit,
+}: {
+  item: OperatorFulfillmentQueueItem;
+  saving: boolean;
+  onSubmit: (input: ResponseReviewInput) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const [outcome, setOutcome] = useState<ResponseReviewInput["outcome"]>("no_resolution");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const result = await onSubmit({ outcome, notes: notes.trim() });
+    if (!result.ok) setError(result.error);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 space-y-3">
+      <div className="space-y-2 rounded-lg border border-amber-200/90 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+        <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+          {recordFormTitle(item.step)}
+        </p>
+        <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-100/90">
+          Follow-up date passed with no confirmed resolution. Review agency, merchant, or bank
+          responses. Do not mark resolved unless resolution is actually confirmed. This does not
+          archive the case.
+        </p>
+        {item.draft_excerpt ? (
+          <p className="text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+            {item.draft_excerpt}
+          </p>
+        ) : null}
+      </div>
+      <fieldset className="space-y-2">
+        <legend className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+          Outcome
+        </legend>
+        {(
+          [
+            { value: "resolved" as const, label: "Resolved" },
+            { value: "no_resolution" as const, label: "No resolution" },
+            { value: "further_escalation" as const, label: "Further escalation needed" },
+          ] as const
+        ).map((opt) => (
+          <label
+            key={opt.value}
+            className="flex cursor-pointer items-center gap-2 text-sm text-neutral-800 dark:text-neutral-200"
+          >
+            <input
+              type="radio"
+              name={`response-review-outcome-${item.task_id}`}
+              value={opt.value}
+              checked={outcome === opt.value}
+              onChange={() => setOutcome(opt.value)}
+              disabled={saving}
+            />
+            {opt.label}
+          </label>
+        ))}
+      </fieldset>
+      <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300">
+        Operator notes (optional)
+        <textarea
+          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950"
+          rows={3}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          disabled={saving}
+        />
+      </label>
+      {error ? (
+        <p className="text-sm text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900"
+      >
+        {saving ? "Saving…" : "Complete response review"}
+      </button>
+    </form>
+  );
+}
+
 export function OperatorFulfillmentQueuePanel({
   items,
   savingTaskId,
   onRecordComplete,
+  onCompleteResponseReview,
 }: {
   items: OperatorFulfillmentQueueItem[];
   savingTaskId: string | null;
@@ -348,12 +444,16 @@ export function OperatorFulfillmentQueuePanel({
     item: OperatorFulfillmentQueueItem,
     input: RecordInput
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onCompleteResponseReview: (
+    item: OperatorFulfillmentQueueItem,
+    input: ResponseReviewInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
   if (items.length === 0) {
     return (
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        No queued merchant contact, FTC, BBB, DOT, FCC, payment dispute, CFPB, State AG, or demand
-        letter fulfillment tasks right now.
+        No queued merchant contact, FTC, BBB, DOT, FCC, payment dispute, CFPB, State AG, demand
+        letter, or follow-up response-review tasks right now.
       </p>
     );
   }
@@ -384,21 +484,11 @@ export function OperatorFulfillmentQueuePanel({
               onSubmit={(input) => onRecordComplete(item, input)}
             />
           ) : item.step === "follow_up_response_review" ? (
-            <div className="mt-3 space-y-2 rounded-lg border border-amber-200/90 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-              <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
-                Operator response review
-              </p>
-              <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-100/90">
-                Follow-up date passed with no confirmed resolution. Check agency, merchant, or bank
-                responses. Do not archive or mark the case resolved unless resolution is actually
-                confirmed.
-              </p>
-              {item.draft_excerpt ? (
-                <p className="text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
-                  {item.draft_excerpt}
-                </p>
-              ) : null}
-            </div>
+            <FollowUpResponseReviewForm
+              item={item}
+              saving={savingTaskId === item.task_id}
+              onSubmit={(input) => onCompleteResponseReview(item, input)}
+            />
           ) : (
             <>
               {item.draft_excerpt ? (
