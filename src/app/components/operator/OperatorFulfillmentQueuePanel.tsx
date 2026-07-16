@@ -18,6 +18,7 @@ import { resolveOperatorFulfillmentPanelKind } from "@/lib/justice/operatorFulfi
 import type { OperatorClosableCaseItem } from "@/lib/justice/operatorOwnedCaseArchive";
 import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
 import { CfpbOperatorFilingWorkspacePanel } from "@/app/components/operator/CfpbOperatorFilingWorkspacePanel";
+import { DotOperatorFilingWorkspacePanel } from "@/app/components/operator/DotOperatorFilingWorkspacePanel";
 import { FccOperatorFilingWorkspacePanel } from "@/app/components/operator/FccOperatorFilingWorkspacePanel";
 import { FtcOperatorFilingWorkspacePanel } from "@/app/components/operator/FtcOperatorFilingWorkspacePanel";
 import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
@@ -518,6 +519,16 @@ export function OperatorFulfillmentQueuePanel({
                 <FtcOperatorFilingWorkspacePanel
                   item={item}
                   workspace={item.ftc_workspace}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              );
+            }
+            if (panelKind === "dot_workspace" && item.dot_workspace) {
+              return (
+                <DotOperatorFilingWorkspacePanel
+                  item={item}
+                  workspace={item.dot_workspace}
                   saving={savingTaskId === item.task_id}
                   onSubmit={(input) => onRecordComplete(item, input)}
                 />
