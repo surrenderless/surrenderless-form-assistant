@@ -41,6 +41,24 @@ describe("chatCaseClosureGates", () => {
         baseContext({
           followUpNeeded: false,
           handlingTrackingStep: HANDLING_TRACKING_STEP_COMPLETE,
+          operatorOwnsClosure: true,
+        })
+      )
+    ).toBeNull();
+    expect(
+      canArchiveCaseViaChat(
+        baseContext({
+          followUpNeeded: false,
+          handlingTrackingStep: HANDLING_TRACKING_STEP_COMPLETE,
+          operatorOwnsClosure: true,
+        })
+      )
+    ).toBe(false);
+    expect(
+      resolvePendingChatCaseClosureGate(
+        baseContext({
+          followUpNeeded: false,
+          handlingTrackingStep: HANDLING_TRACKING_STEP_COMPLETE,
           resolutionFlowExposed: false,
         })
       )

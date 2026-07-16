@@ -14,6 +14,7 @@ import {
   rejectPrematureCaseArchivePatch,
   rejectPrematureResolutionClientStatePatch,
   REJECT_PREMATURE_CASE_ARCHIVE_PATCH_MESSAGE,
+  REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE,
   REJECT_PREMATURE_RESOLUTION_CLIENT_STATE_PATCH_MESSAGE,
 } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 import { REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE } from "@/lib/justice/rejectManualOwnedStepClientStatePatch";
@@ -254,6 +255,26 @@ describe("rejectPrematureCaseArchivePatch", () => {
         tasks: [],
       })
     ).toBeNull();
+  });
+
+  it("rejects consumer archive when operator owns closure after response review", () => {
+    expect(
+      rejectPrematureCaseArchivePatch({
+        caseId: CASE_ID,
+        existingClientState: {
+          approved_next_action: {
+            ...demandLetterCompleted,
+            handling_requested_at: "2026-01-01T00:00:00.000Z",
+            outcome_note: "Operator confirmed resolution after follow-up response review",
+            handling_acknowledged_at: "2026-01-02T00:00:00.000Z",
+            follow_up_needed: false,
+          },
+        },
+        existingArchivedAt: null,
+        incomingArchivedAt: "2026-01-04T00:00:00.000Z",
+        tasks: [],
+      })
+    ).toBe(REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE);
   });
 });
 

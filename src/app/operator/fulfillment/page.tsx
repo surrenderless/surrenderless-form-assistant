@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import Header from "@/app/components/Header";
 import {
+  OperatorClosableCasesPanel,
   OperatorFulfillmentQueuePanel,
   type ResponseReviewInput,
 } from "@/app/components/operator/OperatorFulfillmentQueuePanel";
 import { isOperatorRole, readClerkRole } from "@/lib/clerkRoles";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
+import type { OperatorClosableCaseItem } from "@/lib/justice/operatorOwnedCaseArchive";
 
 export default function OperatorFulfillmentPage() {
   const { isLoaded, isSignedIn } = useAuth();
@@ -19,9 +21,11 @@ export default function OperatorFulfillmentPage() {
   const isOperator = isOperatorRole(role);
 
   const [items, setItems] = useState<OperatorFulfillmentQueueItem[]>([]);
+  const [closableCases, setClosableCases] = useState<OperatorClosableCaseItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
+  const [savingCaseId, setSavingCaseId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -39,13 +43,19 @@ export default function OperatorFulfillmentPage() {
         const payload = (await res.json().catch(() => null)) as { error?: string } | null;
         setLoadError(payload?.error ?? "Could not load operator fulfillment queue.");
         setItems([]);
+        setClosableCases([]);
         return;
       }
-      const data = (await res.json()) as { items?: OperatorFulfillmentQueueItem[] };
+      const data = (await res.json()) as {
+        items?: OperatorFulfillmentQueueItem[];
+        closable_cases?: OperatorClosableCaseItem[];
+      };
       setItems(Array.isArray(data.items) ? data.items : []);
+      setClosableCases(Array.isArray(data.closable_cases) ? data.closable_cases : []);
     } catch {
       setLoadError("Could not load operator fulfillment queue.");
       setItems([]);
+      setClosableCases([]);
     } finally {
       setLoading(false);
     }
@@ -111,7 +121,9 @@ export default function OperatorFulfillmentPage() {
       });
       const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {
-        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as {
           error?: string;
         };
         return { ok: false, error: err.error ?? "Could not record fulfillment." };
@@ -157,6 +169,36 @@ export default function OperatorFulfillmentPage() {
     }
   }
 
+  async function closeCase(
+    item: OperatorClosableCaseItem,
+    confirmArchive: boolean
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    setSavingCaseId(item.case_id);
+    try {
+      const res = await fetch("/api/justice/operator-case-archive/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: item.case_id,
+          confirm_archive: confirmArchive,
+        }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as { error?: string };
+        return { ok: false, error: err.error ?? "Could not close case." };
+      }
+      await loadQueue();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not close case." };
+    } finally {
+      setSavingCaseId(null);
+    }
+  }
+
   if (!isLoaded || !isSignedIn || !isOperator) {
     return null;
   }
@@ -170,7 +212,7 @@ export default function OperatorFulfillmentPage() {
         </h1>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           Surrenderless-owned merchant contact, BBB, DOT, FCC, payment dispute, CFPB, State AG,
-          demand letter, and follow-up response-review steps queued for operator fulfillment.
+          demand letter, follow-up response-review, and case close steps.
         </p>
         {loadError ? (
           <p className="mt-4 text-sm text-red-700 dark:text-red-300" role="alert">
@@ -181,12 +223,28 @@ export default function OperatorFulfillmentPage() {
           {loading ? (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">Loading queue…</p>
           ) : (
-            <OperatorFulfillmentQueuePanel
-              items={items}
-              savingTaskId={savingTaskId}
-              onRecordComplete={recordComplete}
-              onCompleteResponseReview={completeResponseReview}
-            />
+            <>
+              <OperatorFulfillmentQueuePanel
+                items={items}
+                savingTaskId={savingTaskId}
+                onRecordComplete={recordComplete}
+                onCompleteResponseReview={completeResponseReview}
+              />
+              <h2 className="mt-10 text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                Cases ready to close
+              </h2>
+              <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                After a recorded resolved or no-resolution response review, close the case here.
+                Requires explicit confirmation. Further-escalation cases never appear.
+              </p>
+              <div className="mt-4">
+                <OperatorClosableCasesPanel
+                  items={closableCases}
+                  savingCaseId={savingCaseId}
+                  onCloseCase={closeCase}
+                />
+              </div>
+            </>
           )}
         </div>
       </main>

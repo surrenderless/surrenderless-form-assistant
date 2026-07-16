@@ -4,6 +4,7 @@ import {
   hasPendingHumanFulfillmentEscalation,
   isAllowedOperatorEvidenceTerminalResolutionClientStatePatch,
 } from "@/lib/justice/escalationLadderResolution";
+import { shouldSuppressConsumerArchiveForOperatorOwnedClosure } from "@/lib/justice/operatorOwnedCaseArchive";
 import { rejectManualOwnedStepClientStatePatch } from "@/lib/justice/rejectManualOwnedStepClientStatePatch";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -13,6 +14,9 @@ export const REJECT_PREMATURE_RESOLUTION_CLIENT_STATE_PATCH_MESSAGE =
 
 export const REJECT_PREMATURE_CASE_ARCHIVE_PATCH_MESSAGE =
   "This case cannot be archived until escalation is complete and follow-up is handled.";
+
+export const REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE =
+  "This case has an operator-confirmed response-review outcome. Surrenderless will close it from the operator fulfillment queue.";
 
 type ResolutionTrackingField =
   | "outcome_note"
@@ -143,6 +147,10 @@ export function rejectPrematureCaseArchivePatch(
   }
   if (params.existingArchivedAt?.trim()) {
     return null;
+  }
+
+  if (shouldSuppressConsumerArchiveForOperatorOwnedClosure(params.existingClientState)) {
+    return REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE;
   }
 
   const approvedAction = parseApprovedNextActionFromClientState(params.existingClientState);
