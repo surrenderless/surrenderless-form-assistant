@@ -74,6 +74,7 @@ describe("CFPB operator fulfillment queue attachment", () => {
     expect(fccItem?.step).toBe("fcc");
     expect(fccItem?.cfpb_workspace).toBeUndefined();
     expect(fccItem?.state_ag_workspace).toBeUndefined();
+    expect(fccItem?.fcc_workspace).toBeDefined();
   });
 });
 
@@ -95,7 +96,9 @@ describe("resolveOperatorFulfillmentPanelKind", () => {
 
     expect(resolveOperatorFulfillmentPanelKind(cfpbItem)).toBe("cfpb_workspace");
     expect(resolveOperatorFulfillmentPanelKind(stateAgItem)).toBe("state_ag_workspace");
-    expect(resolveOperatorFulfillmentPanelKind(fccItem)).toBe("record_form");
+    expect(resolveOperatorFulfillmentPanelKind(fccItem)).toBe("fcc_workspace");
+    expect(fccItem.fcc_workspace).toBeDefined();
+    expect(fccItem.cfpb_workspace).toBeUndefined();
     expect(
       resolveOperatorFulfillmentPanelKind({
         step: "cfpb",

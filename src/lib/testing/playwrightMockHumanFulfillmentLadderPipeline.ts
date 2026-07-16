@@ -114,6 +114,7 @@ import {
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
 import { buildCfpbOperatorFilingWorkspace } from "@/lib/justice/cfpbOperatorFilingWorkspace";
+import { buildFccOperatorFilingWorkspace } from "@/lib/justice/fccOperatorFilingWorkspace";
 import { buildStateAgOperatorFilingWorkspace } from "@/lib/justice/stateAgOperatorFilingWorkspace";
 import type {
   ContactMethod,
@@ -1548,6 +1549,11 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseFccFilingTaskDraft(task.notes).slice(0, 400),
+        fcc_workspace: buildFccOperatorFilingWorkspace({
+          intake,
+          taskNotes: task.notes,
+          evidence: [],
+        }),
       });
       continue;
     }
