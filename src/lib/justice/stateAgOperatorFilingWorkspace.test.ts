@@ -100,7 +100,7 @@ describe("buildStateAgOperatorFilingWorkspace", () => {
 
   it("never marks the workspace as submitted before completion API success", () => {
     const workspace = buildStateAgOperatorFilingWorkspace({
-      intake: baseIntake({ consumer_us_state: "WY" }),
+      intake: baseIntake({ consumer_us_state: "AK" }),
       evidence: [],
     });
     expect(workspace.is_submitted).toBe(false);
