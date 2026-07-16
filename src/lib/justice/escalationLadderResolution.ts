@@ -2,6 +2,7 @@ import {
   parseApprovedNextActionFromClientState,
   parseJusticeCaseClientState,
 } from "@/lib/justice/approvedNextActionState";
+import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
 
@@ -631,6 +632,12 @@ export function hasPendingHumanFulfillmentEscalation(input: {
 
       return true;
 
+    }
+
+    if (
+      findOpenEscalationTask(input.tasks, caseId, followUpResponseReviewTaskNotesMarker(caseId))
+    ) {
+      return true;
     }
 
   }

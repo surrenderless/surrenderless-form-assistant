@@ -123,3 +123,87 @@ export async function ensureFollowUpResponseReviewTask(
 
   return { task, timeline, created: true };
 }
+
+/** Stable idempotent timeline id when a response-review task is completed. */
+export function followUpResponseReviewTaskCompletedTimelineId(taskId: string): string {
+  return `follow_up_response_review_done:${taskId.trim()}`;
+}
+
+export type CompleteFollowUpResponseReviewTaskResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: TimelineEntry[] | null;
+  completed: boolean;
+};
+
+/**
+ * Completes the operator response-review task. Idempotent when missing or already completed.
+ */
+export async function completeFollowUpResponseReviewTaskIfOpen(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  taskId?: string
+): Promise<CompleteFollowUpResponseReviewTaskResult> {
+  const marker = followUpResponseReviewTaskNotesMarker(caseId);
+
+  let query = supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .limit(1);
+
+  if (taskId?.trim()) {
+    query = supabase
+      .from("justice_case_tasks")
+      .select(TASK_SELECT)
+      .eq("user_id", userId)
+      .eq("case_id", caseId)
+      .eq("id", taskId.trim())
+      .limit(1);
+  }
+
+  const { data: existingRows, error: existingErr } = await query;
+
+  if (existingErr) {
+    console.warn("justice follow-up response review: select for complete", existingErr.message);
+    return { task: null, timeline: null, completed: false };
+  }
+
+  const task = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  if (!task || !taskNotesMatchFollowUpResponseReviewMarker(task.notes, caseId)) {
+    return { task: null, timeline: null, completed: false };
+  }
+  if (task.completed_at?.trim()) {
+    return { task, timeline: null, completed: false };
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: completedAt })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn(
+      "justice follow-up response review: complete update",
+      error?.message ?? "not found"
+    );
+    return { task, timeline: null, completed: false };
+  }
+
+  const updated = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: followUpResponseReviewTaskCompletedTimelineId(task.id),
+    type: "task_completed",
+    label: "Follow-up response review completed",
+    detail: updated.title.trim(),
+    ts: completedAt,
+  });
+
+  return { task: updated, timeline, completed: true };
+}
