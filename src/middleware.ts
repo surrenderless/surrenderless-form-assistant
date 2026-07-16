@@ -2,8 +2,7 @@
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { clerkMiddleware } from "@clerk/nextjs/server";
-
-const BYPASS = [/^\/_next\//, /^\/favicon\.ico$/, /^\/api\/healthz$/];
+import { shouldBypassDeployPasswordGate } from "@/server/bypassDeployPasswordGate";
 
 // Create the Clerk-powered middleware function once
 const runClerk = clerkMiddleware();
@@ -16,8 +15,8 @@ export function middleware(req: NextRequest, event: NextFetchEvent) {
     return NextResponse.next();
   }
 
-  // Skip gating for assets/health
-  if (BYPASS.some((r) => r.test(url.pathname))) {
+  // Skip DEPLOY_PASSWORD Basic Auth for assets/health/cron (cron uses CRON_SECRET in-route).
+  if (shouldBypassDeployPasswordGate(url.pathname)) {
     return runClerk(req, event);
   }
 
