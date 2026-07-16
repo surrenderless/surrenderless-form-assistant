@@ -63,6 +63,7 @@ import {
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
 import { canArchiveCaseForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
+import { shouldSuppressConsumerArchiveForOperatorOwnedClosure } from "@/lib/justice/operatorOwnedCaseArchive";
 import {
   CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
   redirectConsumerActiveCaseOffChatHref,
@@ -570,6 +571,9 @@ function buildApprovedPacketActionAttentionItems(
 }
 
 function canArchiveCaseRow(row: CaseRow, tasks: JusticeCaseTaskRow[]): boolean {
+  if (shouldSuppressConsumerArchiveForOperatorOwnedClosure(row.client_state)) {
+    return false;
+  }
   const approvedAction = parseApprovedNextActionFromClientState(row.client_state);
   return canArchiveCaseForEscalationLadder({
     approvedAction,

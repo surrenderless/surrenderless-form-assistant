@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { listOperatorFulfillmentQueue } from "@/lib/justice/operatorFulfillmentQueue";
+import { listOperatorClosableCases } from "@/lib/justice/operatorOwnedCaseArchive";
 import {
   buildPlaywrightMockOperatorFulfillmentQueue,
   isPlaywrightMockHumanFulfillmentOperatorFilingEnabled,
@@ -31,12 +32,15 @@ export async function GET(req: NextRequest) {
 
   if (isPlaywrightMockHumanFulfillmentOperatorFilingEnabled()) {
     const items = buildPlaywrightMockOperatorFulfillmentQueue();
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, closable_cases: [] });
   }
 
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
-  const items = await listOperatorFulfillmentQueue(supabase);
-  return NextResponse.json({ items });
+  const [items, closable_cases] = await Promise.all([
+    listOperatorFulfillmentQueue(supabase),
+    listOperatorClosableCases(supabase),
+  ]);
+  return NextResponse.json({ items, closable_cases });
 }

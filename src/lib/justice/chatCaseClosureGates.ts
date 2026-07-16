@@ -15,6 +15,8 @@ export type ChatCaseClosureContext = {
   followUpNeeded: boolean;
   handlingTrackingStep: string | null;
   readinessLoading: boolean;
+  /** When true, operator owns close after response-review — chat must not archive. */
+  operatorOwnsClosure?: boolean;
 };
 
 export type ChatCaseClosureParseResult =
@@ -85,6 +87,7 @@ export function buildChatCaseClosureGateContext(input: {
   followUpNeeded: boolean;
   handlingTrackingStep: string | null;
   readinessLoading: boolean;
+  operatorOwnsClosure?: boolean;
 }): ChatCaseClosureContext {
   return {
     caseId: input.caseId.trim(),
@@ -92,6 +95,7 @@ export function buildChatCaseClosureGateContext(input: {
     followUpNeeded: input.followUpNeeded,
     handlingTrackingStep: input.handlingTrackingStep,
     readinessLoading: input.readinessLoading,
+    ...(input.operatorOwnsClosure === true ? { operatorOwnsClosure: true as const } : {}),
   };
 }
 
@@ -102,6 +106,7 @@ export function canClearFollowUpViaChat(context: ChatCaseClosureContext): boolea
 
 export function canArchiveCaseViaChat(context: ChatCaseClosureContext): boolean {
   if (!context.caseId.trim()) return false;
+  if (context.operatorOwnsClosure === true) return false;
   if (!context.resolutionFlowExposed || context.followUpNeeded) return false;
   return context.handlingTrackingStep === HANDLING_TRACKING_STEP_COMPLETE;
 }

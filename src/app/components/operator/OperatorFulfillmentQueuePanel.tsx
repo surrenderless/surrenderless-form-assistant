@@ -14,6 +14,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
+import type { OperatorClosableCaseItem } from "@/lib/justice/operatorOwnedCaseArchive";
 import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
 import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
 
@@ -504,6 +505,115 @@ export function OperatorFulfillmentQueuePanel({
             </>
           )}
         </li>
+      ))}
+    </ul>
+  );
+}
+
+function ClosableCaseCard({
+  item,
+  saving,
+  onCloseCase,
+}: {
+  item: OperatorClosableCaseItem;
+  saving: boolean;
+  onCloseCase: (
+    item: OperatorClosableCaseItem,
+    confirmArchive: boolean
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClose() {
+    if (!confirmed) {
+      setError("Confirm that this case should be closed before archiving.");
+      return;
+    }
+    setError(null);
+    const result = await onCloseCase(item, true);
+    if (!result.ok) setError(result.error);
+  }
+
+  const outcomeLabel = item.outcome === "resolved" ? "Resolved" : "No resolution";
+
+  return (
+    <li className="rounded-xl border border-neutral-200/90 bg-white p-4 shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
+      <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+        {item.company_name}
+      </p>
+      <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+        Operator outcome: {outcomeLabel}
+      </p>
+      {item.consumer_us_state ? (
+        <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+          Consumer state: {item.consumer_us_state}
+        </p>
+      ) : null}
+      {item.outcome_note ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-700 dark:text-neutral-300">
+          {item.outcome_note}
+        </p>
+      ) : null}
+      <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-neutral-800 dark:text-neutral-200">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={confirmed}
+          onChange={(e) => setConfirmed(e.target.checked)}
+          disabled={saving}
+        />
+        <span>
+          I confirm this case should be closed and archived in Surrenderless. This does not undo
+          filings or contact anyone.
+        </span>
+      </label>
+      {error ? (
+        <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        disabled={saving || !confirmed}
+        onClick={() => void handleClose()}
+        className="mt-3 rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900"
+      >
+        {saving ? "Closing…" : "Close case"}
+      </button>
+    </li>
+  );
+}
+
+export function OperatorClosableCasesPanel({
+  items,
+  savingCaseId,
+  onCloseCase,
+}: {
+  items: OperatorClosableCaseItem[];
+  savingCaseId: string | null;
+  onCloseCase: (
+    item: OperatorClosableCaseItem,
+    confirmArchive: boolean
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  if (items.length === 0) {
+    return (
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        No cases awaiting operator close after a recorded response-review outcome.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="space-y-4">
+      {items.map((item) => (
+        <ClosableCaseCard
+          key={item.case_id}
+          item={item}
+          saving={savingCaseId === item.case_id}
+          onCloseCase={onCloseCase}
+        />
       ))}
     </ul>
   );

@@ -148,6 +148,7 @@ import {
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
 } from "@/lib/justice/escalationLadderResolution";
+import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operatorOwnedCaseArchive";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
   OWNED_STEP_CHAT_STATUS_COPY,
@@ -2312,7 +2313,8 @@ function ChatHandlingTrackingStatusReadOnly({
     Boolean(caseId) &&
     derivedStep === HANDLING_TRACKING_STEP_COMPLETE &&
     resolutionFlowExposed &&
-    Boolean(onArchiveCase);
+    Boolean(onArchiveCase) &&
+    !hasOperatorTerminalResponseReviewOutcome(approvedNextAction);
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -5352,6 +5354,7 @@ export default function JusticeChatAiPage() {
         followUpNeeded: closureApprovedAction?.follow_up_needed === true,
         handlingTrackingStep,
         readinessLoading: closureReadinessLoading,
+        operatorOwnsClosure: hasOperatorTerminalResponseReviewOutcome(closureApprovedAction),
       });
       const pendingClosureGate = resolvePendingChatCaseClosureGate(closureContext);
       if (pendingClosureGate) {
