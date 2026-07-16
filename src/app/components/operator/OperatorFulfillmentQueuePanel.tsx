@@ -19,6 +19,7 @@ import type { OperatorClosableCaseItem } from "@/lib/justice/operatorOwnedCaseAr
 import type { ContactMethod, MerchantResponseType } from "@/lib/justice/types";
 import { CfpbOperatorFilingWorkspacePanel } from "@/app/components/operator/CfpbOperatorFilingWorkspacePanel";
 import { FccOperatorFilingWorkspacePanel } from "@/app/components/operator/FccOperatorFilingWorkspacePanel";
+import { FtcOperatorFilingWorkspacePanel } from "@/app/components/operator/FtcOperatorFilingWorkspacePanel";
 import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
 
 export type RecordInput = {
@@ -507,6 +508,16 @@ export function OperatorFulfillmentQueuePanel({
                 <FccOperatorFilingWorkspacePanel
                   item={item}
                   workspace={item.fcc_workspace}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              );
+            }
+            if (panelKind === "ftc_workspace" && item.ftc_workspace) {
+              return (
+                <FtcOperatorFilingWorkspacePanel
+                  item={item}
+                  workspace={item.ftc_workspace}
                   saving={savingTaskId === item.task_id}
                   onSubmit={(input) => onRecordComplete(item, input)}
                 />

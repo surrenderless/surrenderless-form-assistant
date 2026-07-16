@@ -49,6 +49,10 @@ import {
   type FccOperatorFilingWorkspace,
 } from "@/lib/justice/fccOperatorFilingWorkspace";
 import {
+  buildFtcOperatorFilingWorkspace,
+  type FtcOperatorFilingWorkspace,
+} from "@/lib/justice/ftcOperatorFilingWorkspace";
+import {
   buildStateAgOperatorFilingWorkspace,
   type StateAgOperatorFilingWorkspace,
 } from "@/lib/justice/stateAgOperatorFilingWorkspace";
@@ -82,12 +86,15 @@ export type OperatorFulfillmentQueueItem = {
   cfpb_workspace?: CfpbOperatorFilingWorkspace;
   /** Present only for FCC tasks — full guided filing workspace. */
   fcc_workspace?: FccOperatorFilingWorkspace;
+  /** Present only for FTC tasks — full guided filing workspace. */
+  ftc_workspace?: FtcOperatorFilingWorkspace;
 };
 
 export type OperatorFulfillmentPanelKind =
   | "state_ag_workspace"
   | "cfpb_workspace"
   | "fcc_workspace"
+  | "ftc_workspace"
   | "follow_up_response_review"
   | "record_form";
 
@@ -95,12 +102,13 @@ export type OperatorFulfillmentPanelKind =
 export function resolveOperatorFulfillmentPanelKind(
   item: Pick<
     OperatorFulfillmentQueueItem,
-    "step" | "state_ag_workspace" | "cfpb_workspace" | "fcc_workspace"
+    "step" | "state_ag_workspace" | "cfpb_workspace" | "fcc_workspace" | "ftc_workspace"
   >
 ): OperatorFulfillmentPanelKind {
   if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
   if (item.step === "cfpb" && item.cfpb_workspace) return "cfpb_workspace";
   if (item.step === "fcc" && item.fcc_workspace) return "fcc_workspace";
+  if (item.step === "ftc" && item.ftc_workspace) return "ftc_workspace";
   if (item.step === "follow_up_response_review") return "follow_up_response_review";
   return "record_form";
 }
@@ -254,6 +262,11 @@ export function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseFtcFilingTaskDraft(task.notes)),
+      ftc_workspace: buildFtcOperatorFilingWorkspace({
+        intake,
+        taskNotes: task.notes,
+        evidence: [],
+      }),
     };
   }
 
@@ -359,7 +372,11 @@ export async function listOperatorFulfillmentQueue(
     ...new Set(
       items
         .filter(
-          (item) => item.step === "state_ag" || item.step === "cfpb" || item.step === "fcc"
+          (item) =>
+            item.step === "state_ag" ||
+            item.step === "cfpb" ||
+            item.step === "fcc" ||
+            item.step === "ftc"
         )
         .map((item) => item.case_id)
     ),
@@ -430,6 +447,17 @@ export async function listOperatorFulfillmentQueue(
       return {
         ...item,
         fcc_workspace: buildFccOperatorFilingWorkspace({
+          intake,
+          taskNotes: task?.notes,
+          evidence,
+        }),
+      };
+    }
+
+    if (item.step === "ftc" && item.ftc_workspace) {
+      return {
+        ...item,
+        ftc_workspace: buildFtcOperatorFilingWorkspace({
           intake,
           taskNotes: task?.notes,
           evidence,
