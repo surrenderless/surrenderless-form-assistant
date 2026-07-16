@@ -114,6 +114,7 @@ import {
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
 import { buildCfpbOperatorFilingWorkspace } from "@/lib/justice/cfpbOperatorFilingWorkspace";
+import { buildDemandLetterOperatorFilingWorkspace } from "@/lib/justice/demandLetterOperatorFilingWorkspace";
 import { buildDotOperatorFilingWorkspace } from "@/lib/justice/dotOperatorFilingWorkspace";
 import { buildFccOperatorFilingWorkspace } from "@/lib/justice/fccOperatorFilingWorkspace";
 import { buildFtcOperatorFilingWorkspace } from "@/lib/justice/ftcOperatorFilingWorkspace";
@@ -1507,6 +1508,11 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseDemandLetterFilingTaskDraft(task.notes).slice(0, 400),
+        demand_letter_workspace: buildDemandLetterOperatorFilingWorkspace({
+          intake,
+          taskNotes: task.notes,
+          evidence: [],
+        }),
       });
       continue;
     }
