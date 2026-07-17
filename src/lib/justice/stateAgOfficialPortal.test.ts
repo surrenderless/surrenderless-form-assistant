@@ -9,6 +9,7 @@ import {
 
 /** Jurisdictions added in the coverage expansion; keep exact URL assertions. */
 const NEWLY_CURATED_PORTALS: Readonly<Record<string, string>> = {
+  AK: "https://www.law.alaska.gov/department/civil/consumer/complaint-form.html",
   AL: "https://www.alabamaag.gov/consumer-complaint/",
   AR: "https://arkansasag.gov/file-a-complaint/",
   HI: "https://web2.dcca.hawaii.gov/ocpcomplaint/",
@@ -26,6 +27,7 @@ const NEWLY_CURATED_PORTALS: Readonly<Record<string, string>> = {
   NH: "https://www.doj.nh.gov/citizens/consumer-protection-antitrust-bureau/consumer-complaints",
   NM: "https://nmdoj.gov/get-help/submit-a-complaint/",
   NV: "https://ag.nv.gov/Complaints/CSU_Complaints___FAQ/",
+  OK: "https://oklahoma.gov/oag/complaints-tiplines/complaints/consumer.html",
   RI: "https://riag.ri.gov/forms/consumer-complaint",
   SC: "https://applications.sc.gov/DCAComplaintSystem/Login/ConsumerLogin.aspx",
   SD: "https://atg.sd.gov/complaintform.aspx",
@@ -55,17 +57,15 @@ describe("resolveStateAgOfficialPortal", () => {
     expect(resolved.state_office_directory_url).toBe(STATE_CONSUMER_OFFICE_DIRECTORY_URL);
   });
 
-  it("returns unsupported_state with no invented URL when code has no curated portal", () => {
-    const unsupported = listUsStatesWithoutConfirmedStateAgPortal();
-    expect(unsupported.length).toBeGreaterThan(0);
-    expect(unsupported).toEqual(expect.arrayContaining(["AK", "OK"]));
-    const code = unsupported[0]!;
-    const resolved = resolveStateAgOfficialPortal(code);
-    expect(resolved.portal_supported).toBe(false);
-    expect(resolved.portal_url).toBeNull();
-    expect(resolved.unsupported_reason).toBe("unsupported_state");
-    expect(resolved.consumer_us_state).toBe(code);
-    expect(resolved.state_office_directory_url).toBe(STATE_CONSUMER_OFFICE_DIRECTORY_URL);
+  it("covers every US_STATES code with a curated official portal URL", () => {
+    expect(listUsStatesWithoutConfirmedStateAgPortal()).toEqual([]);
+    for (const { code } of US_STATES) {
+      const resolved = resolveStateAgOfficialPortal(code);
+      expect(resolved.portal_supported).toBe(true);
+      expect(resolved.portal_url).toMatch(/^https:\/\//);
+      expect(resolved.unsupported_reason).toBeNull();
+      expect(resolved.consumer_us_state).toBe(code);
+    }
   });
 
   it("rejects unknown state codes without inventing a URL", () => {

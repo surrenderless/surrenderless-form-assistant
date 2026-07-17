@@ -106,7 +106,9 @@ describe("buildStateAgOperatorFilingWorkspace", () => {
       evidence: [],
     });
     expect(workspace.is_submitted).toBe(false);
-    expect(workspace.portal.portal_supported).toBe(false);
-    expect(workspace.portal.portal_url).toBeNull();
+    expect(workspace.portal.portal_supported).toBe(true);
+    expect(workspace.portal.portal_url).toBe(
+      "https://www.law.alaska.gov/department/civil/consumer/complaint-form.html"
+    );
   });
 });
