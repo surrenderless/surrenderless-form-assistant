@@ -6,31 +6,7 @@ import {
   parseJusticeCaseClientState,
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
-import {
-  ensureBbbFilingTask,
-  shouldQueueBbbFilingTask,
-} from "@/lib/justice/bbbFilingTask";
-import {
-  ensureCfpbFilingTask,
-  shouldQueueCfpbFilingTask,
-} from "@/lib/justice/cfpbFilingTask";
-import {
-  ensureDemandLetterFilingTask,
-  shouldQueueDemandLetterFilingTask,
-} from "@/lib/justice/demandLetterFilingTask";
-import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
-import {
-  ensureDotFilingTask,
-  shouldQueueDotFilingTask,
-} from "@/lib/justice/dotFilingTask";
-import {
-  ensureFccFilingTask,
-  shouldQueueFccFilingTask,
-} from "@/lib/justice/fccFilingTask";
-import {
-  ensureFtcFilingTask,
-  shouldQueueFtcFilingTask,
-} from "@/lib/justice/ftcFilingTask";
+import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
@@ -45,10 +21,6 @@ import {
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
-import {
-  ensureStateAgFilingTask,
-  shouldQueueStateAgFilingTask,
-} from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -335,54 +307,22 @@ export async function completePaymentDisputeOperatorFiling(
       timeline = followUpEnsure.timeline;
     }
 
-    if (shouldQueueCfpbFilingTask(clientState)) {
-      const queueResult = await ensureCfpbFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
+    const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
+      userId,
+      caseId,
+      clientState,
+      intake,
+      paymentDisputeDraft: caseRow.payment_dispute_draft,
+    });
+    if (!ownedEnsure.ok) {
+      return {
+        ok: false,
+        error: ownedEnsure.error,
+        status: 500,
+      };
     }
-    if (shouldQueueFccFilingTask(clientState)) {
-      const queueResult = await ensureFccFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueDotFilingTask(clientState)) {
-      const queueResult = await ensureDotFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueFtcFilingTask(clientState)) {
-      const queueResult = await ensureFtcFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueBbbFilingTask(clientState)) {
-      const queueResult = await ensureBbbFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueStateAgFilingTask(clientState)) {
-      const queueResult = await ensureStateAgFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-    }
-    if (shouldQueueDemandLetterFilingTask(clientState)) {
-      const queueResult = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-      const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
-        supabase,
-        userId,
-        caseId,
-        timeline
-      );
-      timeline = emailAttempt.timeline;
+    if (ownedEnsure.timeline) {
+      timeline = ownedEnsure.timeline;
     }
   }
 

@@ -58,11 +58,22 @@ vi.mock("@/lib/justice/demandLetterEmailDelivery", () => ({
 
 vi.mock("@/lib/justice/stateAgFilingTask", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/justice/stateAgFilingTask")>();
+  const stubTask = {
+    id: "queued-owned-task",
+    user_id: "user-owner-1",
+    case_id: "550e8400-e29b-41d4-a716-446655440000",
+    title: "Queued owned filing",
+    due_date: null,
+    notes: "stub",
+    completed_at: null,
+    created_at: "2026-06-01T00:00:00.000Z",
+    updated_at: "2026-06-01T00:00:00.000Z",
+  };
   return {
     ...mod,
     ensureStateAgFilingTask: vi.fn(async () => ({
-      task: null,
-      created: false,
+      task: stubTask,
+      created: true,
       timeline: null,
     })),
   };
@@ -73,8 +84,18 @@ vi.mock("@/lib/justice/paymentDisputeFilingTask", async (importOriginal) => {
   return {
     ...mod,
     ensurePaymentDisputeFilingTask: vi.fn(async () => ({
-      task: null,
-      created: false,
+      task: {
+        id: "queued-pd",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
       timeline: null,
     })),
   };
@@ -84,7 +105,21 @@ vi.mock("@/lib/justice/cfpbFilingTask", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/justice/cfpbFilingTask")>();
   return {
     ...mod,
-    ensureCfpbFilingTask: vi.fn(async () => ({ task: null, created: false, timeline: null })),
+    ensureCfpbFilingTask: vi.fn(async () => ({
+      task: {
+        id: "queued-cfpb",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
+      timeline: null,
+    })),
   };
 });
 
@@ -92,7 +127,21 @@ vi.mock("@/lib/justice/fccFilingTask", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/justice/fccFilingTask")>();
   return {
     ...mod,
-    ensureFccFilingTask: vi.fn(async () => ({ task: null, created: false, timeline: null })),
+    ensureFccFilingTask: vi.fn(async () => ({
+      task: {
+        id: "queued-fcc",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
+      timeline: null,
+    })),
   };
 });
 
@@ -100,7 +149,21 @@ vi.mock("@/lib/justice/dotFilingTask", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/justice/dotFilingTask")>();
   return {
     ...mod,
-    ensureDotFilingTask: vi.fn(async () => ({ task: null, created: false, timeline: null })),
+    ensureDotFilingTask: vi.fn(async () => ({
+      task: {
+        id: "queued-dot",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
+      timeline: null,
+    })),
   };
 });
 
@@ -108,7 +171,21 @@ vi.mock("@/lib/justice/ftcFilingTask", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/justice/ftcFilingTask")>();
   return {
     ...mod,
-    ensureFtcFilingTask: vi.fn(async () => ({ task: null, created: false, timeline: null })),
+    ensureFtcFilingTask: vi.fn(async () => ({
+      task: {
+        id: "queued-ftc",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
+      timeline: null,
+    })),
   };
 });
 
@@ -117,8 +194,18 @@ vi.mock("@/lib/justice/demandLetterFilingTask", async (importOriginal) => {
   return {
     ...mod,
     ensureDemandLetterFilingTask: vi.fn(async () => ({
-      task: null,
-      created: false,
+      task: {
+        id: "queued-dl",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
       timeline: null,
     })),
   };

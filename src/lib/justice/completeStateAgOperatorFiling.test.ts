@@ -10,6 +10,10 @@ import {
   shouldQueueStateAgFilingTask,
   stateAgFilingTaskNotesMarker,
 } from "@/lib/justice/stateAgFilingTask";
+import {
+  shouldQueueDemandLetterFilingTask,
+  taskNotesMatchDemandLetterFilingMarker,
+} from "@/lib/justice/demandLetterFilingTask";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -56,6 +60,7 @@ vi.mock("@/lib/justice/demandLetterEmailDelivery", () => ({
   ),
 }));
 
+import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import { completeStateAgOperatorFiling } from "@/lib/justice/completeStateAgOperatorFiling";
 
 function retailIntake(): JusticeIntake {
@@ -82,7 +87,9 @@ type MockCaseState = {
   client_state: Record<string, unknown>;
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
+  ownedFilingTasks: JusticeCaseTaskRow[];
   filingInsertCount: number;
+  ownedFilingInsertFail: boolean;
 };
 
 function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -118,6 +125,11 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
       }
 
       if (table === "justice_case_tasks") {
+        const tasksMatchingLike = (pattern: string) => {
+          const prefix = String(pattern).replace(/%$/, "");
+          const all = [state.task, ...state.ownedFilingTasks];
+          return all.filter((task) => (task.notes ?? "").startsWith(prefix));
+        };
         return {
           select: () => ({
             eq: () => ({
@@ -126,14 +138,20 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
                   limit: async () => ({ data: [state.task], error: null }),
                   maybeSingle: async () => ({ data: state.task, error: null }),
                 }),
-                like: () => ({
-                  limit: async () => ({ data: [state.task], error: null }),
+                like: (_column: string, pattern: string) => ({
+                  limit: async () => ({
+                    data: tasksMatchingLike(pattern).slice(0, 1),
+                    error: null,
+                  }),
                 }),
                 limit: async () => ({ data: [state.task], error: null }),
                 maybeSingle: async () => ({ data: state.task, error: null }),
               }),
-              like: () => ({
-                limit: async () => ({ data: [state.task], error: null }),
+              like: (_column: string, pattern: string) => ({
+                limit: async () => ({
+                  data: tasksMatchingLike(pattern).slice(0, 1),
+                  error: null,
+                }),
               }),
               maybeSingle: async () => ({ data: state.task, error: null }),
             }),
@@ -157,9 +175,30 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
               }),
             }),
           }),
-          insert: () => ({
+          insert: (row: Record<string, unknown>) => ({
             select: () => ({
-              single: async () => ({ data: null, error: { message: "unexpected demand letter insert" } }),
+              single: async () => {
+                const notes = typeof row.notes === "string" ? row.notes : "";
+                if (!notes.startsWith("demand_letter_filing_queue:")) {
+                  return { data: null, error: { message: "unexpected task insert" } };
+                }
+                if (state.ownedFilingInsertFail) {
+                  return { data: null, error: { message: "demand letter insert failed" } };
+                }
+                const task: JusticeCaseTaskRow = {
+                  id: `dl-${state.ownedFilingTasks.length + 1}`,
+                  user_id: USER_ID,
+                  case_id: CASE_ID,
+                  title: String(row.title ?? ""),
+                  due_date: typeof row.due_date === "string" ? row.due_date : null,
+                  notes,
+                  completed_at: null,
+                  created_at: "2026-02-15T12:06:00.000Z",
+                  updated_at: "2026-02-15T12:06:00.000Z",
+                };
+                state.ownedFilingTasks = [...state.ownedFilingTasks, task];
+                return { data: task, error: null };
+              },
             }),
           }),
         };
@@ -252,6 +291,8 @@ describe("completeStateAgOperatorFiling", () => {
         updated_at: "2026-02-01T00:00:00.000Z",
       },
       filingInsertCount: 0,
+      ownedFilingTasks: [],
+      ownedFilingInsertFail: false,
     };
     const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
       caseId: CASE_ID,
@@ -293,6 +334,8 @@ describe("completeStateAgOperatorFiling", () => {
         updated_at: "2026-02-01T00:00:00.000Z",
       },
       filingInsertCount: 0,
+      ownedFilingTasks: [],
+      ownedFilingInsertFail: false,
     };
 
     const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
@@ -314,5 +357,56 @@ describe("completeStateAgOperatorFiling", () => {
     expect(next.href).not.toBe("/justice/state-ag");
     expect(next.status).toBe("approved");
     expect(shouldQueueStateAgFilingTask(state.client_state)).toBe(false);
+    expect(shouldQueueDemandLetterFilingTask(state.client_state)).toBe(true);
+    expect(state.ownedFilingTasks).toHaveLength(1);
+    expect(taskNotesMatchDemandLetterFilingMarker(state.ownedFilingTasks[0].notes, CASE_ID)).toBe(
+      true
+    );
+  });
+
+  it("returns retriable failure when demand-letter task ensure fails after State AG advance", async () => {
+    const marker = stateAgFilingTaskNotesMarker(CASE_ID);
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "State Attorney General (consumer)",
+          href: "/justice/state-ag",
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "State AG filing: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+        completed_at: null,
+        created_at: "2026-02-01T00:00:00.000Z",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      ownedFilingTasks: [],
+      ownedFilingInsertFail: true,
+    };
+
+    const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filedAt: "2026-02-15",
+      confirmationNumber: "AG-CA-12345",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe(OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR);
+      expect(result.status).toBe(500);
+    }
+    expect(state.ownedFilingTasks).toHaveLength(0);
+    expect(shouldQueueDemandLetterFilingTask(state.client_state)).toBe(true);
   });
 });
