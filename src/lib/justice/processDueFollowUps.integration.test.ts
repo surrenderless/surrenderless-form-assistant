@@ -5,6 +5,7 @@ import { followUpTaskNotesMarker } from "@/lib/justice/followUpCaseTask";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
+  FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR,
   NO_RESPONSE_OUTCOME_MARKER,
   processDueFollowUps,
 } from "@/lib/justice/processDueFollowUps";
@@ -83,6 +84,8 @@ type MockState = {
   casePatched: number;
   /** When true, owned filing-task inserts fail (simulates ensure failure). */
   failOwnedFilingInsert?: boolean;
+  /** When true, response-review task inserts fail (simulates ensure failure). */
+  failResponseReviewInsert?: boolean;
   ownedFilingInserted: number;
 };
 
@@ -182,6 +185,12 @@ function createCapableSupabase(state: MockState): SupabaseClient {
               single: async () => {
                 const notes = typeof row.notes === "string" ? row.notes : "";
                 if (notes.startsWith(`follow_up_response_review:${CASE_ID}`)) {
+                  if (state.failResponseReviewInsert) {
+                    return {
+                      data: null,
+                      error: { message: "simulated response review insert failure" },
+                    };
+                  }
                   state.responseReviewInserted += 1;
                   return {
                     data: {
@@ -527,6 +536,172 @@ describe("processDueFollowUps", () => {
     });
     expect(state.casePatched).toBe(0);
     expect(state.ownedFilingInserted).toBe(0);
+    expect(state.followUpTask.completed_at).toBeNull();
+  });
+
+  it("does not complete follow-up or count terminal when response-review ensure fails", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      responseReviewInserted: 0,
+      casePatched: 0,
+      ownedFilingInserted: 0,
+      failResponseReviewInsert: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-06-01T00:00:00.000Z",
+          follow_up_needed: true,
+          follow_up_at: "2026-07-01T12:00:00.000Z",
+          outcome_note: "Escalation complete. Awaiting responses.",
+          handling_requested_at: "2026-06-01T00:00:00.000Z",
+        },
+      },
+      followUpTask: {
+        id: FOLLOW_UP_TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Surrenderless follow-up: Small claims / demand letter",
+        due_date: "2026-07-01",
+        notes: marker,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+    };
+
+    const summary = await processDueFollowUps(createCapableSupabase(state), {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+
+    expect(summary.failed_retryable).toBe(1);
+    expect(summary.terminal_response_review).toBe(0);
+    expect(summary.processed).toBe(0);
+    expect(summary.results[0]).toMatchObject({
+      kind: "failed_retryable",
+      error: FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR,
+    });
+    expect(state.casePatched).toBe(1);
+    expect(state.responseReviewInserted).toBe(0);
+    expect(state.followUpTask.completed_at).toBeNull();
+    const next = state.client_state.approved_next_action as {
+      follow_up_needed?: boolean;
+      outcome_note?: string;
+    };
+    expect(next.follow_up_needed).toBe(false);
+    expect(next.outcome_note).toContain(NO_RESPONSE_OUTCOME_MARKER);
+  });
+
+  it("on already_processed terminal recovery, re-runs response-review ensure then closes follow-up", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      responseReviewInserted: 0,
+      casePatched: 0,
+      ownedFilingInserted: 0,
+      failResponseReviewInsert: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-06-01T00:00:00.000Z",
+          follow_up_needed: true,
+          follow_up_at: "2026-07-01T12:00:00.000Z",
+          outcome_note: "Escalation complete. Awaiting responses.",
+          handling_requested_at: "2026-06-01T00:00:00.000Z",
+        },
+      },
+      followUpTask: {
+        id: FOLLOW_UP_TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Surrenderless follow-up: Small claims / demand letter",
+        due_date: "2026-07-01",
+        notes: marker,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+    };
+
+    const supabase = createCapableSupabase(state);
+    const first = await processDueFollowUps(supabase, {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+    expect(first.failed_retryable).toBe(1);
+    expect(first.terminal_response_review).toBe(0);
+    expect(state.followUpTask.completed_at).toBeNull();
+    expect(state.responseReviewInserted).toBe(0);
+
+    state.failResponseReviewInsert = false;
+    const second = await processDueFollowUps(supabase, {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+    expect(second.failed_retryable).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(second.results[0]).toMatchObject({
+      kind: "skipped",
+      reason: "already_processed",
+    });
+    expect(second.terminal_response_review).toBe(0);
+    expect(state.responseReviewInserted).toBe(1);
+    expect(state.followUpTask.completed_at).toBeTruthy();
+  });
+
+  it("on already_processed terminal recovery, leaves follow-up open when response-review ensure fails", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      responseReviewInserted: 0,
+      casePatched: 0,
+      ownedFilingInserted: 0,
+      failResponseReviewInsert: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-06-01T00:00:00.000Z",
+          follow_up_needed: false,
+          outcome_note: `${NO_RESPONSE_OUTCOME_MARKER} (due 2026-07-01). Follow-up check completed by Surrenderless — case remains open; no automatic resolution applied.`,
+          handling_requested_at: "2026-06-01T00:00:00.000Z",
+        },
+      },
+      followUpTask: {
+        id: FOLLOW_UP_TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Surrenderless follow-up: Small claims / demand letter",
+        due_date: "2026-07-01",
+        notes: marker,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+    };
+
+    const summary = await processDueFollowUps(createCapableSupabase(state), {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+
+    expect(summary.failed_retryable).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(summary.terminal_response_review).toBe(0);
+    expect(summary.results[0]).toMatchObject({
+      kind: "failed_retryable",
+      error: FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR,
+    });
+    expect(state.casePatched).toBe(0);
+    expect(state.responseReviewInserted).toBe(0);
     expect(state.followUpTask.completed_at).toBeNull();
   });
 });
