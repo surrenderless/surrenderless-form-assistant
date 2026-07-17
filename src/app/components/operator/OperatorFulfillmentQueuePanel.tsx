@@ -23,6 +23,7 @@ import { DemandLetterOperatorFilingWorkspacePanel } from "@/app/components/opera
 import { DotOperatorFilingWorkspacePanel } from "@/app/components/operator/DotOperatorFilingWorkspacePanel";
 import { FccOperatorFilingWorkspacePanel } from "@/app/components/operator/FccOperatorFilingWorkspacePanel";
 import { FtcOperatorFilingWorkspacePanel } from "@/app/components/operator/FtcOperatorFilingWorkspacePanel";
+import { MerchantContactOperatorFilingWorkspacePanel } from "@/app/components/operator/MerchantContactOperatorFilingWorkspacePanel";
 import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
 
 export type RecordInput = {
@@ -551,6 +552,16 @@ export function OperatorFulfillmentQueuePanel({
                 <BbbOperatorFilingWorkspacePanel
                   item={item}
                   workspace={item.bbb_workspace}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onRecordComplete(item, input)}
+                />
+              );
+            }
+            if (panelKind === "merchant_contact_workspace" && item.merchant_contact_workspace) {
+              return (
+                <MerchantContactOperatorFilingWorkspacePanel
+                  item={item}
+                  workspace={item.merchant_contact_workspace}
                   saving={savingTaskId === item.task_id}
                   onSubmit={(input) => onRecordComplete(item, input)}
                 />

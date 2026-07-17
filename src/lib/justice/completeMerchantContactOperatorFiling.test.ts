@@ -47,6 +47,7 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 }));
 
 import { completeMerchantContactOperatorFiling } from "@/lib/justice/completeMerchantContactOperatorFiling";
+import { buildMerchantContactOperatorFilingWorkspace } from "@/lib/justice/merchantContactOperatorFilingWorkspace";
 
 function retailIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -361,5 +362,134 @@ describe("completeMerchantContactOperatorFiling idempotency", () => {
     expect(
       timelineStore.entries.filter((e) => e.type === "merchant_contact_saved")[0]?.id
     ).toBe(contactIds[0]);
+  });
+});
+
+describe("merchant-contact workspace completion behavior", () => {
+  beforeEach(() => {
+    timelineStore.entries = [];
+  });
+
+  it("keeps workspace is_submitted false while requiring the same confirmation fields as the complete API", () => {
+    const workspace = buildMerchantContactOperatorFilingWorkspace({
+      intake: retailIntake({ company_contact_email: "support@acme.example" }),
+    });
+    expect(workspace.is_submitted).toBe(false);
+    expect(workspace.filing_destination).toBe(
+      canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF)
+    );
+    expect(workspace.confirmation_capture).toEqual({
+      requires_filed_at: true,
+      requires_confirmation_number: true,
+      requires_destination: true,
+      requires_contact_method: true,
+      requires_merchant_response_type: true,
+      requires_recipient: true,
+    });
+  });
+
+  it("rejects completion without confirmation number (no false submitted state)", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+    };
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-15",
+        confirmationNumber: "",
+        contactMethod: "email",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+      }
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/confirmation/i);
+    }
+    expect(state.filings).toHaveLength(0);
+    expect(state.task.completed_at).toBeNull();
+  });
+
+  it("records filing through the existing merchant-contact completion path after outreach confirmation", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const workspace = buildMerchantContactOperatorFilingWorkspace({
+      intake: retailIntake({ company_contact_email: "support@acme.example" }),
+    });
+    const state: MockCaseState = {
+      intake: retailIntake({ money_involved: "not sure", pay_or_order_date: "" }),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+    };
+
+    expect(workspace.is_submitted).toBe(false);
+
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: workspace.filing_destination,
+        filedAt: "2026-06-15",
+        confirmationNumber: "MC-SEND-998877",
+        contactMethod: "email",
+        merchantResponseType: "no_response",
+        recipient: workspace.delivery.recipient_email ?? "Acme Retail",
+        notes: "Filed via guided workspace",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.filing.confirmation_number).toBe("MC-SEND-998877");
+    expect(result.filing.destination).toBe("Merchant contact");
+    expect(result.task.completed_at).toBeTruthy();
+    expect(shouldQueueMerchantContactFilingTask(state.client_state)).toBe(false);
+    expect(workspace.is_submitted).toBe(false);
   });
 });

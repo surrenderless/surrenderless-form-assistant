@@ -119,6 +119,7 @@ import { buildDemandLetterOperatorFilingWorkspace } from "@/lib/justice/demandLe
 import { buildDotOperatorFilingWorkspace } from "@/lib/justice/dotOperatorFilingWorkspace";
 import { buildFccOperatorFilingWorkspace } from "@/lib/justice/fccOperatorFilingWorkspace";
 import { buildFtcOperatorFilingWorkspace } from "@/lib/justice/ftcOperatorFilingWorkspace";
+import { buildMerchantContactOperatorFilingWorkspace } from "@/lib/justice/merchantContactOperatorFilingWorkspace";
 import { buildStateAgOperatorFilingWorkspace } from "@/lib/justice/stateAgOperatorFilingWorkspace";
 import type {
   ContactMethod,
@@ -1478,6 +1479,11 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
         company_name: intake.company_name.trim() || "Consumer case",
         consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
         draft_excerpt: parseMerchantContactFilingTaskDraft(task.notes).slice(0, 400),
+        merchant_contact_workspace: buildMerchantContactOperatorFilingWorkspace({
+          intake,
+          taskNotes: task.notes,
+          evidence: [],
+        }),
       });
       continue;
     }
