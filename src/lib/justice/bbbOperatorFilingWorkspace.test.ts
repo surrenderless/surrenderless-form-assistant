@@ -45,6 +45,7 @@ describe("buildBbbOperatorFilingWorkspace", () => {
       taskNotes: notes,
       evidence: [
         {
+          id: "550e8400-e29b-41d4-a716-446655440099",
           title: "Order receipt",
           evidence_type: "receipt",
           file_name: "receipt.pdf",
@@ -78,6 +79,7 @@ describe("buildBbbOperatorFilingWorkspace", () => {
 
     expect(workspace.evidence).toEqual([
       {
+        id: "550e8400-e29b-41d4-a716-446655440099",
         title: "Order receipt",
         evidence_type: "receipt",
         file_name: "receipt.pdf",

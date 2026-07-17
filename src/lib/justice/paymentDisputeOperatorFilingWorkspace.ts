@@ -17,6 +17,11 @@ import {
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type PaymentDisputePreparedAnswerField = {
   id: string;
@@ -25,12 +30,7 @@ export type PaymentDisputePreparedAnswerField = {
   copyable: boolean;
 };
 
-export type PaymentDisputeWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type PaymentDisputeWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 /** Delivery context — automated issuer email may complete first; workspace is fallback. */
 export type PaymentDisputeDeliveryGuidance = {
@@ -66,12 +66,7 @@ export type PaymentDisputeOperatorFilingWorkspace = {
   };
 };
 
-export type PaymentDisputeWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type PaymentDisputeWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -330,12 +325,7 @@ export function buildPaymentDisputePreparedAnswers(
 export function mapPaymentDisputeWorkspaceEvidence(
   rows: readonly PaymentDisputeWorkspaceEvidenceInput[]
 ): PaymentDisputeWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolvePaymentDisputeDraftLetterForWorkspace(

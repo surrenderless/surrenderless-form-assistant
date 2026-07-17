@@ -43,6 +43,7 @@ describe("buildDotOperatorFilingWorkspace", () => {
       taskNotes: notes,
       evidence: [
         {
+          id: "550e8400-e29b-41d4-a716-446655440099",
           title: "Boarding pass",
           evidence_type: "ticket",
           file_name: "boarding-pass.pdf",
@@ -75,6 +76,7 @@ describe("buildDotOperatorFilingWorkspace", () => {
 
     expect(workspace.evidence).toEqual([
       {
+        id: "550e8400-e29b-41d4-a716-446655440099",
         title: "Boarding pass",
         evidence_type: "ticket",
         file_name: "boarding-pass.pdf",

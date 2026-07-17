@@ -15,6 +15,11 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { fccLikelyRelevant } from "@/lib/justice/rules";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type FccPreparedAnswerField = {
   id: string;
@@ -23,12 +28,7 @@ export type FccPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type FccWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type FccWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 export type FccOperatorFilingWorkspace = {
   filing_destination: string;
@@ -45,12 +45,7 @@ export type FccOperatorFilingWorkspace = {
   };
 };
 
-export type FccWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type FccWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -132,12 +127,7 @@ export function buildFccPreparedAnswers(intake: JusticeIntake): FccPreparedAnswe
 export function mapFccWorkspaceEvidence(
   rows: readonly FccWorkspaceEvidenceInput[]
 ): FccWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveFccComplaintDraftForWorkspace(

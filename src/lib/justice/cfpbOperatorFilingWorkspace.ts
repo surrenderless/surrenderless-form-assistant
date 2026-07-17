@@ -16,6 +16,11 @@ import {
 import { cfpbLikelyRelevant } from "@/lib/justice/rules";
 import { stateNameFromCode } from "@/lib/justice/buildStateAgComplaintDraft";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type CfpbPreparedAnswerField = {
   id: string;
@@ -24,12 +29,7 @@ export type CfpbPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type CfpbWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type CfpbWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 export type CfpbOperatorFilingWorkspace = {
   filing_destination: string;
@@ -46,12 +46,7 @@ export type CfpbOperatorFilingWorkspace = {
   };
 };
 
-export type CfpbWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type CfpbWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -136,12 +131,7 @@ export function buildCfpbPreparedAnswers(intake: JusticeIntake): CfpbPreparedAns
 export function mapCfpbWorkspaceEvidence(
   rows: readonly CfpbWorkspaceEvidenceInput[]
 ): CfpbWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveCfpbComplaintDraftForWorkspace(

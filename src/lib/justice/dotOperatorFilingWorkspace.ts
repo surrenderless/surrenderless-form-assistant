@@ -13,6 +13,11 @@ import {
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type DotPreparedAnswerField = {
   id: string;
@@ -21,12 +26,7 @@ export type DotPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type DotWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type DotWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 export type DotOperatorFilingWorkspace = {
   filing_destination: string;
@@ -43,12 +43,7 @@ export type DotOperatorFilingWorkspace = {
   };
 };
 
-export type DotWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type DotWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -125,12 +120,7 @@ export function buildDotPreparedAnswers(intake: JusticeIntake): DotPreparedAnswe
 export function mapDotWorkspaceEvidence(
   rows: readonly DotWorkspaceEvidenceInput[]
 ): DotWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveDotComplaintDraftForWorkspace(
