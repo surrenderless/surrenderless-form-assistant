@@ -65,6 +65,7 @@ import {
 import { autoEndgameAfterManualFilingConfirmation } from "@/lib/justice/autoEndgameAfterManualFilingConfirmation";
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
+  isChatOperatorOwnedClosurePollPending,
   isChatPendingHumanFulfillmentEscalation,
 } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import {
@@ -4330,22 +4331,34 @@ export default function JusticeChatAiPage() {
     let cancelled = false;
     let intervalId: number | undefined;
 
+    const isPollPending = () =>
+      wasPendingHumanFulfillmentEscalationRef.current ||
+      isChatOperatorOwnedClosurePollPending({
+        approvedAction: approvedNextActionRef.current,
+        archivedAt: caseArchivedAtRef.current,
+      });
+
     const tick = async () => {
       if (cancelled) return;
       await refreshFullChatCaseContextFromServer(caseId);
       if (cancelled) return;
-      if (!wasPendingHumanFulfillmentEscalationRef.current && intervalId !== undefined) {
+      if (!isPollPending() && intervalId !== undefined) {
         window.clearInterval(intervalId);
         intervalId = undefined;
       }
     };
 
-    const initialPending = isChatPendingHumanFulfillmentEscalation({
-      approvedAction: approvedNextActionRef.current,
-      caseId,
-      tasks: savedTasksRef.current,
-      filings: savedFilings,
-    });
+    const initialPending =
+      isChatPendingHumanFulfillmentEscalation({
+        approvedAction: approvedNextActionRef.current,
+        caseId,
+        tasks: savedTasksRef.current,
+        filings: savedFilings,
+      }) ||
+      isChatOperatorOwnedClosurePollPending({
+        approvedAction: approvedNextActionRef.current,
+        archivedAt: caseArchivedAtRef.current,
+      });
 
     if (initialPending) {
       void tick();

@@ -1,5 +1,6 @@
 import { hasPendingHumanFulfillmentEscalation } from "@/lib/justice/escalationLadderResolution";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
+import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operatorOwnedCaseArchive";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
@@ -13,6 +14,19 @@ export function isChatPendingHumanFulfillmentEscalation(input: {
   filings?: readonly ManualActionTrackingFiling[];
 }): boolean {
   return hasPendingHumanFulfillmentEscalation(input);
+}
+
+/**
+ * True while Surrenderless owns final closure after a terminal response-review outcome
+ * and the server has not yet reported archived_at. Keeps chat polling so the closed-case
+ * handoff surfaces live without a reload; stops as soon as archived_at is observed.
+ */
+export function isChatOperatorOwnedClosurePollPending(input: {
+  approvedAction: JusticeApprovedNextAction | undefined;
+  archivedAt: string | null | undefined;
+}): boolean {
+  if (input.archivedAt?.trim()) return false;
+  return hasOperatorTerminalResponseReviewOutcome(input.approvedAction);
 }
 
 /**
