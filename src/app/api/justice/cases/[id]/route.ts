@@ -23,43 +23,20 @@ import {
   buildCaseArchivedTimelineEntry,
   isFirstArchiveTransition,
 } from "@/lib/justice/caseArchiveTimeline";
-import { ensureStateAgFilingTask, shouldQueueStateAgFilingTask } from "@/lib/justice/stateAgFilingTask";
 import {
-  ensureDemandLetterFilingTask,
-  shouldQueueDemandLetterFilingTask,
-} from "@/lib/justice/demandLetterFilingTask";
+  ensureOwnedFilingTaskAfterClientStateWrite,
+  OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
+} from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
-import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
 import {
-  ensureFccFilingTask,
-  shouldQueueFccFilingTask,
-} from "@/lib/justice/fccFilingTask";
-import {
-  ensureDotFilingTask,
-  shouldQueueDotFilingTask,
-} from "@/lib/justice/dotFilingTask";
-import {
-  ensureBbbFilingTask,
-  shouldQueueBbbFilingTask,
-} from "@/lib/justice/bbbFilingTask";
-import { attemptAutomatedBbbFilingAfterEnsure, maybeAttemptAutomatedBbbFilingForClientState } from "@/lib/justice/bbbOwnedFilingDelivery";
+  attemptAutomatedBbbFilingAfterEnsure,
+  maybeAttemptAutomatedBbbFilingForClientState,
+} from "@/lib/justice/bbbOwnedFilingDelivery";
 import {
   buildBbbOwnedFilingSubmitContextFromRequest,
   runWithBbbOwnedFilingSubmitContext,
 } from "@/lib/justice/bbbOwnedFilingSubmitContext";
-import {
-  ensureFtcFilingTask,
-  shouldQueueFtcFilingTask,
-} from "@/lib/justice/ftcFilingTask";
-import {
-  ensureMerchantContactFilingTask,
-  shouldQueueMerchantContactFilingTask,
-} from "@/lib/justice/merchantContactFilingTask";
 import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merchantContactEmailDelivery";
-import {
-  ensurePaymentDisputeFilingTask,
-  shouldQueuePaymentDisputeFilingTask,
-} from "@/lib/justice/paymentDisputeFilingTask";
 import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
@@ -462,32 +439,86 @@ async function patchJusticeCase(
     }
   }
 
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueMerchantContactFilingTask(patch.client_state)
-  ) {
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
     const intakePayload = data.intake;
     if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureMerchantContactFilingTask(
-        supabase,
+      // Fail-closed owned filing handoff: ensure required marker task after client_state write.
+      // Delivery side effects stay in this route so refetch/BBB behavior remains identical.
+      const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
         userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
+        caseId: id,
+        clientState: patch.client_state,
+        intake: intakePayload as JusticeIntake,
+        paymentDisputeDraft: data.payment_dispute_draft,
+        attemptDemandLetterEmail: false,
+        attemptPaymentDisputeEmail: false,
+      });
+      if (!ownedEnsure.ok) {
+        return NextResponse.json(
+          { error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR },
+          { status: 500 }
+        );
       }
-      const emailResult = await attemptAutomatedMerchantContactEmailDelivery(
-        supabase,
-        userId,
-        id
-      );
-      if (emailResult.status === "accepted" || emailResult.status === "failed") {
-        if (emailResult.timeline) {
-          responseData = { ...responseData, timeline: emailResult.timeline };
+      if (ownedEnsure.timeline) {
+        responseData = { ...responseData, timeline: ownedEnsure.timeline };
+      }
+
+      if (ownedEnsure.kind === "merchant_contact") {
+        const emailResult = await attemptAutomatedMerchantContactEmailDelivery(
+          supabase,
+          userId,
+          id
+        );
+        if (emailResult.status === "accepted" || emailResult.status === "failed") {
+          if (emailResult.timeline) {
+            responseData = { ...responseData, timeline: emailResult.timeline };
+          }
+          if (emailResult.status === "accepted" && emailResult.task) {
+            const { data: refreshed } = await supabase
+              .from("justice_cases")
+              .select(SELECT)
+              .eq("id", id)
+              .eq("user_id", userId)
+              .maybeSingle();
+            if (refreshed) {
+              responseData = { ...responseData, ...(refreshed as CaseResponse) };
+            }
+            const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
+              supabase,
+              userId,
+              id,
+              responseData.client_state,
+              (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+            );
+            if (bbbAutofill.timeline) {
+              responseData = { ...responseData, timeline: bbbAutofill.timeline };
+            }
+            if (bbbAutofill.result.status === "accepted") {
+              const { data: afterBbb } = await supabase
+                .from("justice_cases")
+                .select(SELECT)
+                .eq("id", id)
+                .eq("user_id", userId)
+                .maybeSingle();
+              if (afterBbb) {
+                responseData = { ...responseData, ...(afterBbb as CaseResponse) };
+              }
+            }
+          }
         }
-        if (emailResult.status === "accepted" && emailResult.task) {
-          // Case advanced/completed via completion path — refetch snapshot fields when present.
+      }
+
+      if (ownedEnsure.kind === "demand_letter") {
+        const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
+          supabase,
+          userId,
+          id,
+          (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+        );
+        if (emailAttempt.timeline) {
+          responseData = { ...responseData, timeline: emailAttempt.timeline };
+        }
+        if (emailAttempt.result.status === "accepted" && emailAttempt.result.task) {
           const { data: refreshed } = await supabase
             .from("justice_cases")
             .select(SELECT)
@@ -497,132 +528,65 @@ async function patchJusticeCase(
           if (refreshed) {
             responseData = { ...responseData, ...(refreshed as CaseResponse) };
           }
-          const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
-            supabase,
-            userId,
-            id,
-            responseData.client_state,
-            (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
-          );
-          if (bbbAutofill.timeline) {
-            responseData = { ...responseData, timeline: bbbAutofill.timeline };
+        }
+      }
+
+      if (ownedEnsure.kind === "payment_dispute") {
+        const emailResult = await attemptAutomatedPaymentDisputeEmailDelivery(
+          supabase,
+          userId,
+          id
+        );
+        if (emailResult.status === "accepted" || emailResult.status === "failed") {
+          if (emailResult.timeline) {
+            responseData = { ...responseData, timeline: emailResult.timeline };
           }
-          if (bbbAutofill.result.status === "accepted") {
-            const { data: afterBbb } = await supabase
+          if (emailResult.status === "accepted" && emailResult.task) {
+            const { data: refreshed } = await supabase
               .from("justice_cases")
               .select(SELECT)
               .eq("id", id)
               .eq("user_id", userId)
               .maybeSingle();
-            if (afterBbb) {
-              responseData = { ...responseData, ...(afterBbb as CaseResponse) };
+            if (refreshed) {
+              responseData = { ...responseData, ...(refreshed as CaseResponse) };
+            }
+            const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
+              supabase,
+              userId,
+              id,
+              responseData.client_state,
+              (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+            );
+            if (bbbAutofill.timeline) {
+              responseData = { ...responseData, timeline: bbbAutofill.timeline };
+            }
+            if (bbbAutofill.result.status === "accepted") {
+              const { data: afterBbb } = await supabase
+                .from("justice_cases")
+                .select(SELECT)
+                .eq("id", id)
+                .eq("user_id", userId)
+                .maybeSingle();
+              if (afterBbb) {
+                responseData = { ...responseData, ...(afterBbb as CaseResponse) };
+              }
             }
           }
         }
       }
-    }
-  }
 
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueStateAgFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureStateAgFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueDemandLetterFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureDemandLetterFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-      const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
-        supabase,
-        userId,
-        id,
-        (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
-      );
-      if (emailAttempt.timeline) {
-        responseData = { ...responseData, timeline: emailAttempt.timeline };
-      }
-      if (emailAttempt.result.status === "accepted" && emailAttempt.result.task) {
-        const { data: refreshed } = await supabase
-          .from("justice_cases")
-          .select(SELECT)
-          .eq("id", id)
-          .eq("user_id", userId)
-          .maybeSingle();
-        if (refreshed) {
-          responseData = { ...responseData, ...(refreshed as CaseResponse) };
+      if (ownedEnsure.kind === "bbb") {
+        const autofill = await attemptAutomatedBbbFilingAfterEnsure(
+          supabase,
+          userId,
+          id,
+          (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+        );
+        if (autofill.timeline) {
+          responseData = { ...responseData, timeline: autofill.timeline };
         }
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueCfpbFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureCfpbFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueuePaymentDisputeFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensurePaymentDisputeFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake,
-        data.payment_dispute_draft
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-      const emailResult = await attemptAutomatedPaymentDisputeEmailDelivery(
-        supabase,
-        userId,
-        id
-      );
-      if (emailResult.status === "accepted" || emailResult.status === "failed") {
-        if (emailResult.timeline) {
-          responseData = { ...responseData, timeline: emailResult.timeline };
-        }
-        if (emailResult.status === "accepted" && emailResult.task) {
+        if (autofill.result.status === "accepted" && autofill.result.task) {
           const { data: refreshed } = await supabase
             .from("justice_cases")
             .select(SELECT)
@@ -632,119 +596,6 @@ async function patchJusticeCase(
           if (refreshed) {
             responseData = { ...responseData, ...(refreshed as CaseResponse) };
           }
-          const bbbAutofill = await maybeAttemptAutomatedBbbFilingForClientState(
-            supabase,
-            userId,
-            id,
-            responseData.client_state,
-            (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
-          );
-          if (bbbAutofill.timeline) {
-            responseData = { ...responseData, timeline: bbbAutofill.timeline };
-          }
-          if (bbbAutofill.result.status === "accepted") {
-            const { data: afterBbb } = await supabase
-              .from("justice_cases")
-              .select(SELECT)
-              .eq("id", id)
-              .eq("user_id", userId)
-              .maybeSingle();
-            if (afterBbb) {
-              responseData = { ...responseData, ...(afterBbb as CaseResponse) };
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueFccFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureFccFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueDotFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureDotFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueFtcFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureFtcFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-    }
-  }
-
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    shouldQueueBbbFilingTask(patch.client_state)
-  ) {
-    const intakePayload = data.intake;
-    if (isJusticeIntakePayload(intakePayload)) {
-      const taskResult = await ensureBbbFilingTask(
-        supabase,
-        userId,
-        id,
-        intakePayload as JusticeIntake
-      );
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
-      const autofill = await attemptAutomatedBbbFilingAfterEnsure(
-        supabase,
-        userId,
-        id,
-        (responseData.timeline as typeof taskResult.timeline) ?? null
-      );
-      if (autofill.timeline) {
-        responseData = { ...responseData, timeline: autofill.timeline };
-      }
-      if (autofill.result.status === "accepted" && autofill.result.task) {
-        const { data: refreshed } = await supabase
-          .from("justice_cases")
-          .select(SELECT)
-          .eq("id", id)
-          .eq("user_id", userId)
-          .maybeSingle();
-        if (refreshed) {
-          responseData = { ...responseData, ...(refreshed as CaseResponse) };
         }
       }
     }
