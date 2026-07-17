@@ -1,4 +1,5 @@
 import { HANDLING_TRACKING_STEP_COMPLETE } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import { REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 
 export type ChatCaseClosureGate = "follow_up_handled" | "archive_case";
 
@@ -8,6 +9,10 @@ export const CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE =
 
 export const CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE =
   "Please archive this case now. I am ready to close it.";
+
+/** Chat copy when consumer asks to archive while Surrenderless owns final closure. */
+export const CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE =
+  REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE;
 
 export type ChatCaseClosureContext = {
   caseId: string;
@@ -24,6 +29,7 @@ export type ChatCaseClosureParseResult =
   | { kind: "ambiguous"; gate: ChatCaseClosureGate }
   | { kind: "decline"; gate: ChatCaseClosureGate }
   | { kind: "premature_archive" }
+  | { kind: "operator_owned_archive" }
   | { kind: "follow_up_handled" }
   | { kind: "archive_case" };
 
@@ -133,6 +139,15 @@ export function parsePrematureArchiveIntent(
   return matchesArchiveCaseConsent(message);
 }
 
+/** Parse archive intent when operator owns final closure (no consumer archive). */
+export function parseOperatorOwnedArchiveIntent(
+  message: string,
+  context: ChatCaseClosureContext
+): boolean {
+  if (context.operatorOwnsClosure !== true) return false;
+  return matchesArchiveCaseConsent(message);
+}
+
 /** Parse a user message against the currently pending closure gate only. */
 export function parseChatCaseClosureMessage(
   message: string,
@@ -141,6 +156,10 @@ export function parseChatCaseClosureMessage(
 ): ChatCaseClosureParseResult {
   const text = normalizedMessage(message);
   if (!text) return { kind: "none" };
+
+  if (context.operatorOwnsClosure === true && matchesArchiveCaseConsent(text)) {
+    return { kind: "operator_owned_archive" };
+  }
 
   if (gate === "follow_up_handled" && matchesArchiveCaseConsent(text)) {
     return { kind: "premature_archive" };
@@ -186,6 +205,8 @@ export function buildChatCaseClosureAssistantResponse(
       return "Your case is archived. You can start a new matter here in chat whenever you're ready.";
     case "premature_archive":
       return "I can't archive yet — follow-up is still flagged on this case. Mark follow-up handled first, then archive when tracking is complete.";
+    case "operator_owned_archive":
+      return CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE;
     case "decline":
       if (result.gate === "follow_up_handled") {
         return "Understood — I'll keep follow-up flagged until you confirm it's handled.";

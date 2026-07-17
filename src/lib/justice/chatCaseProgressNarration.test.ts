@@ -430,4 +430,74 @@ describe("chatCaseProgressNarration", () => {
       })
     ).toContain("resolution_ready");
   });
+
+  it("narrates operator-owned closure pending for terminal response-review outcomes", () => {
+    const observation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "Small claims / demand letter",
+        href: "/justice/demand-letter",
+        status: "completed",
+        outcome_note:
+          "Operator confirmed resolution after follow-up response review. Consumer refunded.",
+        follow_up_needed: false,
+      },
+      tasks: [],
+      filings: [
+        { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
+      ],
+    } as const;
+
+    expect(deriveSatisfiedChatCaseProgressMilestones(observation)).toContain(
+      "operator_closure_pending"
+    );
+    expect(deriveSatisfiedChatCaseProgressMilestones(observation)).not.toContain(
+      "operator_case_closed"
+    );
+    expect(buildChatCaseProgressNarrationMessage("operator_closure_pending")).toContain(
+      "Surrenderless will close it"
+    );
+  });
+
+  it("emits one closed-case handoff when archived_at appears, then dedupes refreshes", () => {
+    const pending = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "Small claims / demand letter",
+        href: "/justice/demand-letter",
+        status: "completed",
+        outcome_note:
+          "Operator confirmed no resolution after follow-up response review.",
+        follow_up_needed: false,
+      },
+      tasks: [],
+      filings: [
+        { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
+      ],
+    } as const;
+
+    const pendingMsgs = collectNewChatCaseProgressNarrationMessages(pending);
+    expect(pendingMsgs).toContainEqual(
+      buildChatCaseProgressNarrationMessage("operator_closure_pending")
+    );
+
+    const closed = {
+      ...pending,
+      archivedAt: "2026-07-17T12:00:00.000Z",
+    } as const;
+
+    expect(deriveSatisfiedChatCaseProgressMilestones(closed)).toContain("operator_case_closed");
+    expect(deriveSatisfiedChatCaseProgressMilestones(closed)).not.toContain(
+      "operator_closure_pending"
+    );
+
+    const firstClosed = collectNewChatCaseProgressNarrationMessages(closed);
+    expect(firstClosed).toEqual([
+      buildChatCaseProgressNarrationMessage("operator_case_closed"),
+    ]);
+    expect(firstClosed[0]).toContain("Surrenderless has closed this case");
+
+    const secondClosed = collectNewChatCaseProgressNarrationMessages(closed);
+    expect(secondClosed).toEqual([]);
+  });
 });

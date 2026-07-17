@@ -6,11 +6,14 @@ import {
   canClearFollowUpViaChat,
   CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE,
   CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
+  CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE,
   parseChatCaseClosureMessage,
+  parseOperatorOwnedArchiveIntent,
   parsePrematureArchiveIntent,
   resolvePendingChatCaseClosureGate,
   type ChatCaseClosureContext,
 } from "@/lib/justice/chatCaseClosureGates";
+import { REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -159,5 +162,22 @@ describe("chatCaseClosureGates", () => {
     expect(
       buildChatCaseClosureAssistantResponse({ kind: "premature_archive" })
     ).toContain("follow-up");
+  });
+
+  it("returns operator-owned archive gate when consumer asks to archive while operator owns closure", () => {
+    const ctx = baseContext({
+      followUpNeeded: false,
+      handlingTrackingStep: HANDLING_TRACKING_STEP_COMPLETE,
+      operatorOwnsClosure: true,
+    });
+    expect(parseOperatorOwnedArchiveIntent(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE, ctx)).toBe(true);
+    expect(
+      parseChatCaseClosureMessage(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE, "archive_case", ctx)
+    ).toEqual({ kind: "operator_owned_archive" });
+    expect(canArchiveCaseViaChat(ctx)).toBe(false);
+    expect(buildChatCaseClosureAssistantResponse({ kind: "operator_owned_archive" })).toBe(
+      CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE
+    );
+    expect(CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE).toBe(REJECT_OPERATOR_OWNED_CASE_ARCHIVE_PATCH_MESSAGE);
   });
 });

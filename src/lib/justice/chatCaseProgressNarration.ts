@@ -57,6 +57,8 @@ import {
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
 } from "@/lib/justice/stateAgFilingTask";
+import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operatorOwnedCaseArchive";
+import { CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE } from "@/lib/justice/chatCaseClosureGates";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
@@ -88,7 +90,9 @@ export type ChatCaseProgressMilestone =
   | "demand_letter_sending"
   | "demand_letter_send_failed"
   | "demand_letter_sent"
-  | "resolution_ready";
+  | "resolution_ready"
+  | "operator_closure_pending"
+  | "operator_case_closed";
 
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
   "merchant_contact_queued",
@@ -119,6 +123,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "demand_letter_send_failed",
   "demand_letter_sent",
   "resolution_ready",
+  "operator_closure_pending",
+  "operator_case_closed",
 ] as const;
 
 export const STORAGE_CHAT_CASE_PROGRESS_NARRATED_V1 = "justice_chat_case_progress_narrated_v1";
@@ -128,6 +134,8 @@ export type ChatCaseProgressObservation = {
   approvedAction: JusticeApprovedNextAction | undefined;
   tasks: readonly JusticeCaseTaskRow[];
   filings: readonly ManualActionTrackingFiling[];
+  /** Server archived_at when known (from case refresh). */
+  archivedAt?: string | null;
 };
 
 /** @deprecated Prefer hasBbbFilingWithConfirmation from bbbFilingTask — re-exported for older imports. */
@@ -336,6 +344,15 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     satisfied.push("resolution_ready");
   }
 
+  const archivedAt = input.archivedAt?.trim() ?? "";
+  if (hasOperatorTerminalResponseReviewOutcome(action)) {
+    if (archivedAt) {
+      satisfied.push("operator_case_closed");
+    } else {
+      satisfied.push("operator_closure_pending");
+    }
+  }
+
   return CHAT_CASE_PROGRESS_MILESTONE_ORDER.filter((milestone) => satisfied.includes(milestone));
 }
 
@@ -399,6 +416,10 @@ export function buildChatCaseProgressNarrationMessage(
       return "Your demand letter is sent and confirmed on file. Escalation steps are complete — I'll help you track follow-up next.";
     case "resolution_ready":
       return "Follow-up and outcome tracking are ready below. Review the summary when you're ready, or tell me if anything changed.";
+    case "operator_closure_pending":
+      return CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE;
+    case "operator_case_closed":
+      return "Surrenderless has closed this case. You can start a new matter here in chat whenever you're ready.";
     default: {
       const _exhaustive: never = milestone;
       return _exhaustive;
