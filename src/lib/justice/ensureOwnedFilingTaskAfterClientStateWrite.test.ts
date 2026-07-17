@@ -10,7 +10,13 @@ import {
   OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
   resolveRequiredOwnedFilingTaskKind,
 } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
-import { MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
+import {
+  taskNotesMatchPaymentDisputeFilingMarker,
+} from "@/lib/justice/paymentDisputeFilingTask";
 import {
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
@@ -57,6 +63,31 @@ vi.mock("@/lib/justice/demandLetterEmailDelivery", () => ({
     ) => ({ timeline, result: { status: "skipped" as const } })
   ),
 }));
+
+const paymentDisputeEmailAfterEnsure = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _supabase: SupabaseClient,
+      _userId: string,
+      _caseId: string,
+      timeline: TimelineEntry[] | null
+    ): Promise<{
+      timeline: TimelineEntry[] | null;
+      result:
+        | { status: "skipped"; reason: string }
+        | { status: "failed"; recipient: string; error: string }
+        | { status: "accepted"; messageId: string; recipient: string; idempotent: boolean };
+    }> => ({ timeline, result: { status: "skipped" as const, reason: "mocked" } })
+  )
+);
+
+vi.mock("@/lib/justice/paymentDisputeEmailDelivery", () => ({
+  attemptAutomatedPaymentDisputeEmailDeliveryAfterEnsure: (
+    ...args: Parameters<typeof paymentDisputeEmailAfterEnsure>
+  ) => paymentDisputeEmailAfterEnsure(...args),
+}));
+
+import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
 
 type MockState = {
   tasks: JusticeCaseTaskRow[];
@@ -146,7 +177,7 @@ function intake(): JusticeIntake {
 }
 
 describe("resolveRequiredOwnedFilingTaskKind", () => {
-  it("resolves State AG and demand letter from approved client_state", () => {
+  it("resolves State AG, demand letter, and payment dispute from approved client_state", () => {
     expect(
       resolveRequiredOwnedFilingTaskKind({
         prepared_packet_approved: true,
@@ -169,6 +200,15 @@ describe("resolveRequiredOwnedFilingTaskKind", () => {
       resolveRequiredOwnedFilingTaskKind({
         prepared_packet_approved: true,
         approved_next_action: {
+          href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+          status: "approved",
+        },
+      })
+    ).toBe("payment_dispute");
+    expect(
+      resolveRequiredOwnedFilingTaskKind({
+        prepared_packet_approved: true,
+        approved_next_action: {
           href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
           status: "completed",
         },
@@ -180,6 +220,16 @@ describe("resolveRequiredOwnedFilingTaskKind", () => {
 describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
   beforeEach(() => {
     timelineStore.entries = [];
+    paymentDisputeEmailAfterEnsure.mockClear();
+    paymentDisputeEmailAfterEnsure.mockImplementation(
+      async (
+        _supabase: SupabaseClient,
+        _userId: string,
+        _caseId: string,
+        timeline: TimelineEntry[] | null
+      ) => ({ timeline, result: { status: "skipped" as const, reason: "mocked" } })
+    );
+    vi.mocked(attemptAutomatedDemandLetterEmailDeliveryAfterEnsure).mockClear();
   });
 
   it("creates a demand-letter task when client_state advances to demand letter", async () => {
@@ -206,6 +256,96 @@ describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
     expect(result.created).toBe(true);
     expect(state.insertCount).toBe(1);
     expect(taskNotesMatchDemandLetterFilingMarker(state.tasks[0].notes, CASE_ID)).toBe(true);
+    expect(paymentDisputeEmailAfterEnsure).not.toHaveBeenCalled();
+  });
+
+  it("creates a payment-dispute task and attempts automated email after ensure", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false };
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "Payment dispute",
+        href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+        status: "approved" as const,
+      },
+    };
+
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState,
+      intake: intake(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("payment_dispute");
+    expect(result.created).toBe(true);
+    expect(taskNotesMatchPaymentDisputeFilingMarker(state.tasks[0].notes, CASE_ID)).toBe(true);
+    expect(paymentDisputeEmailAfterEnsure).toHaveBeenCalledTimes(1);
+    expect(paymentDisputeEmailAfterEnsure).toHaveBeenCalledWith(
+      expect.anything(),
+      USER_ID,
+      CASE_ID,
+      expect.anything()
+    );
+    // Email skip/failure must not invent ensure failure.
+    expect(result.ok).toBe(true);
+  });
+
+  it("skips payment-dispute email when attemptPaymentDisputeEmail is false", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false };
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+          status: "approved",
+        },
+      },
+      intake: intake(),
+      attemptPaymentDisputeEmail: false,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("payment_dispute");
+    expect(paymentDisputeEmailAfterEnsure).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds when payment-dispute email attempt reports failed", async () => {
+    paymentDisputeEmailAfterEnsure.mockImplementation(
+      async (
+        _supabase: SupabaseClient,
+        _userId: string,
+        _caseId: string,
+        timeline: TimelineEntry[] | null
+      ) => ({
+        timeline,
+        result: { status: "failed" as const, recipient: "bank@example.com", error: "smtp down" },
+      })
+    );
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false };
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+          status: "approved",
+        },
+      },
+      intake: intake(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("payment_dispute");
+    expect(result.task).toBeTruthy();
+    expect(paymentDisputeEmailAfterEnsure).toHaveBeenCalledTimes(1);
   });
 
   it("creates a State AG task when client_state advances to State AG (BBB → AG handoff)", async () => {
@@ -231,6 +371,7 @@ describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
     expect(result.kind).toBe("state_ag");
     expect(result.created).toBe(true);
     expect(taskNotesMatchStateAgFilingMarker(state.tasks[0].notes, CASE_ID)).toBe(true);
+    expect(paymentDisputeEmailAfterEnsure).not.toHaveBeenCalled();
   });
 
   it("is idempotent when the marker task already exists", async () => {
@@ -287,6 +428,7 @@ describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
     expect(result.error).toBe(OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR);
     expect(result.kind).toBe("state_ag");
     expect(state.tasks).toHaveLength(0);
+    expect(paymentDisputeEmailAfterEnsure).not.toHaveBeenCalled();
   });
 
   it("does nothing when no owned filing step is required", async () => {
@@ -307,5 +449,6 @@ describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
     if (!result.ok) return;
     expect(result.kind).toBeNull();
     expect(state.insertCount).toBe(0);
+    expect(paymentDisputeEmailAfterEnsure).not.toHaveBeenCalled();
   });
 });
