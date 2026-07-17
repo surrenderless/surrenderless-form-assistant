@@ -45,6 +45,10 @@ import {
   type CfpbOperatorFilingWorkspace,
 } from "@/lib/justice/cfpbOperatorFilingWorkspace";
 import {
+  buildBbbOperatorFilingWorkspace,
+  type BbbOperatorFilingWorkspace,
+} from "@/lib/justice/bbbOperatorFilingWorkspace";
+import {
   buildDemandLetterOperatorFilingWorkspace,
   type DemandLetterOperatorFilingWorkspace,
 } from "@/lib/justice/demandLetterOperatorFilingWorkspace";
@@ -100,6 +104,8 @@ export type OperatorFulfillmentQueueItem = {
   dot_workspace?: DotOperatorFilingWorkspace;
   /** Present only for demand-letter tasks — full guided filing workspace. */
   demand_letter_workspace?: DemandLetterOperatorFilingWorkspace;
+  /** Present only for BBB tasks — guided fallback workspace (owned autofill remains primary). */
+  bbb_workspace?: BbbOperatorFilingWorkspace;
 };
 
 export type OperatorFulfillmentPanelKind =
@@ -109,6 +115,7 @@ export type OperatorFulfillmentPanelKind =
   | "ftc_workspace"
   | "dot_workspace"
   | "demand_letter_workspace"
+  | "bbb_workspace"
   | "follow_up_response_review"
   | "record_form";
 
@@ -123,6 +130,7 @@ export function resolveOperatorFulfillmentPanelKind(
     | "ftc_workspace"
     | "dot_workspace"
     | "demand_letter_workspace"
+    | "bbb_workspace"
   >
 ): OperatorFulfillmentPanelKind {
   if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
@@ -133,6 +141,7 @@ export function resolveOperatorFulfillmentPanelKind(
   if (item.step === "demand_letter" && item.demand_letter_workspace) {
     return "demand_letter_workspace";
   }
+  if (item.step === "bbb" && item.bbb_workspace) return "bbb_workspace";
   if (item.step === "follow_up_response_review") return "follow_up_response_review";
   return "record_form";
 }
@@ -314,6 +323,11 @@ export function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseBbbFilingTaskDraft(task.notes)),
+      bbb_workspace: buildBbbOperatorFilingWorkspace({
+        intake,
+        taskNotes: task.notes,
+        evidence: [],
+      }),
     };
   }
 
@@ -412,7 +426,8 @@ export async function listOperatorFulfillmentQueue(
             item.step === "fcc" ||
             item.step === "ftc" ||
             item.step === "dot" ||
-            item.step === "demand_letter"
+            item.step === "demand_letter" ||
+            item.step === "bbb"
         )
         .map((item) => item.case_id)
     ),
@@ -516,6 +531,17 @@ export async function listOperatorFulfillmentQueue(
       return {
         ...item,
         demand_letter_workspace: buildDemandLetterOperatorFilingWorkspace({
+          intake,
+          taskNotes: task?.notes,
+          evidence,
+        }),
+      };
+    }
+
+    if (item.step === "bbb" && item.bbb_workspace) {
+      return {
+        ...item,
+        bbb_workspace: buildBbbOperatorFilingWorkspace({
           intake,
           taskNotes: task?.notes,
           evidence,

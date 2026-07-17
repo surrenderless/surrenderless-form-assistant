@@ -106,7 +106,7 @@ describe("resolveOperatorFulfillmentPanelKind demand-letter branching", () => {
 
     expect(resolveOperatorFulfillmentPanelKind(dlItem)).toBe("demand_letter_workspace");
     expect(resolveOperatorFulfillmentPanelKind(dotItem)).toBe("dot_workspace");
-    expect(resolveOperatorFulfillmentPanelKind(bbbItem)).toBe("record_form");
+    expect(resolveOperatorFulfillmentPanelKind(bbbItem)).toBe("bbb_workspace");
     expect(
       resolveOperatorFulfillmentPanelKind({
         step: "demand_letter",
