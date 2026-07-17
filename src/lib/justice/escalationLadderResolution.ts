@@ -764,6 +764,15 @@ export function isEscalationLadderTerminalForResolution(
 
 
 
+  // Terminal when State AG completed and the ladder did not advance (e.g. no demand-letter next).
+  if (href === MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF && status === "completed") {
+
+    return true;
+
+  }
+
+
+
   if (status === "completed" && href && !isHumanFulfillmentEscalationHref(href)) {
 
     return true;

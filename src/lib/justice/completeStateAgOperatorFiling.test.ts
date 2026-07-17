@@ -61,7 +61,12 @@ vi.mock("@/lib/justice/demandLetterEmailDelivery", () => ({
 }));
 
 import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
+import {
+  taskNotesMatchFollowUpMarker,
+} from "@/lib/justice/followUpCaseTask";
 import { completeStateAgOperatorFiling } from "@/lib/justice/completeStateAgOperatorFiling";
+import * as recomputeApprovedNextActionAfterIntake from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 
 function retailIntake(): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -88,8 +93,10 @@ type MockCaseState = {
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   ownedFilingTasks: JusticeCaseTaskRow[];
+  followUpTasks: JusticeCaseTaskRow[];
   filingInsertCount: number;
   ownedFilingInsertFail: boolean;
+  followUpInsertFail: boolean;
 };
 
 function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -127,7 +134,7 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
       if (table === "justice_case_tasks") {
         const tasksMatchingLike = (pattern: string) => {
           const prefix = String(pattern).replace(/%$/, "");
-          const all = [state.task, ...state.ownedFilingTasks];
+          const all = [state.task, ...state.ownedFilingTasks, ...state.followUpTasks];
           return all.filter((task) => (task.notes ?? "").startsWith(prefix));
         };
         return {
@@ -179,6 +186,24 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
             select: () => ({
               single: async () => {
                 const notes = typeof row.notes === "string" ? row.notes : "";
+                if (notes.startsWith("follow_up:")) {
+                  if (state.followUpInsertFail) {
+                    return { data: null, error: { message: "follow-up insert failed" } };
+                  }
+                  const task: JusticeCaseTaskRow = {
+                    id: `fu-${state.followUpTasks.length + 1}`,
+                    user_id: USER_ID,
+                    case_id: CASE_ID,
+                    title: String(row.title ?? ""),
+                    due_date: typeof row.due_date === "string" ? row.due_date : null,
+                    notes,
+                    completed_at: null,
+                    created_at: "2026-02-15T12:06:00.000Z",
+                    updated_at: "2026-02-15T12:06:00.000Z",
+                  };
+                  state.followUpTasks = [...state.followUpTasks, task];
+                  return { data: task, error: null };
+                }
                 if (!notes.startsWith("demand_letter_filing_queue:")) {
                   return { data: null, error: { message: "unexpected task insert" } };
                 }
@@ -241,9 +266,25 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
   } as unknown as SupabaseClient;
 }
 
+function baseApprovedStateAgTask(): JusticeCaseTaskRow {
+  const marker = stateAgFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: TASK_ID,
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    title: "State AG filing: Acme Retail",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+    completed_at: null,
+    created_at: "2026-02-01T00:00:00.000Z",
+    updated_at: "2026-02-01T00:00:00.000Z",
+  };
+}
+
 describe("completeStateAgOperatorFiling", () => {
   beforeEach(() => {
     timelineStore.entries = [];
+    vi.restoreAllMocks();
   });
 
   it("uses canonical State AG filing destination", () => {
@@ -267,7 +308,6 @@ describe("completeStateAgOperatorFiling", () => {
   });
 
   it("rejects completion without confirmation number (no false submitted state)", async () => {
-    const marker = stateAgFilingTaskNotesMarker(CASE_ID);
     const state: MockCaseState = {
       intake: retailIntake(),
       client_state: {
@@ -279,20 +319,12 @@ describe("completeStateAgOperatorFiling", () => {
         },
       },
       filings: [],
-      task: {
-        id: TASK_ID,
-        user_id: USER_ID,
-        case_id: CASE_ID,
-        title: "State AG filing: Acme Retail",
-        due_date: null,
-        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
-        completed_at: null,
-        created_at: "2026-02-01T00:00:00.000Z",
-        updated_at: "2026-02-01T00:00:00.000Z",
-      },
+      task: baseApprovedStateAgTask(),
       filingInsertCount: 0,
       ownedFilingTasks: [],
       ownedFilingInsertFail: false,
+      followUpTasks: [],
+      followUpInsertFail: false,
     };
     const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
       caseId: CASE_ID,
@@ -310,7 +342,6 @@ describe("completeStateAgOperatorFiling", () => {
   });
 
   it("records filing, completes task, and advances approved next action on success", async () => {
-    const marker = stateAgFilingTaskNotesMarker(CASE_ID);
     const state: MockCaseState = {
       intake: retailIntake(),
       client_state: {
@@ -322,20 +353,12 @@ describe("completeStateAgOperatorFiling", () => {
         },
       },
       filings: [],
-      task: {
-        id: TASK_ID,
-        user_id: USER_ID,
-        case_id: CASE_ID,
-        title: "State AG filing: Acme Retail",
-        due_date: null,
-        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
-        completed_at: null,
-        created_at: "2026-02-01T00:00:00.000Z",
-        updated_at: "2026-02-01T00:00:00.000Z",
-      },
+      task: baseApprovedStateAgTask(),
       filingInsertCount: 0,
       ownedFilingTasks: [],
       ownedFilingInsertFail: false,
+      followUpTasks: [],
+      followUpInsertFail: false,
     };
 
     const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
@@ -362,10 +385,10 @@ describe("completeStateAgOperatorFiling", () => {
     expect(taskNotesMatchDemandLetterFilingMarker(state.ownedFilingTasks[0].notes, CASE_ID)).toBe(
       true
     );
+    expect(state.followUpTasks).toHaveLength(0);
   });
 
   it("returns retriable failure when demand-letter task ensure fails after State AG advance", async () => {
-    const marker = stateAgFilingTaskNotesMarker(CASE_ID);
     const state: MockCaseState = {
       intake: retailIntake(),
       client_state: {
@@ -377,20 +400,12 @@ describe("completeStateAgOperatorFiling", () => {
         },
       },
       filings: [],
-      task: {
-        id: TASK_ID,
-        user_id: USER_ID,
-        case_id: CASE_ID,
-        title: "State AG filing: Acme Retail",
-        due_date: null,
-        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
-        completed_at: null,
-        created_at: "2026-02-01T00:00:00.000Z",
-        updated_at: "2026-02-01T00:00:00.000Z",
-      },
+      task: baseApprovedStateAgTask(),
       filingInsertCount: 0,
       ownedFilingTasks: [],
       ownedFilingInsertFail: true,
+      followUpTasks: [],
+      followUpInsertFail: false,
     };
 
     const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
@@ -408,5 +423,99 @@ describe("completeStateAgOperatorFiling", () => {
     }
     expect(state.ownedFilingTasks).toHaveLength(0);
     expect(shouldQueueDemandLetterFilingTask(state.client_state)).toBe(true);
+  });
+
+  it("on terminal State AG completion, merges resolution tracking and ensures follow-up task", async () => {
+    vi.spyOn(
+      recomputeApprovedNextActionAfterIntake,
+      "advanceApprovedNextActionAfterCompleted"
+    ).mockReturnValue(null);
+
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "State Attorney General (consumer)",
+          href: "/justice/state-ag",
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: baseApprovedStateAgTask(),
+      filingInsertCount: 0,
+      ownedFilingTasks: [],
+      ownedFilingInsertFail: false,
+      followUpTasks: [],
+      followUpInsertFail: false,
+    };
+
+    const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filedAt: "2026-02-15",
+      confirmationNumber: "AG-CA-TERM-1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.advanced).toBe(false);
+    const next = state.client_state.approved_next_action as {
+      href?: string;
+      status?: string;
+      follow_up_needed?: boolean;
+    };
+    expect(next.href).toBe("/justice/state-ag");
+    expect(next.status).toBe("completed");
+    expect(next.follow_up_needed).toBe(true);
+    expect(state.followUpTasks).toHaveLength(1);
+    expect(taskNotesMatchFollowUpMarker(state.followUpTasks[0].notes, CASE_ID)).toBe(true);
+    expect(state.ownedFilingTasks).toHaveLength(0);
+  });
+
+  it("returns retriable failure when follow-up ensure fails after terminal State AG client_state write", async () => {
+    vi.spyOn(
+      recomputeApprovedNextActionAfterIntake,
+      "advanceApprovedNextActionAfterCompleted"
+    ).mockReturnValue(null);
+
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "State Attorney General (consumer)",
+          href: "/justice/state-ag",
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: baseApprovedStateAgTask(),
+      filingInsertCount: 0,
+      ownedFilingTasks: [],
+      ownedFilingInsertFail: false,
+      followUpTasks: [],
+      followUpInsertFail: true,
+    };
+
+    const result = await completeStateAgOperatorFiling(createStateAgCompleteSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filedAt: "2026-02-15",
+      confirmationNumber: "AG-CA-TERM-2",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe(FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR);
+      expect(result.status).toBe(500);
+    }
+    expect(state.followUpTasks).toHaveLength(0);
+    expect(
+      (state.client_state.approved_next_action as { follow_up_needed?: boolean } | undefined)
+        ?.follow_up_needed
+    ).toBe(true);
   });
 });
