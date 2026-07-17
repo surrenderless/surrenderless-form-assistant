@@ -7,6 +7,11 @@ import {
   MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type MerchantContactPreparedAnswerField = {
   id: string;
@@ -15,12 +20,7 @@ export type MerchantContactPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type MerchantContactWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type MerchantContactWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 /** Delivery context — automated merchant email may complete first; workspace is fallback. */
 export type MerchantContactDeliveryGuidance = {
@@ -49,12 +49,7 @@ export type MerchantContactOperatorFilingWorkspace = {
   };
 };
 
-export type MerchantContactWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type MerchantContactWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -160,12 +155,7 @@ export function buildMerchantContactPreparedAnswers(
 export function mapMerchantContactWorkspaceEvidence(
   rows: readonly MerchantContactWorkspaceEvidenceInput[]
 ): MerchantContactWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveMerchantContactDraftForWorkspace(

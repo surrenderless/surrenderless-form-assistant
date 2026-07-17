@@ -14,6 +14,11 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type BbbPreparedAnswerField = {
   id: string;
@@ -22,12 +27,7 @@ export type BbbPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type BbbWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type BbbWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 export type BbbOperatorFilingWorkspace = {
   filing_destination: string;
@@ -46,12 +46,7 @@ export type BbbOperatorFilingWorkspace = {
   };
 };
 
-export type BbbWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type BbbWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -124,12 +119,7 @@ export function buildBbbPreparedAnswers(intake: JusticeIntake): BbbPreparedAnswe
 export function mapBbbWorkspaceEvidence(
   rows: readonly BbbWorkspaceEvidenceInput[]
 ): BbbWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveBbbComplaintDraftForWorkspace(

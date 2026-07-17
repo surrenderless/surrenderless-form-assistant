@@ -13,6 +13,11 @@ import {
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type FtcPreparedAnswerField = {
   id: string;
@@ -21,12 +26,7 @@ export type FtcPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type FtcWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type FtcWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 export type FtcOperatorFilingWorkspace = {
   filing_destination: string;
@@ -43,12 +43,7 @@ export type FtcOperatorFilingWorkspace = {
   };
 };
 
-export type FtcWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type FtcWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -121,12 +116,7 @@ export function buildFtcPreparedAnswers(intake: JusticeIntake): FtcPreparedAnswe
 export function mapFtcWorkspaceEvidence(
   rows: readonly FtcWorkspaceEvidenceInput[]
 ): FtcWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveFtcComplaintDraftForWorkspace(

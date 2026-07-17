@@ -13,6 +13,11 @@ import {
 } from "@/lib/justice/stateAgOfficialPortal";
 import { parseStateAgFilingTaskDraft } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeIntake } from "@/lib/justice/types";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 
 export type StateAgPreparedAnswerField = {
   id: string;
@@ -21,12 +26,7 @@ export type StateAgPreparedAnswerField = {
   copyable: boolean;
 };
 
-export type StateAgWorkspaceEvidenceItem = {
-  title: string;
-  evidence_type: string;
-  file_name: string | null;
-  evidence_date: string | null;
-};
+export type StateAgWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 
 export type StateAgOperatorFilingWorkspace = {
   filing_destination: string;
@@ -43,12 +43,7 @@ export type StateAgOperatorFilingWorkspace = {
   };
 };
 
-export type StateAgWorkspaceEvidenceInput = {
-  title?: string | null;
-  evidence_type?: string | null;
-  file_name?: string | null;
-  evidence_date?: string | null;
-};
+export type StateAgWorkspaceEvidenceInput = OperatorWorkspaceEvidenceInput;
 
 function answer(
   id: string,
@@ -116,12 +111,7 @@ export function buildStateAgPreparedAnswers(intake: JusticeIntake): StateAgPrepa
 export function mapStateAgWorkspaceEvidence(
   rows: readonly StateAgWorkspaceEvidenceInput[]
 ): StateAgWorkspaceEvidenceItem[] {
-  return rows.map((row) => ({
-    title: (row.title ?? "").trim() || "(untitled)",
-    evidence_type: (row.evidence_type ?? "").trim() || "other",
-    file_name: row.file_name?.trim() || null,
-    evidence_date: row.evidence_date?.trim() || null,
-  }));
+  return mapOperatorWorkspaceEvidence(rows);
 }
 
 export function resolveStateAgComplaintDraftForWorkspace(

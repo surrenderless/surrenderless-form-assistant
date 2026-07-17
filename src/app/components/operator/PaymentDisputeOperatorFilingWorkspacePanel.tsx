@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
+import { OperatorWorkspaceEvidenceInventory } from "@/app/components/operator/OperatorWorkspaceEvidenceInventory";
 import type { PaymentDisputeOperatorFilingWorkspace } from "@/lib/justice/paymentDisputeOperatorFilingWorkspace";
 
 type PaymentDisputeRecordInput = {
@@ -207,40 +208,7 @@ export function PaymentDisputeOperatorFilingWorkspacePanel({
           ))}
         </ul>
       </div>
-
-      <div className="space-y-2 rounded-lg border border-neutral-200/90 bg-neutral-50/80 p-3 dark:border-neutral-600 dark:bg-neutral-950/40">
-        <p className="text-[11px] font-semibold text-neutral-800 dark:text-neutral-200">
-          Evidence inventory
-        </p>
-        {workspace.evidence.length === 0 ? (
-          <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
-            No saved evidence rows on this case yet.
-          </p>
-        ) : (
-          <ul className="space-y-1.5">
-            {workspace.evidence.map((row, index) => (
-              <li
-                key={`${row.title}-${row.file_name ?? "nofile"}-${index}`}
-                className="text-[11px] text-neutral-800 dark:text-neutral-100"
-              >
-                <span className="font-medium">[{row.evidence_type}]</span> {row.title}
-                {row.file_name ? (
-                  <span className="text-neutral-600 dark:text-neutral-400">
-                    {" "}
-                    · file: {row.file_name}
-                  </span>
-                ) : null}
-                {row.evidence_date ? (
-                  <span className="text-neutral-600 dark:text-neutral-400">
-                    {" "}
-                    · {row.evidence_date}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <OperatorWorkspaceEvidenceInventory evidence={workspace.evidence} />
 
       <form
         onSubmit={(e) => void handleSubmit(e)}

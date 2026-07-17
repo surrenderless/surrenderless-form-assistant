@@ -36,6 +36,8 @@ import {
   parseFollowUpResponseReviewTaskDraft,
   taskNotesMatchFollowUpResponseReviewMarker,
 } from "@/lib/justice/followUpResponseReviewTask";
+import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
+import { mapOperatorFulfillmentQueueEvidenceRow } from "@/lib/justice/operatorFulfillmentQueueEvidence";
 import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
@@ -406,18 +408,7 @@ export async function listOperatorFulfillmentQueue(
   const operatorTasks = candidateTasks.filter((task) => {
     const caseId = task.case_id?.trim() ?? "";
     if (!caseId) return false;
-      return (
-        taskNotesMatchFollowUpResponseReviewMarker(task.notes, caseId) ||
-        taskNotesMatchMerchantContactFilingMarker(task.notes, caseId) ||
-        taskNotesMatchStateAgFilingMarker(task.notes, caseId) ||
-        taskNotesMatchDemandLetterFilingMarker(task.notes, caseId) ||
-        taskNotesMatchCfpbFilingMarker(task.notes, caseId) ||
-        taskNotesMatchPaymentDisputeFilingMarker(task.notes, caseId) ||
-        taskNotesMatchFccFilingMarker(task.notes, caseId) ||
-        taskNotesMatchDotFilingMarker(task.notes, caseId) ||
-        taskNotesMatchBbbFilingMarker(task.notes, caseId) ||
-        taskNotesMatchFtcFilingMarker(task.notes, caseId)
-      );
+    return taskNotesMatchAnyOperatorFulfillmentMarker(task.notes, caseId);
   });
 
   if (operatorTasks.length === 0) return [];
@@ -471,7 +462,7 @@ export async function listOperatorFulfillmentQueue(
 
   const { data: evidenceRows, error: evidenceErr } = await supabase
     .from("justice_case_evidence")
-    .select("case_id, title, evidence_type, file_name, evidence_date")
+    .select("id, case_id, title, evidence_type, file_name, evidence_date")
     .in("case_id", workspaceCaseIds)
     .order("created_at", { ascending: true })
     .limit(200);
@@ -486,19 +477,20 @@ export async function listOperatorFulfillmentQueue(
 
   const evidenceByCaseId = new Map<
     string,
-    { title: string; evidence_type: string; file_name: string | null; evidence_date: string | null }[]
+    {
+      id: string;
+      title: string;
+      evidence_type: string;
+      file_name: string | null;
+      evidence_date: string | null;
+    }[]
   >();
   for (const row of evidenceRows ?? []) {
-    const caseId = String(row.case_id ?? "").trim();
-    if (!caseId) continue;
-    const list = evidenceByCaseId.get(caseId) ?? [];
-    list.push({
-      title: typeof row.title === "string" ? row.title : "",
-      evidence_type: typeof row.evidence_type === "string" ? row.evidence_type : "other",
-      file_name: typeof row.file_name === "string" ? row.file_name : null,
-      evidence_date: typeof row.evidence_date === "string" ? row.evidence_date : null,
-    });
-    evidenceByCaseId.set(caseId, list);
+    const mapped = mapOperatorFulfillmentQueueEvidenceRow(row);
+    if (!mapped) continue;
+    const list = evidenceByCaseId.get(mapped.caseId) ?? [];
+    list.push(mapped.evidence);
+    evidenceByCaseId.set(mapped.caseId, list);
   }
 
   return items.map((item) => {
