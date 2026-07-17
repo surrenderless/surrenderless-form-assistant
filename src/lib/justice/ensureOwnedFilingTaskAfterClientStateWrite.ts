@@ -17,6 +17,7 @@ import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import { attemptAutomatedPaymentDisputeEmailDeliveryAfterEnsure } from "@/lib/justice/paymentDisputeEmailDelivery";
 import {
   ensureStateAgFilingTask,
   shouldQueueStateAgFilingTask,
@@ -90,6 +91,8 @@ export async function ensureOwnedFilingTaskAfterClientStateWrite(
     paymentDisputeDraft?: unknown;
     /** When true (default), attempt automated demand-letter email after a successful demand-letter ensure. */
     attemptDemandLetterEmail?: boolean;
+    /** When true (default), attempt automated payment-dispute email after a successful payment-dispute ensure. */
+    attemptPaymentDisputeEmail?: boolean;
   }
 ): Promise<EnsureOwnedFilingTaskAfterClientStateWriteResult> {
   const userId = params.userId.trim();
@@ -160,6 +163,15 @@ export async function ensureOwnedFilingTaskAfterClientStateWrite(
   let timeline = result.timeline;
   if (kind === "demand_letter" && params.attemptDemandLetterEmail !== false) {
     const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
+      supabase,
+      userId,
+      caseId,
+      timeline
+    );
+    timeline = emailAttempt.timeline;
+  }
+  if (kind === "payment_dispute" && params.attemptPaymentDisputeEmail !== false) {
+    const emailAttempt = await attemptAutomatedPaymentDisputeEmailDeliveryAfterEnsure(
       supabase,
       userId,
       caseId,

@@ -458,6 +458,27 @@ export async function attemptAutomatedPaymentDisputeEmailDelivery(
   };
 }
 
+/**
+ * After a successful payment-dispute task ensure: attempt outreach email and prefer
+ * any timeline produced by accepted/failed delivery. Skips leave currentTimeline unchanged.
+ * Idempotent — safe alongside case PATCH delivery.
+ */
+export async function attemptAutomatedPaymentDisputeEmailDeliveryAfterEnsure(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  currentTimeline: TimelineEntry[] | null = null
+): Promise<{
+  timeline: TimelineEntry[] | null;
+  result: AttemptAutomatedPaymentDisputeEmailDeliveryResult;
+}> {
+  const result = await attemptAutomatedPaymentDisputeEmailDelivery(supabase, userId, caseId);
+  if ((result.status === "accepted" || result.status === "failed") && result.timeline) {
+    return { timeline: result.timeline, result };
+  }
+  return { timeline: currentTimeline, result };
+}
+
 /** Task-notes helpers for chat status (queued / sending / failed while task remains open). */
 export function isPaymentDisputeEmailSending(task: JusticeCaseTaskRow | undefined): boolean {
   if (!task || task.completed_at?.trim()) return false;
