@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/reconcile-owned-filing-tasks",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-response-review-tasks",
+      "schedule": "30 14 * * *"
     }
   ]
 }
