@@ -71,6 +71,8 @@ import {
   ensureChatResolutionAfterEscalationFulfillment,
   shouldRehydrateCaseAfterResolutionSync,
 } from "@/lib/justice/chatEscalationFulfillmentSync";
+import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { persistPreparedPacketApprovalToCase } from "@/lib/justice/persistPreparedPacketApprovalToCase";
 import {
   observeChatOwnedFulfillmentCompletionSync,
   shouldRehydrateCaseAfterOwnedFulfillmentSync,
@@ -3173,37 +3175,37 @@ export default function JusticeChatAiPage() {
       nextActionTarget
     );
 
-    writePreparedPacketApproved(caseId);
-    writeSessionApprovedNextAction(caseId, withTracking);
-    setPreparedPacketApproved(true);
-    setApprovedNextAction(withTracking);
-    setApprovePreparedPacketChecked(false);
-
+    // Persist first — never commit optimistic approved session/UI state before PATCH succeeds.
     setApprovingPreparedPacket(true);
     setTrackingSaveError(null);
     try {
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-      if (!getRes.ok) {
-        console.warn("justice chat-ai: GET before prepared packet approve failed", getRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return false;
-      }
-      const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged: JusticeCaseClientState = {
-        ...parseJusticeCaseClientState(existing.client_state),
-        prepared_packet_approved: true,
-        approved_next_action: withTracking,
-      };
-      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_state: merged }),
+      const result = await persistPreparedPacketApprovalToCase({
+        caseId,
+        nextAction: withTracking,
+        logLabel: "justice chat-ai",
       });
-      if (!patchRes.ok) {
-        console.warn("justice chat-ai: PATCH prepared packet approve failed", patchRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+      if (!result.ok) {
+        console.warn(
+          "justice chat-ai: prepared packet approve failed",
+          result.retryableOwnedFilingEnsure ? "owned-filing ensure" : result.error
+        );
+        setTrackingSaveError(
+          result.retryableOwnedFilingEnsure
+            ? OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR
+            : CHAT_TRACKING_SAVE_ERROR_MESSAGE
+        );
         return false;
       }
+
+      const hydrated =
+        hydrateApprovedNextActionForDisplay(caseId, result.clientState) ?? withTracking;
+      writePreparedPacketApproved(caseId);
+      writeSessionApprovedNextAction(caseId, hydrated);
+      setPreparedPacketApproved(
+        parseJusticeCaseClientState(result.clientState).prepared_packet_approved === true
+      );
+      setApprovedNextAction(hydrated);
+      setApprovePreparedPacketChecked(false);
       setTrackingSaveError(null);
       return true;
     } catch (e) {
