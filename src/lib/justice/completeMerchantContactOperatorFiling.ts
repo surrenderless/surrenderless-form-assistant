@@ -436,6 +436,13 @@ export async function completeMerchantContactOperatorFiling(
       existingClientState: caseRow.client_state,
       nextClientState: clientState,
     });
+    if (!followUpEnsure.ok) {
+      return {
+        ok: false,
+        error: followUpEnsure.error,
+        status: 500,
+      };
+    }
     if (followUpEnsure.timeline) {
       timeline = followUpEnsure.timeline;
     }
