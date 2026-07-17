@@ -127,6 +127,7 @@ import {
   buildChatCaseClosureAssistantResponse,
   buildChatCaseClosureGateContext,
   parseChatCaseClosureMessage,
+  parseOperatorOwnedArchiveIntent,
   parsePrematureArchiveIntent,
   resolvePendingChatCaseClosureGate,
 } from "@/lib/justice/chatCaseClosureGates";
@@ -2676,6 +2677,8 @@ export default function JusticeChatAiPage() {
   const evidencePreviewFetchGenerationRef = useRef(0);
   const wasPendingHumanFulfillmentEscalationRef = useRef(false);
   const ownedFulfillmentSnapshotRef = useRef<ChatOwnedFulfillmentObservationSnapshot | null>(null);
+  /** Latest server archived_at for the active case (from case GET refresh). */
+  const caseArchivedAtRef = useRef<string | null>(null);
   const partsRef = useRef(parts);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
@@ -3147,6 +3150,7 @@ export default function JusticeChatAiPage() {
     legalConsentTrackedCaseIdRef.current = null;
     merchantContactAutopilotCaseRef.current = null;
     wasPendingHumanFulfillmentEscalationRef.current = false;
+    caseArchivedAtRef.current = null;
   }
 
   async function handleApprovePreparedPacketFromChat(options?: {
@@ -4086,6 +4090,7 @@ export default function JusticeChatAiPage() {
           approvedAction: approvedNextActionRef.current,
           tasks,
           filings,
+          archivedAt: caseArchivedAtRef.current,
         });
       }
       return { tasks, filings };
@@ -4126,8 +4131,16 @@ export default function JusticeChatAiPage() {
           signal: options?.signal,
         });
         if (!res.ok) return hydrated;
-        const data = (await res.json()) as { client_state?: unknown; timeline?: unknown };
+        const data = (await res.json()) as {
+          client_state?: unknown;
+          timeline?: unknown;
+          archived_at?: string | null;
+        };
         if (options?.signal?.aborted) return hydrated;
+        caseArchivedAtRef.current =
+          typeof data.archived_at === "string" && data.archived_at.trim()
+            ? data.archived_at.trim()
+            : null;
         if (Array.isArray(data.timeline)) {
           const localTimeline = readTimeline(caseId);
           replaceTimelineForCase(
@@ -4192,6 +4205,7 @@ export default function JusticeChatAiPage() {
           approvedAction: approvedAction ?? approvedNextActionRef.current,
           tasks: preview.tasks,
           filings: preview.filings,
+          archivedAt: caseArchivedAtRef.current,
         };
         let fulfillmentSync = observeChatOwnedFulfillmentCompletionSync({
           observation,
@@ -4235,6 +4249,7 @@ export default function JusticeChatAiPage() {
                 approvedAction: approvedAction ?? approvedNextActionRef.current,
                 tasks: preview.tasks,
                 filings: preview.filings,
+                archivedAt: caseArchivedAtRef.current,
               };
               fulfillmentSync = observeChatOwnedFulfillmentCompletionSync({
                 observation,
@@ -4262,6 +4277,7 @@ export default function JusticeChatAiPage() {
               approvedAction: approvedAction ?? approvedNextActionRef.current,
               tasks: preview.tasks,
               filings: preview.filings,
+              archivedAt: caseArchivedAtRef.current,
             };
             fulfillmentSync = observeChatOwnedFulfillmentCompletionSync({
               observation,
@@ -4281,6 +4297,7 @@ export default function JusticeChatAiPage() {
             approvedAction: approvedAction ?? approvedNextActionRef.current,
             tasks: preview.tasks,
             filings: preview.filings,
+            archivedAt: caseArchivedAtRef.current,
           });
         }
       };
@@ -4969,6 +4986,7 @@ export default function JusticeChatAiPage() {
 
     wasPendingHumanFulfillmentEscalationRef.current = false;
     ownedFulfillmentSnapshotRef.current = null;
+    caseArchivedAtRef.current = null;
     const ac = new AbortController();
     void refreshFullChatCaseContextFromServer(caseId, { signal: ac.signal });
 
@@ -5401,6 +5419,11 @@ export default function JusticeChatAiPage() {
                   { caseId: consentCaseId, source: "closure_gate" }
                 );
               }
+            } else {
+              addChatMessages(
+                [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+                { caseId: consentCaseId, source: "closure_gate" }
+              );
             }
           } finally {
             sendInFlightRef.current = false;
@@ -5408,6 +5431,27 @@ export default function JusticeChatAiPage() {
           }
           return;
         }
+      } else if (parseOperatorOwnedArchiveIntent(trimmed, closureContext)) {
+        sendInFlightRef.current = true;
+        setLoading(true);
+        setInputValue("");
+        try {
+          addChatMessages(
+            [
+              { id: msgId(), role: "user", text: trimmed },
+              {
+                id: msgId(),
+                role: "assistant",
+                text: buildChatCaseClosureAssistantResponse({ kind: "operator_owned_archive" }),
+              },
+            ],
+            { caseId: consentCaseId, source: "closure_gate" }
+          );
+        } finally {
+          sendInFlightRef.current = false;
+          setLoading(false);
+        }
+        return;
       } else if (
         resolutionFlowExposed &&
         parsePrematureArchiveIntent(trimmed, closureContext)
