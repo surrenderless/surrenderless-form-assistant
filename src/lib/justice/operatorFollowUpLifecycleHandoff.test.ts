@@ -297,6 +297,8 @@ describe("terminal operator filing → follow-up lifecycle handoff", () => {
       existingClientState: state.client_state,
       nextClientState,
     });
+    expect(ensured.ok).toBe(true);
+    if (!ensured.ok) return;
     expect(ensured.created).toBe(true);
     expect(state.followUpTask).not.toBeNull();
     expect(taskNotesMatchFollowUpMarker(state.followUpTask!.notes, CASE_ID)).toBe(true);
@@ -306,9 +308,11 @@ describe("terminal operator filing → follow-up lifecycle handoff", () => {
     const again = await ensureFollowUpAfterOperatorClientStateWrite(createCapableSupabase(state), {
       userId: USER_ID,
       caseId: CASE_ID,
-      existingClientState: { approved_next_action: { status: "completed" } },
+      existingClientState: nextClientState,
       nextClientState,
     });
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
     expect(again.created).toBe(false);
 
     const due = await processDueFollowUps(createCapableSupabase(state), {

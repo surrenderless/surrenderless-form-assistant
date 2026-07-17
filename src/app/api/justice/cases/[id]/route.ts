@@ -416,6 +416,9 @@ async function patchJusticeCase(
       existingClientState,
       nextClientState: patch.client_state,
     });
+    if (!followUpEnsure.ok) {
+      return NextResponse.json({ error: followUpEnsure.error }, { status: 500 });
+    }
     if (followUpEnsure.timeline) {
       responseData = { ...responseData, timeline: followUpEnsure.timeline };
     }

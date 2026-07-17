@@ -46,6 +46,8 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 }));
 
 import { completeDemandLetterOperatorFiling } from "@/lib/justice/completeDemandLetterOperatorFiling";
+import { FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
+import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
 
 function demandLetterIntake(): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -72,7 +74,9 @@ type MockCaseState = {
   client_state: Record<string, unknown>;
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
+  followUpTasks: JusticeCaseTaskRow[];
   filingInsertCount: number;
+  followUpInsertFail: boolean;
 };
 
 function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -108,6 +112,11 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
       }
 
       if (table === "justice_case_tasks") {
+        const tasksMatchingLike = (pattern: string) => {
+          const prefix = String(pattern).replace(/%$/, "");
+          const all = [state.task, ...state.followUpTasks];
+          return all.filter((task) => (task.notes ?? "").startsWith(prefix));
+        };
         return {
           select: () => ({
             eq: () => ({
@@ -116,14 +125,20 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
                   limit: async () => ({ data: [state.task], error: null }),
                   maybeSingle: async () => ({ data: state.task, error: null }),
                 }),
-                like: () => ({
-                  limit: async () => ({ data: [state.task], error: null }),
+                like: (_column: string, pattern: string) => ({
+                  limit: async () => ({
+                    data: tasksMatchingLike(pattern).slice(0, 1),
+                    error: null,
+                  }),
                 }),
                 limit: async () => ({ data: [state.task], error: null }),
                 maybeSingle: async () => ({ data: state.task, error: null }),
               }),
-              like: () => ({
-                limit: async () => ({ data: [state.task], error: null }),
+              like: (_column: string, pattern: string) => ({
+                limit: async () => ({
+                  data: tasksMatchingLike(pattern).slice(0, 1),
+                  error: null,
+                }),
               }),
               maybeSingle: async () => ({ data: state.task, error: null }),
             }),
@@ -147,9 +162,30 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
               }),
             }),
           }),
-          insert: () => ({
+          insert: (row: Record<string, unknown>) => ({
             select: () => ({
-              single: async () => ({ data: null, error: { message: "unexpected task insert" } }),
+              single: async () => {
+                const notes = typeof row.notes === "string" ? row.notes : "";
+                if (!notes.startsWith("follow_up:")) {
+                  return { data: null, error: { message: "unexpected task insert" } };
+                }
+                if (state.followUpInsertFail) {
+                  return { data: null, error: { message: "follow-up insert failed" } };
+                }
+                const task: JusticeCaseTaskRow = {
+                  id: `follow-up-${state.followUpTasks.length + 1}`,
+                  user_id: USER_ID,
+                  case_id: CASE_ID,
+                  title: String(row.title ?? ""),
+                  due_date: typeof row.due_date === "string" ? row.due_date : null,
+                  notes,
+                  completed_at: null,
+                  created_at: "2026-06-15T12:06:00.000Z",
+                  updated_at: "2026-06-15T12:06:00.000Z",
+                };
+                state.followUpTasks = [...state.followUpTasks, task];
+                return { data: task, error: null };
+              },
             }),
           }),
         };
@@ -269,7 +305,9 @@ describe("demand-letter workspace completion behavior", () => {
         created_at: "2026-06-01T00:00:00.000Z",
         updated_at: "2026-06-01T00:00:00.000Z",
       },
+      followUpTasks: [],
       filingInsertCount: 0,
+      followUpInsertFail: false,
     };
     const result = await completeDemandLetterOperatorFiling(
       createDemandLetterCompleteSupabase(state),
@@ -315,7 +353,9 @@ describe("demand-letter workspace completion behavior", () => {
         created_at: "2026-06-01T00:00:00.000Z",
         updated_at: "2026-06-01T00:00:00.000Z",
       },
+      followUpTasks: [],
       filingInsertCount: 0,
+      followUpInsertFail: false,
     };
 
     expect(workspace.is_submitted).toBe(false);
@@ -339,5 +379,61 @@ describe("demand-letter workspace completion behavior", () => {
     expect(result.filing.destination).toBe("Small claims / demand letter");
     expect(result.task.completed_at).toBeTruthy();
     expect(shouldQueueDemandLetterFilingTask(state.client_state)).toBe(false);
+    expect(state.followUpTasks).toHaveLength(1);
+    expect(taskNotesMatchFollowUpMarker(state.followUpTasks[0].notes, CASE_ID)).toBe(true);
+  });
+
+  it("returns retriable failure when follow-up task ensure fails after client_state write", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const workspace = buildDemandLetterOperatorFilingWorkspace({ intake: demandLetterIntake() });
+    const state: MockCaseState = {
+      intake: demandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Demand letter: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      followUpInsertFail: true,
+    };
+
+    const result = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: workspace.filing_destination,
+        filedAt: "2026-06-15",
+        confirmationNumber: "DL-SEND-998877",
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe(FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR);
+      expect(result.status).toBe(500);
+    }
+    expect(state.followUpTasks).toHaveLength(0);
+    expect(
+      (state.client_state.approved_next_action as { follow_up_needed?: boolean } | undefined)
+        ?.follow_up_needed
+    ).toBe(true);
   });
 });

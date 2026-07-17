@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
+import {
+  ensureFollowUpAfterOperatorClientStateWrite,
+  FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR,
+} from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import {
   followUpTaskNotesMarker,
   taskNotesMatchFollowUpMarker,
@@ -41,6 +44,8 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 type MockState = {
   tasks: JusticeCaseTaskRow[];
   insertCount: number;
+  insertFail: boolean;
+  selectFail: boolean;
 };
 
 function createFollowUpTaskSupabase(state: MockState): SupabaseClient {
@@ -55,6 +60,9 @@ function createFollowUpTaskSupabase(state: MockState): SupabaseClient {
             eq: () => ({
               like: (_column: string, pattern: string) => ({
                 limit: async () => {
+                  if (state.selectFail) {
+                    return { data: null, error: { message: "select failed" } };
+                  }
                   const prefix = String(pattern).replace(/%$/, "");
                   const matched = state.tasks.filter((task) =>
                     (task.notes ?? "").startsWith(prefix)
@@ -68,6 +76,9 @@ function createFollowUpTaskSupabase(state: MockState): SupabaseClient {
         insert: (row: Record<string, unknown>) => ({
           select: () => ({
             single: async () => {
+              if (state.insertFail) {
+                return { data: null, error: { message: "insert failed" } };
+              }
               state.insertCount += 1;
               const task: JusticeCaseTaskRow = {
                 id: `follow-up-${state.insertCount}`,
@@ -90,13 +101,25 @@ function createFollowUpTaskSupabase(state: MockState): SupabaseClient {
   } as unknown as SupabaseClient;
 }
 
+const nextWithFollowUp = {
+  approved_next_action: {
+    label: "Small claims / demand letter",
+    href: "/justice/demand-letter",
+    status: "completed" as const,
+    follow_up_needed: true as const,
+    follow_up_at: "2026-08-01T12:00:00.000Z",
+    outcome_note: "Escalation complete. Awaiting responses.",
+    handling_requested_at: "2026-07-17T12:00:00.000Z",
+  },
+};
+
 describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
   beforeEach(() => {
     timelineStore.entries = [];
   });
 
-  it("creates a follow-up task on false→true follow_up_needed after direct client_state write", async () => {
-    const state: MockState = { tasks: [], insertCount: 0 };
+  it("creates a follow-up task when follow_up_needed is true after client_state write", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false, selectFail: false };
     const result = await ensureFollowUpAfterOperatorClientStateWrite(
       createFollowUpTaskSupabase(state),
       {
@@ -109,26 +132,38 @@ describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
             status: "completed",
           },
         },
-        nextClientState: {
-          approved_next_action: {
-            label: "Small claims / demand letter",
-            href: "/justice/demand-letter",
-            status: "completed",
-            follow_up_needed: true,
-            follow_up_at: "2026-08-01T12:00:00.000Z",
-            outcome_note: "Escalation complete. Awaiting responses.",
-            handling_requested_at: "2026-07-17T12:00:00.000Z",
-          },
-        },
+        nextClientState: nextWithFollowUp,
       }
     );
 
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
     expect(result.created).toBe(true);
     expect(state.insertCount).toBe(1);
     expect(state.tasks).toHaveLength(1);
     expect(taskNotesMatchFollowUpMarker(state.tasks[0].notes, CASE_ID)).toBe(true);
     expect(state.tasks[0].due_date).toBe("2026-08-01");
     expect(result.timeline?.some((e) => e.type === "task_added")).toBe(true);
+  });
+
+  it("heals when follow_up_needed was already true but the task is missing", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false, selectFail: false };
+    const alreadyTrue = nextWithFollowUp;
+    const result = await ensureFollowUpAfterOperatorClientStateWrite(
+      createFollowUpTaskSupabase(state),
+      {
+        userId: USER_ID,
+        caseId: CASE_ID,
+        existingClientState: alreadyTrue,
+        nextClientState: alreadyTrue,
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.created).toBe(true);
+    expect(state.insertCount).toBe(1);
+    expect(state.tasks).toHaveLength(1);
   });
 
   it("is idempotent when a follow-up task already exists", async () => {
@@ -144,7 +179,12 @@ describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
       created_at: "2026-07-01T00:00:00.000Z",
       updated_at: "2026-07-01T00:00:00.000Z",
     };
-    const state: MockState = { tasks: [existing], insertCount: 0 };
+    const state: MockState = {
+      tasks: [existing],
+      insertCount: 0,
+      insertFail: false,
+      selectFail: false,
+    };
 
     const result = await ensureFollowUpAfterOperatorClientStateWrite(
       createFollowUpTaskSupabase(state),
@@ -152,44 +192,20 @@ describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
         userId: USER_ID,
         caseId: CASE_ID,
         existingClientState: { approved_next_action: { status: "completed" } },
-        nextClientState: {
-          approved_next_action: {
-            status: "completed",
-            follow_up_needed: true,
-            follow_up_at: "2026-08-01T12:00:00.000Z",
-            label: "Small claims / demand letter",
-            href: "/justice/demand-letter",
-          },
-        },
+        nextClientState: nextWithFollowUp,
       }
     );
 
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
     expect(result.created).toBe(false);
+    expect(result.task?.id).toBe("existing-follow-up");
     expect(state.insertCount).toBe(0);
     expect(state.tasks).toHaveLength(1);
   });
 
-  it("does nothing when follow_up_needed does not newly become true", async () => {
-    const state: MockState = { tasks: [], insertCount: 0 };
-    const alreadyTrue = {
-      approved_next_action: {
-        status: "completed" as const,
-        follow_up_needed: true as const,
-        href: "/justice/demand-letter",
-      },
-    };
-    const noTransition = await ensureFollowUpAfterOperatorClientStateWrite(
-      createFollowUpTaskSupabase(state),
-      {
-        userId: USER_ID,
-        caseId: CASE_ID,
-        existingClientState: alreadyTrue,
-        nextClientState: alreadyTrue,
-      }
-    );
-    expect(noTransition.created).toBe(false);
-    expect(state.insertCount).toBe(0);
-
+  it("does nothing when follow_up_needed is not true", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false, selectFail: false };
     const stillFalse = await ensureFollowUpAfterOperatorClientStateWrite(
       createFollowUpTaskSupabase(state),
       {
@@ -199,7 +215,44 @@ describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
         nextClientState: { approved_next_action: { status: "completed" } },
       }
     );
+    expect(stillFalse.ok).toBe(true);
+    if (!stillFalse.ok) return;
     expect(stillFalse.created).toBe(false);
     expect(state.insertCount).toBe(0);
+  });
+
+  it("returns retriable failure when ensure cannot create a missing follow-up task", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: true, selectFail: false };
+    const result = await ensureFollowUpAfterOperatorClientStateWrite(
+      createFollowUpTaskSupabase(state),
+      {
+        userId: USER_ID,
+        caseId: CASE_ID,
+        existingClientState: {},
+        nextClientState: nextWithFollowUp,
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe(FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR);
+    expect(state.insertCount).toBe(0);
+    expect(state.tasks).toHaveLength(0);
+  });
+
+  it("returns retriable failure when existing-task select fails", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false, selectFail: true };
+    const result = await ensureFollowUpAfterOperatorClientStateWrite(
+      createFollowUpTaskSupabase(state),
+      {
+        userId: USER_ID,
+        caseId: CASE_ID,
+        nextClientState: nextWithFollowUp,
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe(FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR);
   });
 });
