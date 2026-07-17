@@ -97,7 +97,7 @@ describe("merchant-contact operator fulfillment queue attachment", () => {
 });
 
 describe("resolveOperatorFulfillmentPanelKind merchant-contact branching", () => {
-  it("branches merchant contact to merchant_contact_workspace and leaves payment dispute on record_form", () => {
+  it("branches merchant contact to merchant_contact_workspace and leaves payment dispute on payment_dispute_workspace", () => {
     const intake = baseIntake();
     const merchantItem = classifyOpenOperatorTask(
       openTask(buildMerchantContactFilingTaskNotes(CASE_ID, intake)),
@@ -120,7 +120,7 @@ describe("resolveOperatorFulfillmentPanelKind merchant-contact branching", () =>
 
     expect(resolveOperatorFulfillmentPanelKind(merchantItem)).toBe("merchant_contact_workspace");
     expect(resolveOperatorFulfillmentPanelKind(dlItem)).toBe("demand_letter_workspace");
-    expect(resolveOperatorFulfillmentPanelKind(paymentItem)).toBe("record_form");
+    expect(resolveOperatorFulfillmentPanelKind(paymentItem)).toBe("payment_dispute_workspace");
     expect(
       resolveOperatorFulfillmentPanelKind({
         step: "merchant_contact",
@@ -173,6 +173,7 @@ describe("merchant-contact lane isolation", () => {
     );
     expect(paymentItem?.step).toBe("payment_dispute");
     expect(paymentItem?.merchant_contact_workspace).toBeUndefined();
-    expect(resolveOperatorFulfillmentPanelKind(paymentItem!)).toBe("record_form");
+    expect(paymentItem?.payment_dispute_workspace).toBeDefined();
+    expect(resolveOperatorFulfillmentPanelKind(paymentItem!)).toBe("payment_dispute_workspace");
   });
 });
