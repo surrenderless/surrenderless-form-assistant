@@ -12,7 +12,9 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import {
   completeStateAgFilingTaskIfOpen,
   hasStateAgFilingWithConfirmation,
@@ -256,6 +258,10 @@ export async function completeStateAgOperatorFiling(
   let clientState: Record<string, unknown> = parsedClientState as Record<string, unknown>;
   if (nextApprovedNext) {
     clientState = mergeClientStateWithApprovedNextAction(caseRow.client_state, nextApprovedNext);
+    const resolutionMerged = mergeResolutionTrackingIntoClientState(clientState, intake);
+    if (resolutionMerged) {
+      clientState = resolutionMerged;
+    }
     const { error: patchErr } = await supabase
       .from("justice_cases")
       .update({ client_state: clientState })
@@ -269,6 +275,23 @@ export async function completeStateAgOperatorFiling(
         error: "Filing recorded but could not advance the approved next action",
         status: 500,
       };
+    }
+
+    const followUpEnsure = await ensureFollowUpAfterOperatorClientStateWrite(supabase, {
+      userId,
+      caseId,
+      existingClientState: caseRow.client_state,
+      nextClientState: clientState,
+    });
+    if (!followUpEnsure.ok) {
+      return {
+        ok: false,
+        error: followUpEnsure.error,
+        status: 500,
+      };
+    }
+    if (followUpEnsure.timeline) {
+      timeline = followUpEnsure.timeline;
     }
 
     const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
