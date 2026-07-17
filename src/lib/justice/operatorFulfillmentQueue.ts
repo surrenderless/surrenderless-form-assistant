@@ -78,6 +78,11 @@ import {
   buildStateAgOperatorFilingWorkspace,
   type StateAgOperatorFilingWorkspace,
 } from "@/lib/justice/stateAgOperatorFilingWorkspace";
+import {
+  mapOperatorWorkspaceEvidence,
+  type OperatorWorkspaceEvidenceInput,
+  type OperatorWorkspaceEvidenceItem,
+} from "@/lib/justice/operatorWorkspaceEvidence";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -120,6 +125,11 @@ export type OperatorFulfillmentQueueItem = {
   merchant_contact_workspace?: MerchantContactOperatorFilingWorkspace;
   /** Present only for payment-dispute tasks — guided fallback workspace (email remains primary). */
   payment_dispute_workspace?: PaymentDisputeOperatorFilingWorkspace;
+  /**
+   * Present for follow-up response review — case evidence with View file access
+   * via /api/operator/evidence/[id]/file (never includes file_path).
+   */
+  evidence?: OperatorWorkspaceEvidenceItem[];
 };
 
 export type OperatorFulfillmentPanelKind =
@@ -170,6 +180,37 @@ export function resolveOperatorFulfillmentPanelKind(
   return "record_form";
 }
 
+/** Steps whose case evidence is loaded into the operator fulfillment queue payload. */
+export function operatorFulfillmentStepLoadsCaseEvidence(step: OperatorFulfillmentStep): boolean {
+  return (
+    step === "state_ag" ||
+    step === "cfpb" ||
+    step === "fcc" ||
+    step === "ftc" ||
+    step === "dot" ||
+    step === "demand_letter" ||
+    step === "bbb" ||
+    step === "merchant_contact" ||
+    step === "payment_dispute" ||
+    step === "follow_up_response_review"
+  );
+}
+
+/**
+ * Attaches mapped evidence inventory to a follow-up response-review queue item.
+ * Other steps are unchanged (their evidence lives inside guided workspaces).
+ */
+export function withFollowUpResponseReviewEvidence(
+  item: OperatorFulfillmentQueueItem,
+  evidence: readonly OperatorWorkspaceEvidenceInput[]
+): OperatorFulfillmentQueueItem {
+  if (item.step !== "follow_up_response_review") return item;
+  return {
+    ...item,
+    evidence: mapOperatorWorkspaceEvidence(evidence),
+  };
+}
+
 const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
 
@@ -200,6 +241,7 @@ export function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseFollowUpResponseReviewTaskDraft(task.notes)),
+      evidence: [],
     };
   }
 
@@ -443,18 +485,7 @@ export async function listOperatorFulfillmentQueue(
   const workspaceCaseIds = [
     ...new Set(
       items
-        .filter(
-          (item) =>
-            item.step === "state_ag" ||
-            item.step === "cfpb" ||
-            item.step === "fcc" ||
-            item.step === "ftc" ||
-            item.step === "dot" ||
-            item.step === "demand_letter" ||
-            item.step === "bbb" ||
-            item.step === "merchant_contact" ||
-            item.step === "payment_dispute"
-        )
+        .filter((item) => operatorFulfillmentStepLoadsCaseEvidence(item.step))
         .map((item) => item.case_id)
     ),
   ];
@@ -597,6 +628,10 @@ export async function listOperatorFulfillmentQueue(
           evidence,
         }),
       };
+    }
+
+    if (item.step === "follow_up_response_review") {
+      return withFollowUpResponseReviewEvidence(item, evidence);
     }
 
     return item;
