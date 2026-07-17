@@ -7,6 +7,7 @@ import { stateNameFromCode, US_STATES } from "@/lib/justice/buildStateAgComplain
 export const STATE_AG_OFFICIAL_CONSUMER_COMPLAINT_PORTALS: Readonly<
   Partial<Record<string, string>>
 > = {
+  AK: "https://www.law.alaska.gov/department/civil/consumer/complaint-form.html",
   AL: "https://www.alabamaag.gov/consumer-complaint/",
   AR: "https://arkansasag.gov/file-a-complaint/",
   AZ: "https://www.azag.gov/complaints/consumer",
@@ -42,6 +43,7 @@ export const STATE_AG_OFFICIAL_CONSUMER_COMPLAINT_PORTALS: Readonly<
   NV: "https://ag.nv.gov/Complaints/CSU_Complaints___FAQ/",
   NY: "https://ag.ny.gov/consumer-frauds/filing-consumer-complaint",
   OH: "https://www.ohioattorneygeneral.gov/Individuals-and-Families/Consumers/File-a-Complaint",
+  OK: "https://oklahoma.gov/oag/complaints-tiplines/complaints/consumer.html",
   OR: "https://www.doj.state.or.us/consumer-protection/consumer-complaints/",
   PA: "https://www.attorneygeneral.gov/submit-a-complaint/",
   RI: "https://riag.ri.gov/forms/consumer-complaint",
