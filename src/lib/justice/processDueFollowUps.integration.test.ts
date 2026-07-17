@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { followUpTaskNotesMarker } from "@/lib/justice/followUpCaseTask";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
+import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
   NO_RESPONSE_OUTCOME_MARKER,
   processDueFollowUps,
@@ -80,6 +81,9 @@ type MockState = {
   archived_at: string | null;
   responseReviewInserted: number;
   casePatched: number;
+  /** When true, owned filing-task inserts fail (simulates ensure failure). */
+  failOwnedFilingInsert?: boolean;
+  ownedFilingInserted: number;
 };
 
 /**
@@ -194,6 +198,25 @@ function createCapableSupabase(state: MockState): SupabaseClient {
                     error: null,
                   };
                 }
+                const isOwnedFilingInsert =
+                  notes.startsWith(`state_ag_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`bbb_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`cfpb_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`demand_letter_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`merchant_contact_queue:${CASE_ID}`) ||
+                  notes.startsWith(`payment_dispute_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`fcc_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`ftc_filing_queue:${CASE_ID}`) ||
+                  notes.startsWith(`dot_filing_queue:${CASE_ID}`);
+                if (isOwnedFilingInsert && state.failOwnedFilingInsert) {
+                  return {
+                    data: null,
+                    error: { message: "simulated owned filing insert failure" },
+                  };
+                }
+                if (isOwnedFilingInsert) {
+                  state.ownedFilingInserted += 1;
+                }
                 return {
                   data: {
                     id: "queued-other-task",
@@ -225,6 +248,7 @@ function createCapableSupabase(state: MockState): SupabaseClient {
                     intake: state.intake,
                     client_state: state.client_state,
                     archived_at: state.archived_at,
+                    payment_dispute_draft: null,
                     timeline: timelineStore.entries,
                   },
                   error: null,
@@ -262,6 +286,7 @@ describe("processDueFollowUps", () => {
       archived_at: null,
       responseReviewInserted: 0,
       casePatched: 0,
+      ownedFilingInserted: 0,
       client_state: {
         prepared_packet_approved: true,
         approved_next_action: {
@@ -313,6 +338,7 @@ describe("processDueFollowUps", () => {
       archived_at: null,
       responseReviewInserted: 0,
       casePatched: 0,
+      ownedFilingInserted: 0,
       client_state: {
         prepared_packet_approved: true,
         approved_next_action: {
@@ -353,6 +379,7 @@ describe("processDueFollowUps", () => {
       archived_at: null,
       responseReviewInserted: 0,
       casePatched: 0,
+      ownedFilingInserted: 0,
       client_state: {
         prepared_packet_approved: true,
         approved_next_action: {
@@ -393,5 +420,113 @@ describe("processDueFollowUps", () => {
     expect(second.scanned).toBe(0);
     expect(state.responseReviewInserted).toBe(1);
     expect(state.casePatched).toBe(1);
+  });
+
+  it("does not complete follow-up or count advanced when owned filing ensure fails after advance", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      responseReviewInserted: 0,
+      casePatched: 0,
+      ownedFilingInserted: 0,
+      failOwnedFilingInsert: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Better Business Bureau",
+          href: "/justice/bbb",
+          status: "completed",
+          completed_at: "2026-05-01T00:00:00.000Z",
+          follow_up_needed: true,
+          follow_up_at: "2026-06-15T12:00:00.000Z",
+          outcome_note: "BBB filing recorded. Awaiting response.",
+          handling_requested_at: "2026-05-01T00:00:00.000Z",
+        },
+      },
+      followUpTask: {
+        id: FOLLOW_UP_TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Surrenderless follow-up: Better Business Bureau",
+        due_date: "2026-06-15",
+        notes: marker,
+        completed_at: null,
+        created_at: "2026-05-01T00:00:00.000Z",
+        updated_at: "2026-05-01T00:00:00.000Z",
+      },
+    };
+
+    const summary = await processDueFollowUps(createCapableSupabase(state), {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+
+    expect(summary.failed_retryable).toBe(1);
+    expect(summary.advanced).toBe(0);
+    expect(summary.processed).toBe(0);
+    expect(summary.results[0]).toMatchObject({
+      kind: "failed_retryable",
+      error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
+    });
+    expect(state.casePatched).toBe(1);
+    expect(state.ownedFilingInserted).toBe(0);
+    expect(state.followUpTask.completed_at).toBeNull();
+    const next = state.client_state.approved_next_action as {
+      href?: string;
+      status?: string;
+      follow_up_needed?: boolean;
+    };
+    expect(next.href).not.toBe("/justice/bbb");
+    expect(next.status).toBe("approved");
+    expect(next.follow_up_needed).not.toBe(true);
+  });
+
+  it("on already_processed, re-runs owned ensure and leaves follow-up open when ensure fails", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      responseReviewInserted: 0,
+      casePatched: 0,
+      ownedFilingInserted: 0,
+      failOwnedFilingInsert: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "State Attorney General (consumer)",
+          href: "/justice/state-ag",
+          status: "approved",
+          follow_up_needed: false,
+          outcome_note: `${NO_RESPONSE_OUTCOME_MARKER} (due 2026-06-15). Follow-up check completed by Surrenderless — case remains open; no automatic resolution applied.`,
+          handling_requested_at: "2026-05-01T00:00:00.000Z",
+        },
+      },
+      followUpTask: {
+        id: FOLLOW_UP_TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Surrenderless follow-up: Better Business Bureau",
+        due_date: "2026-06-15",
+        notes: marker,
+        completed_at: null,
+        created_at: "2026-05-01T00:00:00.000Z",
+        updated_at: "2026-05-01T00:00:00.000Z",
+      },
+    };
+
+    const summary = await processDueFollowUps(createCapableSupabase(state), {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+
+    expect(summary.failed_retryable).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(summary.advanced).toBe(0);
+    expect(summary.results[0]).toMatchObject({
+      kind: "failed_retryable",
+      error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
+    });
+    expect(state.casePatched).toBe(0);
+    expect(state.ownedFilingInserted).toBe(0);
+    expect(state.followUpTask.completed_at).toBeNull();
   });
 });

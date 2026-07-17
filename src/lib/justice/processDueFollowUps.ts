@@ -8,7 +8,11 @@ import {
   parseJusticeCaseClientState,
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
-import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import {
+  ensureOwnedFilingTaskAfterClientStateWrite,
+  OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
+  resolveRequiredOwnedFilingTaskKind,
+} from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
   isDownstreamHumanFulfillmentEscalationAction,
   isEscalationLadderTerminalForResolution,
@@ -41,7 +45,11 @@ export type DueFollowUpSkipReason =
   | "follow_up_not_needed"
   | "already_processed";
 
-export type DueFollowUpProcessKind = "advanced" | "terminal_response_review" | "skipped";
+export type DueFollowUpProcessKind =
+  | "advanced"
+  | "terminal_response_review"
+  | "skipped"
+  | "failed_retryable";
 
 export type DueFollowUpProcessResult = {
   case_id: string;
@@ -49,6 +57,8 @@ export type DueFollowUpProcessResult = {
   kind: DueFollowUpProcessKind;
   reason?: DueFollowUpSkipReason;
   advanced_href?: string;
+  /** Present when kind is failed_retryable — cron/operator may retry the open follow-up task. */
+  error?: string;
 };
 
 function localTodayYmd(now: Date): string {
@@ -198,15 +208,18 @@ export function planDueFollowUpClientState(params: {
   return { kind: "terminal_response_review", nextAction: localCompleted, clientState };
 }
 
-async function queueTasksForClientState(
+async function ensureOwnedFilingTasksForClientState(
   supabase: SupabaseClient,
   userId: string,
   caseId: string,
   intake: JusticeIntake,
-  clientState: Record<string, unknown>,
+  clientState: unknown,
   timeline: TimelineEntry[] | null,
   paymentDisputeDraft?: unknown
-): Promise<TimelineEntry[] | null> {
+): Promise<
+  | { ok: true; timeline: TimelineEntry[] | null }
+  | { ok: false; error: string; timeline: TimelineEntry[] | null }
+> {
   const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
     userId,
     caseId,
@@ -216,12 +229,13 @@ async function queueTasksForClientState(
   });
   if (!ownedEnsure.ok) {
     console.warn("process due follow-ups: owned filing task ensure", ownedEnsure.error);
-    return timeline;
+    return {
+      ok: false,
+      error: ownedEnsure.error || OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
+      timeline: ownedEnsure.timeline ?? timeline,
+    };
   }
-  if (ownedEnsure.timeline) {
-    return ownedEnsure.timeline;
-  }
-  return timeline;
+  return { ok: true, timeline: ownedEnsure.timeline ?? timeline };
 }
 
 export type ProcessDueFollowUpsSummary = {
@@ -230,6 +244,7 @@ export type ProcessDueFollowUpsSummary = {
   advanced: number;
   terminal_response_review: number;
   skipped: number;
+  failed_retryable: number;
   results: DueFollowUpProcessResult[];
 };
 
@@ -262,6 +277,7 @@ export async function processDueFollowUps(
       advanced: 0,
       terminal_response_review: 0,
       skipped: 0,
+      failed_retryable: 0,
       results: [],
     };
   }
@@ -274,6 +290,7 @@ export async function processDueFollowUps(
   let advancedCount = 0;
   let terminalCount = 0;
   let skippedCount = 0;
+  let failedRetryableCount = 0;
   let processedCount = 0;
 
   for (const task of candidateTasks) {
@@ -335,21 +352,43 @@ export async function processDueFollowUps(
       continue;
     }
 
-    // Idempotent: consumer follow-up already cleared and no-response recorded → just ensure task completion.
-    if (
-      action &&
-      action.follow_up_needed !== true &&
-      outcomeNoteAlreadyRecordsNoResponse(action.outcome_note)
-    ) {
-      await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
-      results.push({
-        case_id: caseId,
-        task_id: task.id,
-        kind: "skipped",
-        reason: "already_processed",
-      });
-      skippedCount += 1;
-      continue;
+    // Idempotent recovery: follow-up already cleared (no-response recorded and/or
+    // client_state already advanced to a required owned filing step) while the
+    // follow-up task is still open. Re-ensure owned filing before closing the task.
+    if (action && action.follow_up_needed !== true) {
+      const alreadyNoResponse = outcomeNoteAlreadyRecordsNoResponse(action.outcome_note);
+      const requiresOwnedFiling =
+        resolveRequiredOwnedFilingTaskKind(caseRow.client_state) !== null;
+      if (alreadyNoResponse || requiresOwnedFiling) {
+        const ownedEnsure = await ensureOwnedFilingTasksForClientState(
+          supabase,
+          userId,
+          caseId,
+          intake,
+          caseRow.client_state,
+          null,
+          caseRow.payment_dispute_draft
+        );
+        if (!ownedEnsure.ok) {
+          results.push({
+            case_id: caseId,
+            task_id: task.id,
+            kind: "failed_retryable",
+            error: ownedEnsure.error,
+          });
+          failedRetryableCount += 1;
+          continue;
+        }
+        await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
+        results.push({
+          case_id: caseId,
+          task_id: task.id,
+          kind: "skipped",
+          reason: "already_processed",
+        });
+        skippedCount += 1;
+        continue;
+      }
     }
 
     const plan = planDueFollowUpClientState({
@@ -384,11 +423,8 @@ export async function processDueFollowUps(
       detail: NO_RESPONSE_OUTCOME_MARKER,
     });
 
-    const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
-    if (taskResult.timeline) timeline = taskResult.timeline;
-
     if (plan.kind === "advanced") {
-      timeline = await queueTasksForClientState(
+      const ownedEnsure = await ensureOwnedFilingTasksForClientState(
         supabase,
         userId,
         caseId,
@@ -397,6 +433,20 @@ export async function processDueFollowUps(
         timeline,
         caseRow.payment_dispute_draft
       );
+      if (!ownedEnsure.ok) {
+        // Leave follow-up open so cron can retry; client_state already advanced.
+        results.push({
+          case_id: caseId,
+          task_id: task.id,
+          kind: "failed_retryable",
+          error: ownedEnsure.error,
+        });
+        failedRetryableCount += 1;
+        continue;
+      }
+      timeline = ownedEnsure.timeline;
+      const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
+      if (taskResult.timeline) timeline = taskResult.timeline;
       results.push({
         case_id: caseId,
         task_id: task.id,
@@ -407,6 +457,9 @@ export async function processDueFollowUps(
       processedCount += 1;
       continue;
     }
+
+    const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
+    if (taskResult.timeline) timeline = taskResult.timeline;
 
     const review = await ensureFollowUpResponseReviewTask(supabase, userId, caseId, intake);
     if (review.timeline) timeline = review.timeline;
@@ -425,6 +478,7 @@ export async function processDueFollowUps(
     advanced: advancedCount,
     terminal_response_review: terminalCount,
     skipped: skippedCount,
+    failed_retryable: failedRetryableCount,
     results,
   };
 }
