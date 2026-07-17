@@ -24,6 +24,7 @@ import { DotOperatorFilingWorkspacePanel } from "@/app/components/operator/DotOp
 import { FccOperatorFilingWorkspacePanel } from "@/app/components/operator/FccOperatorFilingWorkspacePanel";
 import { FtcOperatorFilingWorkspacePanel } from "@/app/components/operator/FtcOperatorFilingWorkspacePanel";
 import { MerchantContactOperatorFilingWorkspacePanel } from "@/app/components/operator/MerchantContactOperatorFilingWorkspacePanel";
+import { OperatorWorkspaceEvidenceInventory } from "@/app/components/operator/OperatorWorkspaceEvidenceInventory";
 import { PaymentDisputeOperatorFilingWorkspacePanel } from "@/app/components/operator/PaymentDisputeOperatorFilingWorkspacePanel";
 import { StateAgOperatorFilingWorkspacePanel } from "@/app/components/operator/StateAgOperatorFilingWorkspacePanel";
 
@@ -389,6 +390,7 @@ function FollowUpResponseReviewForm({
           </p>
         ) : null}
       </div>
+      <OperatorWorkspaceEvidenceInventory evidence={item.evidence ?? []} />
       <fieldset className="space-y-2">
         <legend className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
           Outcome
