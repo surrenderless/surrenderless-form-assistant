@@ -98,7 +98,7 @@ describe("resolveOperatorFulfillmentPanelKind DOT branching", () => {
 
     expect(resolveOperatorFulfillmentPanelKind(dotItem)).toBe("dot_workspace");
     expect(resolveOperatorFulfillmentPanelKind(ftcItem)).toBe("ftc_workspace");
-    expect(resolveOperatorFulfillmentPanelKind(bbbItem)).toBe("record_form");
+    expect(resolveOperatorFulfillmentPanelKind(bbbItem)).toBe("bbb_workspace");
     expect(
       resolveOperatorFulfillmentPanelKind({
         step: "dot",
