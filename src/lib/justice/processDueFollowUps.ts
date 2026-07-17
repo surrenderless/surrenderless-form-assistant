@@ -238,6 +238,35 @@ async function ensureOwnedFilingTasksForClientState(
   return { ok: true, timeline: ownedEnsure.timeline ?? timeline };
 }
 
+/** Retriable when terminal due processing cannot queue operator response review. */
+export const FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR =
+  "Case updated but the follow-up response review task could not be created. Retry to finish handoff.";
+
+async function ensureResponseReviewTaskForDueFollowUp(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  intake: JusticeIntake,
+  timeline: TimelineEntry[] | null
+): Promise<
+  | { ok: true; timeline: TimelineEntry[] | null }
+  | { ok: false; error: string; timeline: TimelineEntry[] | null }
+> {
+  const review = await ensureFollowUpResponseReviewTask(supabase, userId, caseId, intake);
+  if (!review.task) {
+    console.warn(
+      "process due follow-ups: response review task ensure",
+      FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR
+    );
+    return {
+      ok: false,
+      error: FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR,
+      timeline: review.timeline ?? timeline,
+    };
+  }
+  return { ok: true, timeline: review.timeline ?? timeline };
+}
+
 export type ProcessDueFollowUpsSummary = {
   scanned: number;
   processed: number;
@@ -354,30 +383,52 @@ export async function processDueFollowUps(
 
     // Idempotent recovery: follow-up already cleared (no-response recorded and/or
     // client_state already advanced to a required owned filing step) while the
-    // follow-up task is still open. Re-ensure owned filing before closing the task.
+    // follow-up task is still open. Re-ensure owned filing and/or response review
+    // before closing the task.
     if (action && action.follow_up_needed !== true) {
       const alreadyNoResponse = outcomeNoteAlreadyRecordsNoResponse(action.outcome_note);
       const requiresOwnedFiling =
         resolveRequiredOwnedFilingTaskKind(caseRow.client_state) !== null;
       if (alreadyNoResponse || requiresOwnedFiling) {
-        const ownedEnsure = await ensureOwnedFilingTasksForClientState(
-          supabase,
-          userId,
-          caseId,
-          intake,
-          caseRow.client_state,
-          null,
-          caseRow.payment_dispute_draft
-        );
-        if (!ownedEnsure.ok) {
-          results.push({
-            case_id: caseId,
-            task_id: task.id,
-            kind: "failed_retryable",
-            error: ownedEnsure.error,
-          });
-          failedRetryableCount += 1;
-          continue;
+        if (requiresOwnedFiling) {
+          const ownedEnsure = await ensureOwnedFilingTasksForClientState(
+            supabase,
+            userId,
+            caseId,
+            intake,
+            caseRow.client_state,
+            null,
+            caseRow.payment_dispute_draft
+          );
+          if (!ownedEnsure.ok) {
+            results.push({
+              case_id: caseId,
+              task_id: task.id,
+              kind: "failed_retryable",
+              error: ownedEnsure.error,
+            });
+            failedRetryableCount += 1;
+            continue;
+          }
+        } else if (alreadyNoResponse) {
+          // Terminal recovery: queue response review before closing follow-up.
+          const reviewEnsure = await ensureResponseReviewTaskForDueFollowUp(
+            supabase,
+            userId,
+            caseId,
+            intake,
+            null
+          );
+          if (!reviewEnsure.ok) {
+            results.push({
+              case_id: caseId,
+              task_id: task.id,
+              kind: "failed_retryable",
+              error: reviewEnsure.error,
+            });
+            failedRetryableCount += 1;
+            continue;
+          }
         }
         await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
         results.push({
@@ -458,11 +509,27 @@ export async function processDueFollowUps(
       continue;
     }
 
+    const reviewEnsure = await ensureResponseReviewTaskForDueFollowUp(
+      supabase,
+      userId,
+      caseId,
+      intake,
+      timeline
+    );
+    if (!reviewEnsure.ok) {
+      // Leave follow-up open so cron can retry; client_state already cleared.
+      results.push({
+        case_id: caseId,
+        task_id: task.id,
+        kind: "failed_retryable",
+        error: reviewEnsure.error,
+      });
+      failedRetryableCount += 1;
+      continue;
+    }
+    timeline = reviewEnsure.timeline;
     const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
     if (taskResult.timeline) timeline = taskResult.timeline;
-
-    const review = await ensureFollowUpResponseReviewTask(supabase, userId, caseId, intake);
-    if (review.timeline) timeline = review.timeline;
     results.push({
       case_id: caseId,
       task_id: task.id,
