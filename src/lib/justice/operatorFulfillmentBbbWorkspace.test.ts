@@ -102,7 +102,9 @@ describe("resolveOperatorFulfillmentPanelKind BBB branching", () => {
 
     expect(resolveOperatorFulfillmentPanelKind(bbbItem)).toBe("bbb_workspace");
     expect(resolveOperatorFulfillmentPanelKind(dlItem)).toBe("demand_letter_workspace");
-    expect(resolveOperatorFulfillmentPanelKind(merchantItem)).toBe("record_form");
+    expect(resolveOperatorFulfillmentPanelKind(merchantItem)).toBe(
+      "merchant_contact_workspace"
+    );
     expect(
       resolveOperatorFulfillmentPanelKind({
         step: "bbb",
@@ -122,7 +124,7 @@ describe("BBB workspace owned-autofill coexistence and lane isolation", () => {
     expect(attemptAutomatedBbbFiling).not.toHaveBeenCalled();
   });
 
-  it("keeps merchant/payment-style lanes isolated on record_form", () => {
+  it("keeps merchant-contact on its own workspace without attaching BBB workspace", () => {
     const intake = baseIntake();
     const merchantItem = classifyOpenOperatorTask(
       openTask(buildMerchantContactFilingTaskNotes(CASE_ID, intake)),
@@ -130,6 +132,9 @@ describe("BBB workspace owned-autofill coexistence and lane isolation", () => {
     );
     expect(merchantItem?.step).toBe("merchant_contact");
     expect(merchantItem?.bbb_workspace).toBeUndefined();
-    expect(resolveOperatorFulfillmentPanelKind(merchantItem!)).toBe("record_form");
+    expect(merchantItem?.merchant_contact_workspace).toBeDefined();
+    expect(resolveOperatorFulfillmentPanelKind(merchantItem!)).toBe(
+      "merchant_contact_workspace"
+    );
   });
 });

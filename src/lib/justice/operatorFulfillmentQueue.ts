@@ -65,6 +65,10 @@ import {
   type FtcOperatorFilingWorkspace,
 } from "@/lib/justice/ftcOperatorFilingWorkspace";
 import {
+  buildMerchantContactOperatorFilingWorkspace,
+  type MerchantContactOperatorFilingWorkspace,
+} from "@/lib/justice/merchantContactOperatorFilingWorkspace";
+import {
   buildStateAgOperatorFilingWorkspace,
   type StateAgOperatorFilingWorkspace,
 } from "@/lib/justice/stateAgOperatorFilingWorkspace";
@@ -106,6 +110,8 @@ export type OperatorFulfillmentQueueItem = {
   demand_letter_workspace?: DemandLetterOperatorFilingWorkspace;
   /** Present only for BBB tasks — guided fallback workspace (owned autofill remains primary). */
   bbb_workspace?: BbbOperatorFilingWorkspace;
+  /** Present only for merchant-contact tasks — guided fallback workspace (email remains primary). */
+  merchant_contact_workspace?: MerchantContactOperatorFilingWorkspace;
 };
 
 export type OperatorFulfillmentPanelKind =
@@ -116,6 +122,7 @@ export type OperatorFulfillmentPanelKind =
   | "dot_workspace"
   | "demand_letter_workspace"
   | "bbb_workspace"
+  | "merchant_contact_workspace"
   | "follow_up_response_review"
   | "record_form";
 
@@ -131,6 +138,7 @@ export function resolveOperatorFulfillmentPanelKind(
     | "dot_workspace"
     | "demand_letter_workspace"
     | "bbb_workspace"
+    | "merchant_contact_workspace"
   >
 ): OperatorFulfillmentPanelKind {
   if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
@@ -142,6 +150,9 @@ export function resolveOperatorFulfillmentPanelKind(
     return "demand_letter_workspace";
   }
   if (item.step === "bbb" && item.bbb_workspace) return "bbb_workspace";
+  if (item.step === "merchant_contact" && item.merchant_contact_workspace) {
+    return "merchant_contact_workspace";
+  }
   if (item.step === "follow_up_response_review") return "follow_up_response_review";
   return "record_form";
 }
@@ -189,6 +200,11 @@ export function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseMerchantContactFilingTaskDraft(task.notes)),
+      merchant_contact_workspace: buildMerchantContactOperatorFilingWorkspace({
+        intake,
+        taskNotes: task.notes,
+        evidence: [],
+      }),
     };
   }
 
@@ -427,7 +443,8 @@ export async function listOperatorFulfillmentQueue(
             item.step === "ftc" ||
             item.step === "dot" ||
             item.step === "demand_letter" ||
-            item.step === "bbb"
+            item.step === "bbb" ||
+            item.step === "merchant_contact"
         )
         .map((item) => item.case_id)
     ),
@@ -542,6 +559,17 @@ export async function listOperatorFulfillmentQueue(
       return {
         ...item,
         bbb_workspace: buildBbbOperatorFilingWorkspace({
+          intake,
+          taskNotes: task?.notes,
+          evidence,
+        }),
+      };
+    }
+
+    if (item.step === "merchant_contact" && item.merchant_contact_workspace) {
+      return {
+        ...item,
+        merchant_contact_workspace: buildMerchantContactOperatorFilingWorkspace({
           intake,
           taskNotes: task?.notes,
           evidence,
