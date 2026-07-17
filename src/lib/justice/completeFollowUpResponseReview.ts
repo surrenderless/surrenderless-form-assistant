@@ -6,38 +6,17 @@ import {
   omitClearedHandlingRequestNoteFromApprovedNextAction,
   parseJusticeCaseClientState,
 } from "@/lib/justice/approvedNextActionState";
-import { ensureBbbFilingTask, shouldQueueBbbFilingTask } from "@/lib/justice/bbbFilingTask";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
-import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
-import {
-  ensureDemandLetterFilingTask,
-  shouldQueueDemandLetterFilingTask,
-} from "@/lib/justice/demandLetterFilingTask";
-import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
-import { ensureDotFilingTask, shouldQueueDotFilingTask } from "@/lib/justice/dotFilingTask";
+import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
   isDownstreamHumanFulfillmentEscalationAction,
   stripResolutionTrackingFromApprovedAction,
 } from "@/lib/justice/escalationLadderResolution";
-import { ensureFccFilingTask, shouldQueueFccFilingTask } from "@/lib/justice/fccFilingTask";
 import {
   completeFollowUpResponseReviewTaskIfOpen,
   taskNotesMatchFollowUpResponseReviewMarker,
 } from "@/lib/justice/followUpResponseReviewTask";
-import { ensureFtcFilingTask, shouldQueueFtcFilingTask } from "@/lib/justice/ftcFilingTask";
-import {
-  ensureMerchantContactFilingTask,
-  shouldQueueMerchantContactFilingTask,
-} from "@/lib/justice/merchantContactFilingTask";
-import {
-  ensurePaymentDisputeFilingTask,
-  shouldQueuePaymentDisputeFilingTask,
-} from "@/lib/justice/paymentDisputeFilingTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
-import {
-  ensureStateAgFilingTask,
-  shouldQueueStateAgFilingTask,
-} from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -91,63 +70,6 @@ function withAcknowledgedHandling(action: JusticeApprovedNextAction): JusticeApp
   if (!action.handling_requested_at?.trim()) return action;
   if (action.handling_acknowledged_at?.trim()) return action;
   return { ...action, handling_acknowledged_at: new Date().toISOString() };
-}
-
-async function queueFilingTasksForClientState(
-  supabase: SupabaseClient,
-  userId: string,
-  caseId: string,
-  intake: JusticeIntake,
-  clientState: Record<string, unknown>,
-  timeline: TimelineEntry[] | null
-): Promise<TimelineEntry[] | null> {
-  let nextTimeline = timeline;
-
-  if (shouldQueueMerchantContactFilingTask(clientState)) {
-    const r = await ensureMerchantContactFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueCfpbFilingTask(clientState)) {
-    const r = await ensureCfpbFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueFccFilingTask(clientState)) {
-    const r = await ensureFccFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueDotFilingTask(clientState)) {
-    const r = await ensureDotFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueFtcFilingTask(clientState)) {
-    const r = await ensureFtcFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueBbbFilingTask(clientState)) {
-    const r = await ensureBbbFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueStateAgFilingTask(clientState)) {
-    const r = await ensureStateAgFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueuePaymentDisputeFilingTask(clientState)) {
-    const r = await ensurePaymentDisputeFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueDemandLetterFilingTask(clientState)) {
-    const r = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-    const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
-      supabase,
-      userId,
-      caseId,
-      nextTimeline
-    );
-    nextTimeline = emailAttempt.timeline;
-  }
-
-  return nextTimeline;
 }
 
 export function planFollowUpResponseReviewClientState(params: {
@@ -309,7 +231,7 @@ export async function completeFollowUpResponseReview(
 
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
-    .select("id, user_id, intake, client_state, archived_at")
+    .select("id, user_id, intake, client_state, archived_at, payment_dispute_draft")
     .eq("id", caseId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -382,7 +304,25 @@ export async function completeFollowUpResponseReview(
     return { ok: false, error: "Could not update case", status: 500 };
   }
 
-  let timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+  let timeline: TimelineEntry[] | null = null;
+
+  if (plan.advanced) {
+    const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
+      userId,
+      caseId,
+      clientState: plan.clientState,
+      intake: plan.intake,
+      paymentDisputeDraft: caseRow.payment_dispute_draft,
+    });
+    if (!ownedEnsure.ok) {
+      return { ok: false, error: ownedEnsure.error, status: 500 };
+    }
+    if (ownedEnsure.timeline) {
+      timeline = ownedEnsure.timeline;
+    }
+  }
+
+  timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
     id: `follow_up_response_review_outcome:${caseId}:${taskId}:${input.outcome}`,
     type: "outcome_recorded",
     label:
@@ -404,17 +344,6 @@ export async function completeFollowUpResponseReview(
     return { ok: false, error: "Could not complete response-review task", status: 500 };
   }
   if (taskResult.timeline) timeline = taskResult.timeline;
-
-  if (plan.advanced) {
-    timeline = await queueFilingTasksForClientState(
-      supabase,
-      userId,
-      caseId,
-      plan.intake,
-      plan.clientState,
-      timeline
-    );
-  }
 
   return {
     ok: true,

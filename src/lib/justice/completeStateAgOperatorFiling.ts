@@ -12,11 +12,7 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
-import {
-  ensureDemandLetterFilingTask,
-  shouldQueueDemandLetterFilingTask,
-} from "@/lib/justice/demandLetterFilingTask";
-import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
+import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
   completeStateAgFilingTaskIfOpen,
   hasStateAgFilingWithConfirmation,
@@ -275,18 +271,21 @@ export async function completeStateAgOperatorFiling(
       };
     }
 
-    if (shouldQueueDemandLetterFilingTask(clientState)) {
-      const queueResult = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
-      if (queueResult.timeline) {
-        timeline = queueResult.timeline;
-      }
-      const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
-        supabase,
-        userId,
-        caseId,
-        timeline
-      );
-      timeline = emailAttempt.timeline;
+    const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
+      userId,
+      caseId,
+      clientState,
+      intake,
+    });
+    if (!ownedEnsure.ok) {
+      return {
+        ok: false,
+        error: ownedEnsure.error,
+        status: 500,
+      };
+    }
+    if (ownedEnsure.timeline) {
+      timeline = ownedEnsure.timeline;
     }
   }
 

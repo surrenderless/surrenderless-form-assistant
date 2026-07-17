@@ -7,41 +7,19 @@ import {
   parseApprovedNextActionFromClientState,
   parseJusticeCaseClientState,
 } from "@/lib/justice/approvedNextActionState";
-import { ensureBbbFilingTask, shouldQueueBbbFilingTask } from "@/lib/justice/bbbFilingTask";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
-import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
-import {
-  ensureDemandLetterFilingTask,
-  shouldQueueDemandLetterFilingTask,
-} from "@/lib/justice/demandLetterFilingTask";
-import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
-import { ensureDotFilingTask, shouldQueueDotFilingTask } from "@/lib/justice/dotFilingTask";
+import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
   isDownstreamHumanFulfillmentEscalationAction,
   isEscalationLadderTerminalForResolution,
   stripResolutionTrackingFromApprovedAction,
 } from "@/lib/justice/escalationLadderResolution";
-import { ensureFccFilingTask, shouldQueueFccFilingTask } from "@/lib/justice/fccFilingTask";
 import {
   completeFollowUpCaseTaskIfOpen,
-  followUpTaskNotesMarker,
   taskNotesMatchFollowUpMarker,
 } from "@/lib/justice/followUpCaseTask";
 import { ensureFollowUpResponseReviewTask } from "@/lib/justice/followUpResponseReviewTask";
-import { ensureFtcFilingTask, shouldQueueFtcFilingTask } from "@/lib/justice/ftcFilingTask";
-import {
-  ensureMerchantContactFilingTask,
-  shouldQueueMerchantContactFilingTask,
-} from "@/lib/justice/merchantContactFilingTask";
-import {
-  ensurePaymentDisputeFilingTask,
-  shouldQueuePaymentDisputeFilingTask,
-} from "@/lib/justice/paymentDisputeFilingTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
-import {
-  ensureStateAgFilingTask,
-  shouldQueueStateAgFilingTask,
-} from "@/lib/justice/stateAgFilingTask";
 import { getJusticeTaskDueKind, parseDueDateToLocalYmd } from "@/lib/justice/taskDueStatus";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -226,55 +204,24 @@ async function queueTasksForClientState(
   caseId: string,
   intake: JusticeIntake,
   clientState: Record<string, unknown>,
-  timeline: TimelineEntry[] | null
+  timeline: TimelineEntry[] | null,
+  paymentDisputeDraft?: unknown
 ): Promise<TimelineEntry[] | null> {
-  let nextTimeline = timeline;
-
-  if (shouldQueueMerchantContactFilingTask(clientState)) {
-    const r = await ensureMerchantContactFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
+  const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
+    userId,
+    caseId,
+    clientState,
+    intake,
+    paymentDisputeDraft,
+  });
+  if (!ownedEnsure.ok) {
+    console.warn("process due follow-ups: owned filing task ensure", ownedEnsure.error);
+    return timeline;
   }
-  if (shouldQueueCfpbFilingTask(clientState)) {
-    const r = await ensureCfpbFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
+  if (ownedEnsure.timeline) {
+    return ownedEnsure.timeline;
   }
-  if (shouldQueueFccFilingTask(clientState)) {
-    const r = await ensureFccFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueDotFilingTask(clientState)) {
-    const r = await ensureDotFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueFtcFilingTask(clientState)) {
-    const r = await ensureFtcFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueBbbFilingTask(clientState)) {
-    const r = await ensureBbbFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueStateAgFilingTask(clientState)) {
-    const r = await ensureStateAgFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueuePaymentDisputeFilingTask(clientState)) {
-    const r = await ensurePaymentDisputeFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-  }
-  if (shouldQueueDemandLetterFilingTask(clientState)) {
-    const r = await ensureDemandLetterFilingTask(supabase, userId, caseId, intake);
-    if (r.timeline) nextTimeline = r.timeline;
-    const emailAttempt = await attemptAutomatedDemandLetterEmailDeliveryAfterEnsure(
-      supabase,
-      userId,
-      caseId,
-      nextTimeline
-    );
-    nextTimeline = emailAttempt.timeline;
-  }
-
-  return nextTimeline;
+  return timeline;
 }
 
 export type ProcessDueFollowUpsSummary = {
@@ -345,7 +292,7 @@ export async function processDueFollowUps(
 
     const { data: caseRow, error: caseErr } = await supabase
       .from("justice_cases")
-      .select("id, user_id, intake, client_state, archived_at")
+      .select("id, user_id, intake, client_state, archived_at, payment_dispute_draft")
       .eq("id", caseId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -447,7 +394,8 @@ export async function processDueFollowUps(
         caseId,
         intake,
         plan.clientState,
-        timeline
+        timeline,
+        caseRow.payment_dispute_draft
       );
       results.push({
         case_id: caseId,
