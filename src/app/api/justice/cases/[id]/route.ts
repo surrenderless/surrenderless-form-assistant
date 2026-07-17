@@ -10,10 +10,9 @@ import {
 import { ensureHandlingRequestTask } from "@/lib/justice/handlingRequestTask";
 import {
   completeFollowUpCaseTaskIfOpen,
-  ensureFollowUpCaseTask,
   isFirstFollowUpClearedTransition,
-  isFirstFollowUpNeededTransition,
 } from "@/lib/justice/followUpCaseTask";
+import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import {
   buildHandlingAcknowledgedTimelineEntry,
   buildOutcomeRecordedTimelineEntry,
@@ -410,16 +409,15 @@ async function patchJusticeCase(
     }
   }
 
-  if (
-    Object.prototype.hasOwnProperty.call(patch, "client_state") &&
-    isFirstFollowUpNeededTransition(existingClientState, patch.client_state)
-  ) {
-    const incomingNext = parseApprovedNextActionFromClientState(patch.client_state);
-    if (incomingNext?.follow_up_needed === true) {
-      const taskResult = await ensureFollowUpCaseTask(supabase, userId, id, incomingNext);
-      if (taskResult.timeline) {
-        responseData = { ...responseData, timeline: taskResult.timeline };
-      }
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+    const followUpEnsure = await ensureFollowUpAfterOperatorClientStateWrite(supabase, {
+      userId,
+      caseId: id,
+      existingClientState,
+      nextClientState: patch.client_state,
+    });
+    if (followUpEnsure.timeline) {
+      responseData = { ...responseData, timeline: followUpEnsure.timeline };
     }
   }
 

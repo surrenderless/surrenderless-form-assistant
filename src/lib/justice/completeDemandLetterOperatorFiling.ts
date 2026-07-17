@@ -22,6 +22,7 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
+import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -274,6 +275,16 @@ export async function completeDemandLetterOperatorFiling(
         error: "Filing recorded but could not advance the approved next action",
         status: 500,
       };
+    }
+
+    const followUpEnsure = await ensureFollowUpAfterOperatorClientStateWrite(supabase, {
+      userId,
+      caseId,
+      existingClientState: caseRow.client_state,
+      nextClientState: clientState,
+    });
+    if (followUpEnsure.timeline) {
+      timeline = followUpEnsure.timeline;
     }
   }
 

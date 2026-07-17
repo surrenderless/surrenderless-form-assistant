@@ -48,6 +48,7 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
+import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import {
   ensurePaymentDisputeFilingTask,
   shouldQueuePaymentDisputeFilingTask,
@@ -427,6 +428,16 @@ export async function completeMerchantContactOperatorFiling(
         error: "Contact recorded but could not advance the approved next action",
         status: 500,
       };
+    }
+
+    const followUpEnsure = await ensureFollowUpAfterOperatorClientStateWrite(supabase, {
+      userId,
+      caseId,
+      existingClientState: caseRow.client_state,
+      nextClientState: clientState,
+    });
+    if (followUpEnsure.timeline) {
+      timeline = followUpEnsure.timeline;
     }
 
     if (shouldQueuePaymentDisputeFilingTask(clientState)) {
