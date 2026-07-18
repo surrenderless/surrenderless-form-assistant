@@ -9,6 +9,7 @@ import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/just
 import { ensureDotFilingTask, shouldQueueDotFilingTask } from "@/lib/justice/dotFilingTask";
 import { ensureFccFilingTask, shouldQueueFccFilingTask } from "@/lib/justice/fccFilingTask";
 import { ensureFtcFilingTask, shouldQueueFtcFilingTask } from "@/lib/justice/ftcFilingTask";
+import { attemptAutomatedFtcFilingAfterEnsure } from "@/lib/justice/ftcOwnedFilingDelivery";
 import {
   ensureMerchantContactFilingTask,
   shouldQueueMerchantContactFilingTask,
@@ -93,6 +94,8 @@ export async function ensureOwnedFilingTaskAfterClientStateWrite(
     attemptDemandLetterEmail?: boolean;
     /** When true (default), attempt automated payment-dispute email after a successful payment-dispute ensure. */
     attemptPaymentDisputeEmail?: boolean;
+    /** When true (default), attempt automated real FTC bounded submit after a successful FTC ensure. */
+    attemptFtcAutofill?: boolean;
   }
 ): Promise<EnsureOwnedFilingTaskAfterClientStateWriteResult> {
   const userId = params.userId.trim();
@@ -178,6 +181,15 @@ export async function ensureOwnedFilingTaskAfterClientStateWrite(
       timeline
     );
     timeline = emailAttempt.timeline;
+  }
+  if (kind === "ftc" && params.attemptFtcAutofill !== false) {
+    const autofillAttempt = await attemptAutomatedFtcFilingAfterEnsure(
+      supabase,
+      userId,
+      caseId,
+      timeline
+    );
+    timeline = autofillAttempt.timeline;
   }
 
   return {

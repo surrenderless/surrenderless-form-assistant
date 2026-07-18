@@ -384,6 +384,10 @@ import {
   isBbbOwnedFilingFailed,
   isBbbOwnedFilingSubmitting,
 } from "@/lib/justice/bbbOwnedFilingDeliveryState";
+import {
+  isFtcOwnedFilingFailed,
+  isFtcOwnedFilingSubmitting,
+} from "@/lib/justice/ftcOwnedFilingDeliveryState";
 
 type UiMessage = {
   id: string;
@@ -5882,6 +5886,13 @@ export default function JusticeChatAiPage() {
       tasks: savedTasks,
       filings: savedFilings,
     });
+  const openFtcFilingTask = activeUuidCaseId
+    ? findOpenFtcFilingTask(savedTasks, activeUuidCaseId)
+    : undefined;
+  const showFtcFilingSubmittingNotice =
+    showFtcFilingQueuedNotice && isFtcOwnedFilingSubmitting(openFtcFilingTask);
+  const showFtcFilingSubmitFailedNotice =
+    showFtcFilingQueuedNotice && isFtcOwnedFilingFailed(openFtcFilingTask);
   const showBbbFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedBbbFilingAction(approvedNextAction) &&
@@ -7186,11 +7197,26 @@ export default function JusticeChatAiPage() {
                 ) : null}
                 {showFtcFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    <span className="font-medium">FTC filing queued.</span> Surrenderless has queued
-                    your FTC consumer complaint for operator filing using your case packet and draft.
-                    Nothing has been filed yet.
+                    {showFtcFilingSubmittingNotice ? (
+                      <>
+                        <span className="font-medium">FTC filing submitting.</span> Surrenderless is
+                        filing your FTC consumer complaint using your case packet and draft.
+                      </>
+                    ) : showFtcFilingSubmitFailedNotice ? (
+                      <>
+                        <span className="font-medium">FTC filing failed.</span> Automated filing did
+                        not complete. Operators will finish the FTC complaint manually — nothing is
+                        marked filed until confirmation is recorded.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">FTC filing queued.</span> Surrenderless has
+                        queued your FTC consumer complaint for filing using your case packet and
+                        draft. Nothing has been filed yet.
+                      </>
+                    )}
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — operator updates will appear here.
+                      Stay in this chat — status updates will appear here.
                     </span>
                   </p>
                 ) : null}
