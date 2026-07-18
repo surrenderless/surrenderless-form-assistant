@@ -1,0 +1,120 @@
+import {
+  REAL_BBB_MAX_SUBMIT_STEPS,
+  type AssistedFormPageData,
+  type RealBbbSubmitStopReason,
+} from "@/lib/justice/realBbbBoundedSubmitLoop";
+
+/** Maximum decide-action + fill/click cycles for real FTC assisted submission. */
+export const REAL_FTC_MAX_SUBMIT_STEPS = REAL_BBB_MAX_SUBMIT_STEPS;
+
+/** FTC bounded-submit stop reasons reuse the shared decide-action loop reasons. */
+export type RealFtcSubmitStopReason = RealBbbSubmitStopReason;
+
+/** Official FTC ReportFraud consumer-complaint host. */
+const FTC_TERMINAL_HOST = "reportfraud.ftc.gov";
+
+/** Confirmation-like URL path segments; excludes generic words such as success/complete. */
+const TERMINAL_URL_PATH_PATTERNS = [/confirmation/i, /thank[-_ ]?you/i, /submitted/i, /report-?number/i];
+
+/** Strong FTC ReportFraud submission confirmation phrases in page body text. */
+const TERMINAL_TEXT_PATTERNS = [
+  /thank you for (?:your report|reporting|submitting)/i,
+  /your report has been (?:submitted|received)/i,
+  /report\s*(?:number|id)/i,
+  /reference\s*(?:number|id)/i,
+  /report was submitted/i,
+];
+
+/** Report/reference identifiers extracted from an FTC confirmation page. */
+const REFERENCE_PATTERNS = [
+  /report\s*(?:number|no\.?|#|id)?\s*(?:is|:|#|=)?\s*([A-Z0-9][A-Z0-9-]{4,})/i,
+  /reference\s*(?:number|no\.?|#|id)?\s*(?:is|:|#|=)?\s*([A-Z0-9][A-Z0-9-]{4,})/i,
+  /confirmation\s*(?:number|no\.?|#|id)?\s*(?:is|:|#|=)?\s*([A-Z0-9][A-Z0-9-]{4,})/i,
+];
+
+function isFtcReportHost(url: string): boolean {
+  try {
+    return new URL(url).hostname === FTC_TERMINAL_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * ReportFraud is a hash-routed SPA (pathname is always "/"), so the true entry page is only
+ * the bare root without a meaningful hash/query — deeper wizard/confirmation states carry one.
+ */
+function isFtcReportEntryUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/\/$/, "") || "/";
+    if (path !== "/") return false;
+    const hashAndSearch = `${u.search}${u.hash}`;
+    return !hashAndSearch || hashAndSearch === "#" || hashAndSearch === "#/";
+  } catch {
+    return false;
+  }
+}
+
+function hasConfirmationLikeFtcUrlPath(url: string): boolean {
+  if (!isFtcReportHost(url) || isFtcReportEntryUrl(url)) {
+    return false;
+  }
+  return TERMINAL_URL_PATH_PATTERNS.some((pattern) => pattern.test(url));
+}
+
+function hasFtcSubmissionConfirmationText(pageText: string): boolean {
+  const text = pageText.slice(0, 12000);
+  return TERMINAL_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/** Exported for FTC terminal-page assertions. */
+export function hasFtcSubmissionConfirmationBodyText(pageText: string): boolean {
+  return hasFtcSubmissionConfirmationText(pageText);
+}
+
+/** True when the page shows an FTC ReportFraud submission confirmation state. */
+export function detectRealFtcTerminalConfirmation(pageData: AssistedFormPageData): boolean {
+  const url = pageData.url ?? "";
+  if (!isFtcReportHost(url) || isFtcReportEntryUrl(url)) {
+    return false;
+  }
+  if (hasConfirmationLikeFtcUrlPath(url)) {
+    return true;
+  }
+  return hasFtcSubmissionConfirmationText(pageData.pageText ?? "");
+}
+
+/**
+ * Extracts the real FTC report/reference number from a confirmation page, if present.
+ * Returns null when no identifier can be read (caller falls back to a generic confirmation).
+ */
+export function extractFtcConfirmationReference(pageText: string | null | undefined): string | null {
+  const text = (pageText ?? "").slice(0, 12000);
+  for (const pattern of REFERENCE_PATTERNS) {
+    const match = pattern.exec(text);
+    const value = match?.[1]?.trim();
+    if (value) {
+      return value.slice(0, 120);
+    }
+  }
+  return null;
+}
+
+export function buildRealFtcIncompleteError(
+  stopReason: Exclude<RealFtcSubmitStopReason, "terminal_confirmation">,
+  stepsExecuted: number
+): string {
+  switch (stopReason) {
+    case "max_steps_reached":
+      return `FTC complaint autofill did not reach a confirmation page within ${REAL_FTC_MAX_SUBMIT_STEPS} steps (${stepsExecuted} executed). You can retry.`;
+    case "empty_decision":
+      return "FTC complaint autofill stopped: the assistant returned no fields or next action to take. You can retry.";
+    case "invalid_decision":
+      return "FTC complaint autofill stopped: the assistant returned an invalid next action. You can retry.";
+    case "decide_action_failed":
+      return "FTC complaint autofill stopped: could not determine the next form action. You can retry.";
+    default:
+      return "FTC complaint autofill did not complete. You can retry.";
+  }
+}

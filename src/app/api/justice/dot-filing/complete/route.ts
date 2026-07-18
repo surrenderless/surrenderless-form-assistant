@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { maybeAttemptAutomatedBbbFilingForClientState } from "@/lib/justice/bbbOwnedFilingDelivery";
+import { maybeAttemptAutomatedFtcFilingForClientState } from "@/lib/justice/ftcOwnedFilingDelivery";
 import {
   buildBbbOwnedFilingSubmitContextFromRequest,
   runWithBbbOwnedFilingSubmitContext,
@@ -152,7 +153,14 @@ export async function POST(req: NextRequest) {
         result.clientState,
         result.timeline ?? null
       );
-      return { ok: true as const, result, bbbAutofill };
+      const ftcAutofill = await maybeAttemptAutomatedFtcFilingForClientState(
+        supabase,
+        ownerResult.userId,
+        caseId,
+        result.clientState,
+        bbbAutofill.timeline ?? result.timeline ?? null
+      );
+      return { ok: true as const, result, bbbAutofill, ftcAutofill };
     }
   );
 
@@ -160,12 +168,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: wrapped.result.error }, { status: wrapped.result.status });
   }
 
-  const { result, bbbAutofill } = wrapped;
+  const { result, bbbAutofill, ftcAutofill } = wrapped;
   return NextResponse.json({
     filing: result.filing,
     task: result.task,
     client_state: result.clientState,
-    timeline: bbbAutofill.timeline ?? result.timeline,
+    timeline: ftcAutofill.timeline ?? bbbAutofill.timeline ?? result.timeline,
     advanced: result.advanced,
     idempotent: result.idempotent,
   });

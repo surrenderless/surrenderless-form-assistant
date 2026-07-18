@@ -32,6 +32,7 @@ import {
   attemptAutomatedBbbFilingAfterEnsure,
   maybeAttemptAutomatedBbbFilingForClientState,
 } from "@/lib/justice/bbbOwnedFilingDelivery";
+import { attemptAutomatedFtcFilingAfterEnsure } from "@/lib/justice/ftcOwnedFilingDelivery";
 import {
   buildBbbOwnedFilingSubmitContextFromRequest,
   runWithBbbOwnedFilingSubmitContext,
@@ -578,6 +579,29 @@ async function patchJusticeCase(
 
       if (ownedEnsure.kind === "bbb") {
         const autofill = await attemptAutomatedBbbFilingAfterEnsure(
+          supabase,
+          userId,
+          id,
+          (responseData.timeline as TimelineEntry[] | null | undefined) ?? null
+        );
+        if (autofill.timeline) {
+          responseData = { ...responseData, timeline: autofill.timeline };
+        }
+        if (autofill.result.status === "accepted" && autofill.result.task) {
+          const { data: refreshed } = await supabase
+            .from("justice_cases")
+            .select(SELECT)
+            .eq("id", id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (refreshed) {
+            responseData = { ...responseData, ...(refreshed as CaseResponse) };
+          }
+        }
+      }
+
+      if (ownedEnsure.kind === "ftc") {
+        const autofill = await attemptAutomatedFtcFilingAfterEnsure(
           supabase,
           userId,
           id,

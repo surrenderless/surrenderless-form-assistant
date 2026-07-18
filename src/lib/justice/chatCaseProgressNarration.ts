@@ -31,9 +31,14 @@ import {
   isApprovedFccFilingAction,
 } from "@/lib/justice/fccFilingTask";
 import {
+  findOpenFtcFilingTask,
   hasFtcFilingWithConfirmation,
   isApprovedFtcFilingAction,
 } from "@/lib/justice/ftcFilingTask";
+import {
+  isFtcOwnedFilingFailed,
+  isFtcOwnedFilingSubmitting,
+} from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import {
   findOpenMerchantContactFilingTask,
@@ -78,6 +83,8 @@ export type ChatCaseProgressMilestone =
   | "cfpb_queued"
   | "cfpb_confirmed"
   | "ftc_queued"
+  | "ftc_submitting"
+  | "ftc_submit_failed"
   | "ftc_confirmed"
   | "bbb_queued"
   | "bbb_submitting"
@@ -110,6 +117,8 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "cfpb_queued",
   "cfpb_confirmed",
   "ftc_queued",
+  "ftc_submitting",
+  "ftc_submit_failed",
   "ftc_confirmed",
   "bbb_queued",
   "bbb_submitting",
@@ -260,6 +269,13 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     })
   ) {
     satisfied.push("ftc_queued");
+    const openFtcTask = findOpenFtcFilingTask(input.tasks, caseId);
+    if (isFtcOwnedFilingSubmitting(openFtcTask)) {
+      satisfied.push("ftc_submitting");
+    }
+    if (isFtcOwnedFilingFailed(openFtcTask)) {
+      satisfied.push("ftc_submit_failed");
+    }
   }
 
   if (hasFtcFilingWithConfirmation(input.filings)) {
@@ -389,7 +405,11 @@ export function buildChatCaseProgressNarrationMessage(
     case "cfpb_confirmed":
       return "Your CFPB filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "ftc_queued":
-      return "I've queued your FTC consumer complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+      return "I've queued your FTC consumer complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filing or filed.";
+    case "ftc_submitting":
+      return "Surrenderless is filing your FTC consumer complaint now. Stay here in chat for confirmation.";
+    case "ftc_submit_failed":
+      return "Automated FTC filing did not complete. Surrenderless operators will finish the filing manually — stay here in chat for updates.";
     case "ftc_confirmed":
       return "Your FTC consumer complaint filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_queued":
