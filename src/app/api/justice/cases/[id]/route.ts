@@ -453,7 +453,6 @@ async function patchJusticeCase(
         paymentDisputeDraft: data.payment_dispute_draft,
         attemptDemandLetterEmail: false,
         attemptPaymentDisputeEmail: false,
-        attemptFtcAutofill: false,
       });
       if (!ownedEnsure.ok) {
         return NextResponse.json(

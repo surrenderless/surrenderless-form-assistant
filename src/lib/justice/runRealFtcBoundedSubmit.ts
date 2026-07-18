@@ -1,3 +1,4 @@
+import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { chromium, type Browser, type Page } from "playwright";
 import { v4 as uuidv4 } from "uuid";
