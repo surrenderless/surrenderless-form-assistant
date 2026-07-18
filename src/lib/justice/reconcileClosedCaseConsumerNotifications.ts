@@ -139,13 +139,17 @@ async function writeConsumerClosedNotificationMarker(
   detail: { recipient: string; messageId: string; outcome: OperatorOwnedClosableOutcome }
 ): Promise<boolean> {
   const marker = consumerClosedNotificationTaskNotesMarker(caseId);
+  // Store the provider identifiers the delivery-status webhook needs to resolve this
+  // case later (message id + idempotency key), plus the initial accepted state.
   const notes = clampLen(
     [
       marker,
       `case_id: ${caseId}`,
       `recipient: ${detail.recipient}`,
       `provider_message_id: ${detail.messageId}`,
+      `idempotency_key: ${consumerClosedNotificationEmailIdempotencyKey(caseId)}`,
       `outcome: ${detail.outcome}`,
+      `delivery_state: accepted`,
       `notified_at: ${new Date().toISOString()}`,
     ].join("\n"),
     MAX_NOTES
