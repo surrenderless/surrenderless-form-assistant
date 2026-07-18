@@ -1,7 +1,9 @@
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
 const MAX_NOTES = 8000;
-const DELIVERY_BLOCK_MARKER = "---ftc_owned_autofill_delivery---";
+/** Marker line that opens the owned-FTC delivery block inside task notes. */
+export const FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER = "---ftc_owned_autofill_delivery---";
+const DELIVERY_BLOCK_MARKER = FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER;
 
 /** Persisted owned-FTC automation states (queued → submitting → filed | failed). */
 export type FtcOwnedFilingDeliveryState = "queued" | "submitting" | "failed" | "filed";

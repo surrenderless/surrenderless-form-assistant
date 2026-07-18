@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { reconcileMissingOwnedFilingTasks } from "@/lib/justice/reconcileMissingOwnedFilingTasks";
+import { reconcileStaleSubmittingOwnedFilings } from "@/lib/justice/reconcileStaleSubmittingOwnedFilings";
 import { requireCronSecret } from "@/server/requireCronSecret";
 
 export const runtime = "nodejs";
@@ -28,9 +29,11 @@ async function handleCron(req: NextRequest): Promise<NextResponse> {
   }
 
   const summary = await reconcileMissingOwnedFilingTasks(supabase);
+  const staleSubmitting = await reconcileStaleSubmittingOwnedFilings(supabase);
   return NextResponse.json({
     ok: true,
     ...summary,
+    stale_submitting: staleSubmitting,
   });
 }
 
