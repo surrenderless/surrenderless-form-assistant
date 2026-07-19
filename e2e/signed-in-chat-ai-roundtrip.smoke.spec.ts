@@ -79,7 +79,10 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   ).toBeVisible();
 
   const continueButton = page.getByRole("button", { name: "Save and continue in chat" });
-  await expect(continueButton).toBeDisabled();
+  // The signed-in account's verified email now seeds the consumer's reply_email, so the
+  // consumer-email basic is already satisfied after the first intake message and the button
+  // is enabled before the second message.
+  await expect(continueButton).toBeEnabled({ timeout: 15_000 });
 
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
@@ -239,7 +242,18 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   const operatorContext = await page.context().browser()!.newContext({
     storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
   });
-  const operatorRequest = operatorContext.request;
+  // Refresh the operator Clerk session in-browser so late-suite API posts use live cookies
+  // instead of the static storageState JWT written at global setup.
+  const operatorPage = await operatorContext.newPage();
+  await operatorPage.goto("/operator/fulfillment");
+  await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await operatorPage.getByRole("button", { name: "Open user menu" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+  const operatorRequest = operatorPage.request;
   const ftcCompleteResponse = await operatorRequest.post("/api/justice/ftc-filing/complete", {
     data: {
       case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
@@ -533,7 +547,16 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   const operatorDeniedContext = await page.context().browser()!.newContext({
     storageState: OPERATOR_CLERK_STORAGE_STATE_PATH,
   });
-  const operatorDenied = await operatorDeniedContext.request.get(
+  const operatorDeniedPage = await operatorDeniedContext.newPage();
+  await operatorDeniedPage.goto("/operator/fulfillment");
+  await expect(
+    operatorDeniedPage.getByRole("heading", { name: "Operator fulfillment queue" })
+  ).toBeVisible({ timeout: 30_000 });
+  await operatorDeniedPage.getByRole("button", { name: "Open user menu" }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
+  const operatorDenied = await operatorDeniedPage.request.get(
     `/api/justice/chat-messages?case_id=${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`
   );
   expect(operatorDenied.status()).toBe(404);

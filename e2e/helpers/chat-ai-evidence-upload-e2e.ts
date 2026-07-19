@@ -37,7 +37,10 @@ export async function driveConsumerToSavedCaseForEvidenceUpload(page: Page): Pro
   await expect(page.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE)).toBeVisible();
 
   const continueButton = page.getByRole("button", { name: "Save and continue in chat" });
-  await expect(continueButton).toBeDisabled();
+  // The signed-in account's verified email now seeds the consumer's reply_email, so the
+  // consumer-email basic is already satisfied after the first intake message and the button
+  // is enabled before the second message.
+  await expect(continueButton).toBeEnabled({ timeout: 15_000 });
 
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();

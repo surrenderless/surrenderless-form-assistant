@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -277,6 +277,11 @@ import {
   type BuildJusticeIntakeParts,
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
+import {
+  getPreviewBasicsMissing,
+  stillNeededBeforePreviewMessage,
+} from "@/lib/justice/previewBasicsReadiness";
+import { resolveSignedInConsumerReplyEmail } from "@/lib/justice/resolveSignedInConsumerReplyEmail";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import {
   fetchJusticeCaseById,
@@ -417,20 +422,6 @@ const RECAP_STORY_MAX_LEN = 120;
 const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
 const activeCaseChecklistLinkCls =
   "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
-
-function getPreviewBasicsMissing(parts: BuildJusticeIntakeParts): string[] {
-  const missing: string[] = [];
-  if (!parts.company_name.trim()) missing.push("company");
-  if (!parts.purchase_or_signup.trim()) missing.push("product/service");
-  if (!parts.story.trim()) missing.push("what happened");
-  if (!parts.reply_email.trim().includes("@")) missing.push("reply email");
-  if (!parts.money_amount.trim() && !parts.desired_resolution.trim()) missing.push("requested outcome");
-  return missing;
-}
-
-function stillNeededBeforePreviewMessage(missing: string[]): string {
-  return `Still needed before preview: ${missing.join(", ")}.`;
-}
 
 /** When the model sets contacted=yes but omits proof text, reuse the user's answer for Continue validation. */
 function synthesizeContactProofTextFromChat(
@@ -2563,6 +2554,8 @@ function ApprovedNextActionOutcomeTrackingForm({
 export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
+  const { user } = useUser();
+  const signedInConsumerEmail = resolveSignedInConsumerReplyEmail(user);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendInFlightRef = useRef(false);
   const sessionBaselinePartsRef = useRef<BuildJusticeIntakeParts | null>(null);
@@ -2574,6 +2567,19 @@ export default function JusticeChatAiPage() {
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
   const [isUpdatingExistingCase, setIsUpdatingExistingCase] = useState(false);
+
+  // Seed the consumer's OWN reply email from the signed-in account's verified email so the
+  // user is not unnecessarily asked for it. This only fills an empty `reply_email` (never
+  // overwrites an explicitly captured value), reseeds if hydration clears it, and never
+  // touches the separate merchant `company_contact_email`. When no verified account email is
+  // available, `signedInConsumerEmail` is null and chat asks the user for their own email.
+  useEffect(() => {
+    if (!signedInConsumerEmail) return;
+    if (parts.reply_email.trim()) return;
+    setParts((prev) =>
+      prev.reply_email.trim() ? prev : { ...prev, reply_email: signedInConsumerEmail }
+    );
+  }, [signedInConsumerEmail, parts.reply_email]);
   const [messages, setMessages] = useState<UiMessage[]>(() => [
     { id: msgId(), role: "assistant", text: OPENING_GREETING },
   ]);
