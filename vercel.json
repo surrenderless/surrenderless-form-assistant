@@ -21,6 +21,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/alert-operator-fallbacks",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/reconcile-response-review-tasks",
       "schedule": "30 14 * * *"
     },

@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { listOperatorFulfillmentQueue } from "@/lib/justice/operatorFulfillmentQueue";
+import {
+  listOperatorFulfillmentQueue,
+  summarizeOperatorFulfillmentQueue,
+} from "@/lib/justice/operatorFulfillmentQueue";
 import { listOperatorClosableCases } from "@/lib/justice/operatorOwnedCaseArchive";
 import {
   buildPlaywrightMockOperatorFulfillmentQueue,
@@ -32,7 +35,11 @@ export async function GET(req: NextRequest) {
 
   if (isPlaywrightMockHumanFulfillmentOperatorFilingEnabled()) {
     const items = buildPlaywrightMockOperatorFulfillmentQueue();
-    return NextResponse.json({ items, closable_cases: [] });
+    return NextResponse.json({
+      items,
+      closable_cases: [],
+      queue_metrics: summarizeOperatorFulfillmentQueue(items),
+    });
   }
 
   const supabase = getSupabaseAdmin();
@@ -42,5 +49,9 @@ export async function GET(req: NextRequest) {
     listOperatorFulfillmentQueue(supabase),
     listOperatorClosableCases(supabase),
   ]);
-  return NextResponse.json({ items, closable_cases });
+  return NextResponse.json({
+    items,
+    closable_cases,
+    queue_metrics: summarizeOperatorFulfillmentQueue(items),
+  });
 }
