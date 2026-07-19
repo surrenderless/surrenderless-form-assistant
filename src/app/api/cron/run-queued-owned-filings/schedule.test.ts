@@ -24,4 +24,15 @@ describe("vercel.json queued owned-filing worker schedule", () => {
     expect(stale).toBeDefined();
     expect(stale?.schedule).toBe("*/15 * * * *");
   });
+
+  it("does not schedule the operator dry-run endpoint on the minute cron", () => {
+    const crons = loadCrons();
+    expect(crons.some((c) => c.path.includes("dry-run-owned-filing"))).toBe(false);
+    const worker = readFileSync(
+      path.resolve(process.cwd(), "src/app/api/cron/run-queued-owned-filings/route.ts"),
+      "utf8"
+    );
+    expect(worker.includes("runOwnedFilingDryRun")).toBe(false);
+    expect(worker.includes("dry_run")).toBe(false);
+  });
 });

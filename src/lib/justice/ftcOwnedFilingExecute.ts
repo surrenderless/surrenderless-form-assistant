@@ -21,6 +21,10 @@ import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  isOwnedFilingSubmitArmed,
+  OWNED_FILING_SUBMIT_UNARMED_REASON,
+} from "@/lib/justice/ownedFilingSubmitArmed";
 import { intakeToRealFtcUserData } from "@/lib/justice/realFtcUserData";
 import { runRealFtcBoundedSubmit } from "@/lib/justice/runRealFtcBoundedSubmit";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -101,6 +105,13 @@ export async function executeClaimedFtcFiling(
   const priorDelivery = parseFtcOwnedFilingDeliveryRecord(claimedTask.notes);
   const startedAt = priorDelivery?.started_at ?? new Date().toISOString();
 
+  // Defense in depth: live execute refuses when the submit arm is off (fail closed).
+  if (!isOwnedFilingSubmitArmed()) {
+    return markFailed(supabase, userId, trimmedCaseId, claimedTask, startedAt, OWNED_FILING_SUBMIT_UNARMED_REASON, {
+      stopReason: "submit_unarmed",
+    });
+  }
+
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
     .select("intake")
@@ -130,6 +141,7 @@ export async function executeClaimedFtcFiling(
       userData: intakeToRealFtcUserData(intake),
       base,
       forwardedHeaders,
+      mode: "live",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

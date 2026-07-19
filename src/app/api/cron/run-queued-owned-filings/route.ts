@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  isOwnedFilingSubmitArmed,
+  OWNED_FILING_SUBMIT_UNARMED_REASON,
+} from "@/lib/justice/ownedFilingSubmitArmed";
 import { findAndClaimNextQueuedOwnedFiling } from "@/lib/justice/claimQueuedOwnedFiling";
 import { executeClaimedBbbFiling } from "@/lib/justice/bbbOwnedFilingExecute";
 import { executeClaimedFtcFiling } from "@/lib/justice/ftcOwnedFilingExecute";
@@ -25,10 +29,23 @@ function getSupabaseAdmin(): SupabaseClient | null {
  * Durable worker for owned BBB/FTC filings. Atomically claims the oldest queued task
  * (queued → submitting CAS) and runs the real Browserless bounded-submit off the request path.
  * Processes at most one filing per invocation so a single run cannot overrun the function duration.
+ *
+ * Fail-closed: when OWNED_FILING_SUBMIT_ARMED is unset/false, this worker never claims or submits.
+ * Dry-runs use a separate CRON_SECRET endpoint and are never executed here.
  */
 async function handleCron(req: NextRequest): Promise<NextResponse> {
   const denied = requireCronSecret(req);
   if (denied) return denied;
+
+  if (!isOwnedFilingSubmitArmed()) {
+    return NextResponse.json({
+      ok: true,
+      processed: 0,
+      claimed: 0,
+      skipped: "owned_filing_submit_unarmed",
+      reason: OWNED_FILING_SUBMIT_UNARMED_REASON,
+    });
+  }
 
   const supabase = getSupabaseAdmin();
   if (!supabase) {

@@ -133,6 +133,7 @@ describe("executeClaimedFtcFiling (worker execution off the request path)", () =
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
     vi.stubEnv("BROWSERLESS_URL", "");
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "true");
   });
 
   afterEach(() => {
@@ -148,7 +149,7 @@ describe("executeClaimedFtcFiling (worker execution off the request path)", () =
     expect(result).toMatchObject({ status: "accepted", confirmation: "FTC-2026-4455" });
     expect(runRealFtcBoundedSubmit).toHaveBeenCalledTimes(1);
     expect(runRealFtcBoundedSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://reportfraud.ftc.gov/" })
+      expect.objectContaining({ url: "https://reportfraud.ftc.gov/", mode: "live" })
     );
     expect(completeFtcOperatorFiling).toHaveBeenCalledWith(
       expect.anything(),
@@ -213,6 +214,22 @@ describe("executeClaimedFtcFiling (worker execution off the request path)", () =
     expect(result).toMatchObject({ status: "failed" });
     expect(completeFtcOperatorFiling).not.toHaveBeenCalled();
     expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
+  });
+
+  it("refuses live submit when OWNED_FILING_SUBMIT_ARMED is unset (fail closed)", async () => {
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "");
+    const noteUpdates: string[] = [];
+    const result = await executeClaimedFtcFiling(
+      makeSupabase((n) => noteUpdates.push(n)),
+      USER_ID,
+      CASE_ID,
+      claimedTask()
+    );
+    expect(result.status).toBe("failed");
+    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+    expect(completeFtcOperatorFiling).not.toHaveBeenCalled();
+    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
+    expect(noteUpdates.at(-1)).toContain("submit_unarmed");
   });
 
   it("marks failed without running Playwright when production config is missing", async () => {
