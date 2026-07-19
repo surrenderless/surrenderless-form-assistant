@@ -131,6 +131,7 @@ describe("executeClaimedBbbFiling (worker execution off the request path)", () =
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
     vi.stubEnv("BROWSERLESS_URL", "");
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "true");
   });
 
   afterEach(() => {
@@ -145,7 +146,24 @@ describe("executeClaimedBbbFiling (worker execution off the request path)", () =
     const result = await executeClaimedBbbFiling(makeSupabase(), USER_ID, CASE_ID, claimedTask());
     expect(result.status).toBe("accepted");
     expect(runRealBbbBoundedSubmit).toHaveBeenCalledTimes(1);
+    expect(runRealBbbBoundedSubmit).toHaveBeenCalledWith(expect.objectContaining({ mode: "live" }));
     expect(completeBbbOperatorFiling).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses live submit when OWNED_FILING_SUBMIT_ARMED is unset (fail closed)", async () => {
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "");
+    const noteUpdates: string[] = [];
+    const result = await executeClaimedBbbFiling(
+      makeSupabase((n) => noteUpdates.push(n)),
+      USER_ID,
+      CASE_ID,
+      claimedTask()
+    );
+    expect(result.status).toBe("failed");
+    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+    expect(completeBbbOperatorFiling).not.toHaveBeenCalled();
+    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
+    expect(noteUpdates.at(-1)).toContain("submit_unarmed");
   });
 
   it("marks failed and leaves task open when bounded submit does not confirm", async () => {

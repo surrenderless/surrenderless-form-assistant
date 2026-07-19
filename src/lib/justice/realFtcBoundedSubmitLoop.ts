@@ -114,6 +114,12 @@ export function buildRealFtcIncompleteError(
       return "FTC complaint autofill stopped: the assistant returned an invalid next action. You can retry.";
     case "decide_action_failed":
       return "FTC complaint autofill stopped: could not determine the next form action. You can retry.";
+    case "blocked_irreversible_click":
+      return "FTC complaint autofill stopped before a potentially irreversible submit click (dry-run or unarmed).";
+    case "blocked_unknown_click":
+      return "FTC complaint autofill stopped: next button was ambiguous — fail closed, no click.";
+    case "submit_unarmed":
+      return "FTC complaint autofill refused: OWNED_FILING_SUBMIT_ARMED is not enabled.";
     default:
       return "FTC complaint autofill did not complete. You can retry.";
   }

@@ -55,6 +55,7 @@ describe("GET/POST /api/cron/run-queued-owned-filings", () => {
     vi.stubEnv("CRON_SECRET", CRON_SECRET);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "true");
   });
 
   afterEach(() => {
@@ -73,7 +74,47 @@ describe("GET/POST /api/cron/run-queued-owned-filings", () => {
     expect(executeClaimedFtcFiling).not.toHaveBeenCalled();
   });
 
-  it("executes a claimed FTC filing and reports the outcome", async () => {
+  it("never claims or executes when OWNED_FILING_SUBMIT_ARMED is unset (fail closed)", async () => {
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "");
+    const res = await GET(buildRequest({ authorization: `Bearer ${CRON_SECRET}` }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      ok: true,
+      processed: 0,
+      claimed: 0,
+      skipped: "owned_filing_submit_unarmed",
+    });
+    expect(findAndClaimNextQueuedOwnedFiling).not.toHaveBeenCalled();
+    expect(executeClaimedBbbFiling).not.toHaveBeenCalled();
+    expect(executeClaimedFtcFiling).not.toHaveBeenCalled();
+  });
+
+  it("never claims when OWNED_FILING_SUBMIT_ARMED is false", async () => {
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "false");
+    const res = await POST(buildRequest({ authorization: `Bearer ${CRON_SECRET}` }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ skipped: "owned_filing_submit_unarmed", claimed: 0 });
+    expect(findAndClaimNextQueuedOwnedFiling).not.toHaveBeenCalled();
+  });
+
+  it("concurrent unarmed worker calls cannot bypass the gate", async () => {
+    vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "");
+    const results = await Promise.all([
+      GET(buildRequest({ authorization: `Bearer ${CRON_SECRET}` })),
+      POST(buildRequest({ authorization: `Bearer ${CRON_SECRET}` })),
+      GET(buildRequest({ authorization: `Bearer ${CRON_SECRET}` })),
+    ]);
+    for (const res of results) {
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ processed: 0, claimed: 0, skipped: "owned_filing_submit_unarmed" });
+    }
+    expect(findAndClaimNextQueuedOwnedFiling).not.toHaveBeenCalled();
+    expect(executeClaimedBbbFiling).not.toHaveBeenCalled();
+    expect(executeClaimedFtcFiling).not.toHaveBeenCalled();
+  });
+
+  it("executes a claimed FTC filing and reports the outcome when armed", async () => {
     findAndClaimNextQueuedOwnedFiling.mockResolvedValue({
       kind: "ftc",
       userId: "user_1",
@@ -87,7 +128,7 @@ describe("GET/POST /api/cron/run-queued-owned-filings", () => {
     expect(executeClaimedBbbFiling).not.toHaveBeenCalled();
   });
 
-  it("executes a claimed BBB filing", async () => {
+  it("executes a claimed BBB filing when armed", async () => {
     findAndClaimNextQueuedOwnedFiling.mockResolvedValue({
       kind: "bbb",
       userId: "user_1",

@@ -48,5 +48,14 @@ describe("owned-filing request path stays Playwright-free (enqueue only)", () =>
     const worker = read("src/app/api/cron/run-queued-owned-filings/route.ts");
     expect(worker.includes("executeClaimedBbbFiling")).toBe(true);
     expect(worker.includes("executeClaimedFtcFiling")).toBe(true);
+    expect(worker.includes("isOwnedFilingSubmitArmed")).toBe(true);
+  });
+
+  it("dry-run endpoint is separate from the minute worker and never imports execute claim paths for live submit", () => {
+    const dryRun = read("src/app/api/cron/dry-run-owned-filing/route.ts");
+    expect(dryRun.includes("runOwnedFilingDryRun")).toBe(true);
+    expect(dryRun.includes("executeClaimedBbbFiling")).toBe(false);
+    expect(dryRun.includes("executeClaimedFtcFiling")).toBe(false);
+    expect(dryRun.includes("findAndClaimNextQueuedOwnedFiling")).toBe(false);
   });
 });

@@ -6,7 +6,13 @@ export type RealBbbSubmitStopReason =
   | "max_steps_reached"
   | "invalid_decision"
   | "empty_decision"
-  | "decide_action_failed";
+  | "decide_action_failed"
+  /** Dry-run or unarmed live stopped before an irreversible click. */
+  | "blocked_irreversible_click"
+  /** Ambiguous next action — fail closed, never click. */
+  | "blocked_unknown_click"
+  /** Live mode refused because OWNED_FILING_SUBMIT_ARMED is off. */
+  | "submit_unarmed";
 
 export type FormFieldDecision = {
   selector: string;
@@ -152,6 +158,12 @@ export function buildRealBbbIncompleteError(
       return "BBB complaint autofill stopped: the assistant returned an invalid next action. You can retry.";
     case "decide_action_failed":
       return "BBB complaint autofill stopped: could not determine the next form action. You can retry.";
+    case "blocked_irreversible_click":
+      return "BBB complaint autofill stopped before a potentially irreversible submit click (dry-run or unarmed).";
+    case "blocked_unknown_click":
+      return "BBB complaint autofill stopped: next button was ambiguous — fail closed, no click.";
+    case "submit_unarmed":
+      return "BBB complaint autofill refused: OWNED_FILING_SUBMIT_ARMED is not enabled.";
     default:
       return "BBB complaint autofill did not complete. You can retry.";
   }

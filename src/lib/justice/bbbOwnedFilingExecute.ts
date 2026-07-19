@@ -20,6 +20,10 @@ import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  isOwnedFilingSubmitArmed,
+  OWNED_FILING_SUBMIT_UNARMED_REASON,
+} from "@/lib/justice/ownedFilingSubmitArmed";
 import { intakeToRealBbbUserData } from "@/lib/justice/realBbbUserData";
 import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -100,6 +104,13 @@ export async function executeClaimedBbbFiling(
   const priorDelivery = parseBbbOwnedFilingDeliveryRecord(claimedTask.notes);
   const startedAt = priorDelivery?.started_at ?? new Date().toISOString();
 
+  // Defense in depth: live execute refuses when the submit arm is off (fail closed).
+  if (!isOwnedFilingSubmitArmed()) {
+    return markFailed(supabase, userId, trimmedCaseId, claimedTask, startedAt, OWNED_FILING_SUBMIT_UNARMED_REASON, {
+      stopReason: "submit_unarmed",
+    });
+  }
+
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
     .select("intake")
@@ -129,6 +140,7 @@ export async function executeClaimedBbbFiling(
       userData: intakeToRealBbbUserData(intake),
       base,
       forwardedHeaders,
+      mode: "live",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

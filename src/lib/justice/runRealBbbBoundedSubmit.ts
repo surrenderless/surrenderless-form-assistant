@@ -6,7 +6,6 @@ import os from "os";
 import path from "path";
 import {
   REAL_BBB_MAX_SUBMIT_STEPS,
-  buildButtonSelector,
   buildRealBbbIncompleteError,
   hasReachedStepCap,
   isEmptyFormDecision,
@@ -21,6 +20,7 @@ import {
   resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl,
 } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
+import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
 
 export type RealBbbBoundedSubmitFillResult = {
   status: "success";
@@ -62,7 +62,16 @@ export type RealBbbBoundedSubmitResult =
 export type RealBbbBoundedSubmitStepLogEntry = {
   step: number;
   url: string;
-  action: "terminal_detected" | "decide" | "apply" | "decide_failed" | "invalid_decision" | "empty_decision";
+  action:
+    | "terminal_detected"
+    | "decide"
+    | "apply"
+    | "decide_failed"
+    | "invalid_decision"
+    | "empty_decision"
+    | "blocked_irreversible_click"
+    | "blocked_unknown_click"
+    | "submit_unarmed";
   detail?: string;
 };
 
@@ -71,6 +80,11 @@ export type RunRealBbbBoundedSubmitParams = {
   userData: Record<string, unknown>;
   base: string;
   forwardedHeaders: Record<string, string>;
+  /**
+   * `live` (default): irreversible clicks require OWNED_FILING_SUBMIT_ARMED.
+   * `dry_run`: fills + safe navigation only; stops before irreversible/unknown clicks.
+   */
+  mode?: "live" | "dry_run";
 };
 
 function getSupabaseAdmin(): SupabaseClient | null {
@@ -120,41 +134,6 @@ async function collectPageData(page: Page): Promise<AssistedFormPageData> {
       pageText: document.body?.innerText?.slice(0, 8000) || "",
     };
   });
-}
-
-async function applyFormDecision(page: Page, decision: FormDecision): Promise<void> {
-  const fieldsToFill = decision.fieldsToFill ?? [];
-  for (const field of fieldsToFill) {
-    if (!field.selector?.trim()) continue;
-    try {
-      await page.fill(
-        `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`,
-        String(field.value ?? "")
-      );
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`real-bbb-submit: could not fill "${field.selector}":`, message);
-    }
-  }
-
-  if (decision.nextButton?.value?.trim()) {
-    const buttonSelector = buildButtonSelector(decision.nextButton);
-    try {
-      if (decision.waitForNavigation) {
-        await Promise.all([
-          page.waitForNavigation({ timeout: 10000 }).catch(() => {
-            console.warn("real-bbb-submit: navigation timeout after button click");
-          }),
-          page.click(buttonSelector),
-        ]);
-      } else {
-        await page.click(buttonSelector);
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn("real-bbb-submit: could not click button:", message);
-    }
-  }
 }
 
 async function fetchFormDecision(
@@ -284,6 +263,7 @@ export async function runRealBbbBoundedSubmit(
   params: RunRealBbbBoundedSubmitParams
 ): Promise<RealBbbBoundedSubmitResult> {
   const { url, userData, base, forwardedHeaders } = params;
+  const mode = params.mode ?? "live";
   const playwrightMockLoop = isPlaywrightMockRealBbbBoundedSubmitLoopEnabled();
   const supabase = getSupabaseAdmin();
   if (!supabase && !playwrightMockLoop) {
@@ -324,7 +304,7 @@ export async function runRealBbbBoundedSubmit(
           action: "terminal_detected",
         });
         const capture = await captureScreenshot(page, supabase, storageConfigured);
-        if (supabase && !playwrightMockLoop) {
+        if (supabase && !playwrightMockLoop && mode !== "dry_run") {
           await persistSuccessfulSubmission(
             supabase,
             url,
@@ -398,7 +378,38 @@ export async function runRealBbbBoundedSubmit(
       }
 
       stepLog.push({ step: stepsExecuted, url: pageData.url, action: "decide" });
-      await applyFormDecision(page, decision);
+      const applyResult = await applyOwnedFilingFormDecision(page, decision, {
+        mode,
+        logPrefix: "real-bbb-submit",
+      });
+      if (!applyResult.ok) {
+        const stopReason =
+          applyResult.reason === "unknown_fail_closed"
+            ? "blocked_unknown_click"
+            : applyResult.reason === "unarmed_live"
+              ? "submit_unarmed"
+              : "blocked_irreversible_click";
+        stepLog.push({
+          step: stepsExecuted,
+          url: pageData.url,
+          action: stopReason,
+          detail: applyResult.buttonLabel,
+        });
+        const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({
+          screenshot: null,
+          storageSkipped: true,
+          storageReason: "Screenshot capture failed",
+        }));
+        return buildIncompleteResult(
+          stopReason,
+          stepsExecuted,
+          stepLog,
+          pageData,
+          capture.screenshot,
+          capture.storageSkipped,
+          capture.storageReason
+        );
+      }
       stepsExecuted += 1;
       stepLog.push({ step: stepsExecuted, url: page.url(), action: "apply" });
     }
@@ -411,7 +422,7 @@ export async function runRealBbbBoundedSubmit(
         action: "terminal_detected",
       });
       const capture = await captureScreenshot(page, supabase, storageConfigured);
-      if (supabase && !playwrightMockLoop) {
+      if (supabase && !playwrightMockLoop && mode !== "dry_run") {
         await persistSuccessfulSubmission(
           supabase,
           url,
