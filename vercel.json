@@ -13,6 +13,10 @@
       "schedule": "0 13 * * *"
     },
     {
+      "path": "/api/cron/reconcile-stale-submitting-filings",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/reconcile-response-review-tasks",
       "schedule": "30 14 * * *"
     },
