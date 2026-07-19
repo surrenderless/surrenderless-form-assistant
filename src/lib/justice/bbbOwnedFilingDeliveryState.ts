@@ -24,7 +24,7 @@ export function bbbOwnedFilingIdempotencyKey(caseId: string): string {
 
 export function bbbOwnedFilingTimelineId(
   caseId: string,
-  state: Exclude<BbbOwnedFilingDeliveryState, "queued">
+  state: BbbOwnedFilingDeliveryState
 ): string {
   return `bbb_autofill_${state}:${caseId.trim()}`;
 }

@@ -8,18 +8,9 @@ import {
   parseFtcOwnedFilingDeliveryRecord,
   upsertFtcOwnedFilingDeliveryNotes,
   attemptAutomatedFtcFiling,
-  REAL_FTC_FILING_CONFIRMATION_FALLBACK,
 } from "@/lib/justice/ftcOwnedFilingDelivery";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
-
-vi.mock("@/lib/justice/runRealFtcBoundedSubmit", () => ({
-  runRealFtcBoundedSubmit: vi.fn(),
-}));
-
-vi.mock("@/lib/justice/completeFtcOperatorFiling", () => ({
-  completeFtcOperatorFiling: vi.fn(),
-}));
 
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(async (_s, _u, _c, entry) => [entry]),
@@ -33,10 +24,7 @@ vi.mock("@/lib/justice/surrenderlessOwnedStep", () => ({
   shouldSuppressChatManualActionForSurrenderlessOwnedStep: vi.fn(() => true),
 }));
 
-import { runRealFtcBoundedSubmit } from "@/lib/justice/runRealFtcBoundedSubmit";
-import { completeFtcOperatorFiling } from "@/lib/justice/completeFtcOperatorFiling";
 import { isRealFtcComplaintAutofillEnabled } from "@/lib/justice/realFtcAutofillEnabled";
-import { runWithBbbOwnedFilingSubmitContext } from "@/lib/justice/bbbOwnedFilingSubmitContext";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -134,51 +122,17 @@ function makeSupabase(handlers: {
   } as unknown as SupabaseClient;
 }
 
-function successBoundedResult(confirmationReference: string | null) {
+function taskWithNotes(notes: string): JusticeCaseTaskRow {
   return {
-    ok: true as const,
-    fillResult: {
-      status: "success" as const,
-      screenshot: "https://storage.example/screenshots/x.png",
-      pageData: null,
-      confirmationReference,
-      stepsExecuted: 3,
-      stopReason: "terminal_confirmation" as const,
-      stepLog: [],
-    },
-  };
-}
-
-function completedFilingResult() {
-  return {
-    ok: true as const,
-    filing: {
-      id: "f1",
-      user_id: USER_ID,
-      case_id: CASE_ID,
-      destination: "FTC (consumer complaint)",
-      filed_at: "2026-07-14",
-      confirmation_number: "FTC-2026-4455",
-      filing_url: null,
-      notes: null,
-      created_at: "2026-07-14T00:00:00.000Z",
-      updated_at: "2026-07-14T00:00:00.000Z",
-    },
-    task: {
-      id: TASK_ID,
-      user_id: USER_ID,
-      case_id: CASE_ID,
-      title: "FTC",
-      due_date: null,
-      notes: "done",
-      completed_at: "2026-07-14T00:00:00.000Z",
-      created_at: "2026-07-14T00:00:00.000Z",
-      updated_at: "2026-07-14T00:00:00.000Z",
-    },
-    clientState: {},
-    timeline: [],
-    advanced: false,
-    idempotent: false,
+    id: TASK_ID,
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    title: "FTC",
+    due_date: null,
+    notes,
+    completed_at: null,
+    created_at: "2026-07-14T00:00:00.000Z",
+    updated_at: "2026-07-14T00:00:00.000Z",
   };
 }
 
@@ -208,45 +162,35 @@ describe("ftcOwnedFilingDelivery helpers", () => {
   });
 
   it("detects submitting and failed states on open tasks", () => {
-    const submittingTask: JusticeCaseTaskRow = {
-      id: "t1",
-      user_id: "u1",
-      case_id: "c1",
-      title: "FTC",
-      due_date: null,
-      notes: upsertFtcOwnedFilingDeliveryNotes("marker", {
+    const submittingTask = taskWithNotes(
+      upsertFtcOwnedFilingDeliveryNotes("marker", {
         delivery_state: "submitting",
         provider: "real_ftc_bounded_submit",
-      }),
-      completed_at: null,
-      created_at: "2026-07-14T00:00:00.000Z",
-      updated_at: "2026-07-14T00:00:00.000Z",
-    };
+      })
+    );
     expect(isFtcOwnedFilingSubmitting(submittingTask)).toBe(true);
     expect(isFtcOwnedFilingFailed(submittingTask)).toBe(false);
 
-    const failedTask: JusticeCaseTaskRow = {
-      ...submittingTask,
-      notes: upsertFtcOwnedFilingDeliveryNotes("marker", {
+    const failedTask = taskWithNotes(
+      upsertFtcOwnedFilingDeliveryNotes("marker", {
         delivery_state: "failed",
         provider: "real_ftc_bounded_submit",
         failure_detail: "no",
-      }),
-    };
+      })
+    );
     expect(isFtcOwnedFilingFailed(failedTask)).toBe(true);
   });
 
   it("builds stable idempotency and timeline ids", () => {
     expect(ftcOwnedFilingIdempotencyKey(CASE_ID)).toBe(`ftc-owned-autofill:${CASE_ID}`);
     expect(ftcOwnedFilingTimelineId(CASE_ID, "filed")).toBe(`ftc_autofill_filed:${CASE_ID}`);
+    expect(ftcOwnedFilingTimelineId(CASE_ID, "queued")).toBe(`ftc_autofill_queued:${CASE_ID}`);
   });
 });
 
-describe("attemptAutomatedFtcFiling", () => {
+describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path)", () => {
   beforeEach(() => {
     vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(true);
-    vi.mocked(runRealFtcBoundedSubmit).mockReset();
-    vi.mocked(completeFtcOperatorFiling).mockReset();
     vi.stubEnv("VERCEL_ENV", "preview");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
@@ -258,45 +202,69 @@ describe("attemptAutomatedFtcFiling", () => {
     vi.clearAllMocks();
   });
 
-  it("skips when real FTC autofill is disabled (no false submitted state)", async () => {
-    vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(false);
-    const result = await attemptAutomatedFtcFiling(makeSupabase({}), USER_ID, CASE_ID);
-    expect(result.status).toBe("skipped");
-    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+  it("enqueues delivery_state: queued and returns immediately (nonblocking dispatch)", async () => {
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({ status: "queued", idempotent: false });
+    expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
+    expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(false);
   });
 
-  it("skips without submitting when production Browserless configuration is missing", async () => {
+  it("skips when real FTC autofill is disabled (no false submitted state)", async () => {
+    vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(false);
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result.status).toBe("skipped");
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("skips without enqueue when production Browserless configuration is missing", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("BROWSERLESS_URL", "");
-    const result = await attemptAutomatedFtcFiling(makeSupabase({}), USER_ID, CASE_ID);
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
     expect(result).toMatchObject({
       status: "skipped",
       reason: expect.stringContaining("BROWSERLESS_URL"),
     });
-    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+    expect(noteUpdates.length).toBe(0);
   });
 
-  it("skips duplicate submit while already submitting (idempotency)", async () => {
+  it("does not re-enqueue when already queued (idempotent)", async () => {
+    const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+      delivery_state: "queued",
+      provider: "real_ftc_bounded_submit",
+      started_at: "2026-07-14T00:00:00.000Z",
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [taskWithNotes(notes)], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({ status: "queued", idempotent: true });
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("skips duplicate enqueue while already submitting (worker in progress)", async () => {
     const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
       delivery_state: "submitting",
       provider: "real_ftc_bounded_submit",
     });
     const result = await attemptAutomatedFtcFiling(
-      makeSupabase({
-        tasks: [
-          {
-            id: TASK_ID,
-            user_id: USER_ID,
-            case_id: CASE_ID,
-            title: "FTC",
-            due_date: null,
-            notes,
-            completed_at: null,
-            created_at: "2026-07-14T00:00:00.000Z",
-            updated_at: "2026-07-14T00:00:00.000Z",
-          },
-        ],
-      }),
+      makeSupabase({ tasks: [taskWithNotes(notes)] }),
       USER_ID,
       CASE_ID
     );
@@ -304,7 +272,25 @@ describe("attemptAutomatedFtcFiling", () => {
       status: "skipped",
       reason: expect.stringContaining("already submitting"),
     });
-    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits and never re-dispatches a reconciled failed delivery", async () => {
+    const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+      delivery_state: "failed",
+      provider: "real_ftc_bounded_submit",
+      failure_detail: "stale reclaimed",
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [taskWithNotes(notes)], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: expect.stringContaining("previously failed"),
+    });
+    expect(noteUpdates.length).toBe(0);
   });
 
   it("returns accepted idempotently when the task already recorded a filed confirmation", async () => {
@@ -314,21 +300,7 @@ describe("attemptAutomatedFtcFiling", () => {
       confirmation: "FTC-2026-4455",
     });
     const result = await attemptAutomatedFtcFiling(
-      makeSupabase({
-        tasks: [
-          {
-            id: TASK_ID,
-            user_id: USER_ID,
-            case_id: CASE_ID,
-            title: "FTC",
-            due_date: null,
-            notes,
-            completed_at: null,
-            created_at: "2026-07-14T00:00:00.000Z",
-            updated_at: "2026-07-14T00:00:00.000Z",
-          },
-        ],
-      }),
+      makeSupabase({ tasks: [taskWithNotes(notes)] }),
       USER_ID,
       CASE_ID
     );
@@ -337,124 +309,5 @@ describe("attemptAutomatedFtcFiling", () => {
       idempotent: true,
       confirmation: "FTC-2026-4455",
     });
-    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
-  });
-
-  it("completes and persists the real confirmation reference after terminal confirmation", async () => {
-    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue(successBoundedResult("FTC-2026-4455"));
-    vi.mocked(completeFtcOperatorFiling).mockResolvedValue(completedFilingResult());
-
-    const noteUpdates: string[] = [];
-    const result = await runWithBbbOwnedFilingSubmitContext(
-      {
-        base: "http://127.0.0.1:3000",
-        forwardedHeaders: { "Content-Type": "application/json", cookie: "session=1" },
-      },
-      () =>
-        attemptAutomatedFtcFiling(
-          makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
-          USER_ID,
-          CASE_ID
-        )
-    );
-
-    expect(result).toMatchObject({ status: "accepted", confirmation: "FTC-2026-4455" });
-    expect(runRealFtcBoundedSubmit).toHaveBeenCalledTimes(1);
-    expect(runRealFtcBoundedSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: "https://reportfraud.ftc.gov/",
-        forwardedHeaders: expect.objectContaining({
-          "x-surrenderless-bbb-decide-secret": "test-decide-secret",
-          "x-surrenderless-bbb-user-id": USER_ID,
-        }),
-      })
-    );
-    expect(completeFtcOperatorFiling).toHaveBeenCalledTimes(1);
-    expect(completeFtcOperatorFiling).toHaveBeenCalledWith(
-      expect.anything(),
-      USER_ID,
-      expect.objectContaining({
-        destination: "FTC (consumer complaint)",
-        confirmationNumber: "FTC-2026-4455",
-      })
-    );
-    expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(true);
-  });
-
-  it("falls back to a generic confirmation when the portal exposes no readable reference", async () => {
-    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue(successBoundedResult(null));
-    vi.mocked(completeFtcOperatorFiling).mockResolvedValue(completedFilingResult());
-
-    const result = await runWithBbbOwnedFilingSubmitContext(
-      {
-        base: "http://127.0.0.1:3000",
-        forwardedHeaders: { "Content-Type": "application/json" },
-      },
-      () => attemptAutomatedFtcFiling(makeSupabase({}), USER_ID, CASE_ID)
-    );
-
-    expect(result).toMatchObject({ status: "accepted" });
-    expect(completeFtcOperatorFiling).toHaveBeenCalledWith(
-      expect.anything(),
-      USER_ID,
-      expect.objectContaining({ confirmationNumber: REAL_FTC_FILING_CONFIRMATION_FALLBACK })
-    );
-  });
-
-  it("marks failed and leaves task open on uncertain portal state (operator fallback)", async () => {
-    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
-      ok: false,
-      error: "assistant returned an invalid next action",
-      stopReason: "invalid_decision",
-      stepsExecuted: 2,
-      fillResult: {
-        screenshot: null,
-        pageData: null,
-        stepsExecuted: 2,
-        stopReason: "invalid_decision",
-        stepLog: [],
-      },
-      technicalDetails: {},
-    });
-
-    const noteUpdates: string[] = [];
-    const result = await runWithBbbOwnedFilingSubmitContext(
-      {
-        base: "http://127.0.0.1:3000",
-        forwardedHeaders: { cookie: "session=1", "Content-Type": "application/json" },
-      },
-      () =>
-        attemptAutomatedFtcFiling(
-          makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
-          USER_ID,
-          CASE_ID
-        )
-    );
-
-    expect(result.status).toBe("failed");
-    expect(completeFtcOperatorFiling).not.toHaveBeenCalled();
-    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
-  });
-
-  it("marks failed and leaves task open when the provider throws (operator fallback)", async () => {
-    vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(new Error("Browserless connection refused"));
-
-    const noteUpdates: string[] = [];
-    const result = await runWithBbbOwnedFilingSubmitContext(
-      {
-        base: "http://127.0.0.1:3000",
-        forwardedHeaders: { cookie: "session=1", "Content-Type": "application/json" },
-      },
-      () =>
-        attemptAutomatedFtcFiling(
-          makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
-          USER_ID,
-          CASE_ID
-        )
-    );
-
-    expect(result).toMatchObject({ status: "failed" });
-    expect(completeFtcOperatorFiling).not.toHaveBeenCalled();
-    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
   });
 });

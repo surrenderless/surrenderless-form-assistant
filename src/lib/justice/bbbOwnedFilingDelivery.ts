@@ -1,9 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  REAL_BBB_ASSISTED_SUBMISSION_LANE,
-  REAL_BBB_COMPLAINT_FILING_DESTINATION,
-  REAL_BBB_COMPLAINT_SUBMISSION_URL,
-} from "@/lib/justice/assistedSubmissionLane";
+import { REAL_BBB_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmissionLane";
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
 import {
   bbbFilingsForManualTracking,
@@ -12,10 +8,7 @@ import {
   shouldQueueBbbFilingTask,
   taskNotesMatchBbbFilingMarker,
 } from "@/lib/justice/bbbFilingTask";
-import {
-  getBbbOwnedFilingSubmitContext,
-  type BbbOwnedFilingSubmitContext,
-} from "@/lib/justice/bbbOwnedFilingSubmitContext";
+import { getBbbOwnedFilingSubmitContext } from "@/lib/justice/bbbOwnedFilingSubmitContext";
 import { evaluateOwnedBbbAutofillExecutionReadiness } from "@/lib/justice/bbbOwnedFilingProduction";
 import {
   bbbOwnedFilingIdempotencyKey,
@@ -24,15 +17,9 @@ import {
   upsertBbbOwnedFilingDeliveryNotes,
   type BbbOwnedFilingDeliveryRecord,
 } from "@/lib/justice/bbbOwnedFilingDeliveryState";
-import { completeBbbOperatorFiling } from "@/lib/justice/completeBbbOperatorFiling";
-import {
-  canonicalFilingDestinationForApprovedActionHref,
-  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
-} from "@/lib/justice/handlingTrackingProgress";
+import { MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
-import { intakeToRealBbbUserData } from "@/lib/justice/realBbbUserData";
-import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -49,6 +36,9 @@ export {
   type BbbOwnedFilingDeliveryState,
 } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 
+/** Provider tag stored on the delivery record. */
+export const BBB_OWNED_FILING_PROVIDER = "real_bbb_bounded_submit";
+
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
 
@@ -56,6 +46,12 @@ const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
 
 export type AttemptAutomatedBbbFilingResult =
+  | {
+      status: "queued";
+      idempotent: boolean;
+      task?: JusticeCaseTaskRow;
+      timeline?: TimelineEntry[] | null;
+    }
   | {
       status: "accepted";
       confirmation: string;
@@ -95,15 +91,17 @@ async function patchBbbTaskNotes(
 }
 
 /**
- * Runs Surrenderless-owned BBB filing via the existing real BBB bounded-submit path.
- * Completes the operator task only after terminal confirmation is returned.
- * Idempotent on filed confirmations; concurrent submitting skips; failed leaves task open.
+ * Enqueues Surrenderless-owned BBB filing for the durable background worker.
+ * Never runs Playwright/Browserless on the request path — it only persists
+ * `delivery_state: "queued"` and lets /api/cron/run-queued-owned-filings execute it.
+ *
+ * Idempotent: already filed/queued/submitting is not re-enqueued; a reconciled
+ * `failed` state short-circuits so operator fallbacks are never auto-resubmitted.
  */
 export async function attemptAutomatedBbbFiling(
   supabase: SupabaseClient,
   userId: string,
-  caseId: string,
-  submitContext?: BbbOwnedFilingSubmitContext | null
+  caseId: string
 ): Promise<AttemptAutomatedBbbFilingResult> {
   const trimmedCaseId = caseId.trim();
   if (!trimmedCaseId) {
@@ -215,182 +213,52 @@ export async function attemptAutomatedBbbFiling(
   if (priorDelivery?.delivery_state === "submitting") {
     return {
       status: "skipped",
-      reason: "BBB autofill already submitting — operator/manual fallback",
+      reason: "BBB autofill already submitting — worker in progress",
+    };
+  }
+  if (priorDelivery?.delivery_state === "queued") {
+    return { status: "queued", idempotent: true, task: openTask };
+  }
+  // Failed/needs-operator short-circuit: never auto-resubmit a reconciled failure.
+  if (priorDelivery?.delivery_state === "failed") {
+    return {
+      status: "skipped",
+      reason: "BBB autofill previously failed — operator/manual fallback",
     };
   }
 
+  // Fail closed to operator fallback when production execution config is unavailable.
+  const overrideBase = getBbbOwnedFilingSubmitContext()?.base?.trim();
   const readiness = evaluateOwnedBbbAutofillExecutionReadiness(userId);
-  if (!readiness.ok) {
+  if (!readiness.ok && !overrideBase) {
     return { status: "skipped", reason: readiness.reason };
   }
 
-  const overrideBase = submitContext?.base?.trim() || getBbbOwnedFilingSubmitContext()?.base?.trim();
-  const base = (overrideBase || readiness.base).replace(/\/$/, "");
-  const forwardedHeaders = readiness.forwardedHeaders;
-
-  const provider = "real_bbb_bounded_submit";
-  const startedAt = new Date().toISOString();
-  const submittingRecord: BbbOwnedFilingDeliveryRecord = {
-    delivery_state: "submitting",
-    provider,
-    started_at: startedAt,
+  const queuedAt = new Date().toISOString();
+  const queuedRecord: BbbOwnedFilingDeliveryRecord = {
+    delivery_state: "queued",
+    provider: BBB_OWNED_FILING_PROVIDER,
+    started_at: queuedAt,
   };
-  const submittingNotes = upsertBbbOwnedFilingDeliveryNotes(openTask.notes, submittingRecord);
-  const submittingTask = await patchBbbTaskNotes(
-    supabase,
-    userId,
-    openTask.id,
-    submittingNotes
-  );
-  await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-    id: bbbOwnedFilingTimelineId(trimmedCaseId, "submitting"),
+  const queuedNotes = upsertBbbOwnedFilingDeliveryNotes(openTask.notes, queuedRecord);
+  const queuedTask = await patchBbbTaskNotes(supabase, userId, openTask.id, queuedNotes);
+  if (!queuedTask) {
+    return { status: "skipped", reason: "could not enqueue BBB filing" };
+  }
+  const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
+    id: bbbOwnedFilingTimelineId(trimmedCaseId, "queued"),
     type: "filing_recorded",
-    label: "BBB filing submitting",
-    detail: `provider: ${provider}\nidempotency: ${bbbOwnedFilingIdempotencyKey(trimmedCaseId)}`,
-    ts: startedAt,
+    label: "BBB filing queued",
+    detail: `provider: ${BBB_OWNED_FILING_PROVIDER}\nidempotency: ${bbbOwnedFilingIdempotencyKey(trimmedCaseId)}`,
+    ts: queuedAt,
   });
 
-  let bounded;
-  try {
-    bounded = await runRealBbbBoundedSubmit({
-      url: REAL_BBB_COMPLAINT_SUBMISSION_URL,
-      userData: intakeToRealBbbUserData(intake),
-      base,
-      forwardedHeaders,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    const failedAt = new Date().toISOString();
-    const failedRecord: BbbOwnedFilingDeliveryRecord = {
-      delivery_state: "failed",
-      provider,
-      started_at: startedAt,
-      completed_at: failedAt,
-      failure_detail: message.slice(0, 500),
-    };
-    await patchBbbTaskNotes(
-      supabase,
-      userId,
-      openTask.id,
-      upsertBbbOwnedFilingDeliveryNotes(submittingTask?.notes ?? submittingNotes, failedRecord)
-    );
-    const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-      id: bbbOwnedFilingTimelineId(trimmedCaseId, "failed"),
-      type: "filing_recorded",
-      label: "BBB filing failed",
-      detail: failedRecord.failure_detail,
-      ts: failedAt,
-    });
-    return { status: "failed", error: message, timeline };
-  }
-
-  if (!bounded.ok) {
-    const failedAt = new Date().toISOString();
-    const failedRecord: BbbOwnedFilingDeliveryRecord = {
-      delivery_state: "failed",
-      provider,
-      started_at: startedAt,
-      completed_at: failedAt,
-      failure_detail: bounded.error.slice(0, 500),
-      stop_reason: bounded.stopReason,
-    };
-    await patchBbbTaskNotes(
-      supabase,
-      userId,
-      openTask.id,
-      upsertBbbOwnedFilingDeliveryNotes(submittingTask?.notes ?? submittingNotes, failedRecord)
-    );
-    const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-      id: bbbOwnedFilingTimelineId(trimmedCaseId, "failed"),
-      type: "filing_recorded",
-      label: "BBB filing failed",
-      detail: [
-        `error: ${bounded.error.slice(0, 500)}`,
-        `stop_reason: ${bounded.stopReason}`,
-        `steps_executed: ${bounded.stepsExecuted}`,
-      ].join("\n"),
-      ts: failedAt,
-    });
-    return { status: "failed", error: bounded.error, timeline };
-  }
-
-  const confirmation = REAL_BBB_ASSISTED_SUBMISSION_LANE.filingConfirmation;
-  const destination =
-    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF) ??
-    REAL_BBB_COMPLAINT_FILING_DESTINATION;
-  const filedAt = new Date().toISOString().slice(0, 10);
-  const completeResult = await completeBbbOperatorFiling(supabase, userId, {
-    caseId: trimmedCaseId,
-    taskId: openTask.id,
-    destination,
-    filedAt,
-    confirmationNumber: confirmation,
-    notes: [
-      `provider: ${provider}`,
-      `delivery_state: filed`,
-      `confirmation: ${confirmation}`,
-      `idempotency: ${bbbOwnedFilingIdempotencyKey(trimmedCaseId)}`,
-      `steps_executed: ${bounded.fillResult.stepsExecuted}`,
-      `completed_at: ${new Date().toISOString()}`,
-    ].join("\n"),
-  });
-
-  if (!completeResult.ok) {
-    const failedAt = new Date().toISOString();
-    const failedRecord: BbbOwnedFilingDeliveryRecord = {
-      delivery_state: "failed",
-      provider,
-      started_at: startedAt,
-      completed_at: failedAt,
-      confirmation,
-      failure_detail: `Terminal confirmation returned but completion failed: ${completeResult.error}`.slice(
-        0,
-        500
-      ),
-    };
-    await patchBbbTaskNotes(
-      supabase,
-      userId,
-      openTask.id,
-      upsertBbbOwnedFilingDeliveryNotes(submittingTask?.notes ?? submittingNotes, failedRecord)
-    );
-    const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-      id: bbbOwnedFilingTimelineId(trimmedCaseId, "failed"),
-      type: "filing_recorded",
-      label: "BBB filing failed",
-      detail: failedRecord.failure_detail,
-      ts: failedAt,
-    });
-    return { status: "failed", error: completeResult.error, timeline };
-  }
-
-  const filedTs = new Date().toISOString();
-  await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-    id: bbbOwnedFilingTimelineId(trimmedCaseId, "filed"),
-    type: "filing_recorded",
-    label: "BBB filing filed",
-    detail: [
-      `provider: ${provider}`,
-      `confirmation: ${confirmation}`,
-      `steps_executed: ${bounded.fillResult.stepsExecuted}`,
-      `completed_at: ${filedTs}`,
-    ].join("\n"),
-    ts: filedTs,
-  });
-
-  return {
-    status: "accepted",
-    confirmation,
-    idempotent: completeResult.idempotent,
-    filing: completeResult.filing,
-    task: completeResult.task,
-    timeline: completeResult.timeline,
-  };
+  return { status: "queued", idempotent: false, task: queuedTask, timeline };
 }
 
 /**
  * Call after ensureBbbFilingTask when BBB is approved and owned.
- * Merges timeline from accepted/failed delivery; leaves skipped/unconfirmed open for operators.
+ * Merges timeline from queued/accepted/failed delivery; leaves skipped open for operators.
  */
 export async function attemptAutomatedBbbFilingAfterEnsure(
   supabase: SupabaseClient,
@@ -403,7 +271,7 @@ export async function attemptAutomatedBbbFilingAfterEnsure(
 }> {
   const result = await attemptAutomatedBbbFiling(supabase, userId, caseId);
   if (
-    (result.status === "accepted" || result.status === "failed") &&
+    (result.status === "queued" || result.status === "accepted" || result.status === "failed") &&
     result.timeline
   ) {
     return { timeline: result.timeline, result };

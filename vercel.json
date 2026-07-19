@@ -17,6 +17,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/run-queued-owned-filings",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/reconcile-response-review-tasks",
       "schedule": "30 14 * * *"
     },

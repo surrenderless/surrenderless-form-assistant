@@ -12,14 +12,6 @@ import {
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
-vi.mock("@/lib/justice/runRealBbbBoundedSubmit", () => ({
-  runRealBbbBoundedSubmit: vi.fn(),
-}));
-
-vi.mock("@/lib/justice/completeBbbOperatorFiling", () => ({
-  completeBbbOperatorFiling: vi.fn(),
-}));
-
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(async (_s, _u, _c, entry) => [entry]),
 }));
@@ -32,10 +24,7 @@ vi.mock("@/lib/justice/surrenderlessOwnedStep", () => ({
   shouldSuppressChatManualActionForSurrenderlessOwnedStep: vi.fn(() => true),
 }));
 
-import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
-import { completeBbbOperatorFiling } from "@/lib/justice/completeBbbOperatorFiling";
 import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
-import { runWithBbbOwnedFilingSubmitContext } from "@/lib/justice/bbbOwnedFilingSubmitContext";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -63,11 +52,7 @@ function chainThenMaybeSingle(data: unknown) {
     then: (resolve: (v: { data: unknown; error: null }) => unknown) =>
       Promise.resolve({ data, error: null }).then(resolve),
   };
-  const self: Record<string, unknown> = {
-    eq: () => self,
-    select: () => self,
-    ...terminal,
-  };
+  const self: Record<string, unknown> = { eq: () => self, select: () => self, ...terminal };
   return self;
 }
 
@@ -110,9 +95,7 @@ function makeSupabase(handlers: {
   return {
     from(table: string) {
       if (table === "justice_cases") {
-        return {
-          select: () => chainThenMaybeSingle(caseRow),
-        };
+        return { select: () => chainThenMaybeSingle(caseRow) };
       }
       if (table === "justice_case_tasks") {
         return {
@@ -124,13 +107,25 @@ function makeSupabase(handlers: {
         };
       }
       if (table === "justice_case_filings") {
-        return {
-          select: () => chainThenMaybeSingle(filings),
-        };
+        return { select: () => chainThenMaybeSingle(filings) };
       }
       throw new Error(`unexpected table ${table}`);
     },
   } as unknown as SupabaseClient;
+}
+
+function taskWithNotes(notes: string): JusticeCaseTaskRow {
+  return {
+    id: TASK_ID,
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    title: "BBB",
+    due_date: null,
+    notes,
+    completed_at: null,
+    created_at: "2026-07-14T00:00:00.000Z",
+    updated_at: "2026-07-14T00:00:00.000Z",
+  };
 }
 
 describe("bbbOwnedFilingDelivery helpers", () => {
@@ -159,45 +154,35 @@ describe("bbbOwnedFilingDelivery helpers", () => {
   });
 
   it("detects submitting and failed states on open tasks", () => {
-    const submittingTask: JusticeCaseTaskRow = {
-      id: "t1",
-      user_id: "u1",
-      case_id: "c1",
-      title: "BBB",
-      due_date: null,
-      notes: upsertBbbOwnedFilingDeliveryNotes("marker", {
+    const submittingTask = taskWithNotes(
+      upsertBbbOwnedFilingDeliveryNotes("marker", {
         delivery_state: "submitting",
         provider: "real_bbb_bounded_submit",
-      }),
-      completed_at: null,
-      created_at: "2026-07-14T00:00:00.000Z",
-      updated_at: "2026-07-14T00:00:00.000Z",
-    };
+      })
+    );
     expect(isBbbOwnedFilingSubmitting(submittingTask)).toBe(true);
     expect(isBbbOwnedFilingFailed(submittingTask)).toBe(false);
 
-    const failedTask: JusticeCaseTaskRow = {
-      ...submittingTask,
-      notes: upsertBbbOwnedFilingDeliveryNotes("marker", {
+    const failedTask = taskWithNotes(
+      upsertBbbOwnedFilingDeliveryNotes("marker", {
         delivery_state: "failed",
         provider: "real_bbb_bounded_submit",
         failure_detail: "no",
-      }),
-    };
+      })
+    );
     expect(isBbbOwnedFilingFailed(failedTask)).toBe(true);
   });
 
   it("builds stable idempotency and timeline ids", () => {
     expect(bbbOwnedFilingIdempotencyKey(CASE_ID)).toBe(`bbb-owned-autofill:${CASE_ID}`);
     expect(bbbOwnedFilingTimelineId(CASE_ID, "filed")).toBe(`bbb_autofill_filed:${CASE_ID}`);
+    expect(bbbOwnedFilingTimelineId(CASE_ID, "queued")).toBe(`bbb_autofill_queued:${CASE_ID}`);
   });
 });
 
-describe("attemptAutomatedBbbFiling", () => {
+describe("attemptAutomatedBbbFiling (enqueue only, no Playwright on request path)", () => {
   beforeEach(() => {
     vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(true);
-    vi.mocked(runRealBbbBoundedSubmit).mockReset();
-    vi.mocked(completeBbbOperatorFiling).mockReset();
     vi.stubEnv("VERCEL_ENV", "preview");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
@@ -209,45 +194,69 @@ describe("attemptAutomatedBbbFiling", () => {
     vi.clearAllMocks();
   });
 
-  it("skips when realtime BBB autofill is disabled", async () => {
-    vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(false);
-    const result = await attemptAutomatedBbbFiling(makeSupabase({}), USER_ID, CASE_ID);
-    expect(result.status).toBe("skipped");
-    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+  it("enqueues delivery_state: queued and returns immediately (nonblocking dispatch)", async () => {
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedBbbFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({ status: "queued", idempotent: false });
+    expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
+    expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(false);
   });
 
-  it("skips without submitting when production execution readiness fails", async () => {
+  it("skips when realtime BBB autofill is disabled", async () => {
+    vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(false);
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedBbbFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result.status).toBe("skipped");
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("skips without enqueue when production execution readiness fails", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("BROWSERLESS_URL", "");
-    const result = await attemptAutomatedBbbFiling(makeSupabase({}), USER_ID, CASE_ID);
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedBbbFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
     expect(result).toMatchObject({
       status: "skipped",
       reason: expect.stringContaining("BROWSERLESS_URL"),
     });
-    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+    expect(noteUpdates.length).toBe(0);
   });
 
-  it("skips duplicate submit while already submitting", async () => {
+  it("does not re-enqueue when already queued (idempotent)", async () => {
+    const notes = upsertBbbOwnedFilingDeliveryNotes(`bbb_filing_queue:${CASE_ID}\ndraft:\nx`, {
+      delivery_state: "queued",
+      provider: "real_bbb_bounded_submit",
+      started_at: "2026-07-14T00:00:00.000Z",
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedBbbFiling(
+      makeSupabase({ tasks: [taskWithNotes(notes)], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({ status: "queued", idempotent: true });
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("skips duplicate enqueue while already submitting (worker in progress)", async () => {
     const notes = upsertBbbOwnedFilingDeliveryNotes(`bbb_filing_queue:${CASE_ID}\ndraft:\nx`, {
       delivery_state: "submitting",
       provider: "real_bbb_bounded_submit",
     });
     const result = await attemptAutomatedBbbFiling(
-      makeSupabase({
-        tasks: [
-          {
-            id: TASK_ID,
-            user_id: USER_ID,
-            case_id: CASE_ID,
-            title: "BBB",
-            due_date: null,
-            notes,
-            completed_at: null,
-            created_at: "2026-07-14T00:00:00.000Z",
-            updated_at: "2026-07-14T00:00:00.000Z",
-          },
-        ],
-      }),
+      makeSupabase({ tasks: [taskWithNotes(notes)] }),
       USER_ID,
       CASE_ID
     );
@@ -255,112 +264,24 @@ describe("attemptAutomatedBbbFiling", () => {
       status: "skipped",
       reason: expect.stringContaining("already submitting"),
     });
-    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
   });
 
-  it("completes only after terminal bounded-submit confirmation", async () => {
-    vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
-      ok: true,
-      fillResult: {
-        status: "success",
-        screenshot: null,
-        pageData: null,
-        stepsExecuted: 2,
-        stopReason: "terminal_confirmation",
-        stepLog: [],
-      },
+  it("short-circuits and never re-dispatches a reconciled failed delivery", async () => {
+    const notes = upsertBbbOwnedFilingDeliveryNotes(`bbb_filing_queue:${CASE_ID}\ndraft:\nx`, {
+      delivery_state: "failed",
+      provider: "real_bbb_bounded_submit",
+      failure_detail: "stale reclaimed",
     });
-    vi.mocked(completeBbbOperatorFiling).mockResolvedValue({
-      ok: true,
-      filing: {
-        id: "f1",
-        user_id: USER_ID,
-        case_id: CASE_ID,
-        destination: "Better Business Bureau",
-        filed_at: "2026-07-14",
-        confirmation_number: "BBB complaint complete",
-        filing_url: null,
-        notes: null,
-        created_at: "2026-07-14T00:00:00.000Z",
-        updated_at: "2026-07-14T00:00:00.000Z",
-      },
-      task: {
-        id: TASK_ID,
-        user_id: USER_ID,
-        case_id: CASE_ID,
-        title: "BBB",
-        due_date: null,
-        notes: "done",
-        completed_at: "2026-07-14T00:00:00.000Z",
-        created_at: "2026-07-14T00:00:00.000Z",
-        updated_at: "2026-07-14T00:00:00.000Z",
-      },
-      clientState: {},
-      timeline: [],
-      advanced: false,
-      idempotent: false,
-    });
-
     const noteUpdates: string[] = [];
-    const result = await runWithBbbOwnedFilingSubmitContext(
-      {
-        base: "http://127.0.0.1:3000",
-        forwardedHeaders: { "Content-Type": "application/json", cookie: "session=1" },
-      },
-      () =>
-        attemptAutomatedBbbFiling(
-          makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
-          USER_ID,
-          CASE_ID
-        )
+    const result = await attemptAutomatedBbbFiling(
+      makeSupabase({ tasks: [taskWithNotes(notes)], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
     );
-
-    expect(result.status).toBe("accepted");
-    expect(runRealBbbBoundedSubmit).toHaveBeenCalledTimes(1);
-    expect(runRealBbbBoundedSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        forwardedHeaders: expect.objectContaining({
-          "x-surrenderless-bbb-decide-secret": "test-decide-secret",
-          "x-surrenderless-bbb-user-id": USER_ID,
-        }),
-      })
-    );
-    expect(completeBbbOperatorFiling).toHaveBeenCalledTimes(1);
-    expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(true);
-  });
-
-  it("marks failed and leaves task open when bounded submit does not confirm", async () => {
-    vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
-      ok: false,
-      error: "did not reach confirmation",
-      stopReason: "max_steps_reached",
-      stepsExecuted: 8,
-      fillResult: {
-        screenshot: null,
-        pageData: null,
-        stepsExecuted: 8,
-        stopReason: "max_steps_reached",
-        stepLog: [],
-      },
-      technicalDetails: {},
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: expect.stringContaining("previously failed"),
     });
-
-    const noteUpdates: string[] = [];
-    const result = await runWithBbbOwnedFilingSubmitContext(
-      {
-        base: "http://127.0.0.1:3000",
-        forwardedHeaders: { cookie: "session=1", "Content-Type": "application/json" },
-      },
-      () =>
-        attemptAutomatedBbbFiling(
-          makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
-          USER_ID,
-          CASE_ID
-        )
-    );
-
-    expect(result.status).toBe("failed");
-    expect(completeBbbOperatorFiling).not.toHaveBeenCalled();
-    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
+    expect(noteUpdates.length).toBe(0);
   });
 });

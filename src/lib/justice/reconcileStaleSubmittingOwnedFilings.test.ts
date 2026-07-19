@@ -29,9 +29,12 @@ import {
   upsertFtcOwnedFilingDeliveryNotes,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import {
+  OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS,
+  OWNED_FILING_STALE_QUEUED_TIMEOUT_ENV,
   OWNED_FILING_STALE_SUBMITTING_DEFAULT_TIMEOUT_MS,
   OWNED_FILING_STALE_SUBMITTING_TIMEOUT_ENV,
   reconcileStaleSubmittingOwnedFilings,
+  resolveStaleQueuedTimeoutMs,
   resolveStaleSubmittingTimeoutMs,
 } from "@/lib/justice/reconcileStaleSubmittingOwnedFilings";
 
@@ -101,7 +104,11 @@ const cfgFor = (kind: Kind) =>
 function makeTask(
   kind: Kind,
   caseId: string,
-  record: { delivery_state: "submitting" | "failed" | "filed"; started_at?: string; confirmation?: string }
+  record: {
+    delivery_state: "queued" | "submitting" | "failed" | "filed";
+    started_at?: string;
+    confirmation?: string;
+  }
 ): TaskRow {
   const cfg = cfgFor(kind);
   const base = `${cfg.queueMarker(caseId)}\ndraft:\n${kind.toUpperCase()} DRAFT`;
@@ -393,6 +400,83 @@ describe.each<[Kind]>([["bbb"], ["ftc"]])(
       // still submitting so a later run can retry
       expect(cfg.parseRecord(store.tasks[0].notes)?.delivery_state).toBe("submitting");
       expect(cfg.complete).not.toHaveBeenCalled();
+    });
+  }
+);
+
+const QUEUED_TIMEOUT_MS = 60 * 60 * 1000;
+const STALE_QUEUED_NOW_MS = START_MS + 90 * 60 * 1000; // 90 min later
+
+describe("resolveStaleQueuedTimeoutMs", () => {
+  it("defaults to a window longer than the one-minute worker cadence", () => {
+    expect(resolveStaleQueuedTimeoutMs({})).toBe(OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS);
+    expect(OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS).toBeGreaterThan(60 * 1000);
+  });
+
+  it("honors a positive env override and ignores invalid values", () => {
+    expect(
+      resolveStaleQueuedTimeoutMs({ [OWNED_FILING_STALE_QUEUED_TIMEOUT_ENV]: "120000" })
+    ).toBe(120000);
+    expect(
+      resolveStaleQueuedTimeoutMs({ [OWNED_FILING_STALE_QUEUED_TIMEOUT_ENV]: "0" })
+    ).toBe(OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS);
+  });
+});
+
+describe.each<[Kind]>([["bbb"], ["ftc"]])(
+  "reconcileStaleSubmittingOwnedFilings queued recovery (%s)",
+  (kind) => {
+    const cfg = cfgFor(kind);
+
+    it("ignores a queued task within the stale-queued window", async () => {
+      const store: Store = {
+        tasks: [makeTask(kind, "case-q-fresh", { delivery_state: "queued", started_at: START_ISO })],
+        filings: [],
+      };
+      const summary = await reconcileStaleSubmittingOwnedFilings(makeSupabase(store), {
+        nowMs: FRESH_NOW_MS,
+        timeoutMs: TIMEOUT_MS,
+        queuedTimeoutMs: QUEUED_TIMEOUT_MS,
+      });
+      const result = summary.results.find((r) => r.case_id === "case-q-fresh" && r.kind === kind);
+      expect(result?.outcome).toBe("ignored_not_stale");
+      expect(cfg.parseRecord(store.tasks[0].notes)?.delivery_state).toBe("queued");
+      expect(cfg.complete).not.toHaveBeenCalled();
+    });
+
+    it("sends an unclaimed stale queued task to the operator queue without duplicate submission", async () => {
+      const store: Store = {
+        tasks: [makeTask(kind, "case-q-stuck", { delivery_state: "queued", started_at: START_ISO })],
+        filings: [],
+      };
+      const summary = await reconcileStaleSubmittingOwnedFilings(makeSupabase(store), {
+        nowMs: STALE_QUEUED_NOW_MS,
+        timeoutMs: TIMEOUT_MS,
+        queuedTimeoutMs: QUEUED_TIMEOUT_MS,
+      });
+      const result = summary.results.find((r) => r.case_id === "case-q-stuck" && r.kind === kind);
+      expect(result?.outcome).toBe("sent_to_operator");
+      expect(cfg.complete).not.toHaveBeenCalled();
+      expect(store.tasks[0].completed_at).toBeNull();
+      const record = cfg.parseRecord(store.tasks[0].notes);
+      expect(record?.delivery_state).toBe("failed");
+      expect(record?.stop_reason).toBe("stale_queued_reclaimed");
+    });
+
+    it("finalizes a stale queued task as filed when a confirmed filing already exists", async () => {
+      const store: Store = {
+        tasks: [makeTask(kind, "case-q-conf", { delivery_state: "queued", started_at: START_ISO })],
+        filings: [makeConfirmedFiling(kind, "case-q-conf")],
+      };
+      const summary = await reconcileStaleSubmittingOwnedFilings(makeSupabase(store), {
+        nowMs: STALE_QUEUED_NOW_MS,
+        timeoutMs: TIMEOUT_MS,
+        queuedTimeoutMs: QUEUED_TIMEOUT_MS,
+      });
+      const result = summary.results.find((r) => r.case_id === "case-q-conf" && r.kind === kind);
+      expect(result?.outcome).toBe("finalized_filed");
+      expect(cfg.complete).toHaveBeenCalledTimes(1);
+      expect(cfg.parseRecord(store.tasks[0].notes)?.delivery_state).toBe("filed");
     });
   }
 );
