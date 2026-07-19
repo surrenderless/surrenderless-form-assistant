@@ -83,8 +83,9 @@ test("owned payment dispute queue → operator completes → resolution endgame 
   await expect(paymentDisputeItem.getByText("Step: Payment dispute filing")).toBeVisible();
 
   await paymentDisputeItem.locator('input[type="date"]').fill("2026-06-22");
+  // Guided payment-dispute workspace uses issuer-case wording (not the portal placeholder).
   await paymentDisputeItem
-    .getByPlaceholder("Portal confirmation or reference number")
+    .getByPlaceholder("Issuer case / dispute reference")
     .fill("e2e-ui-pd-999");
   const completeResponsePromise = operatorPage.waitForResponse(
     (res) =>

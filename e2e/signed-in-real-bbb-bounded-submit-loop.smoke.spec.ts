@@ -4,6 +4,7 @@ import {
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
+  waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
 import { PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_CONFIRMATION_PATH } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 
@@ -22,9 +23,14 @@ test.beforeEach(() => {
 });
 
 test("signed-in POST /api/submit-form runs runRealBbbBoundedSubmit through the loopback mock wizard", async ({
-  request,
+  page,
 }) => {
-  const submitRes = await request.post("/api/submit-form", {
+  // Use the live browser session (Clerk JS refreshes cookies) rather than the static
+  // storageState request fixture, which can expire before late-suite authenticated tests.
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+
+  const submitRes = await page.request.post("/api/submit-form", {
     data: {
       url: REAL_BBB_COMPLAINT_SUBMIT_URL,
       userData: REAL_BBB_SUBMIT_USER_DATA,

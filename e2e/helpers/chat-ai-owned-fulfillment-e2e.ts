@@ -75,7 +75,10 @@ export async function driveConsumerToFtcQueuedFromChat(page: Page): Promise<void
   await expect(page.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_ASSISTANT_MESSAGE)).toBeVisible();
 
   const continueButton = page.getByRole("button", { name: "Save and continue in chat" });
-  await expect(continueButton).toBeDisabled();
+  // The signed-in account's verified email now seeds the consumer's reply_email, so the
+  // consumer-email basic is already satisfied after the first intake message and the button
+  // is enabled before the second message.
+  await expect(continueButton).toBeEnabled({ timeout: 15_000 });
 
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
@@ -306,8 +309,10 @@ export async function completeDemandLetterFulfillmentViaOperatorUi(operatorPage:
   await expect(demandLetterItem).toBeVisible({ timeout: 30_000 });
 
   await demandLetterItem.locator('input[type="date"]').fill("2026-06-23");
+  // The guided demand letter workspace uses "Send confirmation…" (email/mail send), unlike the
+  // portal-submission panels (BBB/FTC/State AG) which use "Portal confirmation…".
   await demandLetterItem
-    .getByPlaceholder("Portal confirmation or reference number")
+    .getByPlaceholder("Send confirmation or reference number")
     .fill("e2e-ui-demand-letter-999");
   const completeResponsePromise = operatorPage.waitForResponse(
     (res) =>
@@ -620,7 +625,10 @@ export async function startSecondBetaCaseViaChatAfterArchive(page: Page): Promis
   ).toBeVisible({ timeout: 15_000 });
 
   const continueButton = page.getByRole("button", { name: "Save and continue in chat" });
-  await expect(continueButton).toBeDisabled();
+  // The signed-in account's verified email seeds the consumer's reply_email (persisted across
+  // cases for the same user), so the consumer-email basic is already satisfied after the first
+  // intake message and the button is enabled before the second message.
+  await expect(continueButton).toBeEnabled({ timeout: 15_000 });
 
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_SECOND_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
