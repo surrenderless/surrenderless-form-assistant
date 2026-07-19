@@ -130,7 +130,43 @@ export type OperatorFulfillmentQueueItem = {
    * via /api/operator/evidence/[id]/file (never includes file_path).
    */
   evidence?: OperatorWorkspaceEvidenceItem[];
+  /** Task creation timestamp — used to measure queue age / response SLA. */
+  created_at?: string | null;
 };
+
+/** Aggregate response-SLA metrics for the operator fulfillment queue. */
+export type OperatorFulfillmentQueueMetrics = {
+  /** Total open, unworked operator tasks currently in the queue. */
+  total_unworked: number;
+  /** Creation timestamp of the oldest unworked task (null when empty/unknown). */
+  oldest_created_at: string | null;
+  /** Age in ms of the oldest unworked task (null when empty/unknown). */
+  oldest_age_ms: number | null;
+};
+
+/** Summarizes queue depth and the oldest wait so operators can track a response SLA. */
+export function summarizeOperatorFulfillmentQueue(
+  items: Pick<OperatorFulfillmentQueueItem, "created_at">[],
+  nowMs: number = Date.now()
+): OperatorFulfillmentQueueMetrics {
+  let oldestMs: number | null = null;
+  let oldestIso: string | null = null;
+  for (const item of items) {
+    const iso = item.created_at?.trim();
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) continue;
+    if (oldestMs === null || ms < oldestMs) {
+      oldestMs = ms;
+      oldestIso = iso;
+    }
+  }
+  return {
+    total_unworked: items.length,
+    oldest_created_at: oldestIso,
+    oldest_age_ms: oldestMs === null ? null : Math.max(0, nowMs - oldestMs),
+  };
+}
 
 export type OperatorFulfillmentPanelKind =
   | "state_ag_workspace"
@@ -479,7 +515,7 @@ export async function listOperatorFulfillmentQueue(
     const intake = intakeByCaseId.get(caseId);
     if (!intake) continue;
     const item = classifyOpenOperatorTask(task, intake);
-    if (item) items.push(item);
+    if (item) items.push({ ...item, created_at: task.created_at ?? null });
   }
 
   const workspaceCaseIds = [
