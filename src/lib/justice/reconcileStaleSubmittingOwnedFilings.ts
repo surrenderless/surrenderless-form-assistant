@@ -59,6 +59,30 @@ export function resolveStaleSubmittingTimeoutMs(
   return OWNED_FILING_STALE_SUBMITTING_DEFAULT_TIMEOUT_MS;
 }
 
+/** Env override for the stale-queued reclaim window (milliseconds). */
+export const OWNED_FILING_STALE_QUEUED_TIMEOUT_ENV = "OWNED_FILING_STALE_QUEUED_TIMEOUT_MS";
+
+/**
+ * Default reclaim window for tasks left `queued` (the worker never claimed them). Comfortably
+ * longer than the one-minute worker cadence so a normally-processing task is never reclaimed;
+ * if a queued task lingers this long the worker is not draining and we fall back to operators.
+ */
+export const OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
+
+/** Resolves the stale-queued reclaim timeout from env, falling back to the production-safe default. */
+export function resolveStaleQueuedTimeoutMs(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const raw = env[OWNED_FILING_STALE_QUEUED_TIMEOUT_ENV]?.trim();
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS;
+}
+
 type OwnedDeliveryRecord = {
   delivery_state: "queued" | "submitting" | "failed" | "filed";
   provider: string;
@@ -158,7 +182,10 @@ export type ReconcileStaleSubmittingOwnedFilingsSummary = {
 export type ReconcileStaleSubmittingOwnedFilingsOptions = {
   limit?: number;
   nowMs?: number;
+  /** Reclaim window for tasks stuck in `submitting`. */
   timeoutMs?: number;
+  /** Reclaim window for tasks stuck in `queued` (never claimed by the worker). */
+  queuedTimeoutMs?: number;
 };
 
 type Counters = {
@@ -171,12 +198,19 @@ type Counters = {
   errors: number;
 };
 
-function isStaleSubmitting(
+/** A delivery record we may reclaim if it has lingered too long in that state. */
+function isReclaimableState(state: OwnedDeliveryRecord["delivery_state"]): boolean {
+  return state === "submitting" || state === "queued";
+}
+
+function isStaleReclaimable(
   record: OwnedDeliveryRecord,
   nowMs: number,
-  timeoutMs: number
+  submittingTimeoutMs: number,
+  queuedTimeoutMs: number
 ): boolean {
-  if (record.delivery_state !== "submitting") return false;
+  if (!isReclaimableState(record.delivery_state)) return false;
+  const timeoutMs = record.delivery_state === "queued" ? queuedTimeoutMs : submittingTimeoutMs;
   const started = record.started_at ? Date.parse(record.started_at) : NaN;
   // Unknown/unparseable start time means we cannot bound its age — reclaim it.
   if (!Number.isFinite(started)) return true;
@@ -211,6 +245,7 @@ async function processDestination(
   cfg: StaleReconcilerDestination,
   nowMs: number,
   timeoutMs: number,
+  queuedTimeoutMs: number,
   limit: number,
   results: StaleSubmittingReconcileResult[],
   counters: Counters
@@ -247,7 +282,7 @@ async function processDestination(
       continue;
     }
 
-    if (record.delivery_state !== "submitting") {
+    if (!isReclaimableState(record.delivery_state)) {
       results.push({
         case_id: caseId,
         user_id: userId,
@@ -259,7 +294,7 @@ async function processDestination(
       continue;
     }
 
-    if (!isStaleSubmitting(record, nowMs, timeoutMs)) {
+    if (!isStaleReclaimable(record, nowMs, timeoutMs, queuedTimeoutMs)) {
       results.push({
         case_id: caseId,
         user_id: userId,
@@ -362,18 +397,18 @@ async function processDestination(
       continue;
     }
 
+    const wasQueued = record.delivery_state === "queued";
     const failedAt = new Date(nowMs).toISOString();
     const failedRecord: OwnedDeliveryRecord = {
       delivery_state: "failed",
       provider: record.provider,
       ...(record.started_at ? { started_at: record.started_at } : {}),
       completed_at: failedAt,
-      failure_detail:
-        "Automated submission did not confirm within the stale-submitting window; reclaimed by reconciler — operator/manual fallback".slice(
-          0,
-          500
-        ),
-      stop_reason: "stale_submitting_reclaimed",
+      failure_detail: (wasQueued
+        ? "Queued automated filing was never claimed by the worker within the stale-queued window; reclaimed by reconciler — operator/manual fallback"
+        : "Automated submission did not confirm within the stale-submitting window; reclaimed by reconciler — operator/manual fallback"
+      ).slice(0, 500),
+      stop_reason: wasQueued ? "stale_queued_reclaimed" : "stale_submitting_reclaimed",
     };
 
     const patched = await patchTaskNotes(
@@ -426,6 +461,7 @@ export async function reconcileStaleSubmittingOwnedFilings(
   const limit = options.limit ?? 100;
   const nowMs = options.nowMs ?? Date.now();
   const timeoutMs = options.timeoutMs ?? resolveStaleSubmittingTimeoutMs();
+  const queuedTimeoutMs = options.queuedTimeoutMs ?? resolveStaleQueuedTimeoutMs();
 
   const results: StaleSubmittingReconcileResult[] = [];
   const counters: Counters = {
@@ -439,7 +475,16 @@ export async function reconcileStaleSubmittingOwnedFilings(
   };
 
   for (const cfg of [BBB_DESTINATION, FTC_DESTINATION]) {
-    await processDestination(supabase, cfg, nowMs, timeoutMs, limit, results, counters);
+    await processDestination(
+      supabase,
+      cfg,
+      nowMs,
+      timeoutMs,
+      queuedTimeoutMs,
+      limit,
+      results,
+      counters
+    );
   }
 
   return { ...counters, results };

@@ -1,12 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
 import { evaluateOwnedBbbAutofillExecutionReadiness } from "@/lib/justice/bbbOwnedFilingProduction";
-import { getBbbOwnedFilingSubmitContext } from "@/lib/justice/bbbOwnedFilingSubmitContext";
-import { completeFtcOperatorFiling } from "@/lib/justice/completeFtcOperatorFiling";
 import {
   findFtcFilingWithConfirmation,
   findOpenFtcFilingTask,
-  ftcFilingsForManualTracking,
   hasFtcFilingWithConfirmation,
   shouldQueueFtcFilingTask,
   taskNotesMatchFtcFilingMarker,
@@ -18,15 +15,9 @@ import {
   upsertFtcOwnedFilingDeliveryNotes,
   type FtcOwnedFilingDeliveryRecord,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
-import { FTC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL } from "@/lib/justice/ftcOfficialPortal";
-import {
-  canonicalFilingDestinationForApprovedActionHref,
-  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
-} from "@/lib/justice/handlingTrackingProgress";
+import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { isRealFtcComplaintAutofillEnabled } from "@/lib/justice/realFtcAutofillEnabled";
-import { intakeToRealFtcUserData } from "@/lib/justice/realFtcUserData";
-import { runRealFtcBoundedSubmit } from "@/lib/justice/runRealFtcBoundedSubmit";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -44,10 +35,13 @@ export {
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 
 /** Canonical destination label the FTC operator-filing completion path validates against. */
-const FTC_FILING_DESTINATION = "FTC (consumer complaint)";
+export const FTC_FILING_DESTINATION = "FTC (consumer complaint)";
 
 /** Generic confirmation stored when the portal confirmed submission but exposed no readable reference. */
 export const REAL_FTC_FILING_CONFIRMATION_FALLBACK = "FTC report submitted";
+
+/** Provider tag stored on the delivery record. */
+export const FTC_OWNED_FILING_PROVIDER = "real_ftc_bounded_submit";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -56,6 +50,12 @@ const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
 
 export type AttemptAutomatedFtcFilingResult =
+  | {
+      status: "queued";
+      idempotent: boolean;
+      task?: JusticeCaseTaskRow;
+      timeline?: TimelineEntry[] | null;
+    }
   | {
       status: "accepted";
       confirmation: string;
@@ -95,9 +95,12 @@ async function patchFtcTaskNotes(
 }
 
 /**
- * Runs Surrenderless-owned FTC filing via the real FTC bounded-submit path.
- * Completes the operator task only after terminal confirmation is returned.
- * Idempotent on filed confirmations; concurrent submitting skips; failed leaves task open.
+ * Enqueues Surrenderless-owned FTC filing for the durable background worker.
+ * Never runs Playwright/Browserless on the request path — it only persists
+ * `delivery_state: "queued"` and lets /api/cron/run-queued-owned-filings execute it.
+ *
+ * Idempotent: already filed/queued/submitting is not re-enqueued; a reconciled
+ * `failed` state short-circuits so operator fallbacks are never auto-resubmitted.
  */
 export async function attemptAutomatedFtcFiling(
   supabase: SupabaseClient,
@@ -211,177 +214,51 @@ export async function attemptAutomatedFtcFiling(
   if (priorDelivery?.delivery_state === "submitting") {
     return {
       status: "skipped",
-      reason: "FTC autofill already submitting — operator/manual fallback",
+      reason: "FTC autofill already submitting — worker in progress",
+    };
+  }
+  if (priorDelivery?.delivery_state === "queued") {
+    return { status: "queued", idempotent: true, task: openTask };
+  }
+  // Failed/needs-operator short-circuit: never auto-resubmit a reconciled failure.
+  if (priorDelivery?.delivery_state === "failed") {
+    return {
+      status: "skipped",
+      reason: "FTC autofill previously failed — operator/manual fallback",
     };
   }
 
+  // Fail closed to operator fallback when production execution config is unavailable.
   const readiness = evaluateOwnedBbbAutofillExecutionReadiness(userId);
   if (!readiness.ok) {
     return { status: "skipped", reason: readiness.reason };
   }
 
-  const overrideBase = getBbbOwnedFilingSubmitContext()?.base?.trim();
-  const base = (overrideBase || readiness.base).replace(/\/$/, "");
-  const forwardedHeaders = readiness.forwardedHeaders;
-
-  const provider = "real_ftc_bounded_submit";
-  const startedAt = new Date().toISOString();
-  const submittingRecord: FtcOwnedFilingDeliveryRecord = {
-    delivery_state: "submitting",
-    provider,
-    started_at: startedAt,
+  const queuedAt = new Date().toISOString();
+  const queuedRecord: FtcOwnedFilingDeliveryRecord = {
+    delivery_state: "queued",
+    provider: FTC_OWNED_FILING_PROVIDER,
+    started_at: queuedAt,
   };
-  const submittingNotes = upsertFtcOwnedFilingDeliveryNotes(openTask.notes, submittingRecord);
-  const submittingTask = await patchFtcTaskNotes(supabase, userId, openTask.id, submittingNotes);
-  await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-    id: ftcOwnedFilingTimelineId(trimmedCaseId, "submitting"),
+  const queuedNotes = upsertFtcOwnedFilingDeliveryNotes(openTask.notes, queuedRecord);
+  const queuedTask = await patchFtcTaskNotes(supabase, userId, openTask.id, queuedNotes);
+  if (!queuedTask) {
+    return { status: "skipped", reason: "could not enqueue FTC filing" };
+  }
+  const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
+    id: ftcOwnedFilingTimelineId(trimmedCaseId, "queued"),
     type: "filing_recorded",
-    label: "FTC filing submitting",
-    detail: `provider: ${provider}\nidempotency: ${ftcOwnedFilingIdempotencyKey(trimmedCaseId)}`,
-    ts: startedAt,
+    label: "FTC filing queued",
+    detail: `provider: ${FTC_OWNED_FILING_PROVIDER}\nidempotency: ${ftcOwnedFilingIdempotencyKey(trimmedCaseId)}`,
+    ts: queuedAt,
   });
 
-  let bounded;
-  try {
-    bounded = await runRealFtcBoundedSubmit({
-      url: FTC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL,
-      userData: intakeToRealFtcUserData(intake),
-      base,
-      forwardedHeaders,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    const failedAt = new Date().toISOString();
-    const failedRecord: FtcOwnedFilingDeliveryRecord = {
-      delivery_state: "failed",
-      provider,
-      started_at: startedAt,
-      completed_at: failedAt,
-      failure_detail: message.slice(0, 500),
-    };
-    await patchFtcTaskNotes(
-      supabase,
-      userId,
-      openTask.id,
-      upsertFtcOwnedFilingDeliveryNotes(submittingTask?.notes ?? submittingNotes, failedRecord)
-    );
-    const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-      id: ftcOwnedFilingTimelineId(trimmedCaseId, "failed"),
-      type: "filing_recorded",
-      label: "FTC filing failed",
-      detail: failedRecord.failure_detail,
-      ts: failedAt,
-    });
-    return { status: "failed", error: message, timeline };
-  }
-
-  if (!bounded.ok) {
-    const failedAt = new Date().toISOString();
-    const failedRecord: FtcOwnedFilingDeliveryRecord = {
-      delivery_state: "failed",
-      provider,
-      started_at: startedAt,
-      completed_at: failedAt,
-      failure_detail: bounded.error.slice(0, 500),
-      stop_reason: bounded.stopReason,
-    };
-    await patchFtcTaskNotes(
-      supabase,
-      userId,
-      openTask.id,
-      upsertFtcOwnedFilingDeliveryNotes(submittingTask?.notes ?? submittingNotes, failedRecord)
-    );
-    const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-      id: ftcOwnedFilingTimelineId(trimmedCaseId, "failed"),
-      type: "filing_recorded",
-      label: "FTC filing failed",
-      detail: [
-        `error: ${bounded.error.slice(0, 500)}`,
-        `stop_reason: ${bounded.stopReason}`,
-        `steps_executed: ${bounded.stepsExecuted}`,
-      ].join("\n"),
-      ts: failedAt,
-    });
-    return { status: "failed", error: bounded.error, timeline };
-  }
-
-  const confirmation =
-    bounded.fillResult.confirmationReference?.trim() || REAL_FTC_FILING_CONFIRMATION_FALLBACK;
-  const destination =
-    canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF) ??
-    FTC_FILING_DESTINATION;
-  const filedAt = new Date().toISOString().slice(0, 10);
-  const completeResult = await completeFtcOperatorFiling(supabase, userId, {
-    caseId: trimmedCaseId,
-    taskId: openTask.id,
-    destination,
-    filedAt,
-    confirmationNumber: confirmation,
-    notes: [
-      `provider: ${provider}`,
-      `delivery_state: filed`,
-      `confirmation: ${confirmation}`,
-      `idempotency: ${ftcOwnedFilingIdempotencyKey(trimmedCaseId)}`,
-      `steps_executed: ${bounded.fillResult.stepsExecuted}`,
-      ...(bounded.fillResult.screenshot ? [`screenshot: ${bounded.fillResult.screenshot}`] : []),
-      `completed_at: ${new Date().toISOString()}`,
-    ].join("\n"),
-  });
-
-  if (!completeResult.ok) {
-    const failedAt = new Date().toISOString();
-    const failedRecord: FtcOwnedFilingDeliveryRecord = {
-      delivery_state: "failed",
-      provider,
-      started_at: startedAt,
-      completed_at: failedAt,
-      confirmation,
-      failure_detail:
-        `Terminal confirmation returned but completion failed: ${completeResult.error}`.slice(0, 500),
-    };
-    await patchFtcTaskNotes(
-      supabase,
-      userId,
-      openTask.id,
-      upsertFtcOwnedFilingDeliveryNotes(submittingTask?.notes ?? submittingNotes, failedRecord)
-    );
-    const timeline = await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-      id: ftcOwnedFilingTimelineId(trimmedCaseId, "failed"),
-      type: "filing_recorded",
-      label: "FTC filing failed",
-      detail: failedRecord.failure_detail,
-      ts: failedAt,
-    });
-    return { status: "failed", error: completeResult.error, timeline };
-  }
-
-  const filedTs = new Date().toISOString();
-  await appendCaseTimelineEntry(supabase, userId, trimmedCaseId, {
-    id: ftcOwnedFilingTimelineId(trimmedCaseId, "filed"),
-    type: "filing_recorded",
-    label: "FTC filing filed",
-    detail: [
-      `provider: ${provider}`,
-      `confirmation: ${confirmation}`,
-      `steps_executed: ${bounded.fillResult.stepsExecuted}`,
-      `completed_at: ${filedTs}`,
-    ].join("\n"),
-    ts: filedTs,
-  });
-
-  return {
-    status: "accepted",
-    confirmation,
-    idempotent: completeResult.idempotent,
-    filing: completeResult.filing,
-    task: completeResult.task,
-    timeline: completeResult.timeline,
-  };
+  return { status: "queued", idempotent: false, task: queuedTask, timeline };
 }
 
 /**
  * Call after ensureFtcFilingTask when FTC is approved and owned.
- * Merges timeline from accepted/failed delivery; leaves skipped/unconfirmed open for operators.
+ * Merges timeline from queued/accepted/failed delivery; leaves skipped open for operators.
  */
 export async function attemptAutomatedFtcFilingAfterEnsure(
   supabase: SupabaseClient,
@@ -393,7 +270,10 @@ export async function attemptAutomatedFtcFilingAfterEnsure(
   result: AttemptAutomatedFtcFilingResult;
 }> {
   const result = await attemptAutomatedFtcFiling(supabase, userId, caseId);
-  if ((result.status === "accepted" || result.status === "failed") && result.timeline) {
+  if (
+    (result.status === "queued" || result.status === "accepted" || result.status === "failed") &&
+    result.timeline
+  ) {
     return { timeline: result.timeline, result };
   }
   return { timeline: currentTimeline, result };

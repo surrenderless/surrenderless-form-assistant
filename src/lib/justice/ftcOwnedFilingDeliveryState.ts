@@ -24,7 +24,7 @@ export function ftcOwnedFilingIdempotencyKey(caseId: string): string {
 
 export function ftcOwnedFilingTimelineId(
   caseId: string,
-  state: Exclude<FtcOwnedFilingDeliveryState, "queued">
+  state: FtcOwnedFilingDeliveryState
 ): string {
   return `ftc_autofill_${state}:${caseId.trim()}`;
 }
