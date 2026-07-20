@@ -48,17 +48,30 @@ export type ChromiumConnectionForRealBbbSubmit =
 
 /**
  * Owned-filing Browserless session `timeout` query value in milliseconds.
- * Browserless plan maximum is 60_000 ms — always request that full budget.
+ * Derived from the route maxDuration budget (300s → 300_000 ms).
  */
-export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS = 60_000;
-
-/** Browserless API maximum for the `timeout` query parameter (milliseconds). */
-export const BROWSERLESS_TIMEOUT_MAX_MS = 60_000;
+export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS =
+  BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS * 1000;
 
 /**
- * Ensures a Browserless CDP WebSocket URL has a single `timeout=60000` (milliseconds).
- * Collapses duplicate timeout params. Preserves token and all other query params.
- * Always normalizes via URLSearchParams and returns parsed.toString() when parseable.
+ * Upgraded Browserless plan maximum for the `timeout` query parameter (milliseconds).
+ * Values above this are rejected and replaced with the owned-filing budget.
+ */
+export const BROWSERLESS_TIMEOUT_MAX_MS = 900_000;
+
+function isValidBrowserlessOwnedFilingTimeoutMs(value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    value >= OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS &&
+    value <= BROWSERLESS_TIMEOUT_MAX_MS
+  );
+}
+
+/**
+ * Ensures a Browserless CDP WebSocket URL has a single valid session `timeout` (ms).
+ * Missing, invalid, below budget (including stale 60000), or above plan max → 300000.
+ * Preserves the first timeout already in [300000, plan max]. Collapses duplicates.
+ * Preserves token and all other query params.
  */
 export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: string): string {
   const trimmed = browserlessUrl.trim();
@@ -71,7 +84,22 @@ export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: strin
     return trimmed;
   }
 
-  parsed.searchParams.set("timeout", String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS));
+  const candidates = parsed.searchParams.getAll("timeout");
+  let chosen: number | null = null;
+  for (const raw of candidates) {
+    const candidate = raw.trim();
+    if (!/^\d+$/.test(candidate)) continue;
+    const ms = Number.parseInt(candidate, 10);
+    if (isValidBrowserlessOwnedFilingTimeoutMs(ms)) {
+      chosen = ms;
+      break;
+    }
+  }
+
+  parsed.searchParams.set(
+    "timeout",
+    String(chosen ?? OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS)
+  );
   return parsed.toString();
 }
 
