@@ -337,24 +337,48 @@ export async function withOwnedFilingFirstEvaluateRetry<T>(
 
 /**
  * Soft-waits for a usable ReportFraud interactive control / stable DOM.
- * On timeout, returns without throwing so the bounded evaluate can still run.
+ * Playwright options must be the 3rd argument to waitForFunction (2nd is pageFunction arg).
+ * Closed-target errors propagate; a normal readiness timeout stays soft so bounded evaluate can run.
  */
+export const OWNED_FILING_FTC_READY_SELECTOR =
+  'button, a[href], input, select, textarea, [role="button"]';
+
+export function isOwnedFilingClosedTargetProviderError(err: unknown): boolean {
+  if (isOwnedFilingTargetClosedError(err)) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /browser.*(disconnected|has been closed)/i.test(message) ||
+    /context.*(closed|destroyed)/i.test(message) ||
+    /target closed/i.test(message)
+  );
+}
+
+function isOwnedFilingReadyWaitTimeoutError(err: unknown): boolean {
+  if (err && typeof err === "object" && "name" in err && (err as { name: unknown }).name === "TimeoutError") {
+    return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return /timeout/i.test(message);
+}
+
 export async function waitForFtcReportFraudInteractiveReady(
   page: Page,
   timeoutMs: number = OWNED_FILING_FTC_READY_WAIT_MS
 ): Promise<void> {
   try {
+    // arg is 2nd; options (including timeout) must be 3rd — default timeout is 0 (unbounded).
     await page.waitForFunction(
-      () => {
+      (selector: string) => {
         if (!document.body) return false;
-        return !!document.querySelector(
-          'button, a[href], input, select, textarea, [role="button"]'
-        );
+        return !!document.querySelector(selector);
       },
+      OWNED_FILING_FTC_READY_SELECTOR,
       { timeout: timeoutMs }
     );
-  } catch {
-    // Soft: first evaluate still has its own wall-clock bound.
+  } catch (err: unknown) {
+    if (isOwnedFilingClosedTargetProviderError(err)) throw err;
+    if (isOwnedFilingReadyWaitTimeoutError(err)) return;
+    throw err;
   }
 }
 
