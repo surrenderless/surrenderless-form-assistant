@@ -30,6 +30,8 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*continue[_-]?btn\s*$/i,
   /^\s*next\s*$/i,
   /^\s*next[_-]?btn\s*$/i,
+  /** FTC ReportFraud landing CTA — starts the wizard; finalization is Submit later. */
+  /^\s*report\s+now\s*$/i,
   /^\s*back\s*$/i,
   /^\s*back[_-]?btn\s*$/i,
   /^\s*previous\s*$/i,

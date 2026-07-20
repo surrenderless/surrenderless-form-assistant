@@ -53,6 +53,11 @@ describe("classifyOwnedFilingClick", () => {
     expect(classifyOwnedFilingClick({ selectorType: "id", value: "continue_btn" })).toBe("safe");
   });
 
+  it("classifies FTC landing Report Now as safe navigation (not final submit)", () => {
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "Report Now" })).toBe("safe");
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "  report now  " })).toBe("safe");
+  });
+
   it("classifies submit/file/confirm as irreversible", () => {
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "Submit complaint" })).toBe(
       "irreversible"
@@ -62,12 +67,22 @@ describe("classifyOwnedFilingClick", () => {
       "irreversible"
     );
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "Confirm" })).toBe("irreversible");
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "Submit report" })).toBe(
+      "irreversible"
+    );
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "Submit your report" })).toBe(
+      "irreversible"
+    );
   });
 
   it("fails closed on unknown or blank buttons", () => {
     expect(classifyOwnedFilingClick(null)).toBe("unknown");
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "" })).toBe("unknown");
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "Magic Button XYZ" })).toBe(
+      "unknown"
+    );
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "Report" })).toBe("unknown");
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "Make a report" })).toBe(
       "unknown"
     );
   });
