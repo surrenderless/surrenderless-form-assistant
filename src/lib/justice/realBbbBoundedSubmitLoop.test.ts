@@ -18,6 +18,7 @@ const basePage: AssistedFormPageData = {
 
 describe("realBbbBoundedSubmitLoop", () => {
   it("enforces the maximum step cap", () => {
+    expect(REAL_BBB_MAX_SUBMIT_STEPS).toBe(8);
     expect(hasReachedStepCap(0)).toBe(false);
     expect(hasReachedStepCap(REAL_BBB_MAX_SUBMIT_STEPS - 1)).toBe(false);
     expect(hasReachedStepCap(REAL_BBB_MAX_SUBMIT_STEPS)).toBe(true);

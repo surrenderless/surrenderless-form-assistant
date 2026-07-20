@@ -1,4 +1,6 @@
 const MAX_NOTES = 8000;
+const MAX_STEP_LOG_ENTRIES = 24;
+const MAX_STEP_LOG_CHARS = 1500;
 
 /** Marker opening the owned-filing dry-run result block inside task notes. */
 export const OWNED_FILING_DRY_RUN_BLOCK_MARKER = "---owned_filing_dry_run---";
@@ -20,7 +22,34 @@ export type OwnedFilingDryRunRecord = {
   button_label?: string;
   page_url?: string;
   detail?: string;
+  /** Bounded redacted step log: action|button_label|url entries (no form field values). */
+  step_log?: string;
 };
+
+export type OwnedFilingDryRunStepSource = {
+  action: string;
+  url?: string;
+  /** Button corpus only (e.g. text:Continue) — never field values. */
+  detail?: string;
+};
+
+/**
+ * Formats a bounded, non-sensitive step log for dry-run notes.
+ * Stores action type, optional button label, and page URL only.
+ */
+export function formatOwnedFilingDryRunStepLog(
+  entries: OwnedFilingDryRunStepSource[]
+): string {
+  const parts: string[] = [];
+  for (const entry of entries.slice(0, MAX_STEP_LOG_ENTRIES)) {
+    const action = (entry.action ?? "").replace(/[|;]/g, " ").trim().slice(0, 48);
+    if (!action) continue;
+    const button = (entry.detail ?? "").replace(/[|;]/g, " ").trim().slice(0, 80);
+    const url = (entry.url ?? "").replace(/[|;]/g, " ").trim().slice(0, 160);
+    parts.push(`${action}|${button}|${url}`);
+  }
+  return parts.join(";").slice(0, MAX_STEP_LOG_CHARS);
+}
 
 export function ownedFilingDryRunIdempotencyKey(
   caseId: string,
@@ -71,6 +100,7 @@ export function parseOwnedFilingDryRunRecord(
     ...(map.get("button_label") ? { button_label: map.get("button_label") } : {}),
     ...(map.get("page_url") ? { page_url: map.get("page_url") } : {}),
     ...(map.get("detail") ? { detail: map.get("detail") } : {}),
+    ...(map.get("step_log") ? { step_log: map.get("step_log") } : {}),
   };
 }
 
@@ -102,6 +132,7 @@ export function upsertOwnedFilingDryRunNotes(
   if (record.button_label) lines.push(`button_label: ${record.button_label.slice(0, 200)}`);
   if (record.page_url) lines.push(`page_url: ${record.page_url.slice(0, 500)}`);
   if (record.detail) lines.push(`detail: ${record.detail.slice(0, 500)}`);
+  if (record.step_log) lines.push(`step_log: ${record.step_log.slice(0, MAX_STEP_LOG_CHARS)}`);
   const next = [without, lines.join("\n")].filter(Boolean).join("\n\n");
   return next.length <= MAX_NOTES ? next : next.slice(0, MAX_NOTES);
 }
@@ -118,4 +149,26 @@ export function hasMatchingOwnedFilingDryRunResult(
   const existing = parseOwnedFilingDryRunRecord(notes);
   if (!existing) return false;
   return existing.destination === destination && existing.status === status;
+}
+
+/**
+ * Whether a prior dry-run should short-circuit a retry.
+ * - dry_run_blocked_at_submit: always terminal (verified to irreversible boundary)
+ * - dry_run_completed: terminal unless stop_reason is max_steps_reached (legacy/incomplete)
+ * - dry_run_failed / max_steps: never blocks retry
+ */
+export function shouldSkipOwnedFilingDryRunAsDuplicate(
+  notes: string | null | undefined,
+  destination: "bbb" | "ftc"
+): OwnedFilingDryRunStatus | null {
+  const existing = parseOwnedFilingDryRunRecord(notes);
+  if (!existing || existing.destination !== destination) return null;
+  if (existing.status === "dry_run_blocked_at_submit") {
+    return "dry_run_blocked_at_submit";
+  }
+  if (existing.status === "dry_run_completed") {
+    if (existing.stop_reason === "max_steps_reached") return null;
+    return "dry_run_completed";
+  }
+  return null;
 }

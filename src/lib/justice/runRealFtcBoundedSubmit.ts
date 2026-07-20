@@ -388,7 +388,15 @@ export async function runRealFtcBoundedSubmit(
         );
       }
 
-      stepLog.push({ step: stepsExecuted, url: pageData.url, action: "decide" });
+      const buttonCorpus = decision.nextButton?.value?.trim()
+        ? `${decision.nextButton.selectorType}:${decision.nextButton.value}`.slice(0, 200)
+        : undefined;
+      stepLog.push({
+        step: stepsExecuted,
+        url: pageData.url,
+        action: "decide",
+        ...(buttonCorpus ? { detail: buttonCorpus } : {}),
+      });
       const applyResult = await applyOwnedFilingFormDecision(page, decision, {
         mode,
         logPrefix: "real-ftc-submit",
@@ -422,7 +430,12 @@ export async function runRealFtcBoundedSubmit(
         );
       }
       stepsExecuted += 1;
-      stepLog.push({ step: stepsExecuted, url: page.url(), action: "apply" });
+      stepLog.push({
+        step: stepsExecuted,
+        url: page.url(),
+        action: "apply",
+        ...(buttonCorpus ? { detail: buttonCorpus } : {}),
+      });
     }
 
     const finalPageData = await collectPageData(page, playwrightSession, browser);

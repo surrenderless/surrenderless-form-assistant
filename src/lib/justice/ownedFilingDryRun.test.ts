@@ -334,4 +334,134 @@ describe("runOwnedFilingDryRun", () => {
     });
     expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
   });
+
+  it("does not skip legacy FTC dry_run_completed + max_steps_reached", async () => {
+    const prior = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_completed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T10:00:00.000Z",
+      steps_executed: 8,
+      stop_reason: "max_steps_reached",
+    });
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: "max steps",
+      stopReason: "max_steps_reached",
+      stepsExecuted: 24,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: "https://reportfraud.ftc.gov/assistant", fields: [], buttons: [] },
+        stepsExecuted: 24,
+        stopReason: "max_steps_reached",
+        stepLog: [
+          {
+            step: 1,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "apply",
+            detail: "text:Continue",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(
+        {
+          ...ftcTask(),
+          notes: `${ftcTask().notes}\n\n${prior}`,
+        },
+        noteUpdates
+      ),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+
+    expect(runRealFtcBoundedSubmit).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      stop_reason: "max_steps_reached",
+      steps_executed: 24,
+    });
+    expect(noteUpdates.at(-1)).toContain("dry_run_failed");
+    expect(noteUpdates.at(-1)).toContain("stop_reason: max_steps_reached");
+    expect(noteUpdates.at(-1)).toContain("step_log:");
+    expect(noteUpdates.at(-1)).toContain("apply|text:Continue|");
+    expect(noteUpdates.at(-1)).not.toContain("pat@example.com");
+  });
+
+  it("skips terminal FTC dry_run_completed (empty_decision)", async () => {
+    const prior = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_completed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T10:00:00.000Z",
+      steps_executed: 2,
+      stop_reason: "empty_decision",
+    });
+    const result = await runOwnedFilingDryRun(
+      makeSupabase({
+        ...ftcTask(),
+        notes: `${ftcTask().notes}\n\n${prior}`,
+      }),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      status: "dry_run_completed",
+      skipped_duplicate: true,
+    });
+    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("persists FTC step_log and treats max_steps_reached as dry_run_failed", async () => {
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: "Reached maximum submit steps (24)",
+      stopReason: "max_steps_reached",
+      stepsExecuted: 24,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: "https://reportfraud.ftc.gov/assistant", fields: [], buttons: [] },
+        stepsExecuted: 24,
+        stopReason: "max_steps_reached",
+        stepLog: [
+          {
+            step: 0,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "decide",
+            detail: "text:Continue",
+          },
+          {
+            step: 1,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "apply",
+            detail: "text:Continue",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+    expect(result.status).toBe("dry_run_failed");
+    expect(result.ok).toBe(false);
+    expect(noteUpdates.at(-1)).toContain(
+      "step_log: decide|text:Continue|https://reportfraud.ftc.gov/assistant;apply|text:Continue|https://reportfraud.ftc.gov/assistant"
+    );
+  });
 });

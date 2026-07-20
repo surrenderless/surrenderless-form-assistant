@@ -5,9 +5,11 @@ import {
   OWNED_FILING_SUBMIT_UNARMED_REASON,
 } from "@/lib/justice/ownedFilingSubmitArmed";
 import {
+  formatOwnedFilingDryRunStepLog,
   hasMatchingOwnedFilingDryRunResult,
   OWNED_FILING_DRY_RUN_BLOCK_MARKER,
   parseOwnedFilingDryRunRecord,
+  shouldSkipOwnedFilingDryRunAsDuplicate,
   upsertOwnedFilingDryRunNotes,
 } from "@/lib/justice/ownedFilingDryRunState";
 import {
@@ -153,5 +155,96 @@ describe("ownedFilingDryRunState (durable + idempotent)", () => {
     expect(hasMatchingOwnedFilingDryRunResult(notes, "bbb", "dry_run_blocked_at_submit")).toBe(true);
     expect(hasMatchingOwnedFilingDryRunResult(notes, "ftc", "dry_run_blocked_at_submit")).toBe(false);
     expect(hasMatchingOwnedFilingDryRunResult(notes, "bbb", "dry_run_completed")).toBe(false);
+  });
+
+  it("does not skip legacy dry_run_completed + max_steps_reached (retryable)", () => {
+    const notes = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_completed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T12:00:00.000Z",
+      steps_executed: 8,
+      stop_reason: "max_steps_reached",
+    });
+    expect(shouldSkipOwnedFilingDryRunAsDuplicate(notes, "ftc")).toBeNull();
+  });
+
+  it("does not skip future dry_run_failed + max_steps_reached (retryable)", () => {
+    const notes = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_failed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T12:00:00.000Z",
+      steps_executed: 24,
+      stop_reason: "max_steps_reached",
+    });
+    expect(shouldSkipOwnedFilingDryRunAsDuplicate(notes, "ftc")).toBeNull();
+  });
+
+  it("skips terminal dry_run_completed and dry_run_blocked_at_submit", () => {
+    const completed = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_completed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T12:00:00.000Z",
+      steps_executed: 3,
+      stop_reason: "empty_decision",
+    });
+    expect(shouldSkipOwnedFilingDryRunAsDuplicate(completed, "ftc")).toBe("dry_run_completed");
+
+    const blocked = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_blocked_at_submit",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T12:00:00.000Z",
+      steps_executed: 5,
+      stop_reason: "blocked_irreversible_click",
+    });
+    expect(shouldSkipOwnedFilingDryRunAsDuplicate(blocked, "ftc")).toBe(
+      "dry_run_blocked_at_submit"
+    );
+  });
+
+  it("formats a bounded redacted step log without form field values", () => {
+    const formatted = formatOwnedFilingDryRunStepLog([
+      {
+        action: "decide",
+        detail: "text:Continue",
+        url: "https://reportfraud.ftc.gov/assistant",
+      },
+      {
+        action: "apply",
+        detail: "text:Continue",
+        url: "https://reportfraud.ftc.gov/assistant",
+      },
+      {
+        action: "blocked_irreversible_click",
+        detail: "text:Submit report",
+        url: "https://reportfraud.ftc.gov/review",
+      },
+    ]);
+    expect(formatted).toContain("decide|text:Continue|https://reportfraud.ftc.gov/assistant");
+    expect(formatted).toContain("blocked_irreversible_click|text:Submit report|");
+    expect(formatted).not.toContain("pat@example.com");
+    expect(formatted).not.toContain("Never arrived");
+    expect(formatted).not.toContain("fieldsToFill");
+
+    const notes = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_failed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-19T12:00:00.000Z",
+      steps_executed: 8,
+      stop_reason: "max_steps_reached",
+      step_log: formatted,
+    });
+    const parsed = parseOwnedFilingDryRunRecord(notes);
+    expect(parsed?.step_log).toBe(formatted);
+    expect(parsed?.step_log).not.toMatch(/@/);
   });
 });

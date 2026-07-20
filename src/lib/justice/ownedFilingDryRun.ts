@@ -9,7 +9,8 @@ import { findOpenFtcFilingTask } from "@/lib/justice/ftcFilingTask";
 import { parseFtcOwnedFilingDeliveryRecord } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { FTC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL } from "@/lib/justice/ftcOfficialPortal";
 import {
-  hasMatchingOwnedFilingDryRunResult,
+  formatOwnedFilingDryRunStepLog,
+  shouldSkipOwnedFilingDryRunAsDuplicate,
   upsertOwnedFilingDryRunNotes,
   type OwnedFilingDryRunRecord,
   type OwnedFilingDryRunStatus,
@@ -117,11 +118,9 @@ function mapBoundedStopToDryRunStatus(
     // Should not happen in dry-run without irreversible click; treat as failed safety violation.
     return "dry_run_failed";
   }
-  if (
-    stopReason === "max_steps_reached" ||
-    stopReason === "empty_decision" ||
-    !stopReason
-  ) {
+  // Incomplete / retryable — not a successful verification terminal.
+  if (stopReason === "max_steps_reached") return "dry_run_failed";
+  if (stopReason === "empty_decision" || !stopReason) {
     return "dry_run_completed";
   }
   return "dry_run_failed";
@@ -167,22 +166,18 @@ export async function runOwnedFilingDryRun(
 
   const { task, intake } = loaded;
 
-  // Duplicate-safe: identical successful dry-run already recorded → no re-run.
-  if (
-    hasMatchingOwnedFilingDryRunResult(task.notes, destination, "dry_run_blocked_at_submit") ||
-    hasMatchingOwnedFilingDryRunResult(task.notes, destination, "dry_run_completed")
-  ) {
-    const prior = hasMatchingOwnedFilingDryRunResult(task.notes, destination, "dry_run_blocked_at_submit")
-      ? "dry_run_blocked_at_submit"
-      : "dry_run_completed";
+  // Duplicate-safe: terminal verification already recorded → no re-run.
+  // Legacy dry_run_completed + max_steps_reached does not block (incomplete / retryable).
+  const duplicateStatus = shouldSkipOwnedFilingDryRunAsDuplicate(task.notes, destination);
+  if (duplicateStatus) {
     return {
       ok: true,
-      status: prior,
+      status: duplicateStatus,
       destination,
       case_id: trimmedCaseId,
       task_id: task.id,
       steps_executed: 0,
-      detail: `prior ${prior} — duplicate skipped`,
+      detail: `prior ${duplicateStatus} — duplicate skipped`,
       skipped_duplicate: true,
     };
   }
@@ -210,6 +205,7 @@ export async function runOwnedFilingDryRun(
   let buttonLabel: string | undefined;
   let pageUrl: string | undefined;
   let detail: string | undefined;
+  let stepLog: string | undefined;
 
   try {
     if (destination === "bbb") {
@@ -251,6 +247,10 @@ export async function runOwnedFilingDryRun(
       pageUrl = bounded.ok
         ? bounded.fillResult.pageData?.url
         : bounded.fillResult.pageData?.url ?? undefined;
+      const ftcStepLog = bounded.fillResult.stepLog;
+      if (ftcStepLog.length > 0) {
+        stepLog = formatOwnedFilingDryRunStepLog(ftcStepLog);
+      }
       if (bounded.ok) {
         stopReason = "terminal_confirmation";
         detail = "dry-run unexpectedly reached terminal confirmation without submit gate";
@@ -294,6 +294,7 @@ export async function runOwnedFilingDryRun(
     ...(buttonLabel ? { button_label: buttonLabel, button_risk: stopReason?.includes("unknown") ? "unknown" : "irreversible" } : {}),
     ...(pageUrl ? { page_url: pageUrl } : {}),
     ...(detail ? { detail } : {}),
+    ...(stepLog ? { step_log: stepLog } : {}),
   };
 
   const nextNotes = upsertOwnedFilingDryRunNotes(task.notes, record);

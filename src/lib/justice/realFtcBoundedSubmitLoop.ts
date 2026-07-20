@@ -1,11 +1,10 @@
-import {
-  REAL_BBB_MAX_SUBMIT_STEPS,
-  type AssistedFormPageData,
-  type RealBbbSubmitStopReason,
+import type {
+  AssistedFormPageData,
+  RealBbbSubmitStopReason,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 /** Maximum decide-action + fill/click cycles for real FTC assisted submission. */
-export const REAL_FTC_MAX_SUBMIT_STEPS = REAL_BBB_MAX_SUBMIT_STEPS;
+export const REAL_FTC_MAX_SUBMIT_STEPS = 24;
 
 /** FTC bounded-submit stop reasons reuse the shared decide-action loop reasons. */
 export type RealFtcSubmitStopReason = RealBbbSubmitStopReason;
