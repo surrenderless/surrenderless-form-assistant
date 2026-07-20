@@ -285,6 +285,33 @@ describe("runOwnedFilingDryRun", () => {
     expect(result.detail).toContain("original_error=page.evaluate:");
   });
 
+  it("FTC evaluate_timeout provider failure maps to dry_run_failed without filing", async () => {
+    vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
+      new Error(
+        "owned-filing playwright evaluate_timeout after 45000ms (provider/evaluate_timeout)"
+      )
+    );
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "ftc",
+      steps_executed: 0,
+      stop_reason: "provider",
+    });
+    expect(result.detail).toContain("evaluate_timeout");
+    expect(noteUpdates.at(-1)).toContain("dry_run_failed");
+    expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
+  });
+
   it("unknown click is recorded as blocked_at_submit (fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,

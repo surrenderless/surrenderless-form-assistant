@@ -22,7 +22,7 @@ describe("owned-filing bounded submit evaluate paths use lifecycle enrichment", 
       expect(source).toContain("collectPageData(page, playwrightSession, browser)");
       // Loop + post-cap paths both pass session/browser into collectPageData.
       const collectCalls = source.match(
-        /collectPageData\(page, playwrightSession, browser\)/g
+        /collectPageData\(page!?, playwrightSession!?, browser!?\)/g
       );
       expect(collectCalls?.length).toBeGreaterThanOrEqual(2);
     });
@@ -40,10 +40,24 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser)");
   });
 
+  it("bounds every FTC collectPageData evaluate and retries once on first evaluate_timeout", () => {
+    const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
+    expect(source).toContain("withOwnedFilingEvaluateTimeout");
+    expect(source).toContain("waitForFtcReportFraudInteractiveReady");
+    expect(source).toContain("withOwnedFilingFirstEvaluateRetry");
+    expect(source).toContain("replaceOwnedFilingPlaywrightSessionPage");
+    expect(source).toMatch(
+      /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
+    );
+  });
+
   it("BBB navigation sequence remains unchanged in this slice", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
     expect(source).toContain('await page.goto(navigationUrl, { timeout: 60000 })');
     expect(source).toContain('await page.waitForLoadState("domcontentloaded")');
     expect(source).toContain("await page.waitForTimeout(2000)");
+    expect(source).not.toContain("withOwnedFilingEvaluateTimeout");
+    expect(source).not.toContain("withOwnedFilingFirstEvaluateRetry");
+    expect(source).not.toContain("waitForFtcReportFraudInteractiveReady");
   });
 });

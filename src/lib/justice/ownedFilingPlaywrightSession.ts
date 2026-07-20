@@ -269,3 +269,155 @@ export function assertOwnedFilingPageAliveBeforeEvaluate(
     )}`
   );
 }
+
+/** Wall-clock bound for owned-filing page.evaluate (Playwright evaluate has no native timeout). */
+export const OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS = 45_000;
+
+/** Brief wait for ReportFraud interactive controls before the first FTC evaluate. */
+export const OWNED_FILING_FTC_READY_WAIT_MS = 15_000;
+
+export const OWNED_FILING_EVALUATE_TIMEOUT_REASON = "evaluate_timeout";
+
+export class OwnedFilingEvaluateTimeoutError extends Error {
+  readonly reason = OWNED_FILING_EVALUATE_TIMEOUT_REASON;
+
+  constructor(timeoutMs: number = OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS) {
+    super(
+      `owned-filing playwright evaluate_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_EVALUATE_TIMEOUT_REASON})`
+    );
+    this.name = "OwnedFilingEvaluateTimeoutError";
+  }
+}
+
+export function isOwnedFilingEvaluateTimeoutError(err: unknown): boolean {
+  if (err instanceof OwnedFilingEvaluateTimeoutError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /evaluate_timeout/i.test(message);
+}
+
+/**
+ * Bounds an async evaluate (or similar) with a wall-clock timeout.
+ * Does not cancel the underlying Playwright call; callers should close the browser/page on failure.
+ */
+export async function withOwnedFilingEvaluateTimeout<T>(
+  run: () => Promise<T>,
+  timeoutMs: number = OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new OwnedFilingEvaluateTimeoutError(timeoutMs));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Runs `attempt` once; on evaluate_timeout only, runs `retrySetup` then `attempt` again.
+ * A second timeout (or any other error) fails closed.
+ */
+export async function withOwnedFilingFirstEvaluateRetry<T>(
+  attempt: () => Promise<T>,
+  retrySetup: () => Promise<void>
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (err: unknown) {
+    if (!isOwnedFilingEvaluateTimeoutError(err)) throw err;
+    await retrySetup();
+    return await attempt();
+  }
+}
+
+/**
+ * Soft-waits for a usable ReportFraud interactive control / stable DOM.
+ * On timeout, returns without throwing so the bounded evaluate can still run.
+ */
+export async function waitForFtcReportFraudInteractiveReady(
+  page: Page,
+  timeoutMs: number = OWNED_FILING_FTC_READY_WAIT_MS
+): Promise<void> {
+  try {
+    await page.waitForFunction(
+      () => {
+        if (!document.body) return false;
+        return !!document.querySelector(
+          'button, a[href], input, select, textarea, [role="button"]'
+        );
+      },
+      { timeout: timeoutMs }
+    );
+  } catch {
+    // Soft: first evaluate still has its own wall-clock bound.
+  }
+}
+
+/**
+ * Closes the current session page and opens a fresh page in the same context.
+ * Preserves cumulative elapsed_ms for lifecycle diagnostics. Same Browserless session.
+ */
+export async function replaceOwnedFilingPlaywrightSessionPage(
+  session: OwnedFilingPlaywrightSession,
+  browser: Browser
+): Promise<OwnedFilingPlaywrightSession> {
+  const priorElapsed = (() => {
+    try {
+      return session.snapshot().elapsed_ms;
+    } catch {
+      return 0;
+    }
+  })();
+  const priorFirstClose = (() => {
+    try {
+      return session.snapshot().first_close_event;
+    } catch {
+      return null;
+    }
+  })();
+
+  session.disposeListeners();
+  try {
+    if (!session.page.isClosed()) {
+      await session.page.close();
+    }
+  } catch {
+    // continue with a fresh page even if close fails
+  }
+
+  const startedAt = Date.now() - Math.max(0, priorElapsed);
+  let firstCloseEvent: OwnedFilingCloseEvent | null = priorFirstClose;
+
+  const noteClose = (event: OwnedFilingCloseEvent) => {
+    if (firstCloseEvent == null) firstCloseEvent = event;
+  };
+
+  const page = await session.context.newPage();
+  const onDisconnected = () => noteClose("browser_disconnected");
+  const onContextClose = () => noteClose("context_close");
+  const onPageClose = () => noteClose("page_close");
+
+  browser.on("disconnected", onDisconnected);
+  session.context.on("close", onContextClose);
+  page.on("close", onPageClose);
+
+  const disposeListeners = () => {
+    browser.off("disconnected", onDisconnected);
+    session.context.off("close", onContextClose);
+    page.off("close", onPageClose);
+  };
+
+  const snapshot = (): OwnedFilingLifecycleSnapshot => ({
+    elapsed_ms: Math.max(0, Date.now() - startedAt),
+    browser_connected: browser.isConnected(),
+    page_closed: page.isClosed(),
+    first_close_event: firstCloseEvent,
+  });
+
+  return { context: session.context, page, snapshot, disposeListeners };
+}

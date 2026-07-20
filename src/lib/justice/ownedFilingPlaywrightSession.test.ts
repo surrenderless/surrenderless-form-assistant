@@ -4,8 +4,14 @@ import {
   assertOwnedFilingPageAliveBeforeEvaluate,
   enrichOwnedFilingTargetClosedError,
   formatOwnedFilingLifecycleDetail,
+  isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
+  OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+  OwnedFilingEvaluateTimeoutError,
+  replaceOwnedFilingPlaywrightSessionPage,
   withOwnedFilingEvaluateLifecycle,
+  withOwnedFilingEvaluateTimeout,
+  withOwnedFilingFirstEvaluateRetry,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
 function mockPage(overrides: Partial<Page> & { urlValue?: string } = {}): Page {
@@ -14,6 +20,8 @@ function mockPage(overrides: Partial<Page> & { urlValue?: string } = {}): Page {
   return {
     isClosed: vi.fn(() => false),
     url: vi.fn(() => urlValue),
+    close: vi.fn(async () => undefined),
+    waitForFunction: vi.fn(async () => undefined),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       const set = listeners.get(event) ?? new Set();
       set.add(handler);
@@ -307,5 +315,93 @@ describe("withOwnedFilingEvaluateLifecycle / enrichOwnedFilingTargetClosedError"
       })
     ).rejects.toBe(original);
     session.disposeListeners();
+  });
+});
+
+describe("withOwnedFilingEvaluateTimeout", () => {
+  it("fails within the wall-clock bound when evaluate never settles", async () => {
+    const started = Date.now();
+    await expect(
+      withOwnedFilingEvaluateTimeout(() => new Promise(() => {}), 40)
+    ).rejects.toBeInstanceOf(OwnedFilingEvaluateTimeoutError);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(35);
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
+  it("resolves when evaluate finishes before the bound", async () => {
+    await expect(
+      withOwnedFilingEvaluateTimeout(async () => "ok", 500)
+    ).resolves.toBe("ok");
+  });
+
+  it("exports the production 45s evaluate bound", () => {
+    expect(OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS).toBe(45_000);
+  });
+});
+
+describe("withOwnedFilingFirstEvaluateRetry", () => {
+  it("on first evaluate_timeout runs retry setup once then resumes on success", async () => {
+    let attempts = 0;
+    const retrySetup = vi.fn(async () => undefined);
+    const result = await withOwnedFilingFirstEvaluateRetry(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new OwnedFilingEvaluateTimeoutError(45);
+      return { steps: attempts, page: "fresh" };
+    }, retrySetup);
+
+    expect(retrySetup).toHaveBeenCalledTimes(1);
+    expect(attempts).toBe(2);
+    expect(result).toEqual({ steps: 2, page: "fresh" });
+  });
+
+  it("fails closed when the retry evaluate also times out", async () => {
+    const retrySetup = vi.fn(async () => undefined);
+    await expect(
+      withOwnedFilingFirstEvaluateRetry(async () => {
+        throw new OwnedFilingEvaluateTimeoutError(45);
+      }, retrySetup)
+    ).rejects.toBeInstanceOf(OwnedFilingEvaluateTimeoutError);
+    expect(retrySetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry non-timeout errors", async () => {
+    const retrySetup = vi.fn(async () => undefined);
+    const original = new Error("boom");
+    await expect(
+      withOwnedFilingFirstEvaluateRetry(async () => {
+        throw original;
+      }, retrySetup)
+    ).rejects.toBe(original);
+    expect(retrySetup).not.toHaveBeenCalled();
+  });
+
+  it("recognizes evaluate_timeout errors by message", () => {
+    expect(
+      isOwnedFilingEvaluateTimeoutError(
+        new Error("owned-filing playwright evaluate_timeout after 45000ms (provider/evaluate_timeout)")
+      )
+    ).toBe(true);
+    expect(isOwnedFilingEvaluateTimeoutError(new Error("target closed"))).toBe(false);
+  });
+});
+
+describe("replaceOwnedFilingPlaywrightSessionPage", () => {
+  it("closes the old page and opens a fresh page in the same context", async () => {
+    const blank = mockPage({ urlValue: "about:blank" });
+    const defaultContext = mockContext([blank]);
+    const fresh = mockPage({ urlValue: "about:blank" });
+    defaultContext.newPage.mockResolvedValue(fresh);
+    const browser = mockBrowser({ contexts: [defaultContext] });
+    const session = await openOwnedFilingPlaywrightSession(browser, {
+      chromiumMode: "browserless",
+    });
+
+    const replaced = await replaceOwnedFilingPlaywrightSessionPage(session, browser);
+    expect(blank.close).toHaveBeenCalledTimes(1);
+    expect(defaultContext.newPage).toHaveBeenCalled();
+    expect(replaced.page).toBe(fresh);
+    expect(replaced.context).toBe(defaultContext);
+    replaced.disposeListeners();
   });
 });
