@@ -46,13 +46,16 @@ export type ChromiumConnectionForRealBbbSubmit =
   | { mode: "local" }
   | { mode: "unavailable"; error: string };
 
-/** Owned-filing Browserless session budget (ms), derived from the route maxDuration constant. */
-export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS =
-  BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS * 1000;
+/**
+ * Owned-filing Browserless session budget in seconds (Browserless `timeout` query param unit).
+ * Same value as the route maxDuration constant — do not multiply by 1000.
+ */
+export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS =
+  BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS;
 
 /**
- * Ensures a Browserless CDP WebSocket URL requests a session `timeout` at least as long as
- * the owned-filing route budget. Preserves token and all other query params; leaves an
+ * Ensures a Browserless CDP WebSocket URL requests a session `timeout` (seconds) at least as
+ * long as the owned-filing route budget. Preserves token and all other query params; leaves an
  * already-adequate timeout unchanged. Returns the original string if the URL cannot be parsed.
  */
 export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: string): string {
@@ -68,13 +71,16 @@ export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: strin
 
   const existingRaw = parsed.searchParams.get("timeout");
   if (existingRaw != null) {
-    const existingMs = Number.parseInt(existingRaw, 10);
-    if (Number.isFinite(existingMs) && existingMs >= OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS) {
+    const existingSeconds = Number.parseInt(existingRaw, 10);
+    if (
+      Number.isFinite(existingSeconds) &&
+      existingSeconds >= OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS
+    ) {
       return trimmed;
     }
   }
 
-  parsed.searchParams.set("timeout", String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS));
+  parsed.searchParams.set("timeout", String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS));
   return parsed.toString();
 }
 
