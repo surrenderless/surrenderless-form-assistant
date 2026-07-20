@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
   assertOwnedFilingPageAliveBeforeEvaluate,
+  enrichOwnedFilingTargetClosedError,
   formatOwnedFilingLifecycleDetail,
   openOwnedFilingPlaywrightSession,
+  withOwnedFilingEvaluateLifecycle,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
 function mockPage(overrides: Partial<Page> & { urlValue?: string } = {}): Page {
@@ -198,5 +200,112 @@ describe("formatOwnedFilingLifecycleDetail", () => {
     ).toBe(
       "elapsed_ms=42 browser_connected=false page_closed=true first_close_event=browser_disconnected"
     );
+  });
+});
+
+describe("withOwnedFilingEvaluateLifecycle / enrichOwnedFilingTargetClosedError", () => {
+  it("raw target-closed evaluate errors become enriched with lifecycle fields and URL", async () => {
+    const blank = mockPage({ urlValue: "https://reportfraud.ftc.gov/" });
+    const defaultContext = mockContext([blank]);
+    const browser = mockBrowser({ contexts: [defaultContext] });
+    const session = await openOwnedFilingPlaywrightSession(browser, {
+      chromiumMode: "browserless",
+    });
+    // Re-point session page URL for enrichment (reuse blank was about:blank; use occupied style).
+    (session.page.url as ReturnType<typeof vi.fn>).mockReturnValue("https://reportfraud.ftc.gov/");
+
+    await expect(
+      withOwnedFilingEvaluateLifecycle(session, browser, async () => {
+        throw new Error("page.evaluate: Target page, context or browser has been closed");
+      })
+    ).rejects.toThrow(/owned-filing playwright evaluate target closed:/);
+
+    try {
+      await withOwnedFilingEvaluateLifecycle(session, browser, async () => {
+        throw new Error("page.evaluate: Target page, context or browser has been closed");
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toMatch(/elapsed_ms=\d+/);
+      expect(message).toContain("browser_connected=true");
+      expect(message).toContain("page_closed=false");
+      expect(message).toContain("first_close_event=none");
+      expect(message).toContain("context_count=1");
+      expect(message).toContain("page_count=1");
+      expect(message).toContain("page_url=https://reportfraud.ftc.gov/");
+      expect(message).toContain(
+        "original_error=page.evaluate: Target page, context or browser has been closed"
+      );
+    }
+    session.disposeListeners();
+  });
+
+  it("browser/context/page API failures while collecting diagnostics do not hide the original failure", async () => {
+    const blank = mockPage({ urlValue: "about:blank" });
+    (blank.isClosed as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("isClosed blew up");
+    });
+    (blank.url as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("url blew up");
+    });
+    const defaultContext = mockContext([blank]);
+    (defaultContext.pages as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("pages blew up");
+    });
+    const browser = mockBrowser({ contexts: [defaultContext] });
+    (browser.isConnected as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("isConnected blew up");
+    });
+    (browser.contexts as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("contexts blew up");
+    });
+
+    const session = {
+      context: defaultContext,
+      page: blank,
+      snapshot: () => {
+        throw new Error("snapshot blew up");
+      },
+      disposeListeners: () => {},
+    };
+
+    try {
+      enrichOwnedFilingTargetClosedError(
+        new Error("page.evaluate: Target page, context or browser has been closed"),
+        session,
+        browser
+      );
+      expect.unreachable();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toContain("owned-filing playwright evaluate target closed:");
+      expect(message).toContain("elapsed_ms=unavailable");
+      expect(message).toContain("browser_connected=unavailable");
+      expect(message).toContain("page_closed=unavailable");
+      expect(message).toContain("first_close_event=unavailable");
+      expect(message).toContain("context_count=unavailable");
+      expect(message).toContain("page_count=unavailable");
+      expect(message).toContain("page_url=unavailable");
+      expect(message).toContain(
+        "original_error=page.evaluate: Target page, context or browser has been closed"
+      );
+    }
+  });
+
+  it("non-target-closed errors remain unchanged", async () => {
+    const blank = mockPage({ urlValue: "about:blank" });
+    const defaultContext = mockContext([blank]);
+    const browser = mockBrowser({ contexts: [defaultContext] });
+    const session = await openOwnedFilingPlaywrightSession(browser, {
+      chromiumMode: "browserless",
+    });
+
+    const original = new Error("decide-action returned an invalid decision shape");
+    await expect(
+      withOwnedFilingEvaluateLifecycle(session, browser, async () => {
+        throw original;
+      })
+    ).rejects.toBe(original);
+    session.disposeListeners();
   });
 });

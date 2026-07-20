@@ -26,6 +26,18 @@ export type OwnedFilingContextOptions = {
   httpCredentials?: { username: string; password: string };
 };
 
+/** Extended lifecycle fields attached when a Playwright evaluate target closes. */
+export type OwnedFilingEvaluateLifecycleFields = {
+  elapsed_ms: string;
+  browser_connected: string;
+  page_closed: string;
+  first_close_event: string;
+  context_count: string;
+  page_count: string;
+  page_url: string;
+  original_error: string;
+};
+
 function isReusableBlankPage(page: Page): boolean {
   if (page.isClosed()) return false;
   try {
@@ -100,6 +112,131 @@ export function formatOwnedFilingLifecycleDetail(
     `page_closed=${snapshot.page_closed}`,
     `first_close_event=${snapshot.first_close_event ?? "none"}`,
   ].join(" ");
+}
+
+export function isOwnedFilingTargetClosedError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /target page, context or browser has been closed/i.test(message);
+}
+
+/**
+ * Safely gathers evaluate-failure diagnostics. Individual field reads never throw.
+ */
+export function collectOwnedFilingEvaluateLifecycleFields(
+  session: Pick<OwnedFilingPlaywrightSession, "context" | "page" | "snapshot">,
+  browser: Browser,
+  originalError: unknown
+): OwnedFilingEvaluateLifecycleFields {
+  const original =
+    originalError instanceof Error ? originalError.message : String(originalError);
+
+  let elapsed_ms = "unavailable";
+  let first_close_event = "unavailable";
+  try {
+    const snap = session.snapshot();
+    elapsed_ms = String(snap.elapsed_ms);
+    first_close_event = snap.first_close_event ?? "none";
+  } catch {
+    // keep unavailable
+  }
+
+  const browser_connected = (() => {
+    try {
+      return String(browser.isConnected());
+    } catch {
+      return "unavailable";
+    }
+  })();
+
+  const page_closed = (() => {
+    try {
+      return String(session.page.isClosed());
+    } catch {
+      return "unavailable";
+    }
+  })();
+
+  const context_count = (() => {
+    try {
+      return String(browser.contexts().length);
+    } catch {
+      return "unavailable";
+    }
+  })();
+
+  const page_count = (() => {
+    try {
+      return String(session.context.pages().length);
+    } catch {
+      return "unavailable";
+    }
+  })();
+
+  const page_url = (() => {
+    try {
+      if (session.page.isClosed()) return "closed";
+      return session.page.url() || "unknown";
+    } catch {
+      return "unavailable";
+    }
+  })();
+
+  return {
+    elapsed_ms,
+    browser_connected,
+    page_closed,
+    first_close_event,
+    context_count,
+    page_count,
+    page_url,
+    original_error: original,
+  };
+}
+
+export function formatOwnedFilingEvaluateLifecycleDetail(
+  fields: OwnedFilingEvaluateLifecycleFields
+): string {
+  return [
+    `elapsed_ms=${fields.elapsed_ms}`,
+    `browser_connected=${fields.browser_connected}`,
+    `page_closed=${fields.page_closed}`,
+    `first_close_event=${fields.first_close_event}`,
+    `context_count=${fields.context_count}`,
+    `page_count=${fields.page_count}`,
+    `page_url=${fields.page_url}`,
+    `original_error=${fields.original_error}`,
+  ].join(" ");
+}
+
+/**
+ * Rethrows target-closed Playwright errors with fail-closed lifecycle detail.
+ * Non-target-closed errors are rethrown unchanged.
+ */
+export function enrichOwnedFilingTargetClosedError(
+  err: unknown,
+  session: Pick<OwnedFilingPlaywrightSession, "context" | "page" | "snapshot">,
+  browser: Browser
+): never {
+  if (!isOwnedFilingTargetClosedError(err)) {
+    throw err;
+  }
+  const fields = collectOwnedFilingEvaluateLifecycleFields(session, browser, err);
+  throw new Error(
+    `owned-filing playwright evaluate target closed: ${formatOwnedFilingEvaluateLifecycleDetail(fields)}`
+  );
+}
+
+/** Runs page.evaluate (or similar) and enriches target-closed failures with lifecycle detail. */
+export async function withOwnedFilingEvaluateLifecycle<T>(
+  session: Pick<OwnedFilingPlaywrightSession, "context" | "page" | "snapshot">,
+  browser: Browser,
+  run: () => Promise<T>
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err: unknown) {
+    enrichOwnedFilingTargetClosedError(err, session, browser);
+  }
 }
 
 /**

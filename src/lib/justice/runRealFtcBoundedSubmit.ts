@@ -24,6 +24,7 @@ import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDeci
 import {
   assertOwnedFilingPageAliveBeforeEvaluate,
   openOwnedFilingPlaywrightSession,
+  withOwnedFilingEvaluateLifecycle,
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
@@ -112,34 +113,40 @@ function contextOptions() {
   };
 }
 
-async function collectPageData(page: Page): Promise<AssistedFormPageData> {
-  return page.evaluate(() => {
-    const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
-      const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
+async function collectPageData(
+  page: Page,
+  session: OwnedFilingPlaywrightSession,
+  browser: Browser
+): Promise<AssistedFormPageData> {
+  return withOwnedFilingEvaluateLifecycle(session, browser, () =>
+    page.evaluate(() => {
+      const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
+        const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
+        return {
+          tag: field.tagName.toLowerCase(),
+          type: (field as HTMLInputElement).type || "",
+          name: field.getAttribute("name") || "",
+          id: (field as HTMLInputElement).id || "",
+          placeholder: field.getAttribute("placeholder") || "",
+          label,
+        };
+      });
+
+      const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
+        text: btn.textContent?.trim() || "",
+        id: (btn as HTMLElement).id || "",
+        name: btn.getAttribute("name") || "",
+        type: btn.getAttribute("type") || "",
+      }));
+
       return {
-        tag: field.tagName.toLowerCase(),
-        type: (field as HTMLInputElement).type || "",
-        name: field.getAttribute("name") || "",
-        id: (field as HTMLInputElement).id || "",
-        placeholder: field.getAttribute("placeholder") || "",
-        label,
+        fields,
+        buttons,
+        url: window.location.href,
+        pageText: document.body?.innerText?.slice(0, 8000) || "",
       };
-    });
-
-    const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
-      text: btn.textContent?.trim() || "",
-      id: (btn as HTMLElement).id || "",
-      name: btn.getAttribute("name") || "",
-      type: btn.getAttribute("type") || "",
-    }));
-
-    return {
-      fields,
-      buttons,
-      url: window.location.href,
-      pageText: document.body?.innerText?.slice(0, 8000) || "",
-    };
-  });
+    })
+  );
 }
 
 async function fetchFormDecision(
@@ -308,7 +315,7 @@ export async function runRealFtcBoundedSubmit(
     assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
 
     while (!hasReachedStepCap(stepsExecuted, REAL_FTC_MAX_SUBMIT_STEPS)) {
-      const pageData = await collectPageData(page);
+      const pageData = await collectPageData(page, playwrightSession, browser);
       if (detectRealFtcTerminalConfirmation(pageData)) {
         stepLog.push({ step: stepsExecuted, url: pageData.url, action: "terminal_detected" });
         const confirmationReference = extractFtcConfirmationReference(pageData.pageText);
@@ -420,7 +427,7 @@ export async function runRealFtcBoundedSubmit(
       stepLog.push({ step: stepsExecuted, url: page.url(), action: "apply" });
     }
 
-    const finalPageData = await collectPageData(page);
+    const finalPageData = await collectPageData(page, playwrightSession, browser);
     if (detectRealFtcTerminalConfirmation(finalPageData)) {
       stepLog.push({ step: stepsExecuted, url: finalPageData.url, action: "terminal_detected" });
       const confirmationReference = extractFtcConfirmationReference(finalPageData.pageText);
