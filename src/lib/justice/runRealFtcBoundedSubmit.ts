@@ -308,9 +308,7 @@ export async function runRealFtcBoundedSubmit(
       contextOptions: contextOptions(),
     });
     page = playwrightSession.page;
-    await page.goto(url, { timeout: 60000 });
-    await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(2000);
+    await page.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" });
 
     assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
 
