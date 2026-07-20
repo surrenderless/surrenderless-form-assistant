@@ -8,6 +8,7 @@ import {
   isPlaywrightMockJusticeTasksCaseId,
   isPlaywrightMockJusticeTasksPipelineEnabled,
 } from "@/lib/testing/playwrightMockJusticeTasksPipeline";
+import { seedPlaywrightMockOwnedFilingDryRunOnOpenFtcTask } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 
 const MAX_TITLE = 500;
 const MAX_DUE = 200;
@@ -144,7 +145,13 @@ export async function GET(req: NextRequest) {
     isPlaywrightMockJusticeTasksPipelineEnabled() &&
     isPlaywrightMockJusticeTasksCaseId(caseId)
   ) {
-    return NextResponse.json(buildPlaywrightMockJusticeTasksGetResponse(caseId, userId));
+    const rows = buildPlaywrightMockJusticeTasksGetResponse(caseId, userId);
+    // Playwright-only seed for start-new-case E2E: durable dry-run notes on the open FTC task.
+    if (req.headers.get("x-playwright-seed-owned-filing-dry-run") === "ftc") {
+      seedPlaywrightMockOwnedFilingDryRunOnOpenFtcTask(caseId, userId);
+      return NextResponse.json(buildPlaywrightMockJusticeTasksGetResponse(caseId, userId));
+    }
+    return NextResponse.json(rows);
   }
 
   const supabase = getSupabaseAdmin();

@@ -10,6 +10,7 @@ import {
 } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
   isPlaywrightMockIntakeCaseHydrationPipelineEnabled,
+  isPlaywrightMockPrimaryCaseActive,
   isPlaywrightMockPrimaryCaseArchived,
   resetPlaywrightMockCaseHydrationSnapshotForCase,
   seedPlaywrightMockCaseHydrationFromCreate,
@@ -195,12 +196,14 @@ export async function POST(req: NextRequest) {
       b.intake && typeof b.intake === "object" && !Array.isArray(b.intake)
         ? String((b.intake as { company_name?: unknown }).company_name ?? "").trim()
         : "";
-    // Second deterministic case is only for multi-case chat selection E2E (Beta Corp
-    // after Acme is archived). Standard Acme recommits always reset the primary case.
+    // Second deterministic case:
+    // - Beta Corp after Acme is archived (multi-case selection E2E)
+    // - Fictional Digital Services while Acme stays active (start-new-case E2E)
     const createSecondCase =
       isPlaywrightMockIntakeCaseHydrationPipelineEnabled() &&
-      isPlaywrightMockPrimaryCaseArchived() &&
-      intakeCompany === "Beta Corp";
+      ((isPlaywrightMockPrimaryCaseArchived() && intakeCompany === "Beta Corp") ||
+        (isPlaywrightMockPrimaryCaseActive() &&
+          intakeCompany === "Fictional Digital Services"));
     const createCaseId = createSecondCase
       ? PLAYWRIGHT_MOCK_SECOND_CASE_ID
       : PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;

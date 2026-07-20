@@ -28,6 +28,13 @@ import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJust
 import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 import { expectUrlStaysOnChatAi } from "./chat-ai-ladder-continuity-e2e";
 
+/** Deterministic second-case company while the primary Acme case stays active (start-new-case E2E). */
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_USER_MESSAGE =
+  "I ordered a widget from Fictional Digital Services for $29.99. They charged me twice and never refunded.";
+
+export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_SECOND_USER_MESSAGE =
+  "My email is e2e-chat@example.com and my name is Jordan Lee. I emailed Fictional Digital Services on 2026-01-20 and they refused a refund.";
+
 /** Deterministic second-case intake messages for multi-case selection E2E. */
 export const PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_BETA_USER_MESSAGE =
   "I ordered a gadget from Beta Corp for $19.99. They charged me twice and never refunded.";
