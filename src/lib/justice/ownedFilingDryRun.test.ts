@@ -235,6 +235,35 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
   });
 
+  it("FTC provider throw before first step maps to dry_run_failed with steps_executed 0", async () => {
+    vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
+      new Error("page.evaluate: Target page, context or browser has been closed")
+    );
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      steps_executed: 0,
+      stop_reason: "provider",
+      detail: "page.evaluate: Target page, context or browser has been closed",
+    });
+    expect(noteUpdates.at(-1)).toContain("dry_run_failed");
+    expect(noteUpdates.at(-1)).toContain("stop_reason: provider");
+    expect(noteUpdates.at(-1)).toContain("steps_executed: 0");
+    expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
+  });
+
   it("unknown click is recorded as blocked_at_submit (fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,

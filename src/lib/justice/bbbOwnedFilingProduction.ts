@@ -46,6 +46,38 @@ export type ChromiumConnectionForRealBbbSubmit =
   | { mode: "local" }
   | { mode: "unavailable"; error: string };
 
+/** Owned-filing Browserless session budget (ms), derived from the route maxDuration constant. */
+export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS =
+  BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS * 1000;
+
+/**
+ * Ensures a Browserless CDP WebSocket URL requests a session `timeout` at least as long as
+ * the owned-filing route budget. Preserves token and all other query params; leaves an
+ * already-adequate timeout unchanged. Returns the original string if the URL cannot be parsed.
+ */
+export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: string): string {
+  const trimmed = browserlessUrl.trim();
+  if (!trimmed) return trimmed;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+
+  const existingRaw = parsed.searchParams.get("timeout");
+  if (existingRaw != null) {
+    const existingMs = Number.parseInt(existingRaw, 10);
+    if (Number.isFinite(existingMs) && existingMs >= OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS) {
+      return trimmed;
+    }
+  }
+
+  parsed.searchParams.set("timeout", String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS));
+  return parsed.toString();
+}
+
 /**
  * Production (VERCEL_ENV=production) requires Browserless — never silently launch local Chromium.
  * Non-production and Playwright mock loops may use local Chromium.
@@ -53,7 +85,10 @@ export type ChromiumConnectionForRealBbbSubmit =
 export function resolveChromiumConnectionForRealBbbSubmit(): ChromiumConnectionForRealBbbSubmit {
   const browserlessUrl = process.env.BROWSERLESS_URL?.trim() ?? "";
   if (browserlessUrl) {
-    return { mode: "browserless", url: browserlessUrl };
+    return {
+      mode: "browserless",
+      url: ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl),
+    };
   }
 
   if (isPlaywrightMockRealBbbBoundedSubmitLoopEnabled()) {
