@@ -28,3 +28,22 @@ describe("owned-filing bounded submit evaluate paths use lifecycle enrichment", 
     });
   }
 });
+
+describe("FTC navigation avoids blind settle delay under Browserless budget", () => {
+  it("uses goto waitUntil domcontentloaded and has no fixed 2s pre-evaluate delay", () => {
+    const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
+    expect(source).toMatch(
+      /page\.goto\(\s*url,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
+    );
+    expect(source).not.toMatch(/waitForLoadState\(\s*["']domcontentloaded["']\s*\)/);
+    expect(source).not.toMatch(/waitForTimeout\(\s*2000\s*\)/);
+    expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser)");
+  });
+
+  it("BBB navigation sequence remains unchanged in this slice", () => {
+    const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
+    expect(source).toContain('await page.goto(navigationUrl, { timeout: 60000 })');
+    expect(source).toContain('await page.waitForLoadState("domcontentloaded")');
+    expect(source).toContain("await page.waitForTimeout(2000)");
+  });
+});
