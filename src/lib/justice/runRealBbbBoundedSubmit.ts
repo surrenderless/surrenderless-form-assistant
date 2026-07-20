@@ -21,6 +21,11 @@ import {
 } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
 import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
+import {
+  assertOwnedFilingPageAliveBeforeEvaluate,
+  openOwnedFilingPlaywrightSession,
+  type OwnedFilingPlaywrightSession,
+} from "@/lib/justice/ownedFilingPlaywrightSession";
 
 export type RealBbbBoundedSubmitFillResult = {
   status: "success";
@@ -276,6 +281,7 @@ export async function runRealBbbBoundedSubmit(
   let stepsExecuted = 0;
   let browser: Browser | null = null;
   let page: Page | null = null;
+  let playwrightSession: OwnedFilingPlaywrightSession | null = null;
 
   try {
     const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
@@ -288,12 +294,17 @@ export async function runRealBbbBoundedSubmit(
       browser = await chromium.launch({ headless: true });
     }
 
-    const context = await browser.newContext(contextOptions());
-    page = await context.newPage();
+    playwrightSession = await openOwnedFilingPlaywrightSession(browser, {
+      chromiumMode: chromiumConnection.mode,
+      contextOptions: contextOptions(),
+    });
+    page = playwrightSession.page;
     const navigationUrl = resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl(url, base);
     await page.goto(navigationUrl, { timeout: 60000 });
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(2000);
+
+    assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
 
     while (!hasReachedStepCap(stepsExecuted)) {
       const pageData = await collectPageData(page);
@@ -467,6 +478,7 @@ export async function runRealBbbBoundedSubmit(
       capture.storageReason
     );
   } finally {
+    playwrightSession?.disposeListeners();
     try {
       if (browser) await browser.close();
     } catch (closeErr: unknown) {

@@ -21,6 +21,11 @@ import {
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
 import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
+import {
+  assertOwnedFilingPageAliveBeforeEvaluate,
+  openOwnedFilingPlaywrightSession,
+  type OwnedFilingPlaywrightSession,
+} from "@/lib/justice/ownedFilingPlaywrightSession";
 
 export type RealFtcBoundedSubmitStepLogEntry = {
   step: number;
@@ -278,6 +283,7 @@ export async function runRealFtcBoundedSubmit(
   let stepsExecuted = 0;
   let browser: Browser | null = null;
   let page: Page | null = null;
+  let playwrightSession: OwnedFilingPlaywrightSession | null = null;
 
   try {
     const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
@@ -290,11 +296,16 @@ export async function runRealFtcBoundedSubmit(
       browser = await chromium.launch({ headless: true });
     }
 
-    const context = await browser.newContext(contextOptions());
-    page = await context.newPage();
+    playwrightSession = await openOwnedFilingPlaywrightSession(browser, {
+      chromiumMode: chromiumConnection.mode,
+      contextOptions: contextOptions(),
+    });
+    page = playwrightSession.page;
     await page.goto(url, { timeout: 60000 });
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(2000);
+
+    assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
 
     while (!hasReachedStepCap(stepsExecuted, REAL_FTC_MAX_SUBMIT_STEPS)) {
       const pageData = await collectPageData(page);
@@ -456,6 +467,7 @@ export async function runRealFtcBoundedSubmit(
       capture.storageReason
     );
   } finally {
+    playwrightSession?.disposeListeners();
     try {
       if (browser) await browser.close();
     } catch (closeErr: unknown) {
