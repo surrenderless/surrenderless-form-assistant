@@ -267,7 +267,7 @@ describe("runOwnedFilingDryRun", () => {
   it("FTC enriched lifecycle provider throw remains fail-closed dry_run_failed", async () => {
     vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
       new Error(
-        "owned-filing playwright target closed before first evaluate (page_close): elapsed_ms=2100 browser_connected=true page_closed=true first_close_event=page_close"
+        "owned-filing playwright evaluate target closed: elapsed_ms=2100 browser_connected=false page_closed=true first_close_event=page_close context_count=1 page_count=0 page_url=closed original_error=page.evaluate: Target page, context or browser has been closed"
       )
     );
 
@@ -281,7 +281,8 @@ describe("runOwnedFilingDryRun", () => {
       stop_reason: "provider",
     });
     expect(result.detail).toContain("elapsed_ms=2100");
-    expect(result.detail).toContain("first_close_event=page_close");
+    expect(result.detail).toContain("page_url=closed");
+    expect(result.detail).toContain("original_error=page.evaluate:");
   });
 
   it("unknown click is recorded as blocked_at_submit (fail closed)", async () => {
