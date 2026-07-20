@@ -23,14 +23,15 @@ import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwne
 import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
 import {
   assertOwnedFilingPageAliveBeforeEvaluate,
+  isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
   replaceOwnedFilingPlaywrightSessionPage,
   waitForFtcReportFraudInteractiveReady,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
-  withOwnedFilingFirstEvaluateRetry,
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
+import { createOwnedFilingFtcStageTiming } from "@/lib/justice/ownedFilingFtcStageTiming";
 
 export type RealFtcBoundedSubmitStepLogEntry = {
   step: number;
@@ -297,6 +298,32 @@ export async function runRealFtcBoundedSubmit(
   let browser: Browser | null = null;
   let page: Page | null = null;
   let playwrightSession: OwnedFilingPlaywrightSession | null = null;
+  const stageTiming = createOwnedFilingFtcStageTiming();
+  const getCloseSnapshot = () => {
+    try {
+      return playwrightSession?.snapshot() ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const withStageTimeline = (error: string): string => {
+    const timeline = stageTiming.formatTimeline();
+    if (!timeline || error.includes("stages=")) return error;
+    return `${error} | ${timeline}`;
+  };
+  const finalizeIncomplete = (
+    result: RealFtcBoundedSubmitIncompleteResult
+  ): RealFtcBoundedSubmitIncompleteResult => {
+    const timeline = stageTiming.formatTimeline();
+    return {
+      ...result,
+      error: withStageTimeline(result.error),
+      technicalDetails: {
+        ...result.technicalDetails,
+        ...(timeline ? { stage_timeline: timeline } : {}),
+      },
+    };
+  };
 
   try {
     const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
@@ -304,38 +331,71 @@ export async function runRealFtcBoundedSubmit(
       throw new Error(chromiumConnection.error);
     }
     if (chromiumConnection.mode === "browserless") {
-      browser = await chromium.connectOverCDP(chromiumConnection.url);
+      browser = await stageTiming.run("connect_cdp", () =>
+        chromium.connectOverCDP(chromiumConnection.url)
+      );
     } else {
-      browser = await chromium.launch({ headless: true });
+      browser = await stageTiming.run("connect_cdp", () => chromium.launch({ headless: true }));
     }
 
-    playwrightSession = await openOwnedFilingPlaywrightSession(browser, {
-      chromiumMode: chromiumConnection.mode,
-      contextOptions: contextOptions(),
-    });
+    playwrightSession = await stageTiming.run("open_session", () =>
+      openOwnedFilingPlaywrightSession(browser!, {
+        chromiumMode: chromiumConnection.mode,
+        contextOptions: contextOptions(),
+      })
+    );
     page = playwrightSession.page;
-    await page.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" });
+    await stageTiming.run(
+      "goto_1",
+      () => page!.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" }),
+      getCloseSnapshot
+    );
 
     assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
-    await waitForFtcReportFraudInteractiveReady(page);
+    await stageTiming.run(
+      "ready_1",
+      () => waitForFtcReportFraudInteractiveReady(page!),
+      getCloseSnapshot
+    );
 
     let firstEvaluateCompleted = false;
 
     while (!hasReachedStepCap(stepsExecuted, REAL_FTC_MAX_SUBMIT_STEPS)) {
       const collect = () => collectPageData(page!, playwrightSession!, browser!);
-      const pageData = firstEvaluateCompleted
-        ? await collect()
-        : await withOwnedFilingFirstEvaluateRetry(collect, async () => {
-            playwrightSession = await replaceOwnedFilingPlaywrightSessionPage(
-              playwrightSession!,
-              browser!
-            );
-            page = playwrightSession.page;
-            await page.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" });
-            assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser!);
-            await waitForFtcReportFraudInteractiveReady(page);
-          });
-      firstEvaluateCompleted = true;
+      let pageData: AssistedFormPageData;
+      if (firstEvaluateCompleted) {
+        pageData = await collect();
+      } else {
+        try {
+          pageData = await stageTiming.run("evaluate_1", collect, getCloseSnapshot);
+        } catch (err: unknown) {
+          if (!isOwnedFilingEvaluateTimeoutError(err)) throw err;
+          await stageTiming.run(
+            "retry_replace",
+            async () => {
+              playwrightSession = await replaceOwnedFilingPlaywrightSessionPage(
+                playwrightSession!,
+                browser!
+              );
+              page = playwrightSession.page;
+            },
+            getCloseSnapshot
+          );
+          await stageTiming.run(
+            "goto_2",
+            () => page!.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" }),
+            getCloseSnapshot
+          );
+          assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser!);
+          await stageTiming.run(
+            "ready_2",
+            () => waitForFtcReportFraudInteractiveReady(page!),
+            getCloseSnapshot
+          );
+          pageData = await stageTiming.run("evaluate_2", collect, getCloseSnapshot);
+        }
+        firstEvaluateCompleted = true;
+      }
       if (detectRealFtcTerminalConfirmation(pageData)) {
         stepLog.push({ step: stepsExecuted, url: pageData.url, action: "terminal_detected" });
         const confirmationReference = extractFtcConfirmationReference(pageData.pageText);
@@ -380,14 +440,16 @@ export async function runRealFtcBoundedSubmit(
           storageSkipped: true,
           storageReason: "Screenshot capture failed",
         }));
-        return buildIncompleteResult(
-          decisionResult.stopReason,
-          stepsExecuted,
-          stepLog,
-          pageData,
-          capture.screenshot,
-          capture.storageSkipped,
-          capture.storageReason
+        return finalizeIncomplete(
+          buildIncompleteResult(
+            decisionResult.stopReason,
+            stepsExecuted,
+            stepLog,
+            pageData,
+            capture.screenshot,
+            capture.storageSkipped,
+            capture.storageReason
+          )
         );
       }
 
@@ -399,14 +461,16 @@ export async function runRealFtcBoundedSubmit(
           storageSkipped: true,
           storageReason: "Screenshot capture failed",
         }));
-        return buildIncompleteResult(
-          "empty_decision",
-          stepsExecuted,
-          stepLog,
-          pageData,
-          capture.screenshot,
-          capture.storageSkipped,
-          capture.storageReason
+        return finalizeIncomplete(
+          buildIncompleteResult(
+            "empty_decision",
+            stepsExecuted,
+            stepLog,
+            pageData,
+            capture.screenshot,
+            capture.storageSkipped,
+            capture.storageReason
+          )
         );
       }
 
@@ -441,14 +505,16 @@ export async function runRealFtcBoundedSubmit(
           storageSkipped: true,
           storageReason: "Screenshot capture failed",
         }));
-        return buildIncompleteResult(
-          stopReason,
-          stepsExecuted,
-          stepLog,
-          pageData,
-          capture.screenshot,
-          capture.storageSkipped,
-          capture.storageReason
+        return finalizeIncomplete(
+          buildIncompleteResult(
+            stopReason,
+            stepsExecuted,
+            stepLog,
+            pageData,
+            capture.screenshot,
+            capture.storageSkipped,
+            capture.storageReason
+          )
         );
       }
       stepsExecuted += 1;
@@ -497,15 +563,19 @@ export async function runRealFtcBoundedSubmit(
       storageSkipped: true,
       storageReason: "Screenshot capture failed",
     }));
-    return buildIncompleteResult(
-      "max_steps_reached",
-      stepsExecuted,
-      stepLog,
-      finalPageData,
-      capture.screenshot,
-      capture.storageSkipped,
-      capture.storageReason
+    return finalizeIncomplete(
+      buildIncompleteResult(
+        "max_steps_reached",
+        stepsExecuted,
+        stepLog,
+        finalPageData,
+        capture.screenshot,
+        capture.storageSkipped,
+        capture.storageReason
+      )
     );
+  } catch (err: unknown) {
+    throw stageTiming.attachToError(err);
   } finally {
     playwrightSession?.disposeListeners();
     try {
