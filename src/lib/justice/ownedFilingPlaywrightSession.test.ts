@@ -4,11 +4,15 @@ import {
   assertOwnedFilingPageAliveBeforeEvaluate,
   enrichOwnedFilingTargetClosedError,
   formatOwnedFilingLifecycleDetail,
+  isOwnedFilingClosedTargetProviderError,
   isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
+  OWNED_FILING_FTC_READY_SELECTOR,
+  OWNED_FILING_FTC_READY_WAIT_MS,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
   OwnedFilingEvaluateTimeoutError,
   replaceOwnedFilingPlaywrightSessionPage,
+  waitForFtcReportFraudInteractiveReady,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
   withOwnedFilingFirstEvaluateRetry,
@@ -403,5 +407,64 @@ describe("replaceOwnedFilingPlaywrightSessionPage", () => {
     expect(replaced.page).toBe(fresh);
     expect(replaced.context).toBe(defaultContext);
     replaced.disposeListeners();
+  });
+});
+
+describe("waitForFtcReportFraudInteractiveReady", () => {
+  function pageWithWaitForFunction(
+    waitForFunction: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>
+  ): Page {
+    return mockPage({ waitForFunction } as unknown as Partial<Page>);
+  }
+
+  it("passes timeout as waitForFunction options (3rd arg), not as pageFunction arg", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => undefined);
+    const page = pageWithWaitForFunction(waitForFunction);
+
+    await waitForFtcReportFraudInteractiveReady(page, OWNED_FILING_FTC_READY_WAIT_MS);
+
+    expect(waitForFunction).toHaveBeenCalledTimes(1);
+    const call = waitForFunction.mock.calls[0] as unknown[];
+    expect(typeof call[0]).toBe("function");
+    expect(call[1]).toBe(OWNED_FILING_FTC_READY_SELECTOR);
+    expect(call[2]).toEqual({ timeout: OWNED_FILING_FTC_READY_WAIT_MS });
+    expect(OWNED_FILING_FTC_READY_WAIT_MS).toBe(15_000);
+  });
+
+  it("soft-resolves on a normal readiness TimeoutError so bounded evaluate can proceed", async () => {
+    const timeoutErr = new Error("page.waitForFunction: Timeout 15000ms exceeded.");
+    timeoutErr.name = "TimeoutError";
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => {
+      throw timeoutErr;
+    });
+    const page = pageWithWaitForFunction(waitForFunction);
+
+    await expect(waitForFtcReportFraudInteractiveReady(page, 15_000)).resolves.toBeUndefined();
+  });
+
+  it("propagates target-closed / disconnected errors as provider failures", async () => {
+    const closed = new Error("Target page, context or browser has been closed");
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => {
+      throw closed;
+    });
+    const page = pageWithWaitForFunction(waitForFunction);
+
+    await expect(waitForFtcReportFraudInteractiveReady(page)).rejects.toBe(closed);
+    expect(isOwnedFilingClosedTargetProviderError(closed)).toBe(true);
+    expect(
+      isOwnedFilingClosedTargetProviderError(new Error("browser has been disconnected"))
+    ).toBe(true);
+  });
+
+  it("enforces the Playwright timeout option value of 15 seconds", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
+      async (_fn, _arg, options) => {
+        expect((options as { timeout?: number } | undefined)?.timeout).toBe(15_000);
+        throw Object.assign(new Error("Timeout 15000ms exceeded."), { name: "TimeoutError" });
+      }
+    );
+    const page = pageWithWaitForFunction(waitForFunction);
+    await waitForFtcReportFraudInteractiveReady(page);
+    expect(waitForFunction.mock.calls[0]?.[2]).toEqual({ timeout: 15_000 });
   });
 });

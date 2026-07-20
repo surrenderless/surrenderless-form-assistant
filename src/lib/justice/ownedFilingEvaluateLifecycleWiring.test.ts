@@ -51,6 +51,17 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     );
   });
 
+  it("passes waitForFunction timeout as options (selector arg, then options object)", () => {
+    const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
+    expect(source).toMatch(
+      /waitForFunction\(\s*\(selector:\s*string\)\s*=>\s*\{[\s\S]*?\},\s*OWNED_FILING_FTC_READY_SELECTOR,\s*\{\s*timeout:\s*timeoutMs\s*\}\s*\)/
+    );
+    // Regression: must not pass `{ timeout }` as the pageFunction arg (2nd position).
+    expect(source).not.toMatch(
+      /waitForFunction\(\s*\([\s\S]*?\),\s*\{\s*timeout:\s*timeoutMs\s*\}\s*\)/
+    );
+  });
+
   it("BBB navigation sequence remains unchanged in this slice", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
     expect(source).toContain('await page.goto(navigationUrl, { timeout: 60000 })');
