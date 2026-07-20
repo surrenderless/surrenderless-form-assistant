@@ -107,6 +107,13 @@ import {
   parseChatCaseRestoreMessage,
 } from "@/lib/justice/chatCaseRestoreGates";
 import {
+  applyChatStartNewCaseLocalSessionReset,
+  buildChatStartNewCaseAssistantResponse,
+  buildChatStartNewCaseGateContext,
+  buildChatStartNewCaseStartedResponse,
+  parseChatStartNewCaseMessage,
+} from "@/lib/justice/chatStartNewCaseGates";
+import {
   buildChatCaseSelectionAmbiguousMatchResponse,
   buildChatCaseSelectionAssistantResponse,
   buildChatCaseSelectionGateContext,
@@ -5186,6 +5193,44 @@ export default function JusticeChatAiPage() {
             { source: "case_restore_gate" }
           );
         }
+      } finally {
+        sendInFlightRef.current = false;
+        setLoading(false);
+      }
+      return;
+    }
+
+    const startNewCaseContext = buildChatStartNewCaseGateContext({
+      isLoaded,
+      isSignedIn: Boolean(isSignedIn),
+      activeCaseId:
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "",
+    });
+    const parsedStartNewCase = parseChatStartNewCaseMessage(trimmed, startNewCaseContext);
+    if (parsedStartNewCase.kind !== "none") {
+      sendInFlightRef.current = true;
+      setLoading(true);
+      setInputValue("");
+      const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
+      try {
+        let assistantText: string;
+        if (parsedStartNewCase.kind === "start_new_case") {
+          const priorCaseId =
+            typeof window !== "undefined"
+              ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
+              : "";
+          // Detach local session only — prior server case stays intact (no PATCH/archive/delete).
+          applyChatStartNewCaseLocalSessionReset();
+          resetChatPostClosureUiState();
+          resetActiveChatTranscriptState({ openingGreeting: false });
+          assistantText = buildChatStartNewCaseStartedResponse({ priorCaseId });
+        } else {
+          assistantText = buildChatStartNewCaseAssistantResponse(parsedStartNewCase);
+        }
+        addChatMessages(
+          [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+          { source: "start_new_case_gate" }
+        );
       } finally {
         sendInFlightRef.current = false;
         setLoading(false);

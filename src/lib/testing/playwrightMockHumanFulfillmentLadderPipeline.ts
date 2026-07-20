@@ -135,7 +135,14 @@ import {
   isPlaywrightMockIntakeCaseHydrationCaseId,
 } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
+import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import { isPlaywrightMockRealBbbBoundedSubmitLoopEnabled } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
+import {
+  OWNED_FILING_DRY_RUN_BLOCK_MARKER,
+  parseOwnedFilingDryRunRecord,
+  upsertOwnedFilingDryRunNotes,
+  type OwnedFilingDryRunRecord,
+} from "@/lib/justice/ownedFilingDryRunState";
 import {
   buildPlaywrightMockJusticeFilingPostResponse,
   type PlaywrightMockJusticeFilingRow,
@@ -151,6 +158,8 @@ export const PLAYWRIGHT_MOCK_FCC_TASK_ID = "00000000-0000-4000-8000-000000000750
 export const PLAYWRIGHT_MOCK_DOT_TASK_ID = "00000000-0000-4000-8000-000000000751";
 export const PLAYWRIGHT_MOCK_BBB_TASK_ID = "00000000-0000-4000-8000-000000000752";
 export const PLAYWRIGHT_MOCK_FTC_TASK_ID = "00000000-0000-4000-8000-000000000753";
+/** Distinct FTC task id for the second mock case (start-new-case E2E). */
+export const PLAYWRIGHT_MOCK_SECOND_CASE_FTC_TASK_ID = "00000000-0000-4000-8000-000000000755";
 export const PLAYWRIGHT_MOCK_MERCHANT_CONTACT_TASK_ID = "00000000-0000-4000-8000-000000000754";
 
 const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
@@ -237,6 +246,55 @@ function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNex
   };
 }
 
+function playwrightMockFtcTaskIdForCase(caseId: string): string {
+  return caseId.trim() === PLAYWRIGHT_MOCK_SECOND_CASE_ID
+    ? PLAYWRIGHT_MOCK_SECOND_CASE_FTC_TASK_ID
+    : PLAYWRIGHT_MOCK_FTC_TASK_ID;
+}
+
+/** Keep durable dry-run blocks across ladder resync (task stays open/queued). */
+function preserveOwnedFilingDryRunNotes(
+  previousNotes: string | null | undefined,
+  nextNotes: string
+): string {
+  if (!previousNotes?.includes(OWNED_FILING_DRY_RUN_BLOCK_MARKER)) return nextNotes;
+  const record = parseOwnedFilingDryRunRecord(previousNotes);
+  if (!record) return nextNotes;
+  return upsertOwnedFilingDryRunNotes(nextNotes, record);
+}
+
+/**
+ * Seeds an owned-filing dry-run block onto the open FTC task for Playwright E2E.
+ * Does not complete the task. Returns true when notes were updated.
+ */
+export function seedPlaywrightMockOwnedFilingDryRunOnOpenFtcTask(
+  caseId: string,
+  userId: string
+): boolean {
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return false;
+  const trimmedCaseId = caseId.trim();
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(trimmedCaseId);
+  if (!tasks?.length) return false;
+  const ftcTaskId = playwrightMockFtcTaskIdForCase(trimmedCaseId);
+  const task = tasks.find((row) => row.id === ftcTaskId && !row.completed_at);
+  if (!task) return false;
+  const record: OwnedFilingDryRunRecord = {
+    status: "dry_run_blocked_at_submit",
+    destination: "ftc",
+    case_id: trimmedCaseId,
+    task_id: ftcTaskId,
+    ran_at: "2026-06-21T12:00:00.000Z",
+    steps_executed: 0,
+    stop_reason: "blocked_unknown_click",
+    button_label: "text:Report Now",
+    detail: "playwright_e2e_seeded_dry_run",
+  };
+  task.notes = upsertOwnedFilingDryRunNotes(task.notes, record);
+  task.user_id = userId.trim() || task.user_id;
+  task.updated_at = PLAYWRIGHT_MOCK_TASK_TIMESTAMP;
+  return true;
+}
+
 /** Sync mock operator tasks from cumulative case client_state after PATCH. */
 export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   caseId: string,
@@ -251,6 +309,12 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   const justiceIntake = intake as JusticeIntake;
   const tasks: PlaywrightMockJusticeTaskRow[] = [];
   const trimmedCaseId = caseId.trim();
+  const previousById = new Map(
+    (getPlaywrightMockHumanFulfillmentTasksByCaseId().get(trimmedCaseId) ?? []).map((row) => [
+      row.id,
+      row,
+    ])
+  );
 
   if (shouldQueueMerchantContactFilingTask(clientState)) {
     tasks.push(
@@ -342,13 +406,15 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
   }
 
   if (shouldQueueFtcFilingTask(clientState)) {
+    const ftcTaskId = playwrightMockFtcTaskIdForCase(trimmedCaseId);
+    const builtNotes = buildFtcFilingTaskNotes(trimmedCaseId, justiceIntake);
     tasks.push(
       buildOpenTask({
-        id: PLAYWRIGHT_MOCK_FTC_TASK_ID,
+        id: ftcTaskId,
         userId,
         caseId: trimmedCaseId,
         title: buildFtcFilingTaskTitle(justiceIntake),
-        notes: buildFtcFilingTaskNotes(trimmedCaseId, justiceIntake),
+        notes: preserveOwnedFilingDryRunNotes(previousById.get(ftcTaskId)?.notes, builtNotes),
       })
     );
   }

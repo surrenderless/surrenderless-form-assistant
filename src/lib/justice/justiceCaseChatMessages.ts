@@ -8,6 +8,7 @@ export const JUSTICE_CASE_CHAT_MESSAGE_SOURCES = [
   "closure_gate",
   "case_restore_gate",
   "case_selection_gate",
+  "start_new_case_gate",
   "evidence_upload",
   "progress_narration",
   "greeting",

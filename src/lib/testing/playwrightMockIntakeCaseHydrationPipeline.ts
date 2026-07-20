@@ -82,6 +82,15 @@ export function isPlaywrightMockPrimaryCaseArchived(): boolean {
   return Boolean(snapshot?.archived_at?.trim());
 }
 
+/** True when the primary E2E case snapshot exists and is not archived. */
+export function isPlaywrightMockPrimaryCaseActive(): boolean {
+  const snapshot = getPlaywrightMockCaseHydrationSnapshots().get(
+    PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID
+  );
+  if (!snapshot) return false;
+  return !snapshot.archived_at?.trim();
+}
+
 /** Deterministic intake snapshot for the signed-in chat roundtrip E2E case. */
 export function buildPlaywrightMockE2eCaseIntake(): Record<string, string> {
   return {
