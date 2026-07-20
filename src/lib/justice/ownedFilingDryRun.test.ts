@@ -264,6 +264,26 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
   });
 
+  it("FTC enriched lifecycle provider throw remains fail-closed dry_run_failed", async () => {
+    vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
+      new Error(
+        "owned-filing playwright target closed before first evaluate (page_close): elapsed_ms=2100 browser_connected=true page_closed=true first_close_event=page_close"
+      )
+    );
+
+    const result = await runOwnedFilingDryRun(makeSupabase(ftcTask()), USER_ID, CASE_ID, "ftc");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "ftc",
+      steps_executed: 0,
+      stop_reason: "provider",
+    });
+    expect(result.detail).toContain("elapsed_ms=2100");
+    expect(result.detail).toContain("first_close_event=page_close");
+  });
+
   it("unknown click is recorded as blocked_at_submit (fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,
