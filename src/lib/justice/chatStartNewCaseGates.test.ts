@@ -4,12 +4,16 @@ import {
   buildChatStartNewCaseAssistantResponse,
   buildChatStartNewCaseGateContext,
   buildChatStartNewCaseStartedResponse,
+  buildIsolatedStartNewCaseTranscript,
   canStartNewCaseViaChat,
   CHAT_START_NEW_CASE_MESSAGE,
+  listChatStartNewCaseTransientClientResets,
   parseChatStartNewCaseMessage,
+  stagedProofNotesAfterStartNewCaseReset,
 } from "@/lib/justice/chatStartNewCaseGates";
 import { STORAGE_CHAT_BBB_ACCURACY_CONSENTED_V1 } from "@/lib/justice/chatLegalConsentGates";
 import { STORAGE_APPROVED_NEXT_ACTION_V1 } from "@/lib/justice/approvedNextActionState";
+import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 import { STORAGE_CASE_ID, STORAGE_INTAKE, STORAGE_TIMELINE_V1 } from "@/lib/justice/types";
 
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
@@ -144,6 +148,16 @@ describe("chatStartNewCaseGates", () => {
         STORAGE_CHAT_BBB_ACCURACY_CONSENTED_V1,
         JSON.stringify({ [CASE_ID]: true })
       );
+      sessionStorage.setItem(
+        STORAGE_STAGED_PROOF_NOTES_V1,
+        JSON.stringify([
+          {
+            clientId: "staged-1",
+            title: "Prior receipt",
+            evidence_type: "receipt",
+          },
+        ])
+      );
 
       const result = applyChatStartNewCaseLocalSessionReset();
 
@@ -155,6 +169,37 @@ describe("chatStartNewCaseGates", () => {
       expect(sessionStorage.getItem(STORAGE_SUBMISSION_DRAFT_REVIEWED_V1)).toBeNull();
       expect(sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1)).toBeNull();
       expect(sessionStorage.getItem(STORAGE_CHAT_BBB_ACCURACY_CONSENTED_V1)).toBeNull();
+      expect(sessionStorage.getItem(STORAGE_STAGED_PROOF_NOTES_V1)).toBeNull();
     });
+  });
+
+  it("discards prior transcript turns so create backfill cannot inherit them", () => {
+    const priorTurns = [
+      { id: "1", text: "I ordered a widget from Acme Retail for $49.99." },
+      { id: "2", text: "I've queued your FTC consumer complaint." },
+    ];
+    const startNewTurns = [
+      { id: "3", text: CHAT_START_NEW_CASE_MESSAGE },
+      { id: "4", text: buildChatStartNewCaseStartedResponse({ priorCaseId: CASE_ID }) },
+    ];
+    const isolated = buildIsolatedStartNewCaseTranscript({ priorTurns, startNewTurns });
+    expect(isolated).toEqual(startNewTurns);
+    expect(isolated.some((turn) => turn.text.includes("Acme Retail"))).toBe(false);
+    expect(isolated.some((turn) => turn.text.includes("FTC consumer complaint"))).toBe(false);
+  });
+
+  it("clears staged proof notes so they cannot flush onto the next create", () => {
+    expect(
+      stagedProofNotesAfterStartNewCaseReset([
+        { clientId: "staged-1", title: "Prior receipt", evidence_type: "receipt" },
+      ])
+    ).toEqual([]);
+  });
+
+  it("lists transient client resets required beyond sessionStorage clear", () => {
+    const resets = listChatStartNewCaseTransientClientResets();
+    expect(resets).toContain("messagesRef/transcript");
+    expect(resets).toContain("stagedProofNotes");
+    expect(resets).toContain("isUpdatingExistingCase:false");
   });
 });

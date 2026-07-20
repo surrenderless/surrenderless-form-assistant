@@ -162,3 +162,47 @@ export function applyChatStartNewCaseLocalSessionReset(): {
   clearLocalJusticeSession();
   return { cleared: true, preserveServerCase: true };
 }
+
+/**
+ * In-memory transcript seed after start-new-case detach.
+ * Prior-case turns are discarded so create-time backfill cannot persist them onto the new case.
+ */
+export function buildIsolatedStartNewCaseTranscript<T extends { text: string }>(input: {
+  priorTurns: readonly T[];
+  startNewTurns: readonly T[];
+}): T[] {
+  void input.priorTurns;
+  return [...input.startNewTurns];
+}
+
+/** React staged-proof list after start-new: prior notes must not flush onto the next create. */
+export function stagedProofNotesAfterStartNewCaseReset(
+  priorNotes: readonly unknown[]
+): [] {
+  void priorNotes;
+  return [];
+}
+
+/** React/UI transient fields that must reset with start-new (session clear alone is not enough). */
+export function listChatStartNewCaseTransientClientResets(): readonly string[] {
+  return [
+    "messagesRef/transcript",
+    "persistedTurnIdsRef",
+    "transcriptCaseIdRef",
+    "stagedProofNotes",
+    "stagedProofFlushError",
+    "approvedNextAction",
+    "preparedPacketApproved",
+    "submissionDraftReview",
+    "savedEvidenceRows",
+    "savedTasks",
+    "savedFilings",
+    "parts",
+    "sessionBaselinePartsRef",
+    "sessionBaselineEvidenceCountRef",
+    "ownedFulfillmentSnapshotRef",
+    "merchantContactAutopilotCaseRef",
+    "proofKeywordNudgeOfferedRef",
+    "isUpdatingExistingCase:false",
+  ] as const;
+}
