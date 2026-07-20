@@ -5,6 +5,7 @@ import {
   extractFtcConfirmationReference,
   REAL_FTC_MAX_SUBMIT_STEPS,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
+import { REAL_BBB_MAX_SUBMIT_STEPS, hasReachedStepCap } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import type { AssistedFormPageData } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 function pageData(partial: Partial<AssistedFormPageData>): AssistedFormPageData {
@@ -16,6 +17,17 @@ function pageData(partial: Partial<AssistedFormPageData>): AssistedFormPageData 
     ...partial,
   };
 }
+
+describe("REAL_FTC_MAX_SUBMIT_STEPS", () => {
+  it("is independently 24 and does not share BBB's cap of 8", () => {
+    expect(REAL_FTC_MAX_SUBMIT_STEPS).toBe(24);
+    expect(REAL_BBB_MAX_SUBMIT_STEPS).toBe(8);
+    expect(REAL_FTC_MAX_SUBMIT_STEPS).not.toBe(REAL_BBB_MAX_SUBMIT_STEPS);
+    expect(hasReachedStepCap(8, REAL_FTC_MAX_SUBMIT_STEPS)).toBe(false);
+    expect(hasReachedStepCap(24, REAL_FTC_MAX_SUBMIT_STEPS)).toBe(true);
+    expect(hasReachedStepCap(8, REAL_BBB_MAX_SUBMIT_STEPS)).toBe(true);
+  });
+});
 
 describe("detectRealFtcTerminalConfirmation", () => {
   it("does not treat the ReportFraud entry page as terminal", () => {
