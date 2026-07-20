@@ -288,7 +288,7 @@ describe("runOwnedFilingDryRun", () => {
   it("FTC evaluate_timeout provider failure maps to dry_run_failed without filing", async () => {
     vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
       new Error(
-        "owned-filing playwright evaluate_timeout after 45000ms (provider/evaluate_timeout)"
+        "owned-filing playwright evaluate_timeout after 45000ms (provider/evaluate_timeout) | stages=connect_cdp:10ms:ok;open_session:5ms:ok;goto_1:800ms:ok;ready_1:12ms:ok;evaluate_1:45010ms:fail:evaluate_timeout"
       )
     );
 
@@ -308,7 +308,11 @@ describe("runOwnedFilingDryRun", () => {
       stop_reason: "provider",
     });
     expect(result.detail).toContain("evaluate_timeout");
+    expect(result.detail).toContain("stages=");
+    expect(result.detail).toContain("evaluate_1:");
+    expect(result.detail).not.toContain("pat@example.com");
     expect(noteUpdates.at(-1)).toContain("dry_run_failed");
+    expect(noteUpdates.at(-1)).toContain("stages=");
     expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
   });
 

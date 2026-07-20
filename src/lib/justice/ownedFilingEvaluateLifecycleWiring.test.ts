@@ -33,19 +33,25 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
   it("uses goto waitUntil domcontentloaded and has no fixed 2s pre-evaluate delay", () => {
     const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
     expect(source).toMatch(
-      /page\.goto\(\s*url,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
+      /page!?\.goto\(\s*url,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
     );
     expect(source).not.toMatch(/waitForLoadState\(\s*["']domcontentloaded["']\s*\)/);
     expect(source).not.toMatch(/waitForTimeout\(\s*2000\s*\)/);
-    expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser)");
+    expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser");
   });
 
   it("bounds every FTC collectPageData evaluate and retries once on first evaluate_timeout", () => {
     const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
     expect(source).toContain("withOwnedFilingEvaluateTimeout");
     expect(source).toContain("waitForFtcReportFraudInteractiveReady");
-    expect(source).toContain("withOwnedFilingFirstEvaluateRetry");
     expect(source).toContain("replaceOwnedFilingPlaywrightSessionPage");
+    expect(source).toContain('stageTiming.run("evaluate_1"');
+    expect(source).toContain('stageTiming.run("evaluate_2"');
+    expect(source).toContain('"retry_replace"');
+    expect(source).toContain('"goto_2"');
+    expect(source).toContain('"ready_2"');
+    expect(source).toContain("createOwnedFilingFtcStageTiming");
+    expect(source).toContain("isOwnedFilingEvaluateTimeoutError");
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
     );
@@ -70,5 +76,6 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).not.toContain("withOwnedFilingEvaluateTimeout");
     expect(source).not.toContain("withOwnedFilingFirstEvaluateRetry");
     expect(source).not.toContain("waitForFtcReportFraudInteractiveReady");
+    expect(source).not.toContain("createOwnedFilingFtcStageTiming");
   });
 });
