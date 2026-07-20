@@ -111,7 +111,9 @@ import {
   buildChatStartNewCaseAssistantResponse,
   buildChatStartNewCaseGateContext,
   buildChatStartNewCaseStartedResponse,
+  buildIsolatedStartNewCaseTranscript,
   parseChatStartNewCaseMessage,
+  stagedProofNotesAfterStartNewCaseReset,
 } from "@/lib/justice/chatStartNewCaseGates";
 import {
   buildChatCaseSelectionAmbiguousMatchResponse,
@@ -3143,18 +3145,28 @@ export default function JusticeChatAiPage() {
   function resetChatPostClosureUiState() {
     setIsUpdatingExistingCase(false);
     setApprovedNextAction(undefined);
+    approvedNextActionRef.current = undefined;
     setPreparedPacketApproved(false);
+    setApprovePreparedPacketChecked(false);
     setSavedEvidenceCount(null);
     setSavedFilings([]);
     setSavedTasks([]);
     setChatHandlingReadinessLoading(false);
     setSavedEvidenceRows([]);
     setRecentEvidenceRows([]);
+    setEditingRecentEvidenceId(null);
+    setRecentEvidenceEditError(null);
+    setRecentEvidenceEditSuccess(null);
+    setDeletingRecentEvidenceId(null);
+    setRecentEvidenceDeleteError(null);
+    setRecentEvidenceDeleteSuccess(null);
     setSubmissionDraftReviewOverride(false);
     setSubmissionDraftReviewChecked(false);
     setSubmissionDraftReviewError(null);
     setDraftPreviewExpanded(false);
     setPacketPreviewExpanded(false);
+    setPrepMessageExpanded(false);
+    setPrepCopyHint(null);
     setFtcPracticeConfirmed(false);
     setFtcPracticeRunning(false);
     setFtcPracticeSuccess(false);
@@ -3162,13 +3174,29 @@ export default function JusticeChatAiPage() {
     setFtcPracticeError(null);
     setFtcPracticeLastAssistedSubmissionAttempt(null);
     setArchiveCaseError(null);
+    setStagedProofNotes(stagedProofNotesAfterStartNewCaseReset(stagedProofNotes));
+    setStagedProofFlushError(null);
+    setShowProofKeywordNudge(false);
+    setProofNoteDetailsOpen(false);
+    setProofNoteTitle("");
+    setProofNoteEvidenceDate("");
+    setProofNoteDescription("");
+    setProofNoteError(null);
+    setProofNoteSuccess(null);
+    setChatAiDraftText(null);
+    setChatAiDraftError(null);
     const emptyParts = defaultBuildJusticeIntakeParts();
     sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(emptyParts);
+    sessionBaselineEvidenceCountRef.current = null;
     setParts(emptyParts);
     legalConsentTrackedCaseIdRef.current = null;
     merchantContactAutopilotCaseRef.current = null;
     wasPendingHumanFulfillmentEscalationRef.current = false;
+    ownedFulfillmentSnapshotRef.current = null;
     caseArchivedAtRef.current = null;
+    proofKeywordNudgeOfferedRef.current = false;
+    evidenceUploadProgressTurnIdRef.current = null;
+    paymentDisputeFormHydratedForCaseRef.current = null;
   }
 
   async function handleApprovePreparedPacketFromChat(options?: {
@@ -5213,24 +5241,35 @@ export default function JusticeChatAiPage() {
       setInputValue("");
       const userTurn = { id: msgId(), role: "user" as const, text: trimmed };
       try {
-        let assistantText: string;
         if (parsedStartNewCase.kind === "start_new_case") {
           const priorCaseId =
             typeof window !== "undefined"
               ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
               : "";
+          const priorTranscript = messagesRef.current;
           // Detach local session only — prior server case stays intact (no PATCH/archive/delete).
           applyChatStartNewCaseLocalSessionReset();
           resetChatPostClosureUiState();
-          resetActiveChatTranscriptState({ openingGreeting: false });
-          assistantText = buildChatStartNewCaseStartedResponse({ priorCaseId });
+          // Replace transcript entirely so prior turns cannot backfill onto the next create.
+          resetActiveChatTranscriptState();
+          const assistantText = buildChatStartNewCaseStartedResponse({ priorCaseId });
+          const startNewTurns = [
+            userTurn,
+            { id: msgId(), role: "assistant" as const, text: assistantText },
+          ];
+          const isolated = buildIsolatedStartNewCaseTranscript({
+            priorTurns: priorTranscript,
+            startNewTurns: [...messagesRef.current, ...startNewTurns],
+          });
+          messagesRef.current = isolated;
+          setMessages(isolated);
         } else {
-          assistantText = buildChatStartNewCaseAssistantResponse(parsedStartNewCase);
+          const assistantText = buildChatStartNewCaseAssistantResponse(parsedStartNewCase);
+          addChatMessages(
+            [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
+            { source: "start_new_case_gate" }
+          );
         }
-        addChatMessages(
-          [userTurn, { id: msgId(), role: "assistant", text: assistantText }],
-          { source: "start_new_case_gate" }
-        );
       } finally {
         sendInFlightRef.current = false;
         setLoading(false);

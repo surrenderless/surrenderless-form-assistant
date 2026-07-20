@@ -18,7 +18,9 @@ import { CHAT_INTAKE_COMMIT_MESSAGE } from "@/lib/justice/chatIntakeCommitGates"
 import { CHAT_START_NEW_CASE_MESSAGE } from "@/lib/justice/chatStartNewCaseGates";
 import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import { OWNED_FILING_DRY_RUN_BLOCK_MARKER } from "@/lib/justice/ownedFilingDryRunState";
+import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE } from "@/lib/testing/playwrightMockIntakeChatPipeline";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import {
@@ -39,6 +41,12 @@ type TaskRow = {
   case_id: string;
   notes: string | null;
   completed_at: string | null;
+};
+
+type ChatMessageRow = {
+  case_id: string;
+  role: string;
+  content: string;
 };
 
 test("start a new case detaches the active case and creates an independent second case", async ({
@@ -82,6 +90,27 @@ test("start a new case detaches the active case and creates an independent secon
   const chatInput = page.locator("#chat-ai-input");
   const chatTranscript = chatAiTranscript(page);
 
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // Stale staged-proof session payload must not survive start-new (storage + React reset).
+  await page.evaluate(
+    ({ key, payload }) => {
+      sessionStorage.setItem(key, payload);
+    },
+    {
+      key: STORAGE_STAGED_PROOF_NOTES_V1,
+      payload: JSON.stringify([
+        {
+          clientId: "e2e-prior-staged",
+          title: "Prior case receipt must not carry",
+          evidence_type: "receipt",
+        },
+      ]),
+    }
+  );
+
   let primaryPatched = false;
   page.on("request", (req) => {
     if (
@@ -103,11 +132,22 @@ test("start a new case detaches the active case and creates an independent secon
   await expect(chatTranscript.getByText(primaryCaseId)).toBeVisible({ timeout: 15_000 });
   await expectUrlStaysOnChatAi(page);
 
-  const sessionAfterDetach = await page.evaluate(
-    (key) => sessionStorage.getItem(key),
-    STORAGE_CASE_ID
+  // Prior case transcript must not remain visible after start-new.
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toHaveCount(
+    0
   );
-  expect(sessionAfterDetach).toBeNull();
+  await expect(chatTranscript.getByText("Acme Retail")).toHaveCount(0);
+  await expect(page.getByText("Pending proof notes")).toHaveCount(0);
+
+  const sessionAfterDetach = await page.evaluate(
+    ({ caseKey, stagedKey }) => ({
+      caseId: sessionStorage.getItem(caseKey),
+      staged: sessionStorage.getItem(stagedKey),
+    }),
+    { caseKey: STORAGE_CASE_ID, stagedKey: STORAGE_STAGED_PROOF_NOTES_V1 }
+  );
+  expect(sessionAfterDetach.caseId).toBeNull();
+  expect(sessionAfterDetach.staged).toBeNull();
   expect(primaryPatched).toBe(false);
 
   const primaryAfterDetach = await page.request.get(
@@ -184,6 +224,50 @@ test("start a new case detaches the active case and creates an independent secon
   };
   expect(primaryStillBody.intake?.company_name).toBe("Acme Retail");
 
+  const primaryChat = await page.request.get(
+    `/api/justice/chat-messages?case_id=${encodeURIComponent(primaryCaseId)}`
+  );
+  expect(primaryChat.ok()).toBeTruthy();
+  const primaryChatPayload = (await primaryChat.json()) as { messages?: ChatMessageRow[] };
+  const primaryChatRows = primaryChatPayload.messages ?? [];
+  expect(
+    primaryChatRows.some((row) => row.content.includes(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE))
+  ).toBe(true);
+
+  const secondChat = await page.request.get(
+    `/api/justice/chat-messages?case_id=${encodeURIComponent(PLAYWRIGHT_MOCK_SECOND_CASE_ID)}`
+  );
+  expect(secondChat.ok()).toBeTruthy();
+  const secondChatPayload = (await secondChat.json()) as { messages?: ChatMessageRow[] };
+  const secondChatRows = secondChatPayload.messages ?? [];
+  expect(
+    secondChatRows.some((row) => row.content.includes(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE))
+  ).toBe(false);
+  expect(secondChatRows.some((row) => row.content.includes("Acme Retail"))).toBe(false);
+  expect(
+    secondChatRows.some((row) =>
+      row.content.includes(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_USER_MESSAGE)
+    )
+  ).toBe(true);
+
+  const primaryEvidence = await page.request.get(
+    `/api/justice/evidence?case_id=${encodeURIComponent(primaryCaseId)}`
+  );
+  expect(primaryEvidence.ok()).toBeTruthy();
+  const primaryEvidenceRows = (await primaryEvidence.json()) as Array<{ title?: string }>;
+  expect(
+    primaryEvidenceRows.some((row) => row.title === "Prior case receipt must not carry")
+  ).toBe(false);
+
+  const secondEvidence = await page.request.get(
+    `/api/justice/evidence?case_id=${encodeURIComponent(PLAYWRIGHT_MOCK_SECOND_CASE_ID)}`
+  );
+  expect(secondEvidence.ok()).toBeTruthy();
+  const secondEvidenceRows = (await secondEvidence.json()) as Array<{ title?: string }>;
+  expect(
+    secondEvidenceRows.some((row) => row.title === "Prior case receipt must not carry")
+  ).toBe(false);
+
   const primaryTasksAfterCreate = await page.request.get(
     `/api/justice/tasks?case_id=${encodeURIComponent(primaryCaseId)}`
   );
@@ -198,7 +282,13 @@ test("start a new case detaches the active case and creates an independent secon
     `/api/justice/tasks?case_id=${encodeURIComponent(PLAYWRIGHT_MOCK_SECOND_CASE_ID)}`
   );
   expect(secondTasksBeforeQueue.ok()).toBeTruthy();
-  expect(await secondTasksBeforeQueue.json()).toEqual([]);
+  const secondTasksEarly = (await secondTasksBeforeQueue.json()) as TaskRow[];
+  expect(
+    secondTasksEarly.some((row) => (row.notes ?? "").includes(OWNED_FILING_DRY_RUN_BLOCK_MARKER))
+  ).toBe(false);
+  expect(
+    secondTasksEarly.some((row) => (row.notes ?? "").includes(`case_id: ${primaryCaseId}`))
+  ).toBe(false);
 
   const queueSecondFtcRes = await page.request.patch(
     `/api/justice/cases/${encodeURIComponent(PLAYWRIGHT_MOCK_SECOND_CASE_ID)}`,
