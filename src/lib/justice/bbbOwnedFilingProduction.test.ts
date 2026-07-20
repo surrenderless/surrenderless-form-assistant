@@ -4,7 +4,7 @@ import {
   BBB_DECIDE_ACTION_INTERNAL_SECRET_HEADER,
   BBB_DECIDE_ACTION_USER_ID_HEADER,
   BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS,
-  OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS,
+  OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS,
   ensureBrowserlessOwnedFilingSessionTimeout,
   evaluateOwnedBbbAutofillExecutionReadiness,
   getBbbDecideActionInternalSecret,
@@ -51,7 +51,7 @@ describe("bbbOwnedFilingProduction execution gates", () => {
     });
   });
 
-  it("uses Browserless when configured in production and injects session timeout budget", () => {
+  it("uses Browserless when configured in production and injects session timeout in seconds", () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("BROWSERLESS_URL", "wss://chrome.browserless.io?token=test");
     const connection = resolveChromiumConnectionForRealBbbSubmit();
@@ -59,15 +59,17 @@ describe("bbbOwnedFilingProduction execution gates", () => {
     if (connection.mode !== "browserless") return;
     const resolved = new URL(connection.url);
     expect(resolved.searchParams.get("token")).toBe("test");
+    expect(resolved.searchParams.get("timeout")).toBe("300");
     expect(resolved.searchParams.get("timeout")).toBe(
-      String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS)
+      String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS)
     );
   });
 
-  it("derives Browserless session timeout ms from the route duration constant", () => {
-    expect(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS).toBe(
-      BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS * 1000
+  it("uses the route duration seconds constant as the Browserless timeout (not milliseconds)", () => {
+    expect(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS).toBe(
+      BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS
     );
+    expect(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS).toBe(300);
   });
 
   it("injects timeout when missing and preserves other Browserless query params", () => {
@@ -77,24 +79,20 @@ describe("bbbOwnedFilingProduction execution gates", () => {
     const resolved = new URL(out);
     expect(resolved.searchParams.get("token")).toBe("abc");
     expect(resolved.searchParams.get("stealth")).toBe("true");
-    expect(resolved.searchParams.get("timeout")).toBe(
-      String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS)
-    );
+    expect(resolved.searchParams.get("timeout")).toBe("300");
   });
 
-  it("raises a too-short Browserless timeout up to the owned-filing budget", () => {
+  it("raises a too-short Browserless timeout up to the owned-filing budget in seconds", () => {
     const out = ensureBrowserlessOwnedFilingSessionTimeout(
-      "wss://chrome.browserless.io?token=abc&timeout=30000"
+      "wss://chrome.browserless.io?token=abc&timeout=30"
     );
     const resolved = new URL(out);
     expect(resolved.searchParams.get("token")).toBe("abc");
-    expect(resolved.searchParams.get("timeout")).toBe(
-      String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS)
-    );
+    expect(resolved.searchParams.get("timeout")).toBe("300");
   });
 
   it("preserves an already-adequate Browserless timeout without rewriting the URL", () => {
-    const input = `wss://chrome.browserless.io?token=abc&timeout=${OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS + 60_000}`;
+    const input = `wss://chrome.browserless.io?token=abc&timeout=${OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_SECONDS + 60}`;
     expect(ensureBrowserlessOwnedFilingSessionTimeout(input)).toBe(input);
   });
 
