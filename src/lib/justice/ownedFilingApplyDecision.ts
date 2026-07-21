@@ -176,11 +176,53 @@ function nativeChoiceLabelLocator(page: Page, control: AssistedFormChoiceControl
   return resolveFtcChoiceLocator(page, control).locator("xpath=ancestor::label[1]");
 }
 
+async function forceCheckHiddenNativeChoice(
+  page: Page,
+  control: AssistedFormChoiceControl,
+  options: ApplyDecisionOptions
+): Promise<FillFieldsResult> {
+  const target = resolveFtcChoiceLocator(page, control);
+  try {
+    const count = await target.count();
+    if (count !== 1) {
+      return {
+        ok: false,
+        diagnostic: targetDiagnostic("choice", count, false, null, options),
+      };
+    }
+    const enabled = await target.isEnabled();
+    if (!enabled) {
+      return {
+        ok: false,
+        diagnostic: targetDiagnostic("choice", count, false, enabled, options),
+      };
+    }
+    await target.check({
+      force: true,
+      timeout: options.actionTimeoutMs ?? OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
+    });
+    if (!(await target.isChecked())) {
+      return {
+        ok: false,
+        diagnostic: targetDiagnostic("choice", count, false, enabled, options),
+      };
+    }
+  } catch (err: unknown) {
+    propagateFtcActionError(err, options, "check");
+    if (isClosedTargetError(err)) throw err;
+    return {
+      ok: false,
+      diagnostic: targetDiagnostic("choice", 1, false, true, options),
+    };
+  }
+  return { ok: true };
+}
+
 /**
  * FTC /assistant hides its native radios/checkboxes and exposes the real hit target as a
  * structurally associated visible label. When the matched control is hidden but enabled,
- * activate only that label. Fails closed if the label is missing, ambiguous, hidden, or
- * disabled, and for any non-native control.
+ * activate only that label. If and only if no associated label exists, force-check the exact
+ * native control and verify its checked state. Other label or control failures stay closed.
  */
 async function activateHiddenNativeChoiceLabel(
   page: Page,
@@ -196,6 +238,9 @@ async function activateHiddenNativeChoiceLabel(
   const label = nativeChoiceLabelLocator(page, control);
   try {
     const count = await label.count();
+    if (count === 0) {
+      return forceCheckHiddenNativeChoice(page, control, options);
+    }
     if (count !== 1) {
       return {
         ok: false,

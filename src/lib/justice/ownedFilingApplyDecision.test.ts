@@ -39,6 +39,7 @@ function mockPage(): MockPage {
     count: vi.fn(async () => 1),
     isVisible: vi.fn(async () => true),
     isEnabled: vi.fn(async () => true),
+    isChecked: vi.fn(async () => true),
     check: vi.fn(async () => undefined),
     click: vi.fn(async () => undefined),
     getAttribute: vi.fn(async () => "false"),
@@ -360,8 +361,41 @@ describe("FTC bounded actions", () => {
     );
   });
 
+  it("force-checks the exact hidden enabled native choice when no associated label exists", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [{ ...choiceControl(), visible: false }],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.locator).toHaveBeenNthCalledWith(1, 'label[for="category-fraud"]');
+    expect(page.locator).toHaveBeenNthCalledWith(
+      2,
+      'input[type="radio"][id="category-fraud"][value="fraud"]'
+    );
+    expect(page.choiceLocator.check).toHaveBeenCalledWith({
+      force: true,
+      timeout: 20_000,
+    });
+    expect(page.choiceLocator.isChecked).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(page.choiceLocator.check).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(page.exactButtonLocator.click).mock.invocationCallOrder[0]!
+    );
+  });
+
   it.each([
-    ["missing", 0, true, true],
     ["ambiguous", 2, true, true],
     ["hidden", 1, false, true],
     ["disabled", 1, true, false],
@@ -398,6 +432,38 @@ describe("FTC bounded actions", () => {
     }
   );
 
+  it("fails closed when force-check does not leave the exact native control checked", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+    vi.mocked(page.choiceLocator.isChecked).mockResolvedValue(false);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [{ ...choiceControl(), visible: false }],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("target=choice,count=1"),
+    });
+    expect(page.choiceLocator.check).toHaveBeenCalledWith({
+      force: true,
+      timeout: 20_000,
+    });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
   it("fails closed for a hidden but enabled ARIA choice control without label activation", async () => {
     const page = mockPage();
 
@@ -427,6 +493,63 @@ describe("FTC bounded actions", () => {
       diagnostic: expect.stringContaining("target=choice-label,count=0"),
     });
     expect(page.locator).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("does not apply force-check to a non-choice target", async () => {
+    const page = mockPage();
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Do the thing" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.choiceLocator.check).not.toHaveBeenCalled();
+    expect(page.choiceLocator.click).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stuck force-check and attributes it to check", async () => {
+    vi.useFakeTimers();
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+    vi.mocked(page.choiceLocator.check).mockImplementation(
+      (options) =>
+        new Promise<void>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
+          }, options?.timeout);
+        })
+    );
+
+    const pending = applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [{ ...choiceControl(), visible: false }],
+      }
+    );
+    const assertion = expect(pending).rejects.toThrow(
+      "owned-filing action_timeout:check after 20000ms"
+    );
+    await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
+    await assertion;
+    expect(page.choiceLocator.check).toHaveBeenCalledWith({
+      force: true,
+      timeout: 20_000,
+    });
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
   });
 
@@ -481,7 +604,7 @@ describe("FTC bounded actions", () => {
     );
 
     const serialized = JSON.stringify(result);
-    expect(serialized).toContain("target=choice-label,count=0");
+    expect(serialized).toContain("target=choice,count=0");
     expect(serialized).not.toContain(secret);
   });
 
