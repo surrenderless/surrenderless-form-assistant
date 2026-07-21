@@ -8,7 +8,9 @@ export type OwnedFilingFtcStageName =
   | "retry_replace"
   | "goto_2"
   | "ready_2"
-  | "evaluate_2";
+  | "evaluate_2"
+  | "decide_1"
+  | "apply_1";
 
 export type OwnedFilingFtcStageRecord = {
   stage: OwnedFilingFtcStageName;
@@ -31,6 +33,8 @@ export type OwnedFilingFtcStageCloseSnapshot = {
 export function categorizeOwnedFilingFtcStageError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   if (/evaluate_timeout/i.test(message)) return "evaluate_timeout";
+  if (/decide_timeout/i.test(message)) return "decide_timeout";
+  if (/action_timeout/i.test(message)) return "action_timeout";
   if (/target page, context or browser has been closed/i.test(message)) return "target_closed";
   if (/browser.*(disconnected|has been closed)/i.test(message)) return "browser_disconnected";
   if (/context.*(closed|destroyed)/i.test(message)) return "context_closed";

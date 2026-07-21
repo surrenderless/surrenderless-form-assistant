@@ -51,6 +51,10 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain('"goto_2"');
     expect(source).toContain('"ready_2"');
     expect(source).toContain("createOwnedFilingFtcStageTiming");
+    expect(source).toContain('stageTiming.run("decide_1"');
+    expect(source).toContain('stageTiming.run("apply_1"');
+    expect(source).toContain("OWNED_FILING_FTC_ACTION_TIMEOUT_MS");
+    expect(source).toContain("propagateCriticalErrors: true");
     expect(source).toContain("isOwnedFilingEvaluateTimeoutError");
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
@@ -77,5 +81,7 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).not.toContain("withOwnedFilingFirstEvaluateRetry");
     expect(source).not.toContain("waitForFtcReportFraudInteractiveReady");
     expect(source).not.toContain("createOwnedFilingFtcStageTiming");
+    expect(source).not.toContain("OWNED_FILING_FTC_ACTION_TIMEOUT_MS");
+    expect(source).not.toContain("propagateCriticalErrors");
   });
 });

@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Page } from "playwright";
-import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
+import {
+  applyOwnedFilingFormDecision,
+  OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
+} from "@/lib/justice/ownedFilingApplyDecision";
 import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 function mockPage(): Page {
@@ -103,5 +106,127 @@ describe("applyOwnedFilingFormDecision click gate", () => {
     });
     expect(live).toMatchObject({ ok: true, clicked: true, risk: "safe" });
     expect(page.click).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("FTC bounded actions", () => {
+  const ftcOptions = {
+    mode: "dry_run" as const,
+    logPrefix: "real-ftc-submit",
+    actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
+    propagateCriticalErrors: true,
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fails a stuck fill at 20 seconds without exposing its value", async () => {
+    vi.useFakeTimers();
+    const page = mockPage();
+    vi.mocked(page.fill).mockImplementation(
+      (_selector, _value, options) =>
+        new Promise<void>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
+          }, options?.timeout);
+        })
+    );
+
+    const pending = applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "email", value: "private@example.com" }],
+      },
+      ftcOptions
+    );
+    const assertion = expect(pending).rejects.toThrow(
+      "owned-filing action_timeout after 20000ms"
+    );
+    await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
+    await assertion;
+    expect(page.fill).toHaveBeenCalledWith(
+      expect.any(String),
+      "private@example.com",
+      { timeout: 20_000 }
+    );
+    await pending.catch((err: Error) => {
+      expect(err.message).not.toContain("private@example.com");
+    });
+  });
+
+  it("fails a stuck click at 20 seconds", async () => {
+    vi.useFakeTimers();
+    const page = mockPage();
+    vi.mocked(page.click).mockImplementation(
+      (_selector, options) =>
+        new Promise<void>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
+          }, options?.timeout);
+        })
+    );
+
+    const pending = applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+    const assertion = expect(pending).rejects.toThrow(
+      "owned-filing action_timeout after 20000ms"
+    );
+    await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
+    await assertion;
+    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', {
+      timeout: 20_000,
+    });
+  });
+
+  it("allows a safe bounded click and still blocks Submit", async () => {
+    const page = mockPage();
+    await expect(
+      applyOwnedFilingFormDecision(
+        page,
+        { nextButton: { selectorType: "text", value: "Continue" } },
+        ftcOptions
+      )
+    ).resolves.toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', {
+      timeout: 20_000,
+    });
+
+    vi.mocked(page.click).mockClear();
+    await expect(
+      applyOwnedFilingFormDecision(
+        page,
+        { nextButton: { selectorType: "text", value: "Submit complaint" } },
+        ftcOptions
+      )
+    ).resolves.toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "dry_run_stop",
+    });
+    expect(page.click).not.toHaveBeenCalled();
+  });
+
+  it("leaves BBB calls unbounded and preserves its soft action failure", async () => {
+    const page = mockPage();
+    vi.mocked(page.fill).mockRejectedValue(
+      Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" })
+    );
+
+    await expect(
+      applyOwnedFilingFormDecision(
+        page,
+        {
+          fieldsToFill: [{ selector: "email", value: "private@example.com" }],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+        { mode: "dry_run", logPrefix: "real-bbb-submit" }
+      )
+    ).resolves.toMatchObject({ ok: true, clicked: true });
+    expect(page.fill).toHaveBeenCalledWith(expect.any(String), "private@example.com");
+    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")');
   });
 });
