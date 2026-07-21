@@ -13,6 +13,7 @@ type MockPage = Page & {
   exactButtonLocator: Locator;
   exactLinkLocator: Locator;
   choiceLocator: Locator;
+  labelLocator: Locator;
 };
 
 function mockPage(): MockPage {
@@ -28,6 +29,12 @@ function mockPage(): MockPage {
     isEnabled: vi.fn(async () => true),
     click: vi.fn(async () => undefined),
   } as unknown as Locator;
+  const labelLocator = {
+    count: vi.fn(async () => 1),
+    isVisible: vi.fn(async () => true),
+    isEnabled: vi.fn(async () => true),
+    click: vi.fn(async () => undefined),
+  } as unknown as Locator;
   const choiceLocator = {
     count: vi.fn(async () => 1),
     isVisible: vi.fn(async () => true),
@@ -35,6 +42,7 @@ function mockPage(): MockPage {
     check: vi.fn(async () => undefined),
     click: vi.fn(async () => undefined),
     getAttribute: vi.fn(async () => "false"),
+    locator: vi.fn(() => labelLocator),
   } as unknown as Locator;
   return {
     fill: vi.fn(async () => undefined),
@@ -45,6 +53,7 @@ function mockPage(): MockPage {
     exactButtonLocator,
     exactLinkLocator,
     choiceLocator,
+    labelLocator,
   } as unknown as MockPage;
 }
 
@@ -296,6 +305,184 @@ describe("FTC bounded actions", () => {
     expect(page.choiceLocator.check).not.toHaveBeenCalled();
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
     expect(page.waitForNavigation).not.toHaveBeenCalled();
+  });
+
+  it.each(["radio", "checkbox"] as const)(
+    "activates the exact for/id visible label for a hidden but enabled native %s",
+    async (controlKind) => {
+      const page = mockPage();
+
+      const result = await applyOwnedFilingFormDecision(
+        page,
+        {
+          fieldsToFill: [{ selector: "category", value: "fraud", controlKind }],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+        {
+          ...ftcOptions,
+          choiceControls: [{ ...choiceControl(controlKind), visible: false }],
+        }
+      );
+
+      expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+      expect(page.locator).toHaveBeenCalledWith('label[for="category-fraud"]');
+      expect(page.choiceLocator.check).not.toHaveBeenCalled();
+      expect(page.choiceLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+      expect(vi.mocked(page.choiceLocator.click).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(page.exactButtonLocator.click).mock.invocationCallOrder[0]!
+      );
+    }
+  );
+
+  it("activates the wrapping label when a hidden but enabled native radio has no id", async () => {
+    const page = mockPage();
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [{ ...choiceControl(), id: "", visible: false }],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.locator).toHaveBeenCalledWith(
+      'input[type="radio"][name="category"][value="fraud"]'
+    );
+    expect(page.choiceLocator.locator).toHaveBeenCalledWith("xpath=ancestor::label[1]");
+    expect(page.labelLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(vi.mocked(page.labelLocator.click).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(page.exactButtonLocator.click).mock.invocationCallOrder[0]!
+    );
+  });
+
+  it.each([
+    ["missing", 0, true, true],
+    ["ambiguous", 2, true, true],
+    ["hidden", 1, false, true],
+    ["disabled", 1, true, false],
+  ] as const)(
+    "fails closed when the hidden native choice label is %s",
+    async (_name, count, visible, enabled) => {
+      const page = mockPage();
+      vi.mocked(page.choiceLocator.count).mockResolvedValue(count);
+      vi.mocked(page.choiceLocator.isVisible).mockResolvedValue(visible);
+      vi.mocked(page.choiceLocator.isEnabled).mockResolvedValue(enabled);
+
+      const result = await applyOwnedFilingFormDecision(
+        page,
+        {
+          fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+        {
+          ...ftcOptions,
+          choiceControls: [{ ...choiceControl(), visible: false }],
+        }
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        blocked: true,
+        risk: "unknown",
+        reason: "unknown_fail_closed",
+        diagnostic: expect.stringContaining(`target=choice-label,count=${count}`),
+      });
+      expect(page.choiceLocator.click).not.toHaveBeenCalled();
+      expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+      expect(page.waitForNavigation).not.toHaveBeenCalled();
+    }
+  );
+
+  it("fails closed for a hidden but enabled ARIA choice control without label activation", async () => {
+    const page = mockPage();
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "category-fraud",
+            value: "fraud",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [{ ...choiceControl("radio", "aria"), name: "", visible: false }],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("target=choice-label,count=0"),
+    });
+    expect(page.locator).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stuck hidden-label click and attributes it to check", async () => {
+    vi.useFakeTimers();
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.click).mockImplementation(
+      (options) =>
+        new Promise<void>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
+          }, options?.timeout);
+        })
+    );
+
+    const pending = applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [{ ...choiceControl(), visible: false }],
+      }
+    );
+    const assertion = expect(pending).rejects.toThrow(
+      "owned-filing action_timeout:check after 20000ms"
+    );
+    await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
+    await assertion;
+    expect(page.choiceLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("keeps choice values out of hidden-label fail-closed diagnostics", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count).mockResolvedValue(0);
+    const secret = "SENSITIVE_CHOICE_VALUE";
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: secret, controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        actionableButtonLabels: ["Continue"],
+        choiceControls: [{ ...choiceControl(), optionValue: secret, visible: false }],
+      }
+    );
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).toContain("target=choice-label,count=0");
+    expect(serialized).not.toContain(secret);
   });
 
   it("fails closed before DOM lookup when scraped choice metadata is ambiguous", async () => {
