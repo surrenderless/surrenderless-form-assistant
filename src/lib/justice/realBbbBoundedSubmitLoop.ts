@@ -19,6 +19,8 @@ export type FormFieldDecision = {
   value: string;
   /** FTC-only choice interaction; omitted for legacy text/select fields and all existing BBB use. */
   controlKind?: "radio" | "checkbox" | "choice";
+  /** FTC-only exact structural key used to resolve a scraped choice control. */
+  choiceSelectorType?: "name" | "id" | "accessibleName";
 };
 
 export type FormButtonDecision = {
@@ -32,6 +34,17 @@ export type FormDecision = {
   waitForNavigation?: boolean;
 };
 
+export type AssistedFormChoiceControl = {
+  source: "native" | "aria";
+  kind: "radio" | "checkbox";
+  name: string;
+  id: string;
+  optionValue: string;
+  accessibleName: string;
+  visible: boolean;
+  enabled: boolean;
+};
+
 export type AssistedFormPageData = {
   fields: Array<{
     tag: string;
@@ -43,6 +56,8 @@ export type AssistedFormPageData = {
     /** Non-user option value exposed only for radio/checkbox choice controls. */
     optionValue?: string;
   }>;
+  /** FTC-only sanitized structural inventory for deterministic required-choice selection. */
+  choiceControls?: AssistedFormChoiceControl[];
   buttons: Array<{
     text: string;
     id: string;
@@ -135,6 +150,15 @@ export function normalizeFormDecision(raw: unknown): FormDecision | null {
         field.controlKind !== undefined &&
         !["radio", "checkbox", "choice"].includes(field.controlKind)
       ) {
+        return null;
+      }
+      if (
+        field.choiceSelectorType !== undefined &&
+        !["name", "id", "accessibleName"].includes(field.choiceSelectorType)
+      ) {
+        return null;
+      }
+      if (field.choiceSelectorType !== undefined && field.controlKind === undefined) {
         return null;
       }
     }

@@ -63,6 +63,7 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain("currentPageUrl: pageData.url");
     expect(source).toContain("enableFtcChoiceControls: true");
     expect(source).toContain("actionableButtonLabels: pageData.buttons.map");
+    expect(source).toContain("choiceControls: pageData.choiceControls ?? []");
     // A bounded action timeout preserves progress as an incomplete result instead of throwing.
     expect(source).toContain("parseOwnedFilingActionTimeoutOperation");
     expect(source).toContain('"action_timeout"');

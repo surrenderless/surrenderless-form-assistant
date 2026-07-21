@@ -74,10 +74,16 @@ function installDom(buttons: FakeElement[], choiceFields: FakeElement[] = []): v
   };
   vi.stubGlobal("document", {
     querySelectorAll(selector: string) {
-      return selector === "button, input[type='submit']"
-        ? buttons
-        : [secretField, ...choiceFields];
+      if (selector === "button, input[type='submit']") return buttons;
+      if (
+        selector ===
+        "input[type='radio'], input[type='checkbox'], [role='radio'], [role='checkbox']"
+      ) {
+        return choiceFields;
+      }
+      return [secretField, ...choiceFields.filter((field) => field.tagName === "INPUT")];
     },
+    getElementById: () => null,
     body: { innerText: "FTC assistant" },
   });
   vi.stubGlobal("window", {
@@ -168,6 +174,58 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       optionValue: "fraud",
     });
     expect(result.fields[0]).not.toHaveProperty("optionValue");
+    expect(result.choiceControls).toEqual([
+      {
+        source: "native",
+        kind: "radio",
+        name: "category",
+        id: "category-fraud",
+        optionValue: "fraud",
+        accessibleName: "Fraud category",
+        visible: true,
+        enabled: true,
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  it("collects exact sanitized ARIA radio metadata without broad page text", () => {
+    const ariaRadio: FakeElement = {
+      tagName: "DIV",
+      textContent: "Ignored broad text",
+      id: "category-imposter",
+      disabled: false,
+      hidden: false,
+      value: "",
+      type: "",
+      labels: [],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "role") return "radio";
+        if (name === "aria-label") return "Imposter scams";
+        if (name === "data-value") return "imposter";
+        if (name === "aria-disabled") return "false";
+        return null;
+      },
+      getBoundingClientRect: () => ({ width: 180, height: 40 }),
+    };
+    installDom([], [ariaRadio]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+
+    expect(result.choiceControls).toEqual([
+      {
+        source: "aria",
+        kind: "radio",
+        name: "",
+        id: "category-imposter",
+        optionValue: "imposter",
+        accessibleName: "Imposter scams",
+        visible: true,
+        enabled: true,
+      },
+    ]);
+    expect(JSON.stringify(result.choiceControls)).not.toContain("Ignored broad text");
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 });
