@@ -27,6 +27,8 @@ type ApplyDecisionOptions = {
   actionTimeoutMs?: number;
   /** FTC propagates action timeouts and closed-target errors; BBB keeps legacy soft failures. */
   propagateCriticalErrors?: boolean;
+  /** FTC text buttons use an exact accessible-name locator and require exactly one match. */
+  useExactTextButtonLocator?: boolean;
 };
 
 function isActionTimeoutError(err: unknown): boolean {
@@ -109,17 +111,41 @@ async function clickNextButton(
       if (options.propagateCriticalErrors && isClosedTargetError(err)) throw err;
       console.warn(`${options.logPrefix}: navigation timeout after button click`);
     });
-  const click = () =>
-    options.actionTimeoutMs === undefined
-      ? page.click(buttonSelector)
-      : page.click(buttonSelector, { timeout: options.actionTimeoutMs });
-  try {
-    if (decision.waitForNavigation) {
-      await Promise.all([waitForNavigation(), click()]);
+  const click = async (): Promise<boolean> => {
+    if (options.useExactTextButtonLocator && decision.nextButton?.selectorType === "text") {
+      const target = page.getByRole("button", {
+        name: decision.nextButton.value,
+        exact: true,
+      });
+      if (
+        (await target.count()) !== 1 ||
+        !(await target.isVisible()) ||
+        !(await target.isEnabled())
+      ) {
+        return false;
+      }
+      if (options.actionTimeoutMs === undefined) {
+        await target.click();
+      } else {
+        await target.click({ timeout: options.actionTimeoutMs });
+      }
+      return true;
+    }
+    if (options.actionTimeoutMs === undefined) {
+      await page.click(buttonSelector);
     } else {
-      await click();
+      await page.click(buttonSelector, { timeout: options.actionTimeoutMs });
     }
     return true;
+  };
+  try {
+    let clicked: boolean;
+    if (decision.waitForNavigation) {
+      [, clicked] = await Promise.all([waitForNavigation(), click()]);
+    } else {
+      clicked = await click();
+    }
+    return clicked;
   } catch (err: unknown) {
     propagateFtcActionError(err, options, "click");
     const message = err instanceof Error ? err.message : String(err);
@@ -150,6 +176,15 @@ export async function applyOwnedFilingFormDecision(
 
   if (risk === "safe") {
     const clicked = await clickNextButton(page, decision, options);
+    if (!clicked && options.useExactTextButtonLocator) {
+      return {
+        ok: false,
+        blocked: true,
+        risk: "unknown",
+        buttonLabel,
+        reason: "unknown_fail_closed",
+      };
+    }
     return { ok: true, clicked, risk: "safe" };
   }
 
@@ -185,5 +220,14 @@ export async function applyOwnedFilingFormDecision(
   }
 
   const clicked = await clickNextButton(page, decision, options);
+  if (!clicked && options.useExactTextButtonLocator) {
+    return {
+      ok: false,
+      blocked: true,
+      risk: "unknown",
+      buttonLabel,
+      reason: "unknown_fail_closed",
+    };
+  }
   return { ok: true, clicked, risk: "irreversible" };
 }

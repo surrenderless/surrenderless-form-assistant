@@ -58,6 +58,8 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain("createOwnedFilingFtcStageTiming");
     expect(source).toContain("OWNED_FILING_FTC_ACTION_TIMEOUT_MS");
     expect(source).toContain("propagateCriticalErrors: true");
+    expect(source).toContain("collectOwnedFilingFtcPageDataInBrowser");
+    expect(source).toContain("useExactTextButtonLocator: true");
     // A bounded action timeout preserves progress as an incomplete result instead of throwing.
     expect(source).toContain("parseOwnedFilingActionTimeoutOperation");
     expect(source).toContain('"action_timeout"');
@@ -89,5 +91,7 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).not.toContain("createOwnedFilingFtcStageTiming");
     expect(source).not.toContain("OWNED_FILING_FTC_ACTION_TIMEOUT_MS");
     expect(source).not.toContain("propagateCriticalErrors");
+    expect(source).not.toContain("collectOwnedFilingFtcPageDataInBrowser");
+    expect(source).not.toContain("useExactTextButtonLocator");
   });
 });

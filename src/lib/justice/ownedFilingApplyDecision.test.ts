@@ -1,17 +1,29 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import {
   applyOwnedFilingFormDecision,
   OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
 } from "@/lib/justice/ownedFilingApplyDecision";
 import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
-function mockPage(): Page {
+type MockPage = Page & {
+  exactButtonLocator: Locator;
+};
+
+function mockPage(): MockPage {
+  const exactButtonLocator = {
+    count: vi.fn(async () => 1),
+    isVisible: vi.fn(async () => true),
+    isEnabled: vi.fn(async () => true),
+    click: vi.fn(async () => undefined),
+  } as unknown as Locator;
   return {
     fill: vi.fn(async () => undefined),
     click: vi.fn(async () => undefined),
     waitForNavigation: vi.fn(async () => undefined),
-  } as unknown as Page;
+    getByRole: vi.fn(() => exactButtonLocator),
+    exactButtonLocator,
+  } as unknown as MockPage;
 }
 
 describe("applyOwnedFilingFormDecision click gate", () => {
@@ -115,6 +127,7 @@ describe("FTC bounded actions", () => {
     logPrefix: "real-ftc-submit",
     actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
     propagateCriticalErrors: true,
+    useExactTextButtonLocator: true,
   };
 
   afterEach(() => {
@@ -158,8 +171,8 @@ describe("FTC bounded actions", () => {
   it("fails a stuck click at 20 seconds", async () => {
     vi.useFakeTimers();
     const page = mockPage();
-    vi.mocked(page.click).mockImplementation(
-      (_selector, options) =>
+    vi.mocked(page.exactButtonLocator.click).mockImplementation(
+      (options) =>
         new Promise<void>((_resolve, reject) => {
           setTimeout(() => {
             reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
@@ -177,14 +190,19 @@ describe("FTC bounded actions", () => {
     );
     await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
     await assertion;
-    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', {
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue",
+      exact: true,
+    });
+    expect(page.exactButtonLocator.click).toHaveBeenCalledWith({
       timeout: 20_000,
     });
+    expect(page.click).not.toHaveBeenCalled();
   });
 
   it("does not map a soft navigation timeout to action_timeout and still counts the click", async () => {
     const page = mockPage();
-    vi.mocked(page.click).mockResolvedValue(undefined);
+    vi.mocked(page.exactButtonLocator.click).mockResolvedValue(undefined);
     vi.mocked(page.waitForNavigation).mockRejectedValue(
       Object.assign(new Error("Timeout 10000ms exceeded."), { name: "TimeoutError" })
     );
@@ -196,13 +214,13 @@ describe("FTC bounded actions", () => {
     );
 
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
-    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', { timeout: 20_000 });
+    expect(page.exactButtonLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
     expect(page.waitForNavigation).toHaveBeenCalled();
   });
 
-  it("does not count a click as clicked when page.click fails softly", async () => {
+  it("fails closed when an exact accessible target cannot be clicked", async () => {
     const page = mockPage();
-    vi.mocked(page.click).mockRejectedValue(new Error("element is not visible"));
+    vi.mocked(page.exactButtonLocator.click).mockRejectedValue(new Error("element is not visible"));
 
     const result = await applyOwnedFilingFormDecision(
       page,
@@ -210,8 +228,13 @@ describe("FTC bounded actions", () => {
       ftcOptions
     );
 
-    expect(result).toMatchObject({ ok: true, clicked: false, risk: "safe" });
-    expect(page.click).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      risk: "unknown",
+      reason: "unknown_fail_closed",
+    });
+    expect(page.exactButtonLocator.click).toHaveBeenCalledTimes(1);
   });
 
   it("allows a safe bounded click and still blocks Submit", async () => {
@@ -223,11 +246,15 @@ describe("FTC bounded actions", () => {
         ftcOptions
       )
     ).resolves.toMatchObject({ ok: true, clicked: true, risk: "safe" });
-    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', {
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue",
+      exact: true,
+    });
+    expect(page.exactButtonLocator.click).toHaveBeenCalledWith({
       timeout: 20_000,
     });
 
-    vi.mocked(page.click).mockClear();
+    vi.mocked(page.exactButtonLocator.click).mockClear();
     await expect(
       applyOwnedFilingFormDecision(
         page,
@@ -239,7 +266,47 @@ describe("FTC bounded actions", () => {
       blocked: true,
       reason: "dry_run_stop",
     });
-    expect(page.click).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without clicking when the exact accessible target is not unique", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(2);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("does not click a disabled exact Continue target", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.isEnabled).mockResolvedValue(false);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue",
+      exact: true,
+    });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
   });
 
   it("leaves BBB calls unbounded and preserves its soft action failure", async () => {

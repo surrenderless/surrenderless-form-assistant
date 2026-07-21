@@ -35,6 +35,7 @@ import {
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 import { createOwnedFilingFtcStageTiming } from "@/lib/justice/ownedFilingFtcStageTiming";
 import { fetchOwnedFilingFtcFormDecision } from "@/lib/justice/ownedFilingFtcDecision";
+import { collectOwnedFilingFtcPageDataInBrowser } from "@/lib/justice/ownedFilingFtcPageData";
 
 export type RealFtcBoundedSubmitStepLogEntry = {
   step: number;
@@ -138,33 +139,7 @@ async function collectPageData(
 ): Promise<AssistedFormPageData> {
   return withOwnedFilingEvaluateLifecycle(session, browser, () =>
     withOwnedFilingEvaluateTimeout(() =>
-      page.evaluate(() => {
-        const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
-          const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
-          return {
-            tag: field.tagName.toLowerCase(),
-            type: (field as HTMLInputElement).type || "",
-            name: field.getAttribute("name") || "",
-            id: (field as HTMLInputElement).id || "",
-            placeholder: field.getAttribute("placeholder") || "",
-            label,
-          };
-        });
-
-        const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
-          text: btn.textContent?.trim() || "",
-          id: (btn as HTMLElement).id || "",
-          name: btn.getAttribute("name") || "",
-          type: btn.getAttribute("type") || "",
-        }));
-
-        return {
-          fields,
-          buttons,
-          url: window.location.href,
-          pageText: document.body?.innerText?.slice(0, 8000) || "",
-        };
-      })
+      page.evaluate(collectOwnedFilingFtcPageDataInBrowser)
     )
   );
 }
@@ -471,6 +446,7 @@ export async function runRealFtcBoundedSubmit(
           logPrefix: "real-ftc-submit",
           actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
           propagateCriticalErrors: true,
+          useExactTextButtonLocator: true,
         });
       let applyResult: Awaited<ReturnType<typeof applyDecision>>;
       try {
