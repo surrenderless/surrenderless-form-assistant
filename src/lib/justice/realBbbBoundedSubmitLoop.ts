@@ -17,6 +17,8 @@ export type RealBbbSubmitStopReason =
 export type FormFieldDecision = {
   selector: string;
   value: string;
+  /** FTC-only choice interaction; omitted for legacy text/select fields and all existing BBB use. */
+  controlKind?: "radio" | "checkbox" | "choice";
 };
 
 export type FormButtonDecision = {
@@ -38,6 +40,8 @@ export type AssistedFormPageData = {
     id: string;
     placeholder: string;
     label: string;
+    /** Non-user option value exposed only for radio/checkbox choice controls. */
+    optionValue?: string;
   }>;
   buttons: Array<{
     text: string;
@@ -119,7 +123,20 @@ export function normalizeFormDecision(raw: unknown): FormDecision | null {
   }
   if (Array.isArray(decision.fieldsToFill)) {
     for (const field of decision.fieldsToFill) {
-      if (!field || typeof field !== "object" || typeof field.selector !== "string") return null;
+      if (
+        !field ||
+        typeof field !== "object" ||
+        typeof field.selector !== "string" ||
+        typeof field.value !== "string"
+      ) {
+        return null;
+      }
+      if (
+        field.controlKind !== undefined &&
+        !["radio", "checkbox", "choice"].includes(field.controlKind)
+      ) {
+        return null;
+      }
     }
   }
   return decision;

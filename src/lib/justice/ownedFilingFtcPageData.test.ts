@@ -54,7 +54,7 @@ function button(
   };
 }
 
-function installDom(buttons: FakeElement[]): void {
+function installDom(buttons: FakeElement[], choiceFields: FakeElement[] = []): void {
   const secretField: FakeElement = {
     tagName: "INPUT",
     textContent: "",
@@ -74,7 +74,9 @@ function installDom(buttons: FakeElement[]): void {
   };
   vi.stubGlobal("document", {
     querySelectorAll(selector: string) {
-      return selector === "button, input[type='submit']" ? buttons : [secretField];
+      return selector === "button, input[type='submit']"
+        ? buttons
+        : [secretField, ...choiceFields];
     },
     body: { innerText: "FTC assistant" },
   });
@@ -132,5 +134,40 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
     expect(result.buttons).toHaveLength(1);
     expect(result.buttons[0]?.text).toBe("Next");
     expect(result.buttons.some((entry) => entry.text === "Continue")).toBe(false);
+  });
+
+  it("exposes only non-user radio option values needed for exact choice selection", () => {
+    const radio: FakeElement = {
+      tagName: "INPUT",
+      textContent: "",
+      id: "category-fraud",
+      disabled: false,
+      hidden: false,
+      value: "fraud",
+      type: "radio",
+      labels: [{ innerText: "Fraud category" }],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "name") return "category";
+        if (name === "placeholder") return null;
+        return null;
+      },
+      getBoundingClientRect: () => ({ width: 20, height: 20 }),
+    };
+    installDom([button("Continue")], [radio]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+
+    expect(result.fields[1]).toEqual({
+      tag: "input",
+      type: "radio",
+      name: "category",
+      id: "category-fraud",
+      placeholder: "",
+      label: "Fraud category",
+      optionValue: "fraud",
+    });
+    expect(result.fields[0]).not.toHaveProperty("optionValue");
+    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 });

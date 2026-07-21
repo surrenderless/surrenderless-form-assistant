@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     },
     {
       role: "user",
-      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? Respond like this:\n{\n  fieldsToFill: [ { selector, value } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When the page exposes required radio or checkbox fields, select the required option before Continue using only its exact name or id as selector, its exact optionValue as value, and controlKind "radio", "checkbox", or "choice". Do not treat Submit, confirm, file, or any final action as Continue.\nRespond like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
     },
   ];
 

@@ -121,6 +121,11 @@ describe("POST /api/decide-action", () => {
     expect(mockCreate).toHaveBeenCalledOnce();
     const createArg = mockCreate.mock.calls[0]?.[0] as { messages: Array<{ content: string }> };
     expect(createArg.messages[1]?.content).toContain("Acme");
+    expect(createArg.messages[1]?.content).toContain(
+      "select the required option before Continue"
+    );
+    expect(createArg.messages[1]?.content).toContain('controlKind "radio", "checkbox", or "choice"');
+    expect(createArg.messages[1]?.content).toContain("exact optionValue");
   });
 
   it("prefers userProfile over userData when both are provided", async () => {
