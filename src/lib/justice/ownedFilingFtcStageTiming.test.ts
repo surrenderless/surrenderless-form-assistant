@@ -31,6 +31,16 @@ describe("categorizeOwnedFilingFtcStageError", () => {
     ).toBe("action_timeout");
     expect(
       categorizeOwnedFilingFtcStageError(
+        new Error("owned-filing action_timeout:fill after 20000ms")
+      )
+    ).toBe("action_timeout:fill");
+    expect(
+      categorizeOwnedFilingFtcStageError(
+        new Error("owned-filing action_timeout:click after 20000ms")
+      )
+    ).toBe("action_timeout:click");
+    expect(
+      categorizeOwnedFilingFtcStageError(
         Object.assign(new Error("Timeout 15000ms exceeded."), { name: "TimeoutError" })
       )
     ).toBe("timeout");
@@ -112,6 +122,37 @@ describe("createOwnedFilingFtcStageTiming", () => {
     expect(timeline).not.toContain("secret-case-content");
   });
 
+  it("attributes a later apply_2 click timeout after a successful apply_1", async () => {
+    const timing = createOwnedFilingFtcStageTiming();
+    await timing.run("evaluate_1", async () => undefined);
+    await timing.run("decide_1", async () => undefined);
+    await timing.run("apply_1", async () => undefined);
+    await timing.run("evaluate_2", async () => undefined);
+    await timing.run("decide_2", async () => undefined);
+    await expect(
+      timing.run("apply_2", async () => {
+        throw new Error(
+          "owned-filing action_timeout:click after 20000ms value=secret-case-content"
+        );
+      })
+    ).rejects.toThrow("action_timeout:click");
+
+    const timeline = timing.formatTimeline();
+    expect(timeline).toMatch(/apply_1:\d+ms:ok/);
+    expect(timeline).toMatch(/apply_2:\d+ms:fail:action_timeout:click/);
+    expect(timeline).not.toContain("secret-case-content");
+  });
+
+  it("attributes a fill timeout distinctly from a click timeout", async () => {
+    const timing = createOwnedFilingFtcStageTiming();
+    await expect(
+      timing.run("apply_3", async () => {
+        throw new Error("owned-filing action_timeout:fill after 20000ms");
+      })
+    ).rejects.toThrow("action_timeout:fill");
+    expect(timing.formatTimeline()).toMatch(/apply_3:\d+ms:fail:action_timeout:fill/);
+  });
+
   it("attributes an in-progress hung stage as active in the timeline", async () => {
     const timing = createOwnedFilingFtcStageTiming();
     timing.begin("ready_1");
@@ -121,7 +162,7 @@ describe("createOwnedFilingFtcStageTiming", () => {
     expect(timing.getActiveStage()).toBe("ready_1");
   });
 
-  it("records retry stages after evaluate_1 timeout then evaluate_2 success", async () => {
+  it("records fresh-page retry stages after evaluate_1 timeout then evaluate_retry success", async () => {
     const timing = createOwnedFilingFtcStageTiming();
     await expect(
       timing.run("evaluate_1", async () => {
@@ -130,17 +171,17 @@ describe("createOwnedFilingFtcStageTiming", () => {
     ).rejects.toThrow(/evaluate_timeout/);
 
     await timing.run("retry_replace", async () => undefined);
-    await timing.run("goto_2", async () => undefined);
-    await timing.run("ready_2", async () => undefined);
-    await timing.run("evaluate_2", async () => ({ fields: [] }));
+    await timing.run("goto_retry", async () => undefined);
+    await timing.run("ready_retry", async () => undefined);
+    await timing.run("evaluate_retry", async () => ({ fields: [] }));
 
     const timeline = timing.formatTimeline();
     expect(timeline).toContain("evaluate_1:");
     expect(timeline).toContain("fail:evaluate_timeout");
     expect(timeline).toContain("retry_replace:");
-    expect(timeline).toContain("goto_2:");
-    expect(timeline).toContain("ready_2:");
-    expect(timeline).toMatch(/evaluate_2:\d+ms:ok/);
+    expect(timeline).toContain("goto_retry:");
+    expect(timeline).toContain("ready_retry:");
+    expect(timeline).toMatch(/evaluate_retry:\d+ms:ok/);
   });
 
   it("records close_during as the active stage when first close is observed", async () => {

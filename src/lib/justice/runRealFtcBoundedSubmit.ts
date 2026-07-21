@@ -20,6 +20,7 @@ import {
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
 import {
   applyOwnedFilingFormDecision,
+  parseOwnedFilingActionTimeoutOperation,
   OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
 } from "@/lib/justice/ownedFilingApplyDecision";
 import {
@@ -47,7 +48,8 @@ export type RealFtcBoundedSubmitStepLogEntry = {
     | "empty_decision"
     | "blocked_irreversible_click"
     | "blocked_unknown_click"
-    | "submit_unarmed";
+    | "submit_unarmed"
+    | "action_timeout";
   detail?: string;
 };
 
@@ -118,6 +120,15 @@ function contextOptions() {
   return {
     httpCredentials: { username: "admin", password: pw } as const,
   };
+}
+
+/** Reads the live page URL without throwing if the target is mid-timeout; falls back to `fallback`. */
+function readCurrentPageUrl(page: Page | null, fallback: string): string {
+  try {
+    return page?.url() ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function collectPageData(
@@ -322,15 +333,17 @@ export async function runRealFtcBoundedSubmit(
     );
 
     let firstEvaluateCompleted = false;
+    let iteration = 0;
 
     while (!hasReachedStepCap(stepsExecuted, REAL_FTC_MAX_SUBMIT_STEPS)) {
+      iteration += 1;
       const collect = () => collectPageData(page!, playwrightSession!, browser!);
       let pageData: AssistedFormPageData;
       if (firstEvaluateCompleted) {
-        pageData = await collect();
+        pageData = await stageTiming.run(`evaluate_${iteration}`, collect, getCloseSnapshot);
       } else {
         try {
-          pageData = await stageTiming.run("evaluate_1", collect, getCloseSnapshot);
+          pageData = await stageTiming.run(`evaluate_${iteration}`, collect, getCloseSnapshot);
         } catch (err: unknown) {
           if (!isOwnedFilingEvaluateTimeoutError(err)) throw err;
           await stageTiming.run(
@@ -345,17 +358,17 @@ export async function runRealFtcBoundedSubmit(
             getCloseSnapshot
           );
           await stageTiming.run(
-            "goto_2",
+            "goto_retry",
             () => page!.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" }),
             getCloseSnapshot
           );
           assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser!);
           await stageTiming.run(
-            "ready_2",
+            "ready_retry",
             () => waitForFtcReportFraudInteractiveReady(page!),
             getCloseSnapshot
           );
-          pageData = await stageTiming.run("evaluate_2", collect, getCloseSnapshot);
+          pageData = await stageTiming.run("evaluate_retry", collect, getCloseSnapshot);
         }
         firstEvaluateCompleted = true;
       }
@@ -392,10 +405,11 @@ export async function runRealFtcBoundedSubmit(
 
       const fetchDecision = () =>
         fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
-      const decisionResult =
-        stepsExecuted === 0
-          ? await stageTiming.run("decide_1", fetchDecision, getCloseSnapshot)
-          : await fetchDecision();
+      const decisionResult = await stageTiming.run(
+        `decide_${iteration}`,
+        fetchDecision,
+        getCloseSnapshot
+      );
       if (!decisionResult.ok) {
         stepLog.push({
           step: stepsExecuted,
@@ -458,10 +472,38 @@ export async function runRealFtcBoundedSubmit(
           actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
           propagateCriticalErrors: true,
         });
-      const applyResult =
-        stepsExecuted === 0
-          ? await stageTiming.run("apply_1", applyDecision, getCloseSnapshot)
-          : await applyDecision();
+      let applyResult: Awaited<ReturnType<typeof applyDecision>>;
+      try {
+        applyResult = await stageTiming.run(`apply_${iteration}`, applyDecision, getCloseSnapshot);
+      } catch (err: unknown) {
+        const timedOutOperation = parseOwnedFilingActionTimeoutOperation(err);
+        if (!timedOutOperation) throw err;
+        // A bounded fill/click exceeded its limit. Preserve any earlier completed steps and the
+        // sanitized step log instead of discarding progress via an unattributed provider throw.
+        const currentUrl = readCurrentPageUrl(page, pageData.url);
+        stepLog.push({
+          step: stepsExecuted,
+          url: currentUrl,
+          action: "action_timeout",
+          detail: timedOutOperation,
+        });
+        const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({
+          screenshot: null,
+          storageSkipped: true,
+          storageReason: "Screenshot capture failed",
+        }));
+        return finalizeIncomplete(
+          buildIncompleteResult(
+            "action_timeout",
+            stepsExecuted,
+            stepLog,
+            { ...pageData, url: currentUrl },
+            capture.screenshot,
+            capture.storageSkipped,
+            capture.storageReason
+          )
+        );
+      }
       if (!applyResult.ok) {
         const stopReason =
           applyResult.reason === "unknown_fail_closed"

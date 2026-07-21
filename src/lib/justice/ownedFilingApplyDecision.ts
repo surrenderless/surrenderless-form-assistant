@@ -46,14 +46,25 @@ function isClosedTargetError(err: unknown): boolean {
   );
 }
 
-function propagateFtcActionError(err: unknown, options: ApplyDecisionOptions): void {
+function propagateFtcActionError(
+  err: unknown,
+  options: ApplyDecisionOptions,
+  operation: "fill" | "click"
+): void {
   if (!options.propagateCriticalErrors) return;
   if (isActionTimeoutError(err)) {
     throw new Error(
-      `owned-filing action_timeout after ${options.actionTimeoutMs ?? "configured"}ms`
+      `owned-filing action_timeout:${operation} after ${options.actionTimeoutMs ?? "configured"}ms`
     );
   }
   if (isClosedTargetError(err)) throw err;
+}
+
+/** Returns the timed-out FTC action operation, or null for non-action-timeout errors. */
+export function parseOwnedFilingActionTimeoutOperation(err: unknown): "fill" | "click" | null {
+  const message = err instanceof Error ? err.message : String(err);
+  const match = /action_timeout:(fill|click)/i.exec(message);
+  return match ? (match[1].toLowerCase() as "fill" | "click") : null;
 }
 
 async function fillFields(
@@ -74,19 +85,24 @@ async function fillFields(
         });
       }
     } catch (err: unknown) {
-      propagateFtcActionError(err, options);
+      propagateFtcActionError(err, options, "fill");
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`${options.logPrefix}: could not fill "${field.selector}":`, message);
     }
   }
 }
 
+/**
+ * Clicks the next button. Returns true only when `page.click` actually resolves.
+ * Navigation waiting stays optional and soft: a navigation timeout is swallowed and never
+ * remapped to an action_timeout. Only the click itself can raise an FTC action_timeout.
+ */
 async function clickNextButton(
   page: Page,
   decision: FormDecision,
   options: ApplyDecisionOptions
-): Promise<void> {
-  if (!decision.nextButton?.value?.trim()) return;
+): Promise<boolean> {
+  if (!decision.nextButton?.value?.trim()) return false;
   const buttonSelector = buildButtonSelector(decision.nextButton);
   const waitForNavigation = () =>
     page.waitForNavigation({ timeout: 10000 }).catch((err: unknown) => {
@@ -103,10 +119,12 @@ async function clickNextButton(
     } else {
       await click();
     }
+    return true;
   } catch (err: unknown) {
-    propagateFtcActionError(err, options);
+    propagateFtcActionError(err, options, "click");
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`${options.logPrefix}: could not click button:`, message);
+    return false;
   }
 }
 
@@ -131,8 +149,8 @@ export async function applyOwnedFilingFormDecision(
   const buttonLabel = `${next.selectorType}:${next.value}`.slice(0, 200);
 
   if (risk === "safe") {
-    await clickNextButton(page, decision, options);
-    return { ok: true, clicked: true, risk: "safe" };
+    const clicked = await clickNextButton(page, decision, options);
+    return { ok: true, clicked, risk: "safe" };
   }
 
   if (risk === "unknown") {
@@ -166,6 +184,6 @@ export async function applyOwnedFilingFormDecision(
     };
   }
 
-  await clickNextButton(page, decision, options);
-  return { ok: true, clicked: true, risk: "irreversible" };
+  const clicked = await clickNextButton(page, decision, options);
+  return { ok: true, clicked, risk: "irreversible" };
 }

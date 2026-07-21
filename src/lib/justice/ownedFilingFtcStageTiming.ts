@@ -1,16 +1,21 @@
-/** Bounded FTC Browserless stage names for Production timing diagnostics. */
+/**
+ * Bounded FTC Browserless stage names for Production timing diagnostics.
+ * Iteration stages (`evaluate_n`/`decide_n`/`apply_n`, plus the initial `goto_1`/`ready_1`)
+ * are numbered per loop pass; the one fresh-page retry uses distinct `*_retry` names so it
+ * never collides with the second iteration.
+ */
 export type OwnedFilingFtcStageName =
   | "connect_cdp"
   | "open_session"
-  | "goto_1"
-  | "ready_1"
-  | "evaluate_1"
   | "retry_replace"
-  | "goto_2"
-  | "ready_2"
-  | "evaluate_2"
-  | "decide_1"
-  | "apply_1";
+  | "goto_retry"
+  | "ready_retry"
+  | "evaluate_retry"
+  | `goto_${number}`
+  | `ready_${number}`
+  | `evaluate_${number}`
+  | `decide_${number}`
+  | `apply_${number}`;
 
 export type OwnedFilingFtcStageRecord = {
   stage: OwnedFilingFtcStageName;
@@ -34,6 +39,8 @@ export function categorizeOwnedFilingFtcStageError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   if (/evaluate_timeout/i.test(message)) return "evaluate_timeout";
   if (/decide_timeout/i.test(message)) return "decide_timeout";
+  if (/action_timeout:fill/i.test(message)) return "action_timeout:fill";
+  if (/action_timeout:click/i.test(message)) return "action_timeout:click";
   if (/action_timeout/i.test(message)) return "action_timeout";
   if (/target page, context or browser has been closed/i.test(message)) return "target_closed";
   if (/browser.*(disconnected|has been closed)/i.test(message)) return "browser_disconnected";

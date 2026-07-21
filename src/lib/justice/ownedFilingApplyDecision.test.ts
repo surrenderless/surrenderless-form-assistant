@@ -141,7 +141,7 @@ describe("FTC bounded actions", () => {
       ftcOptions
     );
     const assertion = expect(pending).rejects.toThrow(
-      "owned-filing action_timeout after 20000ms"
+      "owned-filing action_timeout:fill after 20000ms"
     );
     await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
     await assertion;
@@ -173,13 +173,45 @@ describe("FTC bounded actions", () => {
       ftcOptions
     );
     const assertion = expect(pending).rejects.toThrow(
-      "owned-filing action_timeout after 20000ms"
+      "owned-filing action_timeout:click after 20000ms"
     );
     await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
     await assertion;
     expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', {
       timeout: 20_000,
     });
+  });
+
+  it("does not map a soft navigation timeout to action_timeout and still counts the click", async () => {
+    const page = mockPage();
+    vi.mocked(page.click).mockResolvedValue(undefined);
+    vi.mocked(page.waitForNavigation).mockRejectedValue(
+      Object.assign(new Error("Timeout 10000ms exceeded."), { name: "TimeoutError" })
+    );
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" }, waitForNavigation: true },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")', { timeout: 20_000 });
+    expect(page.waitForNavigation).toHaveBeenCalled();
+  });
+
+  it("does not count a click as clicked when page.click fails softly", async () => {
+    const page = mockPage();
+    vi.mocked(page.click).mockRejectedValue(new Error("element is not visible"));
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: false, risk: "safe" });
+    expect(page.click).toHaveBeenCalledTimes(1);
   });
 
   it("allows a safe bounded click and still blocks Submit", async () => {
