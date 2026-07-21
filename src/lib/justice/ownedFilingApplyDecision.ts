@@ -3,6 +3,7 @@ import {
   buildButtonSelector,
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import { isFtcReportEntryUrl } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { classifyOwnedFilingClick } from "@/lib/justice/classifyOwnedFilingClick";
 import { isOwnedFilingSubmitArmed } from "@/lib/justice/ownedFilingSubmitArmed";
 
@@ -29,6 +30,8 @@ type ApplyDecisionOptions = {
   propagateCriticalErrors?: boolean;
   /** FTC text buttons use an exact accessible-name locator and require exactly one match. */
   useExactTextButtonLocator?: boolean;
+  /** Current FTC page URL, used only for the root-scoped Report Now link exception. */
+  currentPageUrl?: string;
 };
 
 function isActionTimeoutError(err: unknown): boolean {
@@ -111,34 +114,44 @@ async function clickNextButton(
       if (options.propagateCriticalErrors && isClosedTargetError(err)) throw err;
       console.warn(`${options.logPrefix}: navigation timeout after button click`);
     });
-  const click = async (): Promise<boolean> => {
-    if (options.useExactTextButtonLocator && decision.nextButton?.selectorType === "text") {
-      const target = page.getByRole("button", {
-        name: decision.nextButton.value,
-        exact: true,
-      });
-      if (
-        (await target.count()) !== 1 ||
-        !(await target.isVisible()) ||
-        !(await target.isEnabled())
-      ) {
+  try {
+    let click: () => Promise<boolean>;
+    if (options.useExactTextButtonLocator && decision.nextButton.selectorType === "text") {
+      const locatorOptions = { name: decision.nextButton.value, exact: true } as const;
+      const buttonTarget = page.getByRole("button", locatorOptions);
+      let target = buttonTarget;
+      if (decision.nextButton.value === "Report Now") {
+        if (!isFtcReportEntryUrl(options.currentPageUrl ?? "")) return false;
+        const linkTarget = page.getByRole("link", locatorOptions);
+        const [buttonCount, linkCount] = await Promise.all([
+          buttonTarget.count(),
+          linkTarget.count(),
+        ]);
+        if (buttonCount + linkCount !== 1) return false;
+        target = buttonCount === 1 ? buttonTarget : linkTarget;
+      } else if ((await buttonTarget.count()) !== 1) {
         return false;
       }
-      if (options.actionTimeoutMs === undefined) {
-        await target.click();
-      } else {
-        await target.click({ timeout: options.actionTimeoutMs });
-      }
-      return true;
-    }
-    if (options.actionTimeoutMs === undefined) {
-      await page.click(buttonSelector);
+      if (!(await target.isVisible()) || !(await target.isEnabled())) return false;
+      click = async () => {
+        if (options.actionTimeoutMs === undefined) {
+          await target.click();
+        } else {
+          await target.click({ timeout: options.actionTimeoutMs });
+        }
+        return true;
+      };
     } else {
-      await page.click(buttonSelector, { timeout: options.actionTimeoutMs });
+      click = async () => {
+        if (options.actionTimeoutMs === undefined) {
+          await page.click(buttonSelector);
+        } else {
+          await page.click(buttonSelector, { timeout: options.actionTimeoutMs });
+        }
+        return true;
+      };
     }
-    return true;
-  };
-  try {
+
     let clicked: boolean;
     if (decision.waitForNavigation) {
       [, clicked] = await Promise.all([waitForNavigation(), click()]);
