@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import {
   buildButtonSelector,
   type AssistedFormChoiceControl,
@@ -102,7 +102,7 @@ function sanitizedActionableLabels(options: ApplyDecisionOptions): string {
 }
 
 function targetDiagnostic(
-  target: "choice" | "continue",
+  target: "choice" | "choice-label" | "continue",
   count: number,
   visible: boolean | null,
   enabled: boolean | null,
@@ -139,6 +139,92 @@ function matchingFtcChoiceControls(
   });
 }
 
+/** Builds the exact locator for a scraped native or ARIA choice control. */
+function resolveFtcChoiceLocator(page: Page, control: AssistedFormChoiceControl): Locator {
+  const value = cssAttributeValue(control.optionValue);
+  if (control.source === "native") {
+    if (control.id) {
+      return page.locator(
+        `input[type="${control.kind}"][id=${cssAttributeValue(control.id)}][value=${value}]`
+      );
+    }
+    if (control.name) {
+      return page.locator(
+        `input[type="${control.kind}"][name=${cssAttributeValue(control.name)}][value=${value}]`
+      );
+    }
+    return page.getByRole(control.kind, { name: control.accessibleName, exact: true });
+  }
+  if (control.id) {
+    return page.locator(`[role="${control.kind}"][id=${cssAttributeValue(control.id)}]`);
+  }
+  if (control.name) {
+    return page.locator(`[role="${control.kind}"][name=${cssAttributeValue(control.name)}]`);
+  }
+  return page.getByRole(control.kind, { name: control.accessibleName, exact: true });
+}
+
+/**
+ * Resolves the structurally associated visible label for a hidden native radio/checkbox.
+ * Uses exact `label[for=id]` when the input carries an id, otherwise the nearest wrapping
+ * `<label>` ancestor. No broad text, card, link, or arbitrary wrapper targeting.
+ */
+function nativeChoiceLabelLocator(page: Page, control: AssistedFormChoiceControl): Locator {
+  if (control.id) {
+    return page.locator(`label[for=${cssAttributeValue(control.id)}]`);
+  }
+  return resolveFtcChoiceLocator(page, control).locator("xpath=ancestor::label[1]");
+}
+
+/**
+ * FTC /assistant hides its native radios/checkboxes and exposes the real hit target as a
+ * structurally associated visible label. When the matched control is hidden but enabled,
+ * activate only that label. Fails closed if the label is missing, ambiguous, hidden, or
+ * disabled, and for any non-native control.
+ */
+async function activateHiddenNativeChoiceLabel(
+  page: Page,
+  control: AssistedFormChoiceControl,
+  options: ApplyDecisionOptions
+): Promise<FillFieldsResult> {
+  if (control.source !== "native") {
+    return {
+      ok: false,
+      diagnostic: targetDiagnostic("choice-label", 0, null, null, options),
+    };
+  }
+  const label = nativeChoiceLabelLocator(page, control);
+  try {
+    const count = await label.count();
+    if (count !== 1) {
+      return {
+        ok: false,
+        diagnostic: targetDiagnostic("choice-label", count, null, null, options),
+      };
+    }
+    const [visible, enabled] = await Promise.all([label.isVisible(), label.isEnabled()]);
+    if (!visible || !enabled) {
+      return {
+        ok: false,
+        diagnostic: targetDiagnostic("choice-label", count, visible, enabled, options),
+      };
+    }
+    if (options.actionTimeoutMs === undefined) {
+      await label.click();
+    } else {
+      await label.click({ timeout: options.actionTimeoutMs });
+    }
+  } catch (err: unknown) {
+    propagateFtcActionError(err, options, "check");
+    if (isClosedTargetError(err)) throw err;
+    return {
+      ok: false,
+      diagnostic: targetDiagnostic("choice-label", 1, true, true, options),
+    };
+  }
+  return { ok: true };
+}
+
 async function fillFields(
   page: Page,
   decision: FormDecision,
@@ -166,7 +252,7 @@ async function fillFields(
           diagnostic: targetDiagnostic("choice", metadataMatches.length, null, null, options),
         };
       }
-      if (!control.visible || !control.enabled) {
+      if (!control.enabled) {
         return {
           ok: false,
           diagnostic: targetDiagnostic(
@@ -178,33 +264,12 @@ async function fillFields(
           ),
         };
       }
-      const value = cssAttributeValue(control.optionValue);
-      const target =
-        control.source === "native"
-          ? control.id
-            ? page.locator(
-                `input[type="${control.kind}"][id=${cssAttributeValue(control.id)}][value=${value}]`
-              )
-            : control.name
-              ? page.locator(
-                  `input[type="${control.kind}"][name=${cssAttributeValue(control.name)}][value=${value}]`
-                )
-              : page.getByRole(control.kind, {
-                  name: control.accessibleName,
-                  exact: true,
-                })
-          : control.id
-            ? page.locator(
-                `[role="${control.kind}"][id=${cssAttributeValue(control.id)}]`
-              )
-            : control.name
-              ? page.locator(
-                  `[role="${control.kind}"][name=${cssAttributeValue(control.name)}]`
-                )
-              : page.getByRole(control.kind, {
-                  name: control.accessibleName,
-                  exact: true,
-                });
+      if (!control.visible) {
+        const labelResult = await activateHiddenNativeChoiceLabel(page, control, options);
+        if (!labelResult.ok) return labelResult;
+        continue;
+      }
+      const target = resolveFtcChoiceLocator(page, control);
       try {
         const count = await target.count();
         if (count !== 1) {
