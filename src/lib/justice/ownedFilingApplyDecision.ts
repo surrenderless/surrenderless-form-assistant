@@ -139,18 +139,42 @@ function matchingFtcChoiceControls(
   });
 }
 
+/**
+ * True when optionValue is the accessible label stand-in used because the native control has
+ * no distinguishing value attribute (verified FTC category radios).
+ */
+function nativeChoiceUsesAccessibleOptionValue(control: AssistedFormChoiceControl): boolean {
+  return (
+    control.source === "native" &&
+    !!control.accessibleName &&
+    control.optionValue === control.accessibleName
+  );
+}
+
 /** Builds the exact locator for a scraped native or ARIA choice control. */
 function resolveFtcChoiceLocator(page: Page, control: AssistedFormChoiceControl): Locator {
-  const value = cssAttributeValue(control.optionValue);
   if (control.source === "native") {
+    // FTC category radios omit value=""; CSS [value=on] matches nothing even though
+    // input.value is the HTML default "on". Prefer stable id / accessible name.
     if (control.id) {
+      if (nativeChoiceUsesAccessibleOptionValue(control)) {
+        return page.locator(
+          `input[type="${control.kind}"][id=${cssAttributeValue(control.id)}]`
+        );
+      }
       return page.locator(
-        `input[type="${control.kind}"][id=${cssAttributeValue(control.id)}][value=${value}]`
+        `input[type="${control.kind}"][id=${cssAttributeValue(control.id)}][value=${cssAttributeValue(control.optionValue)}]`
       );
+    }
+    if (nativeChoiceUsesAccessibleOptionValue(control) && control.accessibleName) {
+      return page.getByRole(control.kind, {
+        name: control.accessibleName,
+        exact: true,
+      });
     }
     if (control.name) {
       return page.locator(
-        `input[type="${control.kind}"][name=${cssAttributeValue(control.name)}][value=${value}]`
+        `input[type="${control.kind}"][name=${cssAttributeValue(control.name)}][value=${cssAttributeValue(control.optionValue)}]`
       );
     }
     return page.getByRole(control.kind, { name: control.accessibleName, exact: true });
@@ -167,12 +191,20 @@ function resolveFtcChoiceLocator(page: Page, control: AssistedFormChoiceControl)
 /**
  * Resolves the structurally associated visible label for a hidden native radio/checkbox.
  * Uses exact `label[for=id]` when the input carries an id, otherwise the nearest wrapping
- * `<label>` ancestor. No broad text, card, link, or arbitrary wrapper targeting.
+ * `<label>` ancestor (verified FTC `.form-check-label.rf-radio` structure). No broad text,
+ * card, link, or arbitrary wrapper targeting.
  */
 function nativeChoiceLabelLocator(page: Page, control: AssistedFormChoiceControl): Locator {
   if (control.id) {
     return page.locator(`label[for=${cssAttributeValue(control.id)}]`);
   }
+  return resolveFtcChoiceLocator(page, control).locator("xpath=ancestor::label[1]");
+}
+
+function nativeChoiceWrappingLabelLocator(
+  page: Page,
+  control: AssistedFormChoiceControl
+): Locator {
   return resolveFtcChoiceLocator(page, control).locator("xpath=ancestor::label[1]");
 }
 
@@ -237,8 +269,25 @@ async function activateHiddenNativeChoiceLabel(
   }
   const label = nativeChoiceLabelLocator(page, control);
   try {
-    const count = await label.count();
-    if (count === 0) {
+    let count = await label.count();
+    let target = label;
+    // Verified FTC /assistant structure: category radios sit inside
+    // label.form-check-label.rf-radio with no for= association.
+    if (count === 0 && control.id) {
+      const wrapping = nativeChoiceWrappingLabelLocator(page, control);
+      const wrappingCount = await wrapping.count();
+      if (wrappingCount === 0) {
+        return forceCheckHiddenNativeChoice(page, control, options);
+      }
+      if (wrappingCount !== 1) {
+        return {
+          ok: false,
+          diagnostic: targetDiagnostic("choice-label", wrappingCount, null, null, options),
+        };
+      }
+      count = wrappingCount;
+      target = wrapping;
+    } else if (count === 0) {
       return forceCheckHiddenNativeChoice(page, control, options);
     }
     if (count !== 1) {
@@ -247,7 +296,7 @@ async function activateHiddenNativeChoiceLabel(
         diagnostic: targetDiagnostic("choice-label", count, null, null, options),
       };
     }
-    const [visible, enabled] = await Promise.all([label.isVisible(), label.isEnabled()]);
+    const [visible, enabled] = await Promise.all([target.isVisible(), target.isEnabled()]);
     if (!visible || !enabled) {
       return {
         ok: false,
@@ -255,9 +304,9 @@ async function activateHiddenNativeChoiceLabel(
       };
     }
     if (options.actionTimeoutMs === undefined) {
-      await label.click();
+      await target.click();
     } else {
-      await label.click({ timeout: options.actionTimeoutMs });
+      await target.click({ timeout: options.actionTimeoutMs });
     }
   } catch (err: unknown) {
     propagateFtcActionError(err, options, "check");
@@ -408,7 +457,18 @@ async function clickNextButton(
         if (buttonCount + linkCount !== 1) return { clicked: false };
         target = buttonCount === 1 ? buttonTarget : linkTarget;
       } else {
-        const count = await buttonTarget.count();
+        let count = await buttonTarget.count();
+        // Verified FTC /assistant Continue buttons use a trailing NBSP in their accessible
+        // name ("Continue\u00a0"), so exact "Continue" matches zero. Non-exact name match
+        // resolves the unique visible enabled Continue on that page.
+        if (
+          count === 0 &&
+          decision.nextButton.value === "Continue" &&
+          isFtcReportAssistantUrl(options.currentPageUrl ?? "")
+        ) {
+          target = page.getByRole("button", { name: "Continue" });
+          count = await target.count();
+        }
         if (count !== 1) {
           return {
             clicked: false,
