@@ -146,14 +146,34 @@ describe("realBbbBoundedSubmitLoop", () => {
     });
     expect(
       normalizeFormDecision({
-        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        fieldsToFill: [{
+          selector: "Fraud category",
+          value: "fraud",
+          controlKind: "radio",
+          choiceSelectorType: "accessibleName",
+        }],
       })
     ).toEqual({
-      fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+      fieldsToFill: [{
+        selector: "Fraud category",
+        value: "fraud",
+        controlKind: "radio",
+        choiceSelectorType: "accessibleName",
+      }],
     });
     expect(
       normalizeFormDecision({
         fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "card" }],
+      })
+    ).toBeNull();
+    expect(
+      normalizeFormDecision({
+        fieldsToFill: [{
+          selector: "category",
+          value: "fraud",
+          controlKind: "radio",
+          choiceSelectorType: "text",
+        }],
       })
     ).toBeNull();
   });

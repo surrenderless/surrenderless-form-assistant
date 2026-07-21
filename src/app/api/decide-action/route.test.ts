@@ -126,6 +126,9 @@ describe("POST /api/decide-action", () => {
     );
     expect(createArg.messages[1]?.content).toContain('controlKind "radio", "checkbox", or "choice"');
     expect(createArg.messages[1]?.content).toContain("exact optionValue");
+    expect(createArg.messages[1]?.content).toContain("choiceControls");
+    expect(createArg.messages[1]?.content).toContain("choiceSelectorType");
+    expect(createArg.messages[1]?.content).toContain("Never invent choice metadata");
   });
 
   it("prefers userProfile over userData when both are provided", async () => {

@@ -451,6 +451,7 @@ export async function runRealFtcBoundedSubmit(
           currentPageUrl: pageData.url,
           enableFtcChoiceControls: true,
           actionableButtonLabels: pageData.buttons.map((button) => button.text),
+          choiceControls: pageData.choiceControls ?? [],
         });
       let applyResult: Awaited<ReturnType<typeof applyDecision>>;
       try {

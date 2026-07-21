@@ -4,7 +4,10 @@ import {
   applyOwnedFilingFormDecision,
   OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
 } from "@/lib/justice/ownedFilingApplyDecision";
-import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import type {
+  AssistedFormChoiceControl,
+  FormDecision,
+} from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 type MockPage = Page & {
   exactButtonLocator: Locator;
@@ -30,6 +33,8 @@ function mockPage(): MockPage {
     isVisible: vi.fn(async () => true),
     isEnabled: vi.fn(async () => true),
     check: vi.fn(async () => undefined),
+    click: vi.fn(async () => undefined),
+    getAttribute: vi.fn(async () => "false"),
   } as unknown as Locator;
   return {
     fill: vi.fn(async () => undefined),
@@ -41,6 +46,22 @@ function mockPage(): MockPage {
     exactLinkLocator,
     choiceLocator,
   } as unknown as MockPage;
+}
+
+function choiceControl(
+  kind: "radio" | "checkbox" = "radio",
+  source: "native" | "aria" = "native"
+): AssistedFormChoiceControl {
+  return {
+    source,
+    kind,
+    name: "category",
+    id: "category-fraud",
+    optionValue: "fraud",
+    accessibleName: "Fraud category",
+    visible: true,
+    enabled: true,
+  };
 }
 
 describe("applyOwnedFilingFormDecision click gate", () => {
@@ -148,6 +169,7 @@ describe("FTC bounded actions", () => {
     currentPageUrl: "https://reportfraud.ftc.gov/assistant",
     enableFtcChoiceControls: true,
     actionableButtonLabels: ["Continue"],
+    choiceControls: [choiceControl()],
   };
 
   afterEach(() => {
@@ -199,12 +221,12 @@ describe("FTC bounded actions", () => {
           fieldsToFill: [{ selector: "category", value: "fraud", controlKind }],
           nextButton: { selectorType: "text", value: "Continue" },
         },
-        ftcOptions
+        { ...ftcOptions, choiceControls: [choiceControl(controlKind)] }
       );
 
       expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
       expect(page.locator).toHaveBeenCalledWith(
-        `input[type="${controlKind}"]:is([name="category"], [id="category"])[value="fraud"]`
+        `input[type="${controlKind}"][id="category-fraud"][value="fraud"]`
       );
       expect(page.choiceLocator.check).toHaveBeenCalledWith({ timeout: 20_000 });
       expect(vi.mocked(page.choiceLocator.check).mock.invocationCallOrder[0]).toBeLessThan(
@@ -212,6 +234,37 @@ describe("FTC bounded actions", () => {
       );
     }
   );
+
+  it("resolves a scraped ARIA radio exactly, selects it, then advances Continue", async () => {
+    const page = mockPage();
+    const ariaControl = {
+      ...choiceControl("radio", "aria"),
+      name: "",
+      id: "category-fraud",
+    };
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "Fraud category",
+            value: "fraud",
+            controlKind: "radio",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      { ...ftcOptions, choiceControls: [ariaControl] }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.locator).toHaveBeenCalledWith('[role="radio"][id="category-fraud"]');
+    expect(page.choiceLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(vi.mocked(page.choiceLocator.click).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(page.exactButtonLocator.click).mock.invocationCallOrder[0]!
+    );
+  });
 
   it.each([
     ["missing", 0, true, true],
@@ -243,6 +296,28 @@ describe("FTC bounded actions", () => {
     expect(page.choiceLocator.check).not.toHaveBeenCalled();
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
     expect(page.waitForNavigation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before DOM lookup when scraped choice metadata is ambiguous", async () => {
+    const page = mockPage();
+    const duplicate = choiceControl();
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      { ...ftcOptions, choiceControls: [duplicate, { ...duplicate }] }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      diagnostic: expect.stringContaining("target=choice,count=2"),
+    });
+    expect(page.locator).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
   });
 
   it("does not enable choice controls outside the official FTC assistant page", async () => {

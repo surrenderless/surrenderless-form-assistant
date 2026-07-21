@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import {
   buildButtonSelector,
+  type AssistedFormChoiceControl,
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
@@ -41,6 +42,8 @@ type ApplyDecisionOptions = {
   enableFtcChoiceControls?: boolean;
   /** Sanitized labels from the FTC actionable button corpus. */
   actionableButtonLabels?: string[];
+  /** FTC-only sanitized structural inventory used to resolve exact choice decisions. */
+  choiceControls?: AssistedFormChoiceControl[];
 };
 
 type FtcActionOperation = "fill" | "check" | "click";
@@ -116,6 +119,26 @@ function targetDiagnostic(
 
 type FillFieldsResult = { ok: true } | { ok: false; diagnostic: string };
 
+function matchingFtcChoiceControls(
+  field: NonNullable<FormDecision["fieldsToFill"]>[number],
+  options: ApplyDecisionOptions
+): AssistedFormChoiceControl[] {
+  return (options.choiceControls ?? []).filter((control) => {
+    if (field.controlKind !== "choice" && control.kind !== field.controlKind) return false;
+    if (control.optionValue !== field.value) return false;
+    if (field.choiceSelectorType === "name") return control.name === field.selector;
+    if (field.choiceSelectorType === "id") return control.id === field.selector;
+    if (field.choiceSelectorType === "accessibleName") {
+      return control.accessibleName === field.selector;
+    }
+    return (
+      control.name === field.selector ||
+      control.id === field.selector ||
+      control.accessibleName === field.selector
+    );
+  });
+}
+
 async function fillFields(
   page: Page,
   decision: FormDecision,
@@ -135,15 +158,53 @@ async function fillFields(
           diagnostic: targetDiagnostic("choice", 0, null, null, options),
         };
       }
-      const selector = cssAttributeValue(field.selector);
-      const value = cssAttributeValue(field.value);
-      const typeSelector =
-        field.controlKind === "choice"
-          ? ':is([type="radio"], [type="checkbox"])'
-          : `[type="${field.controlKind}"]`;
-      const target = page.locator(
-        `input${typeSelector}:is([name=${selector}], [id=${selector}])[value=${value}]`
-      );
+      const metadataMatches = matchingFtcChoiceControls(field, options);
+      const control = metadataMatches[0];
+      if (!control || metadataMatches.length !== 1) {
+        return {
+          ok: false,
+          diagnostic: targetDiagnostic("choice", metadataMatches.length, null, null, options),
+        };
+      }
+      if (!control.visible || !control.enabled) {
+        return {
+          ok: false,
+          diagnostic: targetDiagnostic(
+            "choice",
+            metadataMatches.length,
+            control.visible,
+            control.enabled,
+            options
+          ),
+        };
+      }
+      const value = cssAttributeValue(control.optionValue);
+      const target =
+        control.source === "native"
+          ? control.id
+            ? page.locator(
+                `input[type="${control.kind}"][id=${cssAttributeValue(control.id)}][value=${value}]`
+              )
+            : control.name
+              ? page.locator(
+                  `input[type="${control.kind}"][name=${cssAttributeValue(control.name)}][value=${value}]`
+                )
+              : page.getByRole(control.kind, {
+                  name: control.accessibleName,
+                  exact: true,
+                })
+          : control.id
+            ? page.locator(
+                `[role="${control.kind}"][id=${cssAttributeValue(control.id)}]`
+              )
+            : control.name
+              ? page.locator(
+                  `[role="${control.kind}"][name=${cssAttributeValue(control.name)}]`
+                )
+              : page.getByRole(control.kind, {
+                  name: control.accessibleName,
+                  exact: true,
+                });
       try {
         const count = await target.count();
         if (count !== 1) {
@@ -162,10 +223,18 @@ async function fillFields(
             diagnostic: targetDiagnostic("choice", count, visible, enabled, options),
           };
         }
-        if (options.actionTimeoutMs === undefined) {
-          await target.check();
-        } else {
-          await target.check({ timeout: options.actionTimeoutMs });
+        if (control.source === "native") {
+          if (options.actionTimeoutMs === undefined) {
+            await target.check();
+          } else {
+            await target.check({ timeout: options.actionTimeoutMs });
+          }
+        } else if ((await target.getAttribute("aria-checked")) !== "true") {
+          if (options.actionTimeoutMs === undefined) {
+            await target.click();
+          } else {
+            await target.click({ timeout: options.actionTimeoutMs });
+          }
         }
       } catch (err: unknown) {
         propagateFtcActionError(err, options, "check");
