@@ -45,16 +45,22 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain("withOwnedFilingEvaluateTimeout");
     expect(source).toContain("waitForFtcReportFraudInteractiveReady");
     expect(source).toContain("replaceOwnedFilingPlaywrightSessionPage");
-    expect(source).toContain('stageTiming.run("evaluate_1"');
-    expect(source).toContain('stageTiming.run("evaluate_2"');
+    // Every iteration is staged (evaluate_n / decide_n / apply_n), not only the first.
+    expect(source).toContain("`evaluate_${iteration}`");
+    expect(source).toContain("`decide_${iteration}`");
+    expect(source).toContain("`apply_${iteration}`");
+    expect(source).toContain("iteration += 1");
+    // The single fresh-page retry uses distinct *_retry stages so it never collides with iteration 2.
     expect(source).toContain('"retry_replace"');
-    expect(source).toContain('"goto_2"');
-    expect(source).toContain('"ready_2"');
+    expect(source).toContain('"goto_retry"');
+    expect(source).toContain('"ready_retry"');
+    expect(source).toContain('stageTiming.run("evaluate_retry"');
     expect(source).toContain("createOwnedFilingFtcStageTiming");
-    expect(source).toContain('stageTiming.run("decide_1"');
-    expect(source).toContain('stageTiming.run("apply_1"');
     expect(source).toContain("OWNED_FILING_FTC_ACTION_TIMEOUT_MS");
     expect(source).toContain("propagateCriticalErrors: true");
+    // A bounded action timeout preserves progress as an incomplete result instead of throwing.
+    expect(source).toContain("parseOwnedFilingActionTimeoutOperation");
+    expect(source).toContain('"action_timeout"');
     expect(source).toContain("isOwnedFilingEvaluateTimeoutError");
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/

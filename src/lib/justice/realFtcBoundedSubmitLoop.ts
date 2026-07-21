@@ -6,8 +6,12 @@ import type {
 /** Maximum decide-action + fill/click cycles for real FTC assisted submission. */
 export const REAL_FTC_MAX_SUBMIT_STEPS = 24;
 
-/** FTC bounded-submit stop reasons reuse the shared decide-action loop reasons. */
-export type RealFtcSubmitStopReason = RealBbbSubmitStopReason;
+/**
+ * FTC bounded-submit stop reasons reuse the shared decide-action loop reasons, plus an
+ * FTC-only `action_timeout` for a bounded fill/click that exceeded its time limit. BBB does not
+ * bound actions and never emits this reason.
+ */
+export type RealFtcSubmitStopReason = RealBbbSubmitStopReason | "action_timeout";
 
 /** Official FTC ReportFraud consumer-complaint host. */
 const FTC_TERMINAL_HOST = "reportfraud.ftc.gov";
@@ -119,6 +123,8 @@ export function buildRealFtcIncompleteError(
       return "FTC complaint autofill stopped: next button was ambiguous — fail closed, no click.";
     case "submit_unarmed":
       return "FTC complaint autofill refused: OWNED_FILING_SUBMIT_ARMED is not enabled.";
+    case "action_timeout":
+      return `FTC complaint autofill stopped: a form action exceeded its time limit after ${stepsExecuted} step(s). You can retry.`;
     default:
       return "FTC complaint autofill did not complete. You can retry.";
   }
