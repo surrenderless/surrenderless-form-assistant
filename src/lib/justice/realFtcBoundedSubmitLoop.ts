@@ -3,12 +3,12 @@ import type {
   RealBbbSubmitStopReason,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
-/** Maximum decide-action + fill/click cycles for real FTC assisted submission. */
+/** Maximum decide-action + fill/check/click cycles for real FTC assisted submission. */
 export const REAL_FTC_MAX_SUBMIT_STEPS = 24;
 
 /**
  * FTC bounded-submit stop reasons reuse the shared decide-action loop reasons, plus an
- * FTC-only `action_timeout` for a bounded fill/click that exceeded its time limit. BBB does not
+ * FTC-only `action_timeout` for a bounded fill/check/click that exceeded its time limit. BBB does not
  * bound actions and never emits this reason.
  */
 export type RealFtcSubmitStopReason = RealBbbSubmitStopReason | "action_timeout";
@@ -43,6 +43,14 @@ function isFtcReportHost(url: string): boolean {
   }
 }
 
+function isOfficialFtcHttpsUrl(url: URL): boolean {
+  return (
+    url.protocol === "https:" &&
+    url.hostname === FTC_TERMINAL_HOST &&
+    !url.port
+  );
+}
+
 /**
  * True only for the official HTTPS ReportFraud bare entry root. Deeper wizard/confirmation
  * states carry a path, query, or meaningful hash.
@@ -50,11 +58,21 @@ function isFtcReportHost(url: string): boolean {
 export function isFtcReportEntryUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    if (u.protocol !== "https:" || u.hostname !== FTC_TERMINAL_HOST || u.port) return false;
+    if (!isOfficialFtcHttpsUrl(u)) return false;
     const path = u.pathname.replace(/\/$/, "") || "/";
     if (path !== "/") return false;
     const hashAndSearch = `${u.search}${u.hash}`;
     return !hashAndSearch || hashAndSearch === "#" || hashAndSearch === "#/";
+  } catch {
+    return false;
+  }
+}
+
+/** True only for the official HTTPS ReportFraud assistant path (query/hash wizard state allowed). */
+export function isFtcReportAssistantUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return isOfficialFtcHttpsUrl(u) && u.pathname.replace(/\/$/, "") === "/assistant";
   } catch {
     return false;
   }

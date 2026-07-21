@@ -40,6 +40,7 @@ export function categorizeOwnedFilingFtcStageError(err: unknown): string {
   if (/evaluate_timeout/i.test(message)) return "evaluate_timeout";
   if (/decide_timeout/i.test(message)) return "decide_timeout";
   if (/action_timeout:fill/i.test(message)) return "action_timeout:fill";
+  if (/action_timeout:check/i.test(message)) return "action_timeout:check";
   if (/action_timeout:click/i.test(message)) return "action_timeout:click";
   if (/action_timeout/i.test(message)) return "action_timeout";
   if (/target page, context or browser has been closed/i.test(message)) return "target_closed";

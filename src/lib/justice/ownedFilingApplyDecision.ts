@@ -3,7 +3,10 @@ import {
   buildButtonSelector,
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
-import { isFtcReportEntryUrl } from "@/lib/justice/realFtcBoundedSubmitLoop";
+import {
+  isFtcReportAssistantUrl,
+  isFtcReportEntryUrl,
+} from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { classifyOwnedFilingClick } from "@/lib/justice/classifyOwnedFilingClick";
 import { isOwnedFilingSubmitArmed } from "@/lib/justice/ownedFilingSubmitArmed";
 
@@ -18,6 +21,8 @@ export type OwnedFilingApplyDecisionResult =
       risk: "irreversible" | "unknown";
       buttonLabel: string;
       reason: "dry_run_stop" | "unarmed_live" | "unknown_fail_closed";
+      /** Sanitized target state only; never selectors, field values, user data, or page text. */
+      diagnostic?: string;
     };
 
 type ApplyDecisionOptions = {
@@ -32,7 +37,13 @@ type ApplyDecisionOptions = {
   useExactTextButtonLocator?: boolean;
   /** Current FTC page URL, used only for the root-scoped Report Now link exception. */
   currentPageUrl?: string;
+  /** FTC-only support for exact radio/checkbox decisions. Omitted by BBB. */
+  enableFtcChoiceControls?: boolean;
+  /** Sanitized labels from the FTC actionable button corpus. */
+  actionableButtonLabels?: string[];
 };
+
+type FtcActionOperation = "fill" | "check" | "click";
 
 function isActionTimeoutError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -54,7 +65,7 @@ function isClosedTargetError(err: unknown): boolean {
 function propagateFtcActionError(
   err: unknown,
   options: ApplyDecisionOptions,
-  operation: "fill" | "click"
+  operation: FtcActionOperation
 ): void {
   if (!options.propagateCriticalErrors) return;
   if (isActionTimeoutError(err)) {
@@ -66,19 +77,106 @@ function propagateFtcActionError(
 }
 
 /** Returns the timed-out FTC action operation, or null for non-action-timeout errors. */
-export function parseOwnedFilingActionTimeoutOperation(err: unknown): "fill" | "click" | null {
+export function parseOwnedFilingActionTimeoutOperation(err: unknown): FtcActionOperation | null {
   const message = err instanceof Error ? err.message : String(err);
-  const match = /action_timeout:(fill|click)/i.exec(message);
-  return match ? (match[1].toLowerCase() as "fill" | "click") : null;
+  const match = /action_timeout:(fill|check|click)/i.exec(message);
+  return match ? (match[1].toLowerCase() as FtcActionOperation) : null;
 }
+
+function cssAttributeValue(value: string): string {
+  return `"${value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r\n|\r|\n/g, "\\a ")}"`;
+}
+
+function sanitizedActionableLabels(options: ApplyDecisionOptions): string {
+  const labels = (options.actionableButtonLabels ?? [])
+    .map((label) => label.replace(/[|;,]/g, " ").trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 12);
+  return labels.length > 0 ? labels.join("/") : "none";
+}
+
+function targetDiagnostic(
+  target: "choice" | "continue",
+  count: number,
+  visible: boolean | null,
+  enabled: boolean | null,
+  options: ApplyDecisionOptions
+): string {
+  return [
+    `target=${target}`,
+    `count=${count}`,
+    `visible=${visible === null ? "na" : String(visible)}`,
+    `enabled=${enabled === null ? "na" : String(enabled)}`,
+    `labels=${sanitizedActionableLabels(options)}`,
+  ].join(",");
+}
+
+type FillFieldsResult = { ok: true } | { ok: false; diagnostic: string };
 
 async function fillFields(
   page: Page,
   decision: FormDecision,
   options: ApplyDecisionOptions
-): Promise<void> {
+): Promise<FillFieldsResult> {
   const fieldsToFill = decision.fieldsToFill ?? [];
   for (const field of fieldsToFill) {
+    if (options.enableFtcChoiceControls && field.controlKind) {
+      if (
+        !isFtcReportAssistantUrl(options.currentPageUrl ?? "") ||
+        !field.selector?.trim() ||
+        !["radio", "checkbox", "choice"].includes(field.controlKind) ||
+        !field.value?.trim()
+      ) {
+        return {
+          ok: false,
+          diagnostic: targetDiagnostic("choice", 0, null, null, options),
+        };
+      }
+      const selector = cssAttributeValue(field.selector);
+      const value = cssAttributeValue(field.value);
+      const typeSelector =
+        field.controlKind === "choice"
+          ? ':is([type="radio"], [type="checkbox"])'
+          : `[type="${field.controlKind}"]`;
+      const target = page.locator(
+        `input${typeSelector}:is([name=${selector}], [id=${selector}])[value=${value}]`
+      );
+      try {
+        const count = await target.count();
+        if (count !== 1) {
+          return {
+            ok: false,
+            diagnostic: targetDiagnostic("choice", count, null, null, options),
+          };
+        }
+        const [visible, enabled] = await Promise.all([
+          target.isVisible(),
+          target.isEnabled(),
+        ]);
+        if (!visible || !enabled) {
+          return {
+            ok: false,
+            diagnostic: targetDiagnostic("choice", count, visible, enabled, options),
+          };
+        }
+        if (options.actionTimeoutMs === undefined) {
+          await target.check();
+        } else {
+          await target.check({ timeout: options.actionTimeoutMs });
+        }
+      } catch (err: unknown) {
+        propagateFtcActionError(err, options, "check");
+        if (isClosedTargetError(err)) throw err;
+        return {
+          ok: false,
+          diagnostic: targetDiagnostic("choice", 1, true, true, options),
+        };
+      }
+      continue;
+    }
     if (!field.selector?.trim()) continue;
     try {
       const selector = `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`;
@@ -95,6 +193,7 @@ async function fillFields(
       console.warn(`${options.logPrefix}: could not fill "${field.selector}":`, message);
     }
   }
+  return { ok: true };
 }
 
 /**
@@ -106,8 +205,8 @@ async function clickNextButton(
   page: Page,
   decision: FormDecision,
   options: ApplyDecisionOptions
-): Promise<boolean> {
-  if (!decision.nextButton?.value?.trim()) return false;
+): Promise<{ clicked: boolean; diagnostic?: string }> {
+  if (!decision.nextButton?.value?.trim()) return { clicked: false };
   const buttonSelector = buildButtonSelector(decision.nextButton);
   const waitForNavigation = () =>
     page.waitForNavigation({ timeout: 10000 }).catch((err: unknown) => {
@@ -121,18 +220,37 @@ async function clickNextButton(
       const buttonTarget = page.getByRole("button", locatorOptions);
       let target = buttonTarget;
       if (decision.nextButton.value === "Report Now") {
-        if (!isFtcReportEntryUrl(options.currentPageUrl ?? "")) return false;
+        if (!isFtcReportEntryUrl(options.currentPageUrl ?? "")) return { clicked: false };
         const linkTarget = page.getByRole("link", locatorOptions);
         const [buttonCount, linkCount] = await Promise.all([
           buttonTarget.count(),
           linkTarget.count(),
         ]);
-        if (buttonCount + linkCount !== 1) return false;
+        if (buttonCount + linkCount !== 1) return { clicked: false };
         target = buttonCount === 1 ? buttonTarget : linkTarget;
-      } else if ((await buttonTarget.count()) !== 1) {
-        return false;
+      } else {
+        const count = await buttonTarget.count();
+        if (count !== 1) {
+          return {
+            clicked: false,
+            ...(decision.nextButton.value === "Continue"
+              ? { diagnostic: targetDiagnostic("continue", count, null, null, options) }
+              : {}),
+          };
+        }
       }
-      if (!(await target.isVisible()) || !(await target.isEnabled())) return false;
+      const [visible, enabled] = await Promise.all([
+        target.isVisible(),
+        target.isEnabled(),
+      ]);
+      if (!visible || !enabled) {
+        return {
+          clicked: false,
+          ...(decision.nextButton.value === "Continue"
+            ? { diagnostic: targetDiagnostic("continue", 1, visible, enabled, options) }
+            : {}),
+        };
+      }
       click = async () => {
         if (options.actionTimeoutMs === undefined) {
           await target.click();
@@ -158,12 +276,12 @@ async function clickNextButton(
     } else {
       clicked = await click();
     }
-    return clicked;
+    return { clicked };
   } catch (err: unknown) {
     propagateFtcActionError(err, options, "click");
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`${options.logPrefix}: could not click button:`, message);
-    return false;
+    return { clicked: false };
   }
 }
 
@@ -177,9 +295,21 @@ export async function applyOwnedFilingFormDecision(
   decision: FormDecision,
   options: ApplyDecisionOptions
 ): Promise<OwnedFilingApplyDecisionResult> {
-  await fillFields(page, decision, options);
-
   const next = decision.nextButton;
+  const fieldsResult = await fillFields(page, decision, options);
+  if (!fieldsResult.ok) {
+    return {
+      ok: false,
+      blocked: true,
+      risk: "unknown",
+      buttonLabel: next?.value?.trim()
+        ? `${next.selectorType}:${next.value}`.slice(0, 200)
+        : "choice:required",
+      reason: "unknown_fail_closed",
+      diagnostic: fieldsResult.diagnostic,
+    };
+  }
+
   if (!next?.value?.trim()) {
     return { ok: true, clicked: false, risk: "none" };
   }
@@ -188,17 +318,18 @@ export async function applyOwnedFilingFormDecision(
   const buttonLabel = `${next.selectorType}:${next.value}`.slice(0, 200);
 
   if (risk === "safe") {
-    const clicked = await clickNextButton(page, decision, options);
-    if (!clicked && options.useExactTextButtonLocator) {
+    const clickResult = await clickNextButton(page, decision, options);
+    if (!clickResult.clicked && options.useExactTextButtonLocator) {
       return {
         ok: false,
         blocked: true,
         risk: "unknown",
         buttonLabel,
         reason: "unknown_fail_closed",
+        ...(clickResult.diagnostic ? { diagnostic: clickResult.diagnostic } : {}),
       };
     }
-    return { ok: true, clicked, risk: "safe" };
+    return { ok: true, clicked: clickResult.clicked, risk: "safe" };
   }
 
   if (risk === "unknown") {
@@ -232,8 +363,8 @@ export async function applyOwnedFilingFormDecision(
     };
   }
 
-  const clicked = await clickNextButton(page, decision, options);
-  if (!clicked && options.useExactTextButtonLocator) {
+  const clickResult = await clickNextButton(page, decision, options);
+  if (!clickResult.clicked && options.useExactTextButtonLocator) {
     return {
       ok: false,
       blocked: true,
@@ -242,5 +373,5 @@ export async function applyOwnedFilingFormDecision(
       reason: "unknown_fail_closed",
     };
   }
-  return { ok: true, clicked, risk: "irreversible" };
+  return { ok: true, clicked: clickResult.clicked, risk: "irreversible" };
 }

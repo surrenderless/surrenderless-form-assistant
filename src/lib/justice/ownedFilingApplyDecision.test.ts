@@ -9,6 +9,7 @@ import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
 type MockPage = Page & {
   exactButtonLocator: Locator;
   exactLinkLocator: Locator;
+  choiceLocator: Locator;
 };
 
 function mockPage(): MockPage {
@@ -24,13 +25,21 @@ function mockPage(): MockPage {
     isEnabled: vi.fn(async () => true),
     click: vi.fn(async () => undefined),
   } as unknown as Locator;
+  const choiceLocator = {
+    count: vi.fn(async () => 1),
+    isVisible: vi.fn(async () => true),
+    isEnabled: vi.fn(async () => true),
+    check: vi.fn(async () => undefined),
+  } as unknown as Locator;
   return {
     fill: vi.fn(async () => undefined),
     click: vi.fn(async () => undefined),
     waitForNavigation: vi.fn(async () => undefined),
     getByRole: vi.fn((role) => (role === "link" ? exactLinkLocator : exactButtonLocator)),
+    locator: vi.fn(() => choiceLocator),
     exactButtonLocator,
     exactLinkLocator,
+    choiceLocator,
   } as unknown as MockPage;
 }
 
@@ -136,6 +145,9 @@ describe("FTC bounded actions", () => {
     actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
     propagateCriticalErrors: true,
     useExactTextButtonLocator: true,
+    currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+    enableFtcChoiceControls: true,
+    actionableButtonLabels: ["Continue"],
   };
 
   afterEach(() => {
@@ -174,6 +186,137 @@ describe("FTC bounded actions", () => {
     await pending.catch((err: Error) => {
       expect(err.message).not.toContain("private@example.com");
     });
+  });
+
+  it.each(["radio", "checkbox"] as const)(
+    "checks one exact visible enabled %s before Continue",
+    async (controlKind) => {
+      const page = mockPage();
+
+      const result = await applyOwnedFilingFormDecision(
+        page,
+        {
+          fieldsToFill: [{ selector: "category", value: "fraud", controlKind }],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+        ftcOptions
+      );
+
+      expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+      expect(page.locator).toHaveBeenCalledWith(
+        `input[type="${controlKind}"]:is([name="category"], [id="category"])[value="fraud"]`
+      );
+      expect(page.choiceLocator.check).toHaveBeenCalledWith({ timeout: 20_000 });
+      expect(vi.mocked(page.choiceLocator.check).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(page.exactButtonLocator.click).mock.invocationCallOrder[0]!
+      );
+    }
+  );
+
+  it.each([
+    ["missing", 0, true, true],
+    ["ambiguous", 2, true, true],
+    ["hidden", 1, false, true],
+    ["disabled", 1, true, false],
+  ] as const)("fails closed for a %s required choice target", async (_name, count, visible, enabled) => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count).mockResolvedValue(count);
+    vi.mocked(page.choiceLocator.isVisible).mockResolvedValue(visible);
+    vi.mocked(page.choiceLocator.isEnabled).mockResolvedValue(enabled);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "choice" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      risk: "unknown",
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining(`target=choice,count=${count}`),
+    });
+    expect(page.choiceLocator.check).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(page.waitForNavigation).not.toHaveBeenCalled();
+  });
+
+  it("does not enable choice controls outside the official FTC assistant page", async () => {
+    const page = mockPage();
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      { ...ftcOptions, currentPageUrl: "https://example.com/assistant" }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.locator).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stuck FTC choice check and attributes it to check", async () => {
+    vi.useFakeTimers();
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.check).mockImplementation(
+      (options) =>
+        new Promise<void>((_resolve, reject) => {
+          setTimeout(() => {
+            reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
+          }, options?.timeout);
+        })
+    );
+
+    const pending = applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      ftcOptions
+    );
+    const assertion = expect(pending).rejects.toThrow(
+      "owned-filing action_timeout:check after 20000ms"
+    );
+    await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
+    await assertion;
+    expect(page.choiceLocator.check).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("keeps choice values and case content out of fail-closed diagnostics", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count).mockResolvedValue(0);
+    const secret = "SENSITIVE_CHOICE_VALUE";
+    const caseContent = "SENSITIVE_CASE_CONTENT";
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "category", value: secret, controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        actionableButtonLabels: ["Continue", "Next"],
+      }
+    );
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).toContain("labels=Continue/Next");
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(caseContent);
   });
 
   it("fails a stuck click at 20 seconds", async () => {
@@ -442,6 +585,26 @@ describe("FTC bounded actions", () => {
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
   });
 
+  it("does not click a hidden exact Continue target and returns sanitized diagnostics", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.isVisible).mockResolvedValue(false);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      { ...ftcOptions, actionableButtonLabels: ["Continue"] }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: "target=continue,count=1,visible=false,enabled=true,labels=Continue",
+    });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(page.waitForNavigation).not.toHaveBeenCalled();
+  });
+
   it("leaves BBB calls unbounded and preserves its soft action failure", async () => {
     const page = mockPage();
     vi.mocked(page.fill).mockRejectedValue(
@@ -452,7 +615,9 @@ describe("FTC bounded actions", () => {
       applyOwnedFilingFormDecision(
         page,
         {
-          fieldsToFill: [{ selector: "email", value: "private@example.com" }],
+          fieldsToFill: [
+            { selector: "email", value: "private@example.com", controlKind: "radio" },
+          ],
           nextButton: { selectorType: "text", value: "Continue" },
         },
         { mode: "dry_run", logPrefix: "real-bbb-submit" }
@@ -460,5 +625,6 @@ describe("FTC bounded actions", () => {
     ).resolves.toMatchObject({ ok: true, clicked: true });
     expect(page.fill).toHaveBeenCalledWith(expect.any(String), "private@example.com");
     expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")');
+    expect(page.locator).not.toHaveBeenCalled();
   });
 });

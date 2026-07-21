@@ -36,6 +36,11 @@ describe("categorizeOwnedFilingFtcStageError", () => {
     ).toBe("action_timeout:fill");
     expect(
       categorizeOwnedFilingFtcStageError(
+        new Error("owned-filing action_timeout:check after 20000ms")
+      )
+    ).toBe("action_timeout:check");
+    expect(
+      categorizeOwnedFilingFtcStageError(
         new Error("owned-filing action_timeout:click after 20000ms")
       )
     ).toBe("action_timeout:click");

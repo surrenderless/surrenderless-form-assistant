@@ -161,6 +161,24 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(timeoutEntry?.detail).toBe("click");
   });
 
+  it("attributes a bounded choice timeout to apply_1:action_timeout:check", async () => {
+    h.state.evaluateQueue = [pageData()];
+    h.state.decideQueue = [decideContinue()];
+    h.state.applyQueue = [
+      { error: new Error("owned-filing action_timeout:check after 20000ms") },
+    ];
+
+    const result = await runRealFtcBoundedSubmit(runParams());
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.technicalDetails.stage_timeline).toMatch(
+      /apply_1:\d+ms:fail:action_timeout:check/
+    );
+    expect(result.fillResult.stepLog.find((entry) => entry.action === "action_timeout")?.detail)
+      .toBe("check");
+  });
+
   it("preserves the completed first-step log across an incomplete timeout return", async () => {
     h.state.evaluateQueue = [pageData(), pageData()];
     h.state.decideQueue = [decideContinue(), decideContinue()];
@@ -203,6 +221,40 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     if (result.ok) throw new Error("expected incomplete result");
     expect(result.stopReason).toBe("blocked_irreversible_click");
     expect(result.stepsExecuted).toBe(0);
+  });
+
+  it("persists only sanitized exact-target diagnostics before failing closed", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+      },
+    ];
+    h.state.decideQueue = [decideContinue()];
+    h.state.applyQueue = [
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "unknown",
+          buttonLabel: "text:Continue",
+          reason: "unknown_fail_closed",
+          diagnostic: "target=continue,count=0,visible=na,enabled=na,labels=Continue",
+        },
+      },
+    ];
+
+    const result = await runRealFtcBoundedSubmit(runParams({ story: SECRET }));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    const diagnostic = result.fillResult.stepLog.find(
+      (entry) => entry.action === "exact_target_diagnostic"
+    );
+    expect(diagnostic?.detail).toBe(
+      "target=continue,count=0,visible=na,enabled=na,labels=Continue"
+    );
+    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
   it("keeps sensitive field values and case content out of diagnostics", async () => {

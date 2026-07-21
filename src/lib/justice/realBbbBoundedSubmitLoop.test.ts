@@ -144,6 +144,18 @@ describe("realBbbBoundedSubmitLoop", () => {
       nextButton: { selectorType: "text", value: "Next" },
       waitForNavigation: true,
     });
+    expect(
+      normalizeFormDecision({
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+      })
+    ).toEqual({
+      fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
+    });
+    expect(
+      normalizeFormDecision({
+        fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "card" }],
+      })
+    ).toBeNull();
   });
 
   it("builds clear incomplete error messages for retry", () => {

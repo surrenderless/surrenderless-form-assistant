@@ -1,20 +1,24 @@
 import type { AssistedFormPageData } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 /**
- * Runs inside the FTC page. It intentionally records field metadata only (never values) and
- * exposes only buttons that are currently enabled and visibly actionable.
+ * Runs inside the FTC page. It records field metadata only, except for the non-user option value
+ * required to address a radio/checkbox exactly, and exposes only actionable buttons.
  */
 export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
   const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
     const input = field as HTMLInputElement;
     const label = input.labels?.[0]?.innerText || "";
+    const type = input.type || "";
     return {
       tag: field.tagName.toLowerCase(),
-      type: input.type || "",
+      type,
       name: field.getAttribute("name") || "",
       id: input.id || "",
       placeholder: field.getAttribute("placeholder") || "",
       label,
+      ...(type === "radio" || type === "checkbox"
+        ? { optionValue: input.value }
+        : {}),
     };
   });
 

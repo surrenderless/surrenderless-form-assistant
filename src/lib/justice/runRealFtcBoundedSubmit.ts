@@ -50,6 +50,7 @@ export type RealFtcBoundedSubmitStepLogEntry = {
     | "blocked_irreversible_click"
     | "blocked_unknown_click"
     | "submit_unarmed"
+    | "exact_target_diagnostic"
     | "action_timeout";
   detail?: string;
 };
@@ -448,6 +449,8 @@ export async function runRealFtcBoundedSubmit(
           propagateCriticalErrors: true,
           useExactTextButtonLocator: true,
           currentPageUrl: pageData.url,
+          enableFtcChoiceControls: true,
+          actionableButtonLabels: pageData.buttons.map((button) => button.text),
         });
       let applyResult: Awaited<ReturnType<typeof applyDecision>>;
       try {
@@ -455,7 +458,7 @@ export async function runRealFtcBoundedSubmit(
       } catch (err: unknown) {
         const timedOutOperation = parseOwnedFilingActionTimeoutOperation(err);
         if (!timedOutOperation) throw err;
-        // A bounded fill/click exceeded its limit. Preserve any earlier completed steps and the
+        // A bounded fill/check/click exceeded its limit. Preserve any earlier completed steps and
         // sanitized step log instead of discarding progress via an unattributed provider throw.
         const currentUrl = readCurrentPageUrl(page, pageData.url);
         stepLog.push({
@@ -482,6 +485,14 @@ export async function runRealFtcBoundedSubmit(
         );
       }
       if (!applyResult.ok) {
+        if (applyResult.diagnostic) {
+          stepLog.push({
+            step: stepsExecuted,
+            url: pageData.url,
+            action: "exact_target_diagnostic",
+            detail: applyResult.diagnostic,
+          });
+        }
         const stopReason =
           applyResult.reason === "unknown_fail_closed"
             ? "blocked_unknown_click"
