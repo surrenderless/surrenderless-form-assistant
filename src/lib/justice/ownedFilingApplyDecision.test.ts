@@ -8,6 +8,7 @@ import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 type MockPage = Page & {
   exactButtonLocator: Locator;
+  exactLinkLocator: Locator;
 };
 
 function mockPage(): MockPage {
@@ -17,12 +18,19 @@ function mockPage(): MockPage {
     isEnabled: vi.fn(async () => true),
     click: vi.fn(async () => undefined),
   } as unknown as Locator;
+  const exactLinkLocator = {
+    count: vi.fn(async () => 0),
+    isVisible: vi.fn(async () => true),
+    isEnabled: vi.fn(async () => true),
+    click: vi.fn(async () => undefined),
+  } as unknown as Locator;
   return {
     fill: vi.fn(async () => undefined),
     click: vi.fn(async () => undefined),
     waitForNavigation: vi.fn(async () => undefined),
-    getByRole: vi.fn(() => exactButtonLocator),
+    getByRole: vi.fn((role) => (role === "link" ? exactLinkLocator : exactButtonLocator)),
     exactButtonLocator,
+    exactLinkLocator,
   } as unknown as MockPage;
 }
 
@@ -216,6 +224,131 @@ describe("FTC bounded actions", () => {
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
     expect(page.exactButtonLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
     expect(page.waitForNavigation).toHaveBeenCalled();
+  });
+
+  it("clicks the exact Report Now link on the official FTC entry root", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
+    vi.mocked(page.exactLinkLocator.count).mockResolvedValue(1);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        nextButton: { selectorType: "text", value: "Report Now" },
+        waitForNavigation: true,
+      },
+      { ...ftcOptions, currentPageUrl: "https://reportfraud.ftc.gov/" }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.getByRole).toHaveBeenCalledWith("link", {
+      name: "Report Now",
+      exact: true,
+    });
+    expect(page.exactLinkLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(page.waitForNavigation).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicks the exact Report Now button on the official FTC entry root", async () => {
+    const page = mockPage();
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Report Now" } },
+      { ...ftcOptions, currentPageUrl: "https://reportfraud.ftc.gov/" }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.exactButtonLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(page.exactLinkLocator.click).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "https://reportfraud.ftc.gov/assistant",
+    "https://example.com/",
+  ])("does not allow Report Now at %s", async (currentPageUrl) => {
+    const page = mockPage();
+    vi.mocked(page.exactLinkLocator.count).mockResolvedValue(1);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Report Now" } },
+      { ...ftcOptions, currentPageUrl }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.getByRole).not.toHaveBeenCalledWith("link", expect.anything());
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(page.exactLinkLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for duplicate Report Now roles on the FTC entry root", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactLinkLocator.count).mockResolvedValue(1);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Report Now" } },
+      { ...ftcOptions, currentPageUrl: "https://reportfraud.ftc.gov/" }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(page.exactLinkLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Report Now has no exact accessible-name match", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Report Now" } },
+      { ...ftcOptions, currentPageUrl: "https://reportfraud.ftc.gov/" }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Report Now",
+      exact: true,
+    });
+    expect(page.getByRole).toHaveBeenCalledWith("link", {
+      name: "Report Now",
+      exact: true,
+    });
+  });
+
+  it("does not start a navigation wait when the exact target is absent", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+    });
+    expect(page.waitForNavigation).not.toHaveBeenCalled();
   });
 
   it("fails closed when an exact accessible target cannot be clicked", async () => {

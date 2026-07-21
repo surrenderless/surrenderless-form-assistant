@@ -44,12 +44,13 @@ function isFtcReportHost(url: string): boolean {
 }
 
 /**
- * ReportFraud is a hash-routed SPA (pathname is always "/"), so the true entry page is only
- * the bare root without a meaningful hash/query — deeper wizard/confirmation states carry one.
+ * True only for the official HTTPS ReportFraud bare entry root. Deeper wizard/confirmation
+ * states carry a path, query, or meaningful hash.
  */
-function isFtcReportEntryUrl(url: string): boolean {
+export function isFtcReportEntryUrl(url: string): boolean {
   try {
     const u = new URL(url);
+    if (u.protocol !== "https:" || u.hostname !== FTC_TERMINAL_HOST || u.port) return false;
     const path = u.pathname.replace(/\/$/, "") || "/";
     if (path !== "/") return false;
     const hashAndSearch = `${u.search}${u.hash}`;

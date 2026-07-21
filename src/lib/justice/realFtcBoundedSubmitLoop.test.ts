@@ -3,6 +3,7 @@ import {
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
+  isFtcReportEntryUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { REAL_BBB_MAX_SUBMIT_STEPS, hasReachedStepCap } from "@/lib/justice/realBbbBoundedSubmitLoop";
@@ -26,6 +27,17 @@ describe("REAL_FTC_MAX_SUBMIT_STEPS", () => {
     expect(hasReachedStepCap(8, REAL_FTC_MAX_SUBMIT_STEPS)).toBe(false);
     expect(hasReachedStepCap(24, REAL_FTC_MAX_SUBMIT_STEPS)).toBe(true);
     expect(hasReachedStepCap(8, REAL_BBB_MAX_SUBMIT_STEPS)).toBe(true);
+  });
+});
+
+describe("isFtcReportEntryUrl", () => {
+  it("accepts only the official HTTPS bare entry root", () => {
+    expect(isFtcReportEntryUrl("https://reportfraud.ftc.gov/")).toBe(true);
+    expect(isFtcReportEntryUrl("https://reportfraud.ftc.gov/#/")).toBe(true);
+    expect(isFtcReportEntryUrl("https://reportfraud.ftc.gov/assistant")).toBe(false);
+    expect(isFtcReportEntryUrl("https://reportfraud.ftc.gov/?source=test")).toBe(false);
+    expect(isFtcReportEntryUrl("https://example.com/")).toBe(false);
+    expect(isFtcReportEntryUrl("http://reportfraud.ftc.gov/")).toBe(false);
   });
 });
 

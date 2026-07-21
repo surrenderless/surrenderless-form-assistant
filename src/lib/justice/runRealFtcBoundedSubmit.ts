@@ -447,6 +447,7 @@ export async function runRealFtcBoundedSubmit(
           actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
           propagateCriticalErrors: true,
           useExactTextButtonLocator: true,
+          currentPageUrl: pageData.url,
         });
       let applyResult: Awaited<ReturnType<typeof applyDecision>>;
       try {
