@@ -21,6 +21,16 @@ describe("categorizeOwnedFilingFtcStageError", () => {
     ).toBe("browser_disconnected");
     expect(
       categorizeOwnedFilingFtcStageError(
+        new Error("owned-filing decide_timeout after 60000ms")
+      )
+    ).toBe("decide_timeout");
+    expect(
+      categorizeOwnedFilingFtcStageError(
+        new Error("owned-filing action_timeout after 20000ms")
+      )
+    ).toBe("action_timeout");
+    expect(
+      categorizeOwnedFilingFtcStageError(
         Object.assign(new Error("Timeout 15000ms exceeded."), { name: "TimeoutError" })
       )
     ).toBe("timeout");
@@ -75,6 +85,31 @@ describe("createOwnedFilingFtcStageTiming", () => {
       ok: false,
       error_category: "target_closed",
     });
+  });
+
+  it("identifies decide_1 and apply_1 failures without sensitive action data", async () => {
+    const timing = createOwnedFilingFtcStageTiming();
+    await expect(
+      timing.run("decide_1", async () => {
+        throw new Error(
+          "owned-filing decide_timeout after 60000ms private@example.com sensitive story"
+        );
+      })
+    ).rejects.toThrow("decide_timeout");
+    await expect(
+      timing.run("apply_1", async () => {
+        throw new Error(
+          "owned-filing action_timeout after 20000ms value=secret-case-content"
+        );
+      })
+    ).rejects.toThrow("action_timeout");
+
+    const timeline = timing.formatTimeline();
+    expect(timeline).toMatch(/decide_1:\d+ms:fail:decide_timeout/);
+    expect(timeline).toMatch(/apply_1:\d+ms:fail:action_timeout/);
+    expect(timeline).not.toContain("private@example.com");
+    expect(timeline).not.toContain("sensitive story");
+    expect(timeline).not.toContain("secret-case-content");
   });
 
   it("attributes an in-progress hung stage as active in the timeline", async () => {

@@ -7,6 +7,7 @@ import { classifyOwnedFilingClick } from "@/lib/justice/classifyOwnedFilingClick
 import { isOwnedFilingSubmitArmed } from "@/lib/justice/ownedFilingSubmitArmed";
 
 export type OwnedFilingSubmissionMode = "live" | "dry_run";
+export const OWNED_FILING_FTC_ACTION_TIMEOUT_MS = 20_000;
 
 export type OwnedFilingApplyDecisionResult =
   | { ok: true; clicked: boolean; risk: "safe" | "none" | "irreversible" }
@@ -18,39 +19,94 @@ export type OwnedFilingApplyDecisionResult =
       reason: "dry_run_stop" | "unarmed_live" | "unknown_fail_closed";
     };
 
-async function fillFields(page: Page, decision: FormDecision, logPrefix: string): Promise<void> {
+type ApplyDecisionOptions = {
+  mode: OwnedFilingSubmissionMode;
+  logPrefix: string;
+  env?: Record<string, string | undefined>;
+  /** FTC-only action bound. Omitted by BBB to preserve its existing behavior. */
+  actionTimeoutMs?: number;
+  /** FTC propagates action timeouts and closed-target errors; BBB keeps legacy soft failures. */
+  propagateCriticalErrors?: boolean;
+};
+
+function isActionTimeoutError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    (err instanceof Error && err.name === "TimeoutError") ||
+    /timeout(?:error)?[\s\S]*exceeded/i.test(message)
+  );
+}
+
+function isClosedTargetError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /target page, context or browser has been closed/i.test(message) ||
+    /browser.*(?:disconnected|has been closed)/i.test(message) ||
+    /context.*(?:closed|destroyed)/i.test(message)
+  );
+}
+
+function propagateFtcActionError(err: unknown, options: ApplyDecisionOptions): void {
+  if (!options.propagateCriticalErrors) return;
+  if (isActionTimeoutError(err)) {
+    throw new Error(
+      `owned-filing action_timeout after ${options.actionTimeoutMs ?? "configured"}ms`
+    );
+  }
+  if (isClosedTargetError(err)) throw err;
+}
+
+async function fillFields(
+  page: Page,
+  decision: FormDecision,
+  options: ApplyDecisionOptions
+): Promise<void> {
   const fieldsToFill = decision.fieldsToFill ?? [];
   for (const field of fieldsToFill) {
     if (!field.selector?.trim()) continue;
     try {
-      await page.fill(
-        `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`,
-        String(field.value ?? "")
-      );
+      const selector = `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`;
+      if (options.actionTimeoutMs === undefined) {
+        await page.fill(selector, String(field.value ?? ""));
+      } else {
+        await page.fill(selector, String(field.value ?? ""), {
+          timeout: options.actionTimeoutMs,
+        });
+      }
     } catch (err: unknown) {
+      propagateFtcActionError(err, options);
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`${logPrefix}: could not fill "${field.selector}":`, message);
+      console.warn(`${options.logPrefix}: could not fill "${field.selector}":`, message);
     }
   }
 }
 
-async function clickNextButton(page: Page, decision: FormDecision, logPrefix: string): Promise<void> {
+async function clickNextButton(
+  page: Page,
+  decision: FormDecision,
+  options: ApplyDecisionOptions
+): Promise<void> {
   if (!decision.nextButton?.value?.trim()) return;
   const buttonSelector = buildButtonSelector(decision.nextButton);
+  const waitForNavigation = () =>
+    page.waitForNavigation({ timeout: 10000 }).catch((err: unknown) => {
+      if (options.propagateCriticalErrors && isClosedTargetError(err)) throw err;
+      console.warn(`${options.logPrefix}: navigation timeout after button click`);
+    });
+  const click = () =>
+    options.actionTimeoutMs === undefined
+      ? page.click(buttonSelector)
+      : page.click(buttonSelector, { timeout: options.actionTimeoutMs });
   try {
     if (decision.waitForNavigation) {
-      await Promise.all([
-        page.waitForNavigation({ timeout: 10000 }).catch(() => {
-          console.warn(`${logPrefix}: navigation timeout after button click`);
-        }),
-        page.click(buttonSelector),
-      ]);
+      await Promise.all([waitForNavigation(), click()]);
     } else {
-      await page.click(buttonSelector);
+      await click();
     }
   } catch (err: unknown) {
+    propagateFtcActionError(err, options);
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`${logPrefix}: could not click button:`, message);
+    console.warn(`${options.logPrefix}: could not click button:`, message);
   }
 }
 
@@ -62,13 +118,9 @@ async function clickNextButton(page: Page, decision: FormDecision, logPrefix: st
 export async function applyOwnedFilingFormDecision(
   page: Page,
   decision: FormDecision,
-  options: {
-    mode: OwnedFilingSubmissionMode;
-    logPrefix: string;
-    env?: Record<string, string | undefined>;
-  }
+  options: ApplyDecisionOptions
 ): Promise<OwnedFilingApplyDecisionResult> {
-  await fillFields(page, decision, options.logPrefix);
+  await fillFields(page, decision, options);
 
   const next = decision.nextButton;
   if (!next?.value?.trim()) {
@@ -79,7 +131,7 @@ export async function applyOwnedFilingFormDecision(
   const buttonLabel = `${next.selectorType}:${next.value}`.slice(0, 200);
 
   if (risk === "safe") {
-    await clickNextButton(page, decision, options.logPrefix);
+    await clickNextButton(page, decision, options);
     return { ok: true, clicked: true, risk: "safe" };
   }
 
@@ -114,6 +166,6 @@ export async function applyOwnedFilingFormDecision(
     };
   }
 
-  await clickNextButton(page, decision, options.logPrefix);
+  await clickNextButton(page, decision, options);
   return { ok: true, clicked: true, risk: "irreversible" };
 }

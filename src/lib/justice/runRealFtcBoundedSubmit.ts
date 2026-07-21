@@ -8,9 +8,7 @@ import path from "path";
 import {
   hasReachedStepCap,
   isEmptyFormDecision,
-  normalizeFormDecision,
   type AssistedFormPageData,
-  type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
   buildRealFtcIncompleteError,
@@ -20,7 +18,10 @@ import {
   type RealFtcSubmitStopReason,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
-import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
+import {
+  applyOwnedFilingFormDecision,
+  OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
+} from "@/lib/justice/ownedFilingApplyDecision";
 import {
   assertOwnedFilingPageAliveBeforeEvaluate,
   isOwnedFilingEvaluateTimeoutError,
@@ -32,6 +33,7 @@ import {
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 import { createOwnedFilingFtcStageTiming } from "@/lib/justice/ownedFilingFtcStageTiming";
+import { fetchOwnedFilingFtcFormDecision } from "@/lib/justice/ownedFilingFtcDecision";
 
 export type RealFtcBoundedSubmitStepLogEntry = {
   step: number;
@@ -154,45 +156,6 @@ async function collectPageData(
       })
     )
   );
-}
-
-async function fetchFormDecision(
-  base: string,
-  forwardedHeaders: Record<string, string>,
-  pageData: AssistedFormPageData,
-  userData: Record<string, unknown>
-): Promise<
-  | { ok: true; decision: FormDecision }
-  | { ok: false; stopReason: "decide_action_failed" | "invalid_decision"; detail: string }
-> {
-  const res = await fetch(`${base}/api/decide-action`, {
-    method: "POST",
-    headers: forwardedHeaders,
-    body: JSON.stringify({ pageData, userProfile: userData, userData }),
-  });
-  const payload = (await res.json().catch(() => ({}))) as {
-    decision?: unknown;
-    error?: string;
-    raw?: string;
-  };
-  if (!res.ok) {
-    return {
-      ok: false,
-      stopReason: "decide_action_failed",
-      detail:
-        [payload.error, payload.raw].filter(Boolean).join(" — ") ||
-        `decide-action failed (${res.status})`,
-    };
-  }
-  const normalized = normalizeFormDecision(payload.decision);
-  if (!normalized) {
-    return {
-      ok: false,
-      stopReason: "invalid_decision",
-      detail: "decide-action returned an invalid decision shape",
-    };
-  }
-  return { ok: true, decision: normalized };
 }
 
 async function captureScreenshot(
@@ -427,7 +390,12 @@ export async function runRealFtcBoundedSubmit(
         };
       }
 
-      const decisionResult = await fetchFormDecision(base, forwardedHeaders, pageData, userData);
+      const fetchDecision = () =>
+        fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
+      const decisionResult =
+        stepsExecuted === 0
+          ? await stageTiming.run("decide_1", fetchDecision, getCloseSnapshot)
+          : await fetchDecision();
       if (!decisionResult.ok) {
         stepLog.push({
           step: stepsExecuted,
@@ -483,10 +451,17 @@ export async function runRealFtcBoundedSubmit(
         action: "decide",
         ...(buttonCorpus ? { detail: buttonCorpus } : {}),
       });
-      const applyResult = await applyOwnedFilingFormDecision(page, decision, {
-        mode,
-        logPrefix: "real-ftc-submit",
-      });
+      const applyDecision = () =>
+        applyOwnedFilingFormDecision(page!, decision, {
+          mode,
+          logPrefix: "real-ftc-submit",
+          actionTimeoutMs: OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
+          propagateCriticalErrors: true,
+        });
+      const applyResult =
+        stepsExecuted === 0
+          ? await stageTiming.run("apply_1", applyDecision, getCloseSnapshot)
+          : await applyDecision();
       if (!applyResult.ok) {
         const stopReason =
           applyResult.reason === "unknown_fail_closed"
