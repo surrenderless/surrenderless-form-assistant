@@ -11,10 +11,12 @@ import {
   type AssistedFormPageData,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
+  buildFtcAssistantChoiceDecision,
   buildFtcEntryReportNowDecision,
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
+  isFtcReportAssistantUrl,
   isFtcReportEntryUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
   type RealFtcSubmitStopReason,
@@ -385,6 +387,18 @@ export async function runRealFtcBoundedSubmit(
         // Official entry root only: skip decide-action and use the verified Report Now CTA.
         if (isFtcReportEntryUrl(pageData.url)) {
           return { ok: true as const, decision: buildFtcEntryReportNowDecision() };
+        }
+        // Official /assistant only: case-appropriate choice from scraped controls + issue_type.
+        if (isFtcReportAssistantUrl(pageData.url)) {
+          const decision = buildFtcAssistantChoiceDecision(pageData, userData);
+          if (!decision) {
+            return {
+              ok: false as const,
+              stopReason: "invalid_decision" as const,
+              detail: "no unique enabled FTC assistant choice matched issue_type",
+            };
+          }
+          return { ok: true as const, decision };
         }
         return fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
       };

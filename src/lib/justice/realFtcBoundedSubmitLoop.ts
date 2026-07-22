@@ -1,4 +1,5 @@
 import type {
+  AssistedFormChoiceControl,
   AssistedFormPageData,
   FormDecision,
   RealBbbSubmitStopReason,
@@ -104,6 +105,81 @@ export function isFtcReportChoiceFlowUrl(url: string): boolean {
 export function buildFtcEntryReportNowDecision(): FormDecision {
   return {
     nextButton: { selectorType: "text", value: "Report Now" },
+    waitForNavigation: true,
+  };
+}
+
+/**
+ * Verified FTC /assistant label aliases from intake `issue_type` (underscores already
+ * normalized to spaces by intakeToRealFtcUserData) to scraped accessible names.
+ */
+const FTC_ASSISTANT_ISSUE_TYPE_ALIASES: Record<string, string> = {
+  "online purchase": "Online shopping",
+  "something else": "Something else",
+};
+
+function normalizeFtcAssistantChoiceLabel(value: string): string {
+  return value.replace(/_/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function ftcAssistantIssueMatchLabels(issueType: string): string[] {
+  const normalized = normalizeFtcAssistantChoiceLabel(issueType);
+  if (!normalized) return [];
+  const labels = new Set<string>([normalized]);
+  const alias = FTC_ASSISTANT_ISSUE_TYPE_ALIASES[normalized];
+  if (alias) {
+    labels.add(normalizeFtcAssistantChoiceLabel(alias));
+  }
+  return [...labels];
+}
+
+function choiceMatchesFtcAssistantIssue(
+  control: AssistedFormChoiceControl,
+  matchLabels: string[]
+): boolean {
+  const names = [
+    normalizeFtcAssistantChoiceLabel(control.accessibleName),
+    normalizeFtcAssistantChoiceLabel(control.optionValue),
+  ].filter(Boolean);
+  return names.some((name) => matchLabels.includes(name));
+}
+
+/**
+ * Case-appropriate /assistant category (or subcategory) decision from scraped choiceControls
+ * and userData.issue_type. Returns null when the page is not assistant or no unique enabled
+ * radio matches — caller must fail closed without inventing controls.
+ */
+export function buildFtcAssistantChoiceDecision(
+  pageData: AssistedFormPageData,
+  userData: Record<string, unknown>
+): FormDecision | null {
+  if (!isFtcReportAssistantUrl(pageData.url ?? "")) return null;
+
+  const issueType =
+    typeof userData.issue_type === "string" ? userData.issue_type.trim() : "";
+  const matchLabels = ftcAssistantIssueMatchLabels(issueType);
+  if (matchLabels.length === 0) return null;
+
+  const matches = (pageData.choiceControls ?? []).filter(
+    (control) =>
+      control.kind === "radio" &&
+      control.enabled &&
+      Boolean(control.id?.trim()) &&
+      choiceMatchesFtcAssistantIssue(control, matchLabels)
+  );
+  if (matches.length !== 1) return null;
+
+  const control = matches[0]!;
+  return {
+    fieldsToFill: [
+      {
+        selector: control.id,
+        value: control.optionValue,
+        controlKind: "radio",
+        choiceSelectorType: "id",
+      },
+    ],
+    nextButton: { selectorType: "text", value: "Continue" },
     waitForNavigation: true,
   };
 }
