@@ -252,41 +252,89 @@ export function ftcAssistantAmbiguousSubcategoryCandidates(
 }
 
 /**
+ * Allowlisted reasons when structured /assistant subcategory validation fails closed.
+ * Never include selectors, labels, candidates, or model text.
+ */
+export type FtcAssistantStructuredSubcategoryValidationFailure =
+  | "field_count"
+  | "control_kind"
+  | "selector_type"
+  | "selector_not_found"
+  | "option_value_mismatch"
+  | "next_button";
+
+export const FTC_ASSISTANT_STRUCTURED_SUBCATEGORY_VALIDATION_FAILURES: ReadonlySet<string> =
+  new Set([
+    "field_count",
+    "control_kind",
+    "selector_type",
+    "selector_not_found",
+    "option_value_mismatch",
+    "next_button",
+  ]);
+
+export type FtcAssistantStructuredSubcategoryValidationResult =
+  | { ok: true; decision: FormDecision }
+  | { ok: false; reason: FtcAssistantStructuredSubcategoryValidationFailure };
+
+/**
  * Strict post-validation for a structured /assistant subcategory decide-action result.
  * Accepts only one radio id/value pair that exactly matches a scraped next candidate and a
- * Continue nextButton. Returns a canonical decision or null (fail closed).
+ * Continue nextButton. Returns a canonical decision or an allowlisted failure reason.
  */
 export function validateFtcAssistantStructuredSubcategoryDecision(
   decision: FormDecision,
   candidates: AssistedFormChoiceControl[]
-): FormDecision | null {
+): FtcAssistantStructuredSubcategoryValidationResult {
   const fields = decision.fieldsToFill ?? [];
-  if (fields.length !== 1) return null;
+  if (fields.length !== 1) {
+    return { ok: false, reason: "field_count" };
+  }
 
   const field = fields[0]!;
-  if (field.controlKind !== "radio") return null;
-  if (field.choiceSelectorType !== "id") return null;
-  if (typeof field.selector !== "string" || !field.selector.trim()) return null;
-  if (typeof field.value !== "string") return null;
+  if (field.controlKind !== "radio") {
+    return { ok: false, reason: "control_kind" };
+  }
+  if (field.choiceSelectorType !== "id") {
+    return { ok: false, reason: "selector_type" };
+  }
+  if (typeof field.selector !== "string" || !field.selector.trim()) {
+    return { ok: false, reason: "selector_not_found" };
+  }
+  if (typeof field.value !== "string") {
+    return { ok: false, reason: "option_value_mismatch" };
+  }
 
   const next = decision.nextButton;
-  if (!next?.value?.trim() || !next.selectorType) return null;
-  if (normalizeFtcAssistantChoiceLabel(next.value) !== "continue") return null;
+  if (!next?.value?.trim() || !next.selectorType) {
+    return { ok: false, reason: "next_button" };
+  }
+  if (normalizeFtcAssistantChoiceLabel(next.value) !== "continue") {
+    return { ok: false, reason: "next_button" };
+  }
 
   const match = candidates.find((control) => control.id === field.selector);
-  if (!match || field.value !== match.optionValue) return null;
+  if (!match) {
+    return { ok: false, reason: "selector_not_found" };
+  }
+  if (field.value !== match.optionValue) {
+    return { ok: false, reason: "option_value_mismatch" };
+  }
 
   return {
-    fieldsToFill: [
-      {
-        selector: match.id,
-        value: match.optionValue,
-        controlKind: "radio",
-        choiceSelectorType: "id",
-      },
-    ],
-    nextButton: { selectorType: next.selectorType, value: next.value },
-    waitForNavigation: true,
+    ok: true,
+    decision: {
+      fieldsToFill: [
+        {
+          selector: match.id,
+          value: match.optionValue,
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: next.selectorType, value: next.value },
+      waitForNavigation: true,
+    },
   };
 }
 

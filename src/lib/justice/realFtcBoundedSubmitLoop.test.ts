@@ -461,16 +461,19 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
 
   it("accepts exactly one scraped candidate radio with Continue", () => {
     expect(validateFtcAssistantStructuredSubcategoryDecision(validDecision(), candidates)).toEqual({
-      fieldsToFill: [
-        {
-          selector: "sub-a",
-          value: "Option A",
-          controlKind: "radio",
-          choiceSelectorType: "id",
-        },
-      ],
-      nextButton: { selectorType: "text", value: "Continue" },
-      waitForNavigation: true,
+      ok: true,
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option A",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      },
     });
   });
 
@@ -489,7 +492,7 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
         }),
         candidates
       )
-    ).toBeNull();
+    ).toEqual({ ok: false, reason: "selector_not_found" });
   });
 
   it("fails closed on mismatched optionValue", () => {
@@ -507,7 +510,7 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
         }),
         candidates
       )
-    ).toBeNull();
+    ).toEqual({ ok: false, reason: "option_value_mismatch" });
   });
 
   it("fails closed on multiple fieldsToFill", () => {
@@ -531,7 +534,7 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
         }),
         candidates
       )
-    ).toBeNull();
+    ).toEqual({ ok: false, reason: "field_count" });
   });
 
   it("fails closed on wrong controlKind", () => {
@@ -549,7 +552,7 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
         }),
         candidates
       )
-    ).toBeNull();
+    ).toEqual({ ok: false, reason: "control_kind" });
   });
 
   it("fails closed on wrong choiceSelectorType", () => {
@@ -567,7 +570,7 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
         }),
         candidates
       )
-    ).toBeNull();
+    ).toEqual({ ok: false, reason: "selector_type" });
   });
 
   it("fails closed when nextButton is not Continue", () => {
@@ -578,7 +581,34 @@ describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
         }),
         candidates
       )
-    ).toBeNull();
+    ).toEqual({ ok: false, reason: "next_button" });
+  });
+
+  it("fails closed with field_count when fieldsToFill is empty", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({ fieldsToFill: [] }),
+        candidates
+      )
+    ).toEqual({ ok: false, reason: "field_count" });
+  });
+
+  it("fails closed with selector_not_found when selector is blank", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          fieldsToFill: [
+            {
+              selector: "   ",
+              value: "Option A",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+        }),
+        candidates
+      )
+    ).toEqual({ ok: false, reason: "selector_not_found" });
   });
 });
 

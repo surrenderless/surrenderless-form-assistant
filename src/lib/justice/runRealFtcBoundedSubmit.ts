@@ -422,14 +422,14 @@ export async function runRealFtcBoundedSubmit(
             structured.decision,
             ambiguousCandidates
           );
-          if (!validated) {
+          if (!validated.ok) {
             return {
               ok: false as const,
               stopReason: "invalid_decision" as const,
-              detail: "structured FTC assistant subcategory decision failed validation",
+              detail: validated.reason,
             };
           }
-          return { ok: true as const, decision: validated };
+          return { ok: true as const, decision: validated.decision };
         }
         return fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
       };

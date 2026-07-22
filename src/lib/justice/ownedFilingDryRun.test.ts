@@ -336,6 +336,90 @@ describe("runOwnedFilingDryRun", () => {
     });
   });
 
+  it("FTC invalid_decision dry-run detail uses allowlisted validator-failure enum", async () => {
+    const genericLiveError =
+      "FTC complaint autofill stopped: the assistant returned an invalid next action. You can retry.";
+
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: genericLiveError,
+      stopReason: "invalid_decision",
+      stepsExecuted: 2,
+      fillResult: {
+        screenshot: null,
+        pageData: {
+          url: "https://reportfraud.ftc.gov/assistant",
+          fields: [],
+          buttons: [],
+        },
+        stepsExecuted: 2,
+        stopReason: "invalid_decision",
+        stepLog: [
+          {
+            step: 2,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "invalid_decision",
+            detail: "selector_type",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      stop_reason: "invalid_decision",
+      steps_executed: 2,
+      detail: "selector_type",
+    });
+    expect(result.detail).not.toBe(genericLiveError);
+    expect(noteUpdates.at(-1)).toContain("detail: selector_type");
+  });
+
+  it("FTC invalid_decision ignores non-allowlisted step detail", async () => {
+    const genericLiveError =
+      "FTC complaint autofill stopped: the assistant returned an invalid next action. You can retry.";
+
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: genericLiveError,
+      stopReason: "invalid_decision",
+      stepsExecuted: 0,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: "https://reportfraud.ftc.gov/assistant", fields: [], buttons: [] },
+        stepsExecuted: 0,
+        stopReason: "invalid_decision",
+        stepLog: [
+          {
+            step: 0,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "invalid_decision",
+            detail: "no unique enabled FTC assistant choice matched issue_type",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const result = await runOwnedFilingDryRun(makeSupabase(ftcTask()), USER_ID, CASE_ID, "ftc");
+
+    expect(result).toMatchObject({
+      ok: false,
+      stop_reason: "invalid_decision",
+      detail: genericLiveError,
+    });
+  });
+
   it("FTC provider throw before first step maps to dry_run_failed with steps_executed 0", async () => {
     vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
       new Error("page.evaluate: Target page, context or browser has been closed")
