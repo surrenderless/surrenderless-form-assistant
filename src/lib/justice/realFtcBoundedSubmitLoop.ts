@@ -173,15 +173,10 @@ function ftcAssistantContinueIsEnabled(pageData: AssistedFormPageData): boolean 
   );
 }
 
-/**
- * Case-appropriate /assistant category/subcategory decision from scraped choiceControls
- * and userData.issue_type. Never re-selects an already-checked parent. Returns null when the
- * page is not assistant or progression is zero/ambiguous — caller must fail closed.
- */
-export function buildFtcAssistantChoiceDecision(
+function ftcAssistantIssueMatchedParent(
   pageData: AssistedFormPageData,
   userData: Record<string, unknown>
-): FormDecision | null {
+): AssistedFormChoiceControl | null {
   if (!isFtcReportAssistantUrl(pageData.url ?? "")) return null;
 
   const issueType =
@@ -196,9 +191,36 @@ export function buildFtcAssistantChoiceDecision(
       Boolean(control.id?.trim()) &&
       choiceMatchesFtcAssistantIssue(control, matchLabels)
   );
-  if (issueMatches.length !== 1) return null;
+  return issueMatches.length === 1 ? issueMatches[0]! : null;
+}
 
-  const parent = issueMatches[0]!;
+function ftcAssistantUncheckedNextRadios(
+  pageData: AssistedFormPageData,
+  parent: AssistedFormChoiceControl
+): AssistedFormChoiceControl[] {
+  return (pageData.choiceControls ?? []).filter(
+    (control) =>
+      control.kind === "radio" &&
+      control.enabled &&
+      Boolean(control.id?.trim()) &&
+      !control.checked &&
+      control.id !== parent.id
+  );
+}
+
+/**
+ * Case-appropriate /assistant category/subcategory decision from scraped choiceControls
+ * and userData.issue_type. Never re-selects an already-checked parent. Returns null when the
+ * page is not assistant or progression is zero/ambiguous — caller must fail closed (or use
+ * the structured ambiguous-subcategory fallback when candidates are available).
+ */
+export function buildFtcAssistantChoiceDecision(
+  pageData: AssistedFormPageData,
+  userData: Record<string, unknown>
+): FormDecision | null {
+  const parent = ftcAssistantIssueMatchedParent(pageData, userData);
+  if (!parent) return null;
+
   if (!parent.checked) {
     return ftcAssistantRadioChoiceDecision(parent);
   }
@@ -208,16 +230,64 @@ export function buildFtcAssistantChoiceDecision(
     return ftcAssistantContinueOnlyDecision();
   }
 
-  const nextCandidates = (pageData.choiceControls ?? []).filter(
-    (control) =>
-      control.kind === "radio" &&
-      control.enabled &&
-      Boolean(control.id?.trim()) &&
-      !control.checked &&
-      control.id !== parent.id
-  );
+  const nextCandidates = ftcAssistantUncheckedNextRadios(pageData, parent);
   if (nextCandidates.length !== 1) return null;
   return ftcAssistantRadioChoiceDecision(nextCandidates[0]!);
+}
+
+/**
+ * Scraped next-radio candidates when the unique issue_type parent is checked, Continue is
+ * not actionable, and multiple enabled unchecked radios remain. Null outside that branch.
+ */
+export function ftcAssistantAmbiguousSubcategoryCandidates(
+  pageData: AssistedFormPageData,
+  userData: Record<string, unknown>
+): AssistedFormChoiceControl[] | null {
+  const parent = ftcAssistantIssueMatchedParent(pageData, userData);
+  if (!parent?.checked) return null;
+  if (ftcAssistantContinueIsEnabled(pageData)) return null;
+
+  const nextCandidates = ftcAssistantUncheckedNextRadios(pageData, parent);
+  return nextCandidates.length > 1 ? nextCandidates : null;
+}
+
+/**
+ * Strict post-validation for a structured /assistant subcategory decide-action result.
+ * Accepts only one radio id/value pair that exactly matches a scraped next candidate and a
+ * Continue nextButton. Returns a canonical decision or null (fail closed).
+ */
+export function validateFtcAssistantStructuredSubcategoryDecision(
+  decision: FormDecision,
+  candidates: AssistedFormChoiceControl[]
+): FormDecision | null {
+  const fields = decision.fieldsToFill ?? [];
+  if (fields.length !== 1) return null;
+
+  const field = fields[0]!;
+  if (field.controlKind !== "radio") return null;
+  if (field.choiceSelectorType !== "id") return null;
+  if (typeof field.selector !== "string" || !field.selector.trim()) return null;
+  if (typeof field.value !== "string") return null;
+
+  const next = decision.nextButton;
+  if (!next?.value?.trim() || !next.selectorType) return null;
+  if (normalizeFtcAssistantChoiceLabel(next.value) !== "continue") return null;
+
+  const match = candidates.find((control) => control.id === field.selector);
+  if (!match || field.value !== match.optionValue) return null;
+
+  return {
+    fieldsToFill: [
+      {
+        selector: match.id,
+        value: match.optionValue,
+        controlKind: "radio",
+        choiceSelectorType: "id",
+      },
+    ],
+    nextButton: { selectorType: next.selectorType, value: next.value },
+    waitForNavigation: true,
+  };
 }
 
 function hasConfirmationLikeFtcUrlPath(url: string): boolean {

@@ -714,4 +714,334 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(result.stepsExecuted).toBe(2);
     expect(result.stopReason).toBe("decide_action_failed");
   });
+
+  it("invokes structured decide once for ambiguous subcategories and applies a validated candidate", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        buttons: [],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "category",
+            id: "cat-radio-2",
+            optionValue: "Online shopping",
+            accessibleName: "Online shopping",
+            visible: false,
+            enabled: true,
+            checked: true,
+          },
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-a",
+            optionValue: "Option A",
+            accessibleName: "Option A",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-b",
+            optionValue: "Option B",
+            accessibleName: "Option B",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+        ],
+      },
+      pageData("https://reportfraud.ftc.gov/form/main"),
+    ];
+    h.state.decideQueue = [
+      {
+        ok: true,
+        decision: {
+          fieldsToFill: [
+            {
+              selector: "sub-b",
+              value: "Option B",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+      },
+      {
+        ok: false,
+        stopReason: "decide_action_failed",
+        detail: "decide-action failed (500)",
+      },
+    ];
+    h.state.applyQueue = [{ result: applyOk() }];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({ issue_type: "online purchase" })
+    );
+
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(2);
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [
+        {
+          selector: "sub-b",
+          value: "Option B",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stepsExecuted).toBe(1);
+    expect(result.stopReason).toBe("decide_action_failed");
+  });
+
+  it.each([
+    {
+      name: "unknown id",
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-unknown",
+            value: "Option A",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+    },
+    {
+      name: "mismatched value",
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option B",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+    },
+    {
+      name: "multiple fields",
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option A",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+          {
+            selector: "sub-b",
+            value: "Option B",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+    },
+    {
+      name: "wrong controlKind",
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option A",
+            controlKind: "checkbox",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+    },
+    {
+      name: "wrong choiceSelectorType",
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option A",
+            controlKind: "radio",
+            choiceSelectorType: "accessibleName",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+    },
+    {
+      name: "non-Continue nextButton",
+      decision: {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option A",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Submit" },
+      },
+    },
+  ])(
+    "fails closed without applying when structured subcategory decide returns $name",
+    async ({ decision }) => {
+      h.state.evaluateQueue = [
+        {
+          ...pageData("https://reportfraud.ftc.gov/assistant"),
+          buttons: [],
+          choiceControls: [
+            {
+              source: "native",
+              kind: "radio",
+              name: "category",
+              id: "cat-radio-2",
+              optionValue: "Online shopping",
+              accessibleName: "Online shopping",
+              visible: false,
+              enabled: true,
+              checked: true,
+            },
+            {
+              source: "native",
+              kind: "radio",
+              name: "subcategory",
+              id: "sub-a",
+              optionValue: "Option A",
+              accessibleName: "Option A",
+              visible: true,
+              enabled: true,
+              checked: false,
+            },
+            {
+              source: "native",
+              kind: "radio",
+              name: "subcategory",
+              id: "sub-b",
+              optionValue: "Option B",
+              accessibleName: "Option B",
+              visible: true,
+              enabled: true,
+              checked: false,
+            },
+          ],
+        },
+      ];
+      h.state.decideQueue = [{ ok: true, decision }];
+      h.state.applyQueue = [{ result: applyOk() }];
+
+      const result = await runRealFtcBoundedSubmit(
+        runParams({ issue_type: "online purchase" })
+      );
+
+      expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
+      expect(mockedApplyDecision).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected incomplete");
+      expect(result.stopReason).toBe("invalid_decision");
+      expect(result.stepsExecuted).toBe(0);
+      expect(result.fillResult.stepLog.find((e) => e.action === "invalid_decision")?.detail).toBe(
+        "structured FTC assistant subcategory decision failed validation"
+      );
+    }
+  );
+
+  it("keeps dry-run Submit blocking after a validated structured subcategory step", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        buttons: [],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "category",
+            id: "cat-radio-2",
+            optionValue: "Online shopping",
+            accessibleName: "Online shopping",
+            visible: false,
+            enabled: true,
+            checked: true,
+          },
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-a",
+            optionValue: "Option A",
+            accessibleName: "Option A",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-b",
+            optionValue: "Option B",
+            accessibleName: "Option B",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+        ],
+      },
+      pageData("https://reportfraud.ftc.gov/form/main"),
+    ];
+    h.state.decideQueue = [
+      {
+        ok: true,
+        decision: {
+          fieldsToFill: [
+            {
+              selector: "sub-a",
+              value: "Option A",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+      },
+      {
+        ok: true,
+        decision: { nextButton: { selectorType: "text", value: "Submit complaint" } },
+      },
+    ];
+    h.state.applyQueue = [
+      { result: applyOk() },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit complaint",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({ issue_type: "online purchase" })
+    );
+
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(1);
+  });
 });
