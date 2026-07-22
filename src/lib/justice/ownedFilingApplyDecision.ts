@@ -15,7 +15,7 @@ export type OwnedFilingSubmissionMode = "live" | "dry_run";
 export const OWNED_FILING_FTC_ACTION_TIMEOUT_MS = 20_000;
 
 export type OwnedFilingApplyDecisionResult =
-  | { ok: true; clicked: boolean; risk: "safe" | "none" | "irreversible" }
+  | { ok: true; clicked: boolean; risk: "safe" | "none" | "irreversible"; diagnostic?: string }
   | {
       ok: false;
       blocked: true;
@@ -106,18 +106,34 @@ function targetDiagnostic(
   count: number,
   visible: boolean | null,
   enabled: boolean | null,
-  options: ApplyDecisionOptions
+  options: ApplyDecisionOptions,
+  phase?:
+    | "precheck_disabled"
+    | "precheck_hidden"
+    | "precheck_ambiguous"
+    | "click_rejected"
+    | "nav_soft_timeout"
 ): string {
   return [
     `target=${target}`,
     `count=${count}`,
     `visible=${visible === null ? "na" : String(visible)}`,
     `enabled=${enabled === null ? "na" : String(enabled)}`,
+    ...(phase ? [`phase=${phase}`] : []),
     `labels=${sanitizedActionableLabels(options)}`,
   ].join(",");
 }
 
-type FillFieldsResult = { ok: true } | { ok: false; diagnostic: string };
+type FillFieldsResult =
+  | { ok: true; choiceApplied: boolean }
+  | { ok: false; diagnostic: string };
+
+type ClickNextButtonResult = {
+  clicked: boolean;
+  diagnostic?: string;
+  /** FTC Continue uniquely resolved but disabled — safe to defer after a choice apply. */
+  continueDisabled?: boolean;
+};
 
 function matchingFtcChoiceControls(
   field: NonNullable<FormDecision["fieldsToFill"]>[number],
@@ -247,7 +263,7 @@ async function forceCheckHiddenNativeChoice(
       diagnostic: targetDiagnostic("choice", 1, false, true, options),
     };
   }
-  return { ok: true };
+  return { ok: true, choiceApplied: true };
 }
 
 /**
@@ -316,7 +332,7 @@ async function activateHiddenNativeChoiceLabel(
       diagnostic: targetDiagnostic("choice-label", 1, true, true, options),
     };
   }
-  return { ok: true };
+  return { ok: true, choiceApplied: true };
 }
 
 async function fillFields(
@@ -325,6 +341,7 @@ async function fillFields(
   options: ApplyDecisionOptions
 ): Promise<FillFieldsResult> {
   const fieldsToFill = decision.fieldsToFill ?? [];
+  let choiceApplied = false;
   for (const field of fieldsToFill) {
     if (options.enableFtcChoiceControls && field.controlKind) {
       if (
@@ -361,6 +378,7 @@ async function fillFields(
       if (!control.visible) {
         const labelResult = await activateHiddenNativeChoiceLabel(page, control, options);
         if (!labelResult.ok) return labelResult;
+        choiceApplied = true;
         continue;
       }
       const target = resolveFtcChoiceLocator(page, control);
@@ -403,6 +421,7 @@ async function fillFields(
           diagnostic: targetDiagnostic("choice", 1, true, true, options),
         };
       }
+      choiceApplied = true;
       continue;
     }
     if (!field.selector?.trim()) continue;
@@ -421,7 +440,7 @@ async function fillFields(
       console.warn(`${options.logPrefix}: could not fill "${field.selector}":`, message);
     }
   }
-  return { ok: true };
+  return { ok: true, choiceApplied };
 }
 
 /**
@@ -433,12 +452,14 @@ async function clickNextButton(
   page: Page,
   decision: FormDecision,
   options: ApplyDecisionOptions
-): Promise<{ clicked: boolean; diagnostic?: string }> {
+): Promise<ClickNextButtonResult> {
   if (!decision.nextButton?.value?.trim()) return { clicked: false };
   const buttonSelector = buildButtonSelector(decision.nextButton);
+  let navigationSoftTimedOut = false;
   const waitForNavigation = () =>
     page.waitForNavigation({ timeout: 10000 }).catch((err: unknown) => {
       if (options.propagateCriticalErrors && isClosedTargetError(err)) throw err;
+      navigationSoftTimedOut = true;
       console.warn(`${options.logPrefix}: navigation timeout after button click`);
     });
   try {
@@ -460,7 +481,7 @@ async function clickNextButton(
         let count = await buttonTarget.count();
         // Verified FTC /assistant Continue buttons use a trailing NBSP in their accessible
         // name ("Continue\u00a0"), so exact "Continue" matches zero. Non-exact name match
-        // resolves the unique visible enabled Continue on that page.
+        // resolves the unique visible Continue on that page.
         if (
           count === 0 &&
           decision.nextButton.value === "Continue" &&
@@ -473,7 +494,16 @@ async function clickNextButton(
           return {
             clicked: false,
             ...(decision.nextButton.value === "Continue"
-              ? { diagnostic: targetDiagnostic("continue", count, null, null, options) }
+              ? {
+                  diagnostic: targetDiagnostic(
+                    "continue",
+                    count,
+                    null,
+                    null,
+                    options,
+                    "precheck_ambiguous"
+                  ),
+                }
               : {}),
           };
         }
@@ -483,10 +513,14 @@ async function clickNextButton(
         target.isEnabled(),
       ]);
       if (!visible || !enabled) {
+        const phase = !visible ? "precheck_hidden" : "precheck_disabled";
         return {
           clicked: false,
           ...(decision.nextButton.value === "Continue"
-            ? { diagnostic: targetDiagnostic("continue", 1, visible, enabled, options) }
+            ? {
+                diagnostic: targetDiagnostic("continue", 1, visible, enabled, options, phase),
+                ...(phase === "precheck_disabled" ? { continueDisabled: true } : {}),
+              }
             : {}),
         };
       }
@@ -515,12 +549,37 @@ async function clickNextButton(
     } else {
       clicked = await click();
     }
+    if (
+      clicked &&
+      navigationSoftTimedOut &&
+      decision.nextButton.value === "Continue" &&
+      options.useExactTextButtonLocator
+    ) {
+      return {
+        clicked: true,
+        diagnostic: targetDiagnostic("continue", 1, true, true, options, "nav_soft_timeout"),
+      };
+    }
     return { clicked };
   } catch (err: unknown) {
     propagateFtcActionError(err, options, "click");
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`${options.logPrefix}: could not click button:`, message);
-    return { clicked: false };
+    return {
+      clicked: false,
+      ...(decision.nextButton.value === "Continue" && options.useExactTextButtonLocator
+        ? {
+            diagnostic: targetDiagnostic(
+              "continue",
+              1,
+              true,
+              true,
+              options,
+              "click_rejected"
+            ),
+          }
+        : {}),
+    };
   }
 }
 
@@ -559,6 +618,20 @@ export async function applyOwnedFilingFormDecision(
   if (risk === "safe") {
     const clickResult = await clickNextButton(page, decision, options);
     if (!clickResult.clicked && options.useExactTextButtonLocator) {
+      // Verified FTC /assistant: after a category choice, Continue stays uniquely visible but
+      // disabled until a subcategory is selected. Preserve the choice and let the loop re-scrape.
+      if (
+        fieldsResult.choiceApplied &&
+        clickResult.continueDisabled &&
+        isFtcReportAssistantUrl(options.currentPageUrl ?? "")
+      ) {
+        return {
+          ok: true,
+          clicked: false,
+          risk: "safe",
+          ...(clickResult.diagnostic ? { diagnostic: clickResult.diagnostic } : {}),
+        };
+      }
       return {
         ok: false,
         blocked: true,
@@ -568,7 +641,12 @@ export async function applyOwnedFilingFormDecision(
         ...(clickResult.diagnostic ? { diagnostic: clickResult.diagnostic } : {}),
       };
     }
-    return { ok: true, clicked: clickResult.clicked, risk: "safe" };
+    return {
+      ok: true,
+      clicked: clickResult.clicked,
+      risk: "safe",
+      ...(clickResult.diagnostic ? { diagnostic: clickResult.diagnostic } : {}),
+    };
   }
 
   if (risk === "unknown") {

@@ -840,7 +840,12 @@ describe("FTC bounded actions", () => {
       ftcOptions
     );
 
-    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(result).toMatchObject({
+      ok: true,
+      clicked: true,
+      risk: "safe",
+      diagnostic: expect.stringContaining("phase=nav_soft_timeout"),
+    });
     expect(page.exactButtonLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
     expect(page.waitForNavigation).toHaveBeenCalled();
   });
@@ -985,6 +990,7 @@ describe("FTC bounded actions", () => {
       blocked: true,
       risk: "unknown",
       reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=click_rejected"),
     });
     expect(page.exactButtonLocator.click).toHaveBeenCalledTimes(1);
   });
@@ -1053,12 +1059,50 @@ describe("FTC bounded actions", () => {
       ok: false,
       blocked: true,
       reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_disabled"),
     });
     expect(page.getByRole).toHaveBeenCalledWith("button", {
       name: "Continue",
       exact: true,
     });
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("defers Continue when unique visible target stays disabled after an FTC choice", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count).mockResolvedValueOnce(0); // label[for]=0
+    vi.mocked(page.exactButtonLocator.isEnabled).mockResolvedValue(false);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "cat-radio-2",
+            value: "Online shopping",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [ftcCategoryControl()],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      clicked: false,
+      risk: "safe",
+      diagnostic: expect.stringMatching(
+        /target=continue,count=1,visible=true,enabled=false,phase=precheck_disabled/
+      ),
+    });
+    expect(page.labelLocator.click).toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(page.waitForNavigation).not.toHaveBeenCalled();
   });
 
   it("does not click a hidden exact Continue target and returns sanitized diagnostics", async () => {
@@ -1075,10 +1119,68 @@ describe("FTC bounded actions", () => {
       ok: false,
       blocked: true,
       reason: "unknown_fail_closed",
-      diagnostic: "target=continue,count=1,visible=false,enabled=true,labels=Continue",
+      diagnostic:
+        "target=continue,count=1,visible=false,enabled=true,phase=precheck_hidden,labels=Continue",
     });
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
     expect(page.waitForNavigation).not.toHaveBeenCalled();
+  });
+
+  it("attributes a soft Continue click failure to click_rejected", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.click).mockRejectedValue(new Error("element is not enabled"));
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=click_rejected"),
+    });
+  });
+
+  it("keeps dry-run Submit blocked after a deferred Continue", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count).mockResolvedValueOnce(0);
+    vi.mocked(page.exactButtonLocator.isEnabled).mockResolvedValue(false);
+
+    const deferred = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "cat-radio-2",
+            value: "Online shopping",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [ftcCategoryControl()],
+      }
+    );
+    expect(deferred).toMatchObject({ ok: true, clicked: false });
+
+    const submit = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Submit" } },
+      ftcOptions
+    );
+    expect(submit).toMatchObject({
+      ok: false,
+      blocked: true,
+      risk: "irreversible",
+      reason: "dry_run_stop",
+    });
+    expect(page.click).not.toHaveBeenCalled();
   });
 
   it("leaves BBB calls unbounded and preserves its soft action failure", async () => {

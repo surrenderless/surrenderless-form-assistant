@@ -239,7 +239,8 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
           risk: "unknown",
           buttonLabel: "text:Continue",
           reason: "unknown_fail_closed",
-          diagnostic: "target=continue,count=0,visible=na,enabled=na,labels=Continue",
+          diagnostic:
+            "target=continue,count=0,visible=na,enabled=na,phase=precheck_ambiguous,labels=Continue",
         },
       },
     ];
@@ -252,7 +253,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       (entry) => entry.action === "exact_target_diagnostic"
     );
     expect(diagnostic?.detail).toBe(
-      "target=continue,count=0,visible=na,enabled=na,labels=Continue"
+      "target=continue,count=0,visible=na,enabled=na,phase=precheck_ambiguous,labels=Continue"
     );
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
