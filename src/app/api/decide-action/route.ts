@@ -18,6 +18,42 @@ function getOpenAI(): OpenAI | null {
   return new OpenAI({ apiKey });
 }
 
+/**
+ * Parses decide-action model output as JSON.
+ * Accepts bare JSON, or one complete markdown fence (``` / ```json) whose entire trimmed
+ * payload is that fence. Rejects prose wrappers, incomplete fences, and malformed JSON.
+ */
+function parseDecideActionModelJson(responseText: string | null | undefined): unknown {
+  if (typeof responseText !== "string") {
+    throw new SyntaxError("Decide-action model response was empty");
+  }
+  const trimmed = responseText.trim();
+  if (!trimmed) {
+    throw new SyntaxError("Decide-action model response was empty");
+  }
+
+  let jsonText = trimmed;
+  if (trimmed.startsWith("```")) {
+    if (!trimmed.endsWith("```") || trimmed.length < 6) {
+      throw new SyntaxError("Decide-action model response fence was incomplete");
+    }
+    const withoutOpen = trimmed.replace(/^```(?:json)?\s*\r?\n?/i, "");
+    if (withoutOpen === trimmed) {
+      throw new SyntaxError("Decide-action model response fence was invalid");
+    }
+    const withoutClose = withoutOpen.replace(/\r?\n?\s*```$/u, "");
+    if (withoutClose === withoutOpen) {
+      throw new SyntaxError("Decide-action model response fence was incomplete");
+    }
+    jsonText = withoutClose.trim();
+    if (!jsonText) {
+      throw new SyntaxError("Decide-action model response fence was empty");
+    }
+  }
+
+  return JSON.parse(jsonText);
+}
+
 export async function POST(req: NextRequest) {
   const userId = resolveBbbDecideActionInternalUserId(req) ?? getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -71,7 +107,7 @@ export async function POST(req: NextRequest) {
   const responseText = completion.choices[0].message.content;
 
   try {
-    const parsed = JSON.parse(responseText!);
+    const parsed = parseDecideActionModelJson(responseText);
     return NextResponse.json({ decision: parsed });
   } catch {
     return NextResponse.json(

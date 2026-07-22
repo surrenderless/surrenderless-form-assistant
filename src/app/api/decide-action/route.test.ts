@@ -27,6 +27,19 @@ import { rateLimit } from "@/utils/rateLimiter";
 
 const USER_ID = "user_test_123";
 
+const SAMPLE_DECISION = {
+  fieldsToFill: [
+    {
+      selector: "sub-a",
+      value: "Option A",
+      controlKind: "radio",
+      choiceSelectorType: "id",
+    },
+  ],
+  nextButton: { selectorType: "text", value: "Continue" },
+  waitForNavigation: true,
+};
+
 function buildRequest(body: Record<string, unknown>, cookie?: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.cookie = cookie;
@@ -35,6 +48,13 @@ function buildRequest(body: Record<string, unknown>, cookie?: string) {
     headers,
     body: JSON.stringify(body),
   });
+}
+
+async function postWithModelContent(content: string) {
+  mockCreate.mockResolvedValue({
+    choices: [{ message: { content } }],
+  });
+  return POST(buildRequest({ pageData: { fields: [] }, userData: {} }));
 }
 
 describe("POST /api/decide-action", () => {
@@ -149,5 +169,71 @@ describe("POST /api/decide-action", () => {
     const createArg = mockCreate.mock.calls[0]?.[0] as { messages: Array<{ content: string }> };
     expect(createArg.messages[1]?.content).toContain('"source": "profile"');
     expect(createArg.messages[1]?.content).not.toContain('"source": "data"');
+  });
+
+  it("accepts bare valid JSON from the model", async () => {
+    const res = await postWithModelContent(JSON.stringify(SAMPLE_DECISION));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ decision: SAMPLE_DECISION });
+  });
+
+  it("accepts fenced ```json JSON from the model", async () => {
+    const res = await postWithModelContent(
+      `\`\`\`json\n${JSON.stringify(SAMPLE_DECISION, null, 2)}\n\`\`\``
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ decision: SAMPLE_DECISION });
+  });
+
+  it("accepts fenced ``` JSON without a language tag", async () => {
+    const res = await postWithModelContent(`\`\`\`\n${JSON.stringify(SAMPLE_DECISION)}\n\`\`\``);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ decision: SAMPLE_DECISION });
+  });
+
+  it("accepts surrounding whitespace around bare or fenced JSON", async () => {
+    const bare = await postWithModelContent(`  \n${JSON.stringify(SAMPLE_DECISION)}\n  `);
+    expect(bare.status).toBe(200);
+    expect(await bare.json()).toEqual({ decision: SAMPLE_DECISION });
+
+    const fenced = await postWithModelContent(
+      `\n\`\`\`json\n${JSON.stringify(SAMPLE_DECISION)}\n\`\`\`\n`
+    );
+    expect(fenced.status).toBe(200);
+    expect(await fenced.json()).toEqual({ decision: SAMPLE_DECISION });
+  });
+
+  it("returns 500 for malformed JSON", async () => {
+    const partial = await postWithModelContent('{ "fieldsToFill": [');
+    expect(partial.status).toBe(500);
+    expect(await partial.json()).toMatchObject({ error: "Invalid JSON response from GPT" });
+
+    const brokenFence = await postWithModelContent("```json\n{ broken\n```");
+    expect(brokenFence.status).toBe(500);
+  });
+
+  it("returns 500 for prose-only model output", async () => {
+    const res = await postWithModelContent(
+      "Select the Online shopping subcategory and click Continue."
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: "Invalid JSON response from GPT" });
+  });
+
+  it("returns 500 when prose surrounds JSON or a fenced payload", async () => {
+    const bareWrapped = await postWithModelContent(
+      `Here is the decision:\n${JSON.stringify(SAMPLE_DECISION)}\nThanks!`
+    );
+    expect(bareWrapped.status).toBe(500);
+
+    const fenceWrapped = await postWithModelContent(
+      `Here is the decision:\n\`\`\`json\n${JSON.stringify(SAMPLE_DECISION)}\n\`\`\`\nDone.`
+    );
+    expect(fenceWrapped.status).toBe(500);
+
+    const trailing = await postWithModelContent(
+      `${JSON.stringify(SAMPLE_DECISION)}\n// trailing note`
+    );
+    expect(trailing.status).toBe(500);
   });
 });
