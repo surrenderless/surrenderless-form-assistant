@@ -13,7 +13,9 @@ type FakeElement = {
   type: string;
   labels: Array<{ innerText: string }>;
   styleState: { display: string; visibility: string };
+  valueAttribute?: string | null;
   getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
   getBoundingClientRect(): { width: number; height: number };
 };
 
@@ -47,6 +49,9 @@ function button(
       if (name === "type") return "button";
       return null;
     },
+    hasAttribute() {
+      return false;
+    },
     getBoundingClientRect: () => ({
       width: options.width ?? 100,
       height: options.height ?? 30,
@@ -69,6 +74,9 @@ function installDom(buttons: FakeElement[], choiceFields: FakeElement[] = []): v
       if (name === "name") return "story";
       if (name === "placeholder") return "Describe the issue";
       return null;
+    },
+    hasAttribute() {
+      return false;
     },
     getBoundingClientRect: () => ({ width: 200, height: 30 }),
   };
@@ -156,7 +164,11 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       getAttribute(name: string) {
         if (name === "name") return "category";
         if (name === "placeholder") return null;
+        if (name === "value") return "fraud";
         return null;
+      },
+      hasAttribute(name: string) {
+        return name === "value";
       },
       getBoundingClientRect: () => ({ width: 20, height: 20 }),
     };
@@ -189,6 +201,45 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
+  it("uses accessibleName as optionValue for FTC category radios that omit value attributes", () => {
+    const radio: FakeElement = {
+      tagName: "INPUT",
+      textContent: "",
+      id: "cat-radio-2",
+      disabled: false,
+      hidden: true,
+      value: "on",
+      type: "radio",
+      labels: [{ innerText: "Online shopping" }],
+      styleState: { display: "block", visibility: "hidden" },
+      getAttribute(name: string) {
+        if (name === "name") return "category";
+        return null;
+      },
+      hasAttribute() {
+        return false;
+      },
+      getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    };
+    installDom([button("Continue", { disabled: true })], [radio]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+
+    expect(result.choiceControls).toEqual([
+      {
+        source: "native",
+        kind: "radio",
+        name: "category",
+        id: "cat-radio-2",
+        optionValue: "Online shopping",
+        accessibleName: "Online shopping",
+        visible: false,
+        enabled: true,
+      },
+    ]);
+    expect(result.choiceControls?.[0]?.optionValue).not.toBe("on");
+  });
+
   it("collects exact sanitized ARIA radio metadata without broad page text", () => {
     const ariaRadio: FakeElement = {
       tagName: "DIV",
@@ -206,6 +257,9 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         if (name === "data-value") return "imposter";
         if (name === "aria-disabled") return "false";
         return null;
+      },
+      hasAttribute() {
+        return false;
       },
       getBoundingClientRect: () => ({ width: 180, height: 40 }),
     };

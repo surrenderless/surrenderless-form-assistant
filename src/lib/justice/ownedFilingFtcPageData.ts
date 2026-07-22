@@ -73,9 +73,13 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
         ? "checkbox"
         : "radio";
     const accessibleName = accessibleChoiceName(element);
+    // FTC category/subcategory radios omit the value attribute; the JS property defaults to
+    // "on" for every option, which is not a distinguishing locator key. Prefer accessibleName.
     const optionValue = sanitizeChoiceMetadata(
       isNative
-        ? input.value
+        ? element.hasAttribute("value")
+          ? input.value || accessibleName
+          : accessibleName || input.value
         : element.getAttribute("data-value") ??
             element.getAttribute("value") ??
             accessibleName

@@ -129,6 +129,8 @@ describe("POST /api/decide-action", () => {
     expect(createArg.messages[1]?.content).toContain("choiceControls");
     expect(createArg.messages[1]?.content).toContain("choiceSelectorType");
     expect(createArg.messages[1]?.content).toContain("Never invent choice metadata");
+    expect(createArg.messages[1]?.content).toContain("optionValue equals accessibleName");
+    expect(createArg.messages[1]?.content).toContain('choiceSelectorType "id"');
   });
 
   it("prefers userProfile over userData when both are provided", async () => {

@@ -74,6 +74,23 @@ function choiceControl(
   };
 }
 
+/** Verified FTC /assistant category radio: no value attribute, optionValue === accessibleName. */
+function ftcCategoryControl(
+  overrides: Partial<AssistedFormChoiceControl> = {}
+): AssistedFormChoiceControl {
+  return {
+    source: "native",
+    kind: "radio",
+    name: "category",
+    id: "cat-radio-2",
+    optionValue: "Online shopping",
+    accessibleName: "Online shopping",
+    visible: false,
+    enabled: true,
+    ...overrides,
+  };
+}
+
 describe("applyOwnedFilingFormDecision click gate", () => {
   it("dry-run stops before irreversible click and never clicks", async () => {
     const page = mockPage();
@@ -364,8 +381,9 @@ describe("FTC bounded actions", () => {
   it("force-checks the exact hidden enabled native choice when no associated label exists", async () => {
     const page = mockPage();
     vi.mocked(page.choiceLocator.count)
-      .mockResolvedValueOnce(0)
-      .mockResolvedValueOnce(1);
+      .mockResolvedValueOnce(0) // label[for]
+      .mockResolvedValueOnce(1); // force-check input
+    vi.mocked(page.labelLocator.count).mockResolvedValue(0); // wrapping label
 
     const result = await applyOwnedFilingFormDecision(
       page,
@@ -380,9 +398,8 @@ describe("FTC bounded actions", () => {
     );
 
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
-    expect(page.locator).toHaveBeenNthCalledWith(1, 'label[for="category-fraud"]');
-    expect(page.locator).toHaveBeenNthCalledWith(
-      2,
+    expect(page.locator).toHaveBeenCalledWith('label[for="category-fraud"]');
+    expect(page.locator).toHaveBeenCalledWith(
       'input[type="radio"][id="category-fraud"][value="fraud"]'
     );
     expect(page.choiceLocator.check).toHaveBeenCalledWith({
@@ -395,6 +412,76 @@ describe("FTC bounded actions", () => {
     );
   });
 
+  it("selects the verified FTC category radio via wrapping label when value attr is absent", async () => {
+    const page = mockPage();
+    vi.mocked(page.choiceLocator.count).mockResolvedValueOnce(0); // label[for]=0
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "cat-radio-2",
+            value: "Online shopping",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        choiceControls: [ftcCategoryControl()],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.locator).toHaveBeenCalledWith('label[for="cat-radio-2"]');
+    expect(page.locator).toHaveBeenCalledWith('input[type="radio"][id="cat-radio-2"]');
+    expect(page.locator).not.toHaveBeenCalledWith(
+      'input[type="radio"][id="cat-radio-2"][value="Online shopping"]'
+    );
+    expect(page.locator).not.toHaveBeenCalledWith(
+      'input[type="radio"][id="cat-radio-2"][value="on"]'
+    );
+    expect(page.choiceLocator.locator).toHaveBeenCalledWith("xpath=ancestor::label[1]");
+    expect(page.labelLocator.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(page.choiceLocator.check).not.toHaveBeenCalled();
+    expect(vi.mocked(page.labelLocator.click).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(page.exactButtonLocator.click).mock.invocationCallOrder[0]!
+    );
+  });
+
+  it("advances Continue when exact accessible name misses trailing NBSP on FTC assistant", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
+    const nbspContinue = {
+      count: vi.fn(async () => 1),
+      isVisible: vi.fn(async () => true),
+      isEnabled: vi.fn(async () => true),
+      click: vi.fn(async () => undefined),
+    } as unknown as Locator;
+    vi.mocked(page.getByRole).mockImplementation((role, opts) => {
+      if (role === "link") return page.exactLinkLocator;
+      if (role === "button" && opts && "exact" in opts && opts.exact === true) {
+        return page.exactButtonLocator;
+      }
+      if (role === "button") return nbspContinue;
+      return page.exactButtonLocator;
+    });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue", exact: true });
+    expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue" });
+    expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
   it.each([
     ["ambiguous", 2, true, true],
     ["hidden", 1, false, true],
@@ -403,6 +490,7 @@ describe("FTC bounded actions", () => {
     "fails closed when the hidden native choice label is %s",
     async (_name, count, visible, enabled) => {
       const page = mockPage();
+      // for-label finds a candidate; no wrapping fallback needed
       vi.mocked(page.choiceLocator.count).mockResolvedValue(count);
       vi.mocked(page.choiceLocator.isVisible).mockResolvedValue(visible);
       vi.mocked(page.choiceLocator.isEnabled).mockResolvedValue(enabled);
@@ -437,6 +525,7 @@ describe("FTC bounded actions", () => {
     vi.mocked(page.choiceLocator.count)
       .mockResolvedValueOnce(0)
       .mockResolvedValueOnce(1);
+    vi.mocked(page.labelLocator.count).mockResolvedValue(0);
     vi.mocked(page.choiceLocator.isChecked).mockResolvedValue(false);
 
     const result = await applyOwnedFilingFormDecision(
@@ -521,6 +610,7 @@ describe("FTC bounded actions", () => {
     vi.mocked(page.choiceLocator.count)
       .mockResolvedValueOnce(0)
       .mockResolvedValueOnce(1);
+    vi.mocked(page.labelLocator.count).mockResolvedValue(0);
     vi.mocked(page.choiceLocator.check).mockImplementation(
       (options) =>
         new Promise<void>((_resolve, reject) => {
@@ -588,6 +678,7 @@ describe("FTC bounded actions", () => {
   it("keeps choice values out of hidden-label fail-closed diagnostics", async () => {
     const page = mockPage();
     vi.mocked(page.choiceLocator.count).mockResolvedValue(0);
+    vi.mocked(page.labelLocator.count).mockResolvedValue(0);
     const secret = "SENSITIVE_CHOICE_VALUE";
 
     const result = await applyOwnedFilingFormDecision(
