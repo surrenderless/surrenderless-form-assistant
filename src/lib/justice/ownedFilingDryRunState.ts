@@ -153,7 +153,8 @@ export function hasMatchingOwnedFilingDryRunResult(
 
 /**
  * Whether a prior dry-run should short-circuit a retry.
- * - dry_run_blocked_at_submit: always terminal (verified to irreversible boundary)
+ * - dry_run_blocked_at_submit: terminal only for a verified irreversible Submit boundary
+ * - Legacy mis-mapped blocked_unknown_click / button_risk=unknown records are retryable
  * - dry_run_completed: terminal unless stop_reason is max_steps_reached (legacy/incomplete)
  * - dry_run_failed / max_steps: never blocks retry
  */
@@ -164,6 +165,13 @@ export function shouldSkipOwnedFilingDryRunAsDuplicate(
   const existing = parseOwnedFilingDryRunRecord(notes);
   if (!existing || existing.destination !== destination) return null;
   if (existing.status === "dry_run_blocked_at_submit") {
+    // Prior tip incorrectly mapped mid-form unknown clicks to blocked_at_submit.
+    if (
+      existing.stop_reason === "blocked_unknown_click" ||
+      existing.button_risk === "unknown"
+    ) {
+      return null;
+    }
     return "dry_run_blocked_at_submit";
   }
   if (existing.status === "dry_run_completed") {

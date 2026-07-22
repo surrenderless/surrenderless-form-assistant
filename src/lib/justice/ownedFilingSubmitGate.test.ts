@@ -209,6 +209,33 @@ describe("ownedFilingDryRunState (durable + idempotent)", () => {
     );
   });
 
+  it("does not skip legacy blocked_unknown_click records mis-mapped as blocked_at_submit", () => {
+    const legacyUnknown = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_blocked_at_submit",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-22T20:00:00.000Z",
+      steps_executed: 4,
+      stop_reason: "blocked_unknown_click",
+      button_label: "text:Continue",
+      button_risk: "unknown",
+      page_url: "https://reportfraud.ftc.gov/form/main",
+    });
+    expect(shouldSkipOwnedFilingDryRunAsDuplicate(legacyUnknown, "ftc")).toBeNull();
+
+    const legacyRiskOnly = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_blocked_at_submit",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-22T20:00:00.000Z",
+      steps_executed: 4,
+      button_risk: "unknown",
+    });
+    expect(shouldSkipOwnedFilingDryRunAsDuplicate(legacyRiskOnly, "ftc")).toBeNull();
+  });
+
   it("formats a bounded redacted step log without form field values", () => {
     const formatted = formatOwnedFilingDryRunStepLog([
       {

@@ -52,18 +52,19 @@ function bbbTask(notesExtra = ""): JusticeCaseTaskRow {
   };
 }
 
-function ftcTask(): JusticeCaseTaskRow {
+function ftcTask(notesExtra = ""): JusticeCaseTaskRow {
+  const base = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+    delivery_state: "queued",
+    provider: "real_ftc_bounded_submit",
+    started_at: "2026-07-14T00:00:00.000Z",
+  });
   return {
     id: TASK_ID,
     user_id: USER_ID,
     case_id: CASE_ID,
     title: "FTC filing: Acme",
     due_date: null,
-    notes: upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
-      delivery_state: "queued",
-      provider: "real_ftc_bounded_submit",
-      started_at: "2026-07-14T00:00:00.000Z",
-    }),
+    notes: notesExtra ? `${base}\n\n${notesExtra}` : base,
     completed_at: null,
     created_at: "2026-07-14T00:00:00.000Z",
     updated_at: "2026-07-14T00:00:00.000Z",
@@ -501,7 +502,7 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
   });
 
-  it("unknown click is recorded as blocked_at_submit (fail closed)", async () => {
+  it("unknown click is recorded as dry_run_failed (retryable, fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,
       error: "unknown",
@@ -524,11 +525,68 @@ describe("runOwnedFilingDryRun", () => {
       technicalDetails: {},
     });
     const result = await runOwnedFilingDryRun(makeSupabase(bbbTask()), USER_ID, CASE_ID, "bbb");
-    expect(result.status).toBe("dry_run_blocked_at_submit");
+    expect(result.status).toBe("dry_run_failed");
     expect(result.stop_reason).toBe("blocked_unknown_click");
+    expect(result.ok).toBe(false);
   });
 
-  it("skips duplicate dry-run when prior blocked_at_submit exists", async () => {
+  it("FTC blocked_unknown_click is dry_run_failed and does not duplicate-skip a retry", async () => {
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: "ambiguous",
+      stopReason: "blocked_unknown_click",
+      stepsExecuted: 4,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: "https://reportfraud.ftc.gov/form/main", fields: [], buttons: [] },
+        stepsExecuted: 4,
+        stopReason: "blocked_unknown_click",
+        stepLog: [
+          {
+            step: 4,
+            url: "https://reportfraud.ftc.gov/form/main",
+            action: "blocked_unknown_click",
+            detail: "text:Continue",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+    expect(result.status).toBe("dry_run_failed");
+    expect(result.stop_reason).toBe("blocked_unknown_click");
+    expect(noteUpdates.at(-1)).toContain("dry_run_failed");
+    expect(noteUpdates.at(-1)).toContain("blocked_unknown_click");
+
+    const legacyNotes = upsertOwnedFilingDryRunNotes("", {
+      status: "dry_run_blocked_at_submit",
+      destination: "ftc",
+      case_id: CASE_ID,
+      task_id: TASK_ID,
+      ran_at: "2026-07-22T20:00:00.000Z",
+      steps_executed: 4,
+      stop_reason: "blocked_unknown_click",
+      button_risk: "unknown",
+      page_url: "https://reportfraud.ftc.gov/form/main",
+    });
+    const retried = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(legacyNotes)),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+    expect(retried.skipped_duplicate).not.toBe(true);
+    expect(runRealFtcBoundedSubmit).toHaveBeenCalled();
+  });
+
+  it("skips duplicate dry-run when prior irreversible blocked_at_submit exists", async () => {
     const prior = upsertOwnedFilingDryRunNotes("", {
       status: "dry_run_blocked_at_submit",
       destination: "bbb",
@@ -536,6 +594,8 @@ describe("runOwnedFilingDryRun", () => {
       task_id: TASK_ID,
       ran_at: "2026-07-19T10:00:00.000Z",
       steps_executed: 2,
+      stop_reason: "blocked_irreversible_click",
+      button_risk: "irreversible",
     });
     const result = await runOwnedFilingDryRun(
       makeSupabase(bbbTask(prior)),

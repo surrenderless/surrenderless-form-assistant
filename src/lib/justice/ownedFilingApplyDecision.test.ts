@@ -27,18 +27,20 @@ type FillMatchOptions = {
 };
 
 function mockPage(fillMatch: FillMatchOptions = {}): MockPage {
-  const exactButtonLocator = {
+  const exactButtonLocator: Record<string, unknown> = {
     count: vi.fn(async () => 1),
     isVisible: vi.fn(async () => true),
     isEnabled: vi.fn(async () => true),
     click: vi.fn(async () => undefined),
-  } as unknown as Locator;
-  const exactLinkLocator = {
+  };
+  exactButtonLocator.nth = vi.fn(() => exactButtonLocator);
+  const exactLinkLocator: Record<string, unknown> = {
     count: vi.fn(async () => 0),
     isVisible: vi.fn(async () => true),
     isEnabled: vi.fn(async () => true),
     click: vi.fn(async () => undefined),
-  } as unknown as Locator;
+  };
+  exactLinkLocator.nth = vi.fn(() => exactLinkLocator);
   const labelLocator = {
     count: vi.fn(async () => 1),
     isVisible: vi.fn(async () => true),
@@ -91,13 +93,54 @@ function mockPage(fillMatch: FillMatchOptions = {}): MockPage {
       }
       return choiceLocator;
     }),
-    exactButtonLocator,
-    exactLinkLocator,
+    exactButtonLocator: exactButtonLocator as unknown as Locator,
+    exactLinkLocator: exactLinkLocator as unknown as Locator,
     choiceLocator,
     labelLocator,
     fillFieldLocator,
     fillMatchLocator,
   } as unknown as MockPage;
+}
+
+function mockContinueCandidate(state: {
+  visible: boolean;
+  enabled: boolean;
+}): Locator {
+  return {
+    isVisible: vi.fn(async () => state.visible),
+    isEnabled: vi.fn(async () => state.enabled),
+    click: vi.fn(async () => undefined),
+  } as unknown as Locator;
+}
+
+function installContinueRoleMatches(
+  page: MockPage,
+  candidates: Locator[],
+  softCandidates?: Locator[]
+): void {
+  const exactRoot = {
+    count: vi.fn(async () => candidates.length),
+    nth: vi.fn((index: number) => candidates[index]!),
+    isVisible: vi.fn(async () => candidates[0] ? candidates[0].isVisible() : false),
+    isEnabled: vi.fn(async () => candidates[0] ? candidates[0].isEnabled() : false),
+    click: vi.fn(async () => undefined),
+  } as unknown as Locator;
+  const softRoot = {
+    count: vi.fn(async () => (softCandidates ?? []).length),
+    nth: vi.fn((index: number) => (softCandidates ?? [])[index]!),
+    isVisible: vi.fn(async () => false),
+    isEnabled: vi.fn(async () => false),
+    click: vi.fn(async () => undefined),
+  } as unknown as Locator;
+  vi.mocked(page.getByRole).mockImplementation((role, opts) => {
+    if (role === "link") return page.exactLinkLocator;
+    if (role === "button" && opts && "exact" in opts && opts.exact === true) {
+      return exactRoot;
+    }
+    if (role === "button") return softCandidates ? softRoot : exactRoot;
+    return exactRoot;
+  });
+  page.exactButtonLocator = exactRoot;
 }
 
 function choiceControl(
@@ -633,21 +676,8 @@ describe("FTC bounded actions", () => {
 
   it("advances Continue when exact accessible name misses trailing NBSP on FTC assistant", async () => {
     const page = mockPage();
-    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
-    const nbspContinue = {
-      count: vi.fn(async () => 1),
-      isVisible: vi.fn(async () => true),
-      isEnabled: vi.fn(async () => true),
-      click: vi.fn(async () => undefined),
-    } as unknown as Locator;
-    vi.mocked(page.getByRole).mockImplementation((role, opts) => {
-      if (role === "link") return page.exactLinkLocator;
-      if (role === "button" && opts && "exact" in opts && opts.exact === true) {
-        return page.exactButtonLocator;
-      }
-      if (role === "button") return nbspContinue;
-      return page.exactButtonLocator;
-    });
+    const softContinue = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [], [softContinue]);
 
     const result = await applyOwnedFilingFormDecision(
       page,
@@ -658,26 +688,13 @@ describe("FTC bounded actions", () => {
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
     expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue", exact: true });
     expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue" });
-    expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(softContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
   });
 
   it("selects verified /form/main yes/no radios and advances Continue via role=button soft match", async () => {
     const page = mockPage();
-    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
-    const nbspContinue = {
-      count: vi.fn(async () => 1),
-      isVisible: vi.fn(async () => true),
-      isEnabled: vi.fn(async () => true),
-      click: vi.fn(async () => undefined),
-    } as unknown as Locator;
-    vi.mocked(page.getByRole).mockImplementation((role, opts) => {
-      if (role === "link") return page.exactLinkLocator;
-      if (role === "button" && opts && "exact" in opts && opts.exact === true) {
-        return page.exactButtonLocator;
-      }
-      if (role === "button") return nbspContinue;
-      return page.exactButtonLocator;
-    });
+    const softContinue = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [], [softContinue]);
 
     const formMainControl: AssistedFormChoiceControl = {
       source: "native",
@@ -719,7 +736,124 @@ describe("FTC bounded actions", () => {
       { timeout: 20_000 }
     );
     expect(page.fill).not.toHaveBeenCalled();
-    expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(softContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("clicks the unique visible enabled Continue when a hidden or disabled duplicate exists", async () => {
+    const page = mockPage();
+    const hidden = mockContinueCandidate({ visible: false, enabled: true });
+    const disabled = mockContinueCandidate({ visible: true, enabled: false });
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [hidden, disabled, active]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(hidden.click).not.toHaveBeenCalled();
+    expect(disabled.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when two visible enabled Continue controls remain", async () => {
+    const page = mockPage();
+    const first = mockContinueCandidate({ visible: true, enabled: true });
+    const second = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [first, second]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
+    });
+    expect(result.diagnostic).toContain("count=2");
+    expect(first.click).not.toHaveBeenCalled();
+    expect(second.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when no visible enabled Continue remains", async () => {
+    const page = mockPage();
+    const hidden = mockContinueCandidate({ visible: false, enabled: true });
+    const disabled = mockContinueCandidate({ visible: true, enabled: false });
+    installContinueRoleMatches(page, [hidden, disabled]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    // Unique visible-disabled (plus a hidden twin) still fails closed without a choice apply.
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_disabled"),
+    });
+    expect(hidden.click).not.toHaveBeenCalled();
+    expect(disabled.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the scraped actionable corpus lacks exactly one Continue", async () => {
+    const page = mockPage();
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [active]);
+
+    const missing = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Next"],
+      }
+    );
+    expect(missing).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
+    });
+    expect(active.click).not.toHaveBeenCalled();
+
+    const duplicateLabels = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue", "Continue"],
+      }
+    );
+    expect(duplicateLabels).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
+    });
+    expect(active.click).not.toHaveBeenCalled();
   });
 
   it("defers disabled Continue on /form/main after a successful choice apply", async () => {
@@ -1346,7 +1480,9 @@ describe("FTC bounded actions", () => {
 
   it("fails closed without clicking when the exact accessible target is not unique", async () => {
     const page = mockPage();
-    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(2);
+    const first = mockContinueCandidate({ visible: true, enabled: true });
+    const second = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [first, second]);
 
     const result = await applyOwnedFilingFormDecision(
       page,
@@ -1358,8 +1494,10 @@ describe("FTC bounded actions", () => {
       ok: false,
       blocked: true,
       reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
     });
-    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(first.click).not.toHaveBeenCalled();
+    expect(second.click).not.toHaveBeenCalled();
   });
 
   it("does not click a disabled exact Continue target", async () => {
