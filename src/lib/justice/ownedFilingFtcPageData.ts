@@ -28,6 +28,17 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
     }
     return sanitizeChoiceMetadata(element.textContent);
   };
+  const fieldLabel = (field: Element): string => {
+    const input = field as HTMLInputElement;
+    const fromLabels = sanitizeChoiceMetadata(
+      Array.from(input.labels ?? [])
+        .map((entry) => entry.innerText)
+        .join(" ")
+    );
+    if (fromLabels) return fromLabels;
+    // Verified FTC /form/main comments textarea uses aria-labelledby without a <label>.
+    return accessibleChoiceName(field as HTMLElement);
+  };
   const elementIsVisible = (element: HTMLElement): boolean => {
     if (element.hidden) return false;
     const style = window.getComputedStyle(element);
@@ -44,15 +55,16 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
 
   const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
     const input = field as HTMLInputElement;
-    const label = input.labels?.[0]?.innerText || "";
     const type = input.type || "";
+    const formControlName = sanitizeChoiceMetadata(field.getAttribute("formcontrolname"));
     return {
       tag: field.tagName.toLowerCase(),
       type,
       name: field.getAttribute("name") || "",
       id: input.id || "",
       placeholder: field.getAttribute("placeholder") || "",
-      label,
+      label: fieldLabel(field),
+      ...(formControlName ? { formControlName } : {}),
       ...(type === "radio" || type === "checkbox"
         ? { optionValue: input.value }
         : {}),
@@ -99,12 +111,20 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
   });
 
   const buttons = Array.from(
-    document.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
-      "button, input[type='submit']"
+    document.querySelectorAll<HTMLElement>(
+      // Verified FTC /form/main Continue is an <a role="button">, not a <button>.
+      "button, input[type='submit'], a[role='button']"
     )
   )
     .filter((button) => {
-      if (button.disabled || button.getAttribute("aria-disabled")?.toLowerCase() === "true") {
+      if (button.getAttribute("aria-disabled")?.toLowerCase() === "true") {
+        return false;
+      }
+      const tag = button.tagName.toLowerCase();
+      if (
+        (tag === "button" || tag === "input") &&
+        (button as HTMLButtonElement | HTMLInputElement).disabled
+      ) {
         return false;
       }
       return elementIsVisible(button);
@@ -113,10 +133,10 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
       text:
         button.tagName.toLowerCase() === "input"
           ? (button as HTMLInputElement).value.trim()
-          : button.textContent?.trim() || "",
+          : button.textContent?.replace(/\u00a0/g, " ").trim() || "",
       id: button.id || "",
       name: button.getAttribute("name") || "",
-      type: button.getAttribute("type") || "",
+      type: button.getAttribute("type") || button.getAttribute("role") || "",
     }));
 
   return {

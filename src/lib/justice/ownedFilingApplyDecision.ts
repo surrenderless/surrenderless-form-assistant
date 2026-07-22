@@ -5,7 +5,7 @@ import {
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
-  isFtcReportAssistantUrl,
+  isFtcReportChoiceFlowUrl,
   isFtcReportEntryUrl,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { classifyOwnedFilingClick } from "@/lib/justice/classifyOwnedFilingClick";
@@ -345,7 +345,7 @@ async function fillFields(
   for (const field of fieldsToFill) {
     if (options.enableFtcChoiceControls && field.controlKind) {
       if (
-        !isFtcReportAssistantUrl(options.currentPageUrl ?? "") ||
+        !isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "") ||
         !field.selector?.trim() ||
         !["radio", "checkbox", "choice"].includes(field.controlKind) ||
         !field.value?.trim()
@@ -426,7 +426,23 @@ async function fillFields(
     }
     if (!field.selector?.trim()) continue;
     try {
-      const selector = `input[name="${field.selector}"], input#${field.selector}, textarea[name="${field.selector}"], textarea#${field.selector}, select[name="${field.selector}"], select#${field.selector}`;
+      const key = field.selector.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const selector = [
+        `input[name="${key}"]`,
+        `input#${field.selector}`,
+        `textarea[name="${key}"]`,
+        `textarea#${field.selector}`,
+        `select[name="${key}"]`,
+        `select#${field.selector}`,
+        // Verified FTC /form/main Angular controls (e.g. comments) expose formcontrolname only.
+        ...(options.enableFtcChoiceControls
+          ? [
+              `textarea[formcontrolname="${key}"]`,
+              `input[formcontrolname="${key}"]`,
+              `select[formcontrolname="${key}"]`,
+            ]
+          : []),
+      ].join(", ");
       if (options.actionTimeoutMs === undefined) {
         await page.fill(selector, String(field.value ?? ""));
       } else {
@@ -479,13 +495,12 @@ async function clickNextButton(
         target = buttonCount === 1 ? buttonTarget : linkTarget;
       } else {
         let count = await buttonTarget.count();
-        // Verified FTC /assistant Continue buttons use a trailing NBSP in their accessible
-        // name ("Continue\u00a0"), so exact "Continue" matches zero. Non-exact name match
-        // resolves the unique visible Continue on that page.
+        // Verified FTC Continue CTAs use a trailing NBSP in their accessible name
+        // ("Continue\u00a0") on /assistant and /form/main (including <a role="button">).
         if (
           count === 0 &&
           decision.nextButton.value === "Continue" &&
-          isFtcReportAssistantUrl(options.currentPageUrl ?? "")
+          isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "")
         ) {
           target = page.getByRole("button", { name: "Continue" });
           count = await target.count();
@@ -618,12 +633,12 @@ export async function applyOwnedFilingFormDecision(
   if (risk === "safe") {
     const clickResult = await clickNextButton(page, decision, options);
     if (!clickResult.clicked && options.useExactTextButtonLocator) {
-      // Verified FTC /assistant: after a category choice, Continue stays uniquely visible but
-      // disabled until a subcategory is selected. Preserve the choice and let the loop re-scrape.
+      // Verified FTC choice-flow pages: after a required choice, Continue can stay uniquely
+      // visible but disabled until remaining required controls are set. Preserve progress.
       if (
         fieldsResult.choiceApplied &&
         clickResult.continueDisabled &&
-        isFtcReportAssistantUrl(options.currentPageUrl ?? "")
+        isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "")
       ) {
         return {
           ok: true,
