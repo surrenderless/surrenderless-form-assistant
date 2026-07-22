@@ -11,9 +11,11 @@ import {
   type AssistedFormPageData,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
+  buildFtcEntryReportNowDecision,
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
+  isFtcReportEntryUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
   type RealFtcSubmitStopReason,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
@@ -379,8 +381,13 @@ export async function runRealFtcBoundedSubmit(
         };
       }
 
-      const fetchDecision = () =>
-        fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
+      const fetchDecision = async () => {
+        // Official entry root only: skip decide-action and use the verified Report Now CTA.
+        if (isFtcReportEntryUrl(pageData.url)) {
+          return { ok: true as const, decision: buildFtcEntryReportNowDecision() };
+        }
+        return fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
+      };
       const decisionResult = await stageTiming.run(
         `decide_${iteration}`,
         fetchDecision,

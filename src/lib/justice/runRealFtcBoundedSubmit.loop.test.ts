@@ -83,9 +83,13 @@ vi.mock("@/lib/justice/ownedFilingApplyDecision", async (importOriginal) => {
   };
 });
 
+import { fetchOwnedFilingFtcFormDecision } from "@/lib/justice/ownedFilingFtcDecision";
+import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
 import { runRealFtcBoundedSubmit } from "@/lib/justice/runRealFtcBoundedSubmit";
 
 const SECRET = "SENSITIVE_CASE_SECRET";
+const mockedFetchDecision = vi.mocked(fetchOwnedFilingFtcFormDecision);
+const mockedApplyDecision = vi.mocked(applyOwnedFilingFormDecision);
 
 function pageData(url = "https://reportfraud.ftc.gov/#/form") {
   return { fields: [], buttons: [], url, pageText: "" };
@@ -115,6 +119,8 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     h.state.decideQueue = [];
     h.state.applyQueue = [];
     h.state.currentUrl = "https://reportfraud.ftc.gov/#/form";
+    mockedFetchDecision.mockClear();
+    mockedApplyDecision.mockClear();
     vi.unstubAllEnvs();
     // Supabase admin must construct; storage stays unconfigured so screenshots are skipped.
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://supabase.example");
@@ -283,5 +289,140 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     const persistedStepLog = formatOwnedFilingDryRunStepLog(result.fillResult.stepLog);
     expect(persistedStepLog).not.toContain(SECRET);
     expect(persistedStepLog).toContain("action_timeout|click|");
+  });
+
+  it("bypasses decide-action on the FTC entry URL and applies Report Now", async () => {
+    h.state.evaluateQueue = [
+      pageData("https://reportfraud.ftc.gov/"),
+      pageData("https://reportfraud.ftc.gov/assistant"),
+    ];
+    h.state.decideQueue = [decideContinue()];
+    h.state.applyQueue = [
+      { result: applyOk() },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "unknown",
+          buttonLabel: "text:Continue",
+          reason: "unknown_fail_closed",
+        },
+      },
+    ];
+    h.state.currentUrl = "https://reportfraud.ftc.gov/";
+
+    const result = await runRealFtcBoundedSubmit(runParams());
+
+    // Entry iteration skips decide-action; assistant iteration still uses it.
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
+      nextButton: { selectorType: "text", value: "Report Now" },
+      waitForNavigation: true,
+    });
+    expect(mockedApplyDecision.mock.calls[0]?.[2]).toMatchObject({
+      currentPageUrl: "https://reportfraud.ftc.gov/",
+      mode: "dry_run",
+    });
+    expect(mockedApplyDecision.mock.calls[1]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "Continue" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete after second step");
+    expect(result.stepsExecuted).toBe(1);
+    expect(result.fillResult.stepLog.find((e) => e.action === "decide")?.detail).toBe(
+      "text:Report Now"
+    );
+    expect(result.fillResult.stepLog.find((e) => e.action === "apply")?.detail).toBe(
+      "text:Report Now"
+    );
+  });
+
+  it.each([
+    ["assistant", "https://reportfraud.ftc.gov/assistant"],
+    ["form/main", "https://reportfraud.ftc.gov/form/main"],
+  ] as const)("still calls decide-action on FTC %s", async (_name, url) => {
+    h.state.evaluateQueue = [pageData(url), pageData(url)];
+    h.state.decideQueue = [
+      decideContinue(),
+      {
+        ok: false,
+        stopReason: "decide_action_failed",
+        detail: "decide-action failed (500)",
+      },
+    ];
+    h.state.applyQueue = [{ result: applyOk() }];
+
+    const result = await runRealFtcBoundedSubmit(runParams());
+
+    expect(mockedFetchDecision).toHaveBeenCalled();
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "Continue" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stepsExecuted).toBe(1);
+  });
+
+  it("does not inject Report Now for a non-FTC URL pageData", async () => {
+    h.state.evaluateQueue = [pageData("https://example.com/")];
+    h.state.decideQueue = [decideContinue()];
+    h.state.applyQueue = [
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "unknown",
+          buttonLabel: "text:Continue",
+          reason: "unknown_fail_closed",
+        },
+      },
+    ];
+
+    await runRealFtcBoundedSubmit(runParams());
+
+    expect(mockedFetchDecision).toHaveBeenCalled();
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "Continue" },
+    });
+    expect(JSON.stringify(mockedApplyDecision.mock.calls[0]?.[1])).not.toContain("Report Now");
+  });
+
+  it("keeps dry-run Submit blocking after the entry Report Now bypass", async () => {
+    h.state.evaluateQueue = [
+      pageData("https://reportfraud.ftc.gov/"),
+      pageData("https://reportfraud.ftc.gov/assistant"),
+    ];
+    h.state.decideQueue = [
+      {
+        ok: true,
+        decision: { nextButton: { selectorType: "text", value: "Submit complaint" } },
+      },
+    ];
+    h.state.applyQueue = [
+      { result: applyOk() },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit complaint",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealFtcBoundedSubmit(runParams());
+
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toMatchObject({
+      nextButton: { value: "Report Now" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(1);
   });
 });

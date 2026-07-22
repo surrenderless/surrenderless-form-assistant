@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFtcEntryReportNowDecision,
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
@@ -41,6 +42,15 @@ describe("isFtcReportEntryUrl", () => {
     expect(isFtcReportEntryUrl("https://reportfraud.ftc.gov/?source=test")).toBe(false);
     expect(isFtcReportEntryUrl("https://example.com/")).toBe(false);
     expect(isFtcReportEntryUrl("http://reportfraud.ftc.gov/")).toBe(false);
+  });
+});
+
+describe("buildFtcEntryReportNowDecision", () => {
+  it("returns the fixed Report Now decision used on the entry root", () => {
+    expect(buildFtcEntryReportNowDecision()).toEqual({
+      nextButton: { selectorType: "text", value: "Report Now" },
+      waitForNavigation: true,
+    });
   });
 });
 

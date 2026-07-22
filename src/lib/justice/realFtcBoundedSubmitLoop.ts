@@ -1,5 +1,6 @@
 import type {
   AssistedFormPageData,
+  FormDecision,
   RealBbbSubmitStopReason,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
@@ -94,6 +95,17 @@ export function isFtcReportFormMainUrl(url: string): boolean {
  */
 export function isFtcReportChoiceFlowUrl(url: string): boolean {
   return isFtcReportAssistantUrl(url) || isFtcReportFormMainUrl(url);
+}
+
+/**
+ * Deterministic first action on the official ReportFraud entry root only.
+ * Bypasses decide-action; apply still enforces the entry-URL Report Now gate.
+ */
+export function buildFtcEntryReportNowDecision(): FormDecision {
+  return {
+    nextButton: { selectorType: "text", value: "Report Now" },
+    waitForNavigation: true,
+  };
 }
 
 function hasConfirmationLikeFtcUrlPath(url: string): boolean {
