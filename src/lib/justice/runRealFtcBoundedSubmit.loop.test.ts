@@ -232,7 +232,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
   it("persists only sanitized exact-target diagnostics before failing closed", async () => {
     h.state.evaluateQueue = [
       {
-        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        ...pageData("https://reportfraud.ftc.gov/form/main"),
         buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
       },
     ];
@@ -294,9 +294,23 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
   it("bypasses decide-action on the FTC entry URL and applies Report Now", async () => {
     h.state.evaluateQueue = [
       pageData("https://reportfraud.ftc.gov/"),
-      pageData("https://reportfraud.ftc.gov/assistant"),
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "category",
+            id: "cat-radio-2",
+            optionValue: "Online shopping",
+            accessibleName: "Online shopping",
+            visible: false,
+            enabled: true,
+          },
+        ],
+      },
     ];
-    h.state.decideQueue = [decideContinue()];
+    h.state.decideQueue = [];
     h.state.applyQueue = [
       { result: applyOk() },
       {
@@ -311,21 +325,27 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     ];
     h.state.currentUrl = "https://reportfraud.ftc.gov/";
 
-    const result = await runRealFtcBoundedSubmit(runParams());
+    const result = await runRealFtcBoundedSubmit(
+      runParams({ issue_type: "online purchase" })
+    );
 
-    // Entry iteration skips decide-action; assistant iteration still uses it.
-    expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
+    // Entry and assistant both skip decide-action.
+    expect(mockedFetchDecision).not.toHaveBeenCalled();
     expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
       nextButton: { selectorType: "text", value: "Report Now" },
       waitForNavigation: true,
     });
-    expect(mockedApplyDecision.mock.calls[0]?.[2]).toMatchObject({
-      currentPageUrl: "https://reportfraud.ftc.gov/",
-      mode: "dry_run",
-    });
     expect(mockedApplyDecision.mock.calls[1]?.[1]).toEqual({
-      fieldsToFill: [],
+      fieldsToFill: [
+        {
+          selector: "cat-radio-2",
+          value: "Online shopping",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
       nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected incomplete after second step");
@@ -333,16 +353,96 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(result.fillResult.stepLog.find((e) => e.action === "decide")?.detail).toBe(
       "text:Report Now"
     );
-    expect(result.fillResult.stepLog.find((e) => e.action === "apply")?.detail).toBe(
-      "text:Report Now"
-    );
   });
 
-  it.each([
-    ["assistant", "https://reportfraud.ftc.gov/assistant"],
-    ["form/main", "https://reportfraud.ftc.gov/form/main"],
-  ] as const)("still calls decide-action on FTC %s", async (_name, url) => {
-    h.state.evaluateQueue = [pageData(url), pageData(url)];
+  it("bypasses decide-action on /assistant and applies the matched choice", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "category",
+            id: "cat-radio-11",
+            optionValue: "Something else",
+            accessibleName: "Something else",
+            visible: false,
+            enabled: true,
+          },
+        ],
+      },
+      pageData("https://reportfraud.ftc.gov/form/main"),
+    ];
+    h.state.decideQueue = [
+      {
+        ok: false,
+        stopReason: "decide_action_failed",
+        detail: "decide-action failed (500)",
+      },
+    ];
+    h.state.applyQueue = [{ result: applyOk() }];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({ issue_type: "something else" })
+    );
+
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toMatchObject({
+      fieldsToFill: [
+        {
+          selector: "cat-radio-11",
+          value: "Something else",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stepsExecuted).toBe(1);
+    expect(result.stopReason).toBe("decide_action_failed");
+  });
+
+  it("fails closed on /assistant when no unique choice matches issue_type", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "category",
+            id: "cat-radio-2",
+            optionValue: "Online shopping",
+            accessibleName: "Online shopping",
+            visible: false,
+            enabled: true,
+          },
+        ],
+      },
+    ];
+    h.state.decideQueue = [decideContinue()];
+    h.state.applyQueue = [{ result: applyOk() }];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({ issue_type: "charge dispute" })
+    );
+
+    expect(mockedFetchDecision).not.toHaveBeenCalled();
+    expect(mockedApplyDecision).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stopReason).toBe("invalid_decision");
+    expect(result.stepsExecuted).toBe(0);
+  });
+
+  it("still calls decide-action on FTC form/main", async () => {
+    h.state.evaluateQueue = [
+      pageData("https://reportfraud.ftc.gov/form/main"),
+      pageData("https://reportfraud.ftc.gov/form/main"),
+    ];
     h.state.decideQueue = [
       decideContinue(),
       {
@@ -390,10 +490,25 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(JSON.stringify(mockedApplyDecision.mock.calls[0]?.[1])).not.toContain("Report Now");
   });
 
-  it("keeps dry-run Submit blocking after the entry Report Now bypass", async () => {
+  it("keeps dry-run Submit blocking after entry and assistant deterministic steps", async () => {
     h.state.evaluateQueue = [
       pageData("https://reportfraud.ftc.gov/"),
-      pageData("https://reportfraud.ftc.gov/assistant"),
+      {
+        ...pageData("https://reportfraud.ftc.gov/assistant"),
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "category",
+            id: "cat-radio-2",
+            optionValue: "Online shopping",
+            accessibleName: "Online shopping",
+            visible: false,
+            enabled: true,
+          },
+        ],
+      },
+      pageData("https://reportfraud.ftc.gov/form/main"),
     ];
     h.state.decideQueue = [
       {
@@ -402,6 +517,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       },
     ];
     h.state.applyQueue = [
+      { result: applyOk() },
       { result: applyOk() },
       {
         result: {
@@ -414,15 +530,20 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       },
     ];
 
-    const result = await runRealFtcBoundedSubmit(runParams());
+    const result = await runRealFtcBoundedSubmit(
+      runParams({ issue_type: "online purchase" })
+    );
 
     expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
     expect(mockedApplyDecision.mock.calls[0]?.[1]).toMatchObject({
       nextButton: { value: "Report Now" },
     });
+    expect(mockedApplyDecision.mock.calls[1]?.[1]).toMatchObject({
+      fieldsToFill: [{ selector: "cat-radio-2", controlKind: "radio" }],
+    });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected incomplete");
     expect(result.stopReason).toBe("blocked_irreversible_click");
-    expect(result.stepsExecuted).toBe(1);
+    expect(result.stepsExecuted).toBe(2);
   });
 });

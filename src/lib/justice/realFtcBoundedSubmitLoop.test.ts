@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFtcAssistantChoiceDecision,
   buildFtcEntryReportNowDecision,
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
@@ -10,7 +11,11 @@ import {
   isFtcReportFormMainUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
-import { REAL_BBB_MAX_SUBMIT_STEPS, hasReachedStepCap } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import {
+  REAL_BBB_MAX_SUBMIT_STEPS,
+  hasReachedStepCap,
+  type AssistedFormChoiceControl,
+} from "@/lib/justice/realBbbBoundedSubmitLoop";
 import type { AssistedFormPageData } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 function pageData(partial: Partial<AssistedFormPageData>): AssistedFormPageData {
@@ -20,6 +25,22 @@ function pageData(partial: Partial<AssistedFormPageData>): AssistedFormPageData 
     url: "https://reportfraud.ftc.gov/",
     pageText: "",
     ...partial,
+  };
+}
+
+function choice(
+  overrides: Partial<AssistedFormChoiceControl> = {}
+): AssistedFormChoiceControl {
+  return {
+    source: "native",
+    kind: "radio",
+    name: "category",
+    id: "cat-radio-2",
+    optionValue: "Online shopping",
+    accessibleName: "Online shopping",
+    visible: false,
+    enabled: true,
+    ...overrides,
   };
 }
 
@@ -51,6 +72,131 @@ describe("buildFtcEntryReportNowDecision", () => {
       nextButton: { selectorType: "text", value: "Report Now" },
       waitForNavigation: true,
     });
+  });
+});
+
+describe("buildFtcAssistantChoiceDecision", () => {
+  const assistantUrl = "https://reportfraud.ftc.gov/assistant";
+
+  it("matches a scraped category by normalized issue_type", () => {
+    const decision = buildFtcAssistantChoiceDecision(
+      pageData({
+        url: assistantUrl,
+        choiceControls: [
+          choice({
+            id: "cat-radio-11",
+            optionValue: "Something else",
+            accessibleName: "Something else",
+          }),
+        ],
+      }),
+      { issue_type: "something else" }
+    );
+    expect(decision).toEqual({
+      fieldsToFill: [
+        {
+          selector: "cat-radio-11",
+          value: "Something else",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    });
+  });
+
+  it("maps online_purchase / online purchase to Online shopping", () => {
+    const decision = buildFtcAssistantChoiceDecision(
+      pageData({
+        url: assistantUrl,
+        choiceControls: [choice()],
+      }),
+      { issue_type: "online purchase" }
+    );
+    expect(decision?.fieldsToFill?.[0]).toEqual({
+      selector: "cat-radio-2",
+      value: "Online shopping",
+      controlKind: "radio",
+      choiceSelectorType: "id",
+    });
+  });
+
+  it("maps something_else alias to Something else", () => {
+    const decision = buildFtcAssistantChoiceDecision(
+      pageData({
+        url: assistantUrl,
+        choiceControls: [
+          choice({
+            id: "cat-radio-11",
+            optionValue: "Something else",
+            accessibleName: "Something else",
+          }),
+        ],
+      }),
+      { issue_type: "something_else" }
+    );
+    expect(decision?.fieldsToFill?.[0]?.selector).toBe("cat-radio-11");
+  });
+
+  it("returns null when no enabled radio matches", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: assistantUrl,
+          choiceControls: [choice()],
+        }),
+        { issue_type: "charge dispute" }
+      )
+    ).toBeNull();
+  });
+
+  it("returns null when multiple enabled radios match ambiguously", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: assistantUrl,
+          choiceControls: [
+            choice({ id: "cat-radio-2a" }),
+            choice({ id: "cat-radio-2b" }),
+          ],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+
+  it("ignores disabled matching radios", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: assistantUrl,
+          choiceControls: [choice({ enabled: false })],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for non-assistant URLs", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: "https://reportfraud.ftc.gov/form/main",
+          choiceControls: [choice()],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: "https://reportfraud.ftc.gov/",
+          choiceControls: [choice()],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
   });
 });
 
