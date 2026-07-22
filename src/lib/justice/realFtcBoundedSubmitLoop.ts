@@ -78,6 +78,24 @@ export function isFtcReportAssistantUrl(url: string): boolean {
   }
 }
 
+/** True only for the official HTTPS ReportFraud main form path. */
+export function isFtcReportFormMainUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return isOfficialFtcHttpsUrl(u) && u.pathname.replace(/\/$/, "") === "/form/main";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Official FTC pages where exact choice-control selection is enabled (assistant wizard and
+ * the main report form).
+ */
+export function isFtcReportChoiceFlowUrl(url: string): boolean {
+  return isFtcReportAssistantUrl(url) || isFtcReportFormMainUrl(url);
+}
+
 function hasConfirmationLikeFtcUrlPath(url: string): boolean {
   if (!isFtcReportHost(url) || isFtcReportEntryUrl(url)) {
     return false;

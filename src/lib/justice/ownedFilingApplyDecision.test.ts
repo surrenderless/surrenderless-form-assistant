@@ -482,6 +482,107 @@ describe("FTC bounded actions", () => {
     expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
   });
 
+  it("selects verified /form/main yes/no radios and advances Continue via role=button soft match", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.count).mockResolvedValue(0);
+    const nbspContinue = {
+      count: vi.fn(async () => 1),
+      isVisible: vi.fn(async () => true),
+      isEnabled: vi.fn(async () => true),
+      click: vi.fn(async () => undefined),
+    } as unknown as Locator;
+    vi.mocked(page.getByRole).mockImplementation((role, opts) => {
+      if (role === "link") return page.exactLinkLocator;
+      if (role === "button" && opts && "exact" in opts && opts.exact === true) {
+        return page.exactButtonLocator;
+      }
+      if (role === "button") return nbspContinue;
+      return page.exactButtonLocator;
+    });
+
+    const formMainControl: AssistedFormChoiceControl = {
+      source: "native",
+      kind: "radio",
+      name: "yesOrNoMoney",
+      id: "yes-or-no-money-no",
+      optionValue: "no",
+      accessibleName: "No",
+      visible: true,
+      enabled: true,
+    };
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "yesOrNoMoney",
+            value: "no",
+            controlKind: "radio",
+            choiceSelectorType: "name",
+          },
+          { selector: "comments", value: "Merchant refused a refund after a defective product." },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        choiceControls: [formMainControl],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.locator).toHaveBeenCalled();
+    expect(page.choiceLocator.check).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(page.fill).toHaveBeenCalledWith(
+      expect.stringContaining('textarea[formcontrolname="comments"]'),
+      "Merchant refused a refund after a defective product.",
+      { timeout: 20_000 }
+    );
+    expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("defers disabled Continue on /form/main after a successful choice apply", async () => {
+    const page = mockPage();
+    vi.mocked(page.exactButtonLocator.isEnabled).mockResolvedValue(false);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "yesOrNoMoney",
+            value: "no",
+            controlKind: "radio",
+            choiceSelectorType: "name",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "yesOrNoMoney",
+            id: "yes-or-no-money-no",
+            optionValue: "no",
+            accessibleName: "No",
+            visible: true,
+            enabled: true,
+          },
+        ],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: false, risk: "safe" });
+    expect(page.choiceLocator.check).toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["ambiguous", 2, true, true],
     ["hidden", 1, false, true],
@@ -721,10 +822,10 @@ describe("FTC bounded actions", () => {
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
   });
 
-  it("does not enable choice controls outside the official FTC assistant page", async () => {
+  it("does not enable choice controls outside official FTC choice-flow pages", async () => {
     const page = mockPage();
 
-    const result = await applyOwnedFilingFormDecision(
+    const offHost = await applyOwnedFilingFormDecision(
       page,
       {
         fieldsToFill: [{ selector: "category", value: "fraud", controlKind: "radio" }],
@@ -732,14 +833,51 @@ describe("FTC bounded actions", () => {
       },
       { ...ftcOptions, currentPageUrl: "https://example.com/assistant" }
     );
-
-    expect(result).toMatchObject({
+    expect(offHost).toMatchObject({
       ok: false,
       blocked: true,
       reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("target=choice,count=0"),
     });
+
+    const entryOnly = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "yesOrNoMoney", value: "no", controlKind: "radio" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      { ...ftcOptions, currentPageUrl: "https://reportfraud.ftc.gov/" }
+    );
+    expect(entryOnly).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("target=choice,count=0"),
+    });
+
     expect(page.locator).not.toHaveBeenCalled();
     expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("does not fill Angular formcontrolname selectors for BBB", async () => {
+    const page = mockPage();
+
+    await expect(
+      applyOwnedFilingFormDecision(
+        page,
+        {
+          fieldsToFill: [{ selector: "comments", value: "BBB story" }],
+          nextButton: { selectorType: "text", value: "Continue" },
+        },
+        { mode: "dry_run", logPrefix: "real-bbb-submit" }
+      )
+    ).resolves.toMatchObject({ ok: true, clicked: true });
+
+    expect(page.fill).toHaveBeenCalledWith(
+      expect.not.stringContaining("formcontrolname"),
+      "BBB story"
+    );
+    expect(page.click).toHaveBeenCalledWith('button:has-text("Continue")');
   });
 
   it("bounds a stuck FTC choice check and attributes it to check", async () => {

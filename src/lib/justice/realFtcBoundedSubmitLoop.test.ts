@@ -4,7 +4,9 @@ import {
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
   isFtcReportAssistantUrl,
+  isFtcReportChoiceFlowUrl,
   isFtcReportEntryUrl,
+  isFtcReportFormMainUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { REAL_BBB_MAX_SUBMIT_STEPS, hasReachedStepCap } from "@/lib/justice/realBbbBoundedSubmitLoop";
@@ -49,6 +51,18 @@ describe("isFtcReportAssistantUrl", () => {
     expect(isFtcReportAssistantUrl("https://reportfraud.ftc.gov/")).toBe(false);
     expect(isFtcReportAssistantUrl("https://example.com/assistant")).toBe(false);
     expect(isFtcReportAssistantUrl("http://reportfraud.ftc.gov/assistant")).toBe(false);
+  });
+});
+
+describe("isFtcReportFormMainUrl / isFtcReportChoiceFlowUrl", () => {
+  it("accepts only the official HTTPS form main path and choice-flow union", () => {
+    expect(isFtcReportFormMainUrl("https://reportfraud.ftc.gov/form/main")).toBe(true);
+    expect(isFtcReportFormMainUrl("https://reportfraud.ftc.gov/form/main?x=1")).toBe(true);
+    expect(isFtcReportFormMainUrl("https://reportfraud.ftc.gov/assistant")).toBe(false);
+    expect(isFtcReportFormMainUrl("https://example.com/form/main")).toBe(false);
+    expect(isFtcReportChoiceFlowUrl("https://reportfraud.ftc.gov/form/main")).toBe(true);
+    expect(isFtcReportChoiceFlowUrl("https://reportfraud.ftc.gov/assistant")).toBe(true);
+    expect(isFtcReportChoiceFlowUrl("https://reportfraud.ftc.gov/")).toBe(false);
   });
 });
 

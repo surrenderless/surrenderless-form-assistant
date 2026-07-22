@@ -59,7 +59,11 @@ function button(
   };
 }
 
-function installDom(buttons: FakeElement[], choiceFields: FakeElement[] = []): void {
+function installDom(
+  buttons: FakeElement[],
+  choiceFields: FakeElement[] = [],
+  extraFields: FakeElement[] = []
+): void {
   const secretField: FakeElement = {
     tagName: "INPUT",
     textContent: "",
@@ -82,16 +86,21 @@ function installDom(buttons: FakeElement[], choiceFields: FakeElement[] = []): v
   };
   vi.stubGlobal("document", {
     querySelectorAll(selector: string) {
-      if (selector === "button, input[type='submit']") return buttons;
+      if (selector === "button, input[type='submit'], a[role='button']") return buttons;
       if (
         selector ===
         "input[type='radio'], input[type='checkbox'], [role='radio'], [role='checkbox']"
       ) {
         return choiceFields;
       }
-      return [secretField, ...choiceFields.filter((field) => field.tagName === "INPUT")];
+      return [secretField, ...extraFields, ...choiceFields.filter((field) => field.tagName === "INPUT")];
     },
-    getElementById: () => null,
+    getElementById: (id: string) => {
+      if (id === "commentsLabel") {
+        return { textContent: "Please describe what happened." };
+      }
+      return null;
+    },
     body: { innerText: "FTC assistant" },
   });
   vi.stubGlobal("window", {
@@ -281,5 +290,81 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
     ]);
     expect(JSON.stringify(result.choiceControls)).not.toContain("Ignored broad text");
     expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  it("scrapes verified /form/main comments formControlName and aria-labelledby label", () => {
+    const comments: FakeElement = {
+      tagName: "TEXTAREA",
+      textContent: "",
+      id: "",
+      disabled: false,
+      hidden: false,
+      value: SECRET,
+      type: "textarea",
+      labels: [],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "formcontrolname") return "comments";
+        if (name === "aria-labelledby") return "commentsLabel";
+        if (name === "name" || name === "placeholder") return null;
+        return null;
+      },
+      hasAttribute(name: string) {
+        return name === "formcontrolname" || name === "aria-labelledby";
+      },
+      getBoundingClientRect: () => ({ width: 400, height: 120 }),
+    };
+    installDom([], [], [comments]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+    const commentsField = result.fields.find((field) => field.formControlName === "comments");
+
+    expect(commentsField).toEqual({
+      tag: "textarea",
+      type: "textarea",
+      name: "",
+      id: "",
+      placeholder: "",
+      label: "Please describe what happened.",
+      formControlName: "comments",
+    });
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  it("includes visible a[role=button] Continue and normalizes trailing NBSP text", () => {
+    const continueLink: FakeElement = {
+      tagName: "A",
+      textContent: "Continue\u00a0",
+      id: "",
+      disabled: false,
+      hidden: false,
+      value: "",
+      type: "",
+      labels: [],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "role") return "button";
+        if (name === "aria-disabled") return null;
+        if (name === "type" || name === "name") return null;
+        return null;
+      },
+      hasAttribute() {
+        return false;
+      },
+      getBoundingClientRect: () => ({ width: 183, height: 54 }),
+    };
+    const zeroSizeModalContinue = button("Continue", { width: 0, height: 0 });
+    installDom([zeroSizeModalContinue, continueLink]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+
+    expect(result.buttons).toEqual([
+      {
+        text: "Continue",
+        id: "",
+        name: "",
+        type: "button",
+      },
+    ]);
   });
 });

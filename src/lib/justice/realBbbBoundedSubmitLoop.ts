@@ -53,6 +53,8 @@ export type AssistedFormPageData = {
     id: string;
     placeholder: string;
     label: string;
+    /** Angular formControlName when name/id are absent (FTC /form/main). */
+    formControlName?: string;
     /** Non-user option value exposed only for radio/checkbox choice controls. */
     optionValue?: string;
   }>;
