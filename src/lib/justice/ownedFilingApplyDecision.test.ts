@@ -14,9 +14,19 @@ type MockPage = Page & {
   exactLinkLocator: Locator;
   choiceLocator: Locator;
   labelLocator: Locator;
+  fillFieldLocator: Locator;
+  fillMatchLocator: Locator;
 };
 
-function mockPage(): MockPage {
+type FillMatchOptions = {
+  count?: number;
+  tag?: string;
+  type?: string;
+  visible?: boolean;
+  enabled?: boolean;
+};
+
+function mockPage(fillMatch: FillMatchOptions = {}): MockPage {
   const exactButtonLocator = {
     count: vi.fn(async () => 1),
     isVisible: vi.fn(async () => true),
@@ -45,16 +55,48 @@ function mockPage(): MockPage {
     getAttribute: vi.fn(async () => "false"),
     locator: vi.fn(() => labelLocator),
   } as unknown as Locator;
+  const fillMatchLocator = {
+    evaluate: vi.fn(async (fn: (el: { tagName: string; type: string }) => string) =>
+      fn({
+        tagName: fillMatch.tag ?? "TEXTAREA",
+        type: fillMatch.type ?? "textarea",
+      })
+    ),
+    isVisible: vi.fn(async () => fillMatch.visible ?? true),
+    isEnabled: vi.fn(async () => fillMatch.enabled ?? true),
+    fill: vi.fn(async () => undefined),
+    selectOption: vi.fn(async () => [] as string[]),
+  } as unknown as Locator;
+  const fillFieldLocator = {
+    count: vi.fn(async () => fillMatch.count ?? 1),
+    nth: vi.fn(() => fillMatchLocator),
+    fill: vi.fn(async () => undefined),
+    selectOption: vi.fn(async () => [] as string[]),
+  } as unknown as Locator;
   return {
     fill: vi.fn(async () => undefined),
     click: vi.fn(async () => undefined),
     waitForNavigation: vi.fn(async () => undefined),
     getByRole: vi.fn((role) => (role === "link" ? exactLinkLocator : exactButtonLocator)),
-    locator: vi.fn(() => choiceLocator),
+    locator: vi.fn((selector: string) => {
+      if (
+        /formcontrolname=|input\[name=|textarea\[name=|select\[name=|input#|textarea#|select#/.test(
+          selector
+        ) &&
+        !/type=["']radio["']|type=["']checkbox["']|role=["']radio["']|role=["']checkbox["']/.test(
+          selector
+        )
+      ) {
+        return fillFieldLocator;
+      }
+      return choiceLocator;
+    }),
     exactButtonLocator,
     exactLinkLocator,
     choiceLocator,
     labelLocator,
+    fillFieldLocator,
+    fillMatchLocator,
   } as unknown as MockPage;
 }
 
@@ -203,11 +245,11 @@ describe("FTC bounded actions", () => {
     vi.useRealTimers();
   });
 
-  it("fails a stuck fill at 20 seconds without exposing its value", async () => {
+  it("fails a stuck visible fill at 20 seconds without exposing its value", async () => {
     vi.useFakeTimers();
-    const page = mockPage();
-    vi.mocked(page.fill).mockImplementation(
-      (_selector, _value, options) =>
+    const page = mockPage({ tag: "INPUT", type: "text", visible: true, enabled: true });
+    vi.mocked(page.fillMatchLocator.fill).mockImplementation(
+      (_value, options) =>
         new Promise<void>((_resolve, reject) => {
           setTimeout(() => {
             reject(Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" }));
@@ -227,14 +269,151 @@ describe("FTC bounded actions", () => {
     );
     await vi.advanceTimersByTimeAsync(OWNED_FILING_FTC_ACTION_TIMEOUT_MS);
     await assertion;
-    expect(page.fill).toHaveBeenCalledWith(
-      expect.any(String),
-      "private@example.com",
-      { timeout: 20_000 }
-    );
+    expect(page.fillMatchLocator.fill).toHaveBeenCalledWith("private@example.com", {
+      timeout: 20_000,
+    });
+    expect(page.fill).not.toHaveBeenCalled();
     await pending.catch((err: Error) => {
       expect(err.message).not.toContain("private@example.com");
     });
+  });
+
+  it("fills the verified unique visible /form/main comments textarea via formcontrolname", async () => {
+    const page = mockPage({ tag: "TEXTAREA", type: "textarea", visible: true, enabled: true });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          { selector: "comments", value: "SENSITIVE_CASE_STORY_VALUE" },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.locator).toHaveBeenCalledWith(
+      expect.stringContaining('textarea[formcontrolname="comments"]')
+    );
+    expect(page.fillMatchLocator.fill).toHaveBeenCalledWith("SENSITIVE_CASE_STORY_VALUE", {
+      timeout: 20_000,
+    });
+    expect(page.fill).not.toHaveBeenCalled();
+  });
+
+  it("selects a verified unique visible /form/main select via selectOption", async () => {
+    const page = mockPage({ tag: "SELECT", type: "select-one", visible: true, enabled: true });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "paymentType", value: "credit" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true });
+    expect(page.fillMatchLocator.selectOption).toHaveBeenCalledWith("credit", {
+      timeout: 20_000,
+    });
+    expect(page.fill).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before waiting when /form/main fill matches are hidden duplicates", async () => {
+    const page = mockPage({
+      count: 2,
+      tag: "INPUT",
+      type: "text",
+      visible: false,
+      enabled: true,
+    });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "email", value: "private@example.com" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic:
+        "target=fill,selector=email,control=text,count=2,visible=false,enabled=true,phase=hidden,labels=Continue",
+    });
+    expect(result.diagnostic).not.toContain("private@example.com");
+    expect(page.fillMatchLocator.fill).not.toHaveBeenCalled();
+    expect(page.fill).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when fill targets a radio without controlKind", async () => {
+    const page = mockPage({ tag: "INPUT", type: "radio", visible: true, enabled: true });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "yesOrNoMoney", value: "no" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      diagnostic: expect.stringContaining("target=fill,selector=yesOrNoMoney,control=radio"),
+    });
+    expect(result.diagnostic).toContain("phase=unsupported");
+    expect(page.fillMatchLocator.fill).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when multiple visible fill matches are ambiguous", async () => {
+    const page = mockPage({
+      count: 2,
+      tag: "INPUT",
+      type: "text",
+      visible: true,
+      enabled: true,
+    });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "name", value: "SENSITIVE_NAME" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      diagnostic: expect.stringContaining("phase=ambiguous"),
+    });
+    expect(result.diagnostic).not.toContain("SENSITIVE_NAME");
+    expect(page.fillMatchLocator.fill).not.toHaveBeenCalled();
   });
 
   it.each(["radio", "checkbox"] as const)(
@@ -535,11 +714,11 @@ describe("FTC bounded actions", () => {
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
     expect(page.locator).toHaveBeenCalled();
     expect(page.choiceLocator.check).toHaveBeenCalledWith({ timeout: 20_000 });
-    expect(page.fill).toHaveBeenCalledWith(
-      expect.stringContaining('textarea[formcontrolname="comments"]'),
+    expect(page.fillMatchLocator.fill).toHaveBeenCalledWith(
       "Merchant refused a refund after a defective product.",
       { timeout: 20_000 }
     );
+    expect(page.fill).not.toHaveBeenCalled();
     expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
   });
 

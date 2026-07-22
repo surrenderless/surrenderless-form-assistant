@@ -22,7 +22,10 @@ export type OwnedFilingApplyDecisionResult =
       risk: "irreversible" | "unknown";
       buttonLabel: string;
       reason: "dry_run_stop" | "unarmed_live" | "unknown_fail_closed";
-      /** Sanitized target state only; never selectors, field values, user data, or page text. */
+      /**
+       * Sanitized target state only. May include a structural field selector key and control
+       * type for fill failures; never field values, user data, or page text.
+       */
       diagnostic?: string;
     };
 
@@ -122,6 +125,213 @@ function targetDiagnostic(
     ...(phase ? [`phase=${phase}`] : []),
     `labels=${sanitizedActionableLabels(options)}`,
   ].join(",");
+}
+
+function sanitizeFillSelectorKey(selector: string): string {
+  return selector.replace(/[|;,=]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "none";
+}
+
+function fillTargetDiagnostic(
+  selector: string,
+  control: string,
+  count: number,
+  visible: boolean | null,
+  enabled: boolean | null,
+  options: ApplyDecisionOptions,
+  phase:
+    | "missing"
+    | "hidden"
+    | "ambiguous"
+    | "unsupported"
+    | "disabled"
+    | "fill_rejected"
+): string {
+  return [
+    "target=fill",
+    `selector=${sanitizeFillSelectorKey(selector)}`,
+    `control=${control}`,
+    `count=${count}`,
+    `visible=${visible === null ? "na" : String(visible)}`,
+    `enabled=${enabled === null ? "na" : String(enabled)}`,
+    `phase=${phase}`,
+    `labels=${sanitizedActionableLabels(options)}`,
+  ].join(",");
+}
+
+function buildOwnedFilingFillSelector(
+  fieldSelector: string,
+  includeFormControlName: boolean
+): string {
+  const key = fieldSelector.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return [
+    `input[name="${key}"]`,
+    `input#${fieldSelector}`,
+    `textarea[name="${key}"]`,
+    `textarea#${fieldSelector}`,
+    `select[name="${key}"]`,
+    `select#${fieldSelector}`,
+    ...(includeFormControlName
+      ? [
+          `textarea[formcontrolname="${key}"]`,
+          `input[formcontrolname="${key}"]`,
+          `select[formcontrolname="${key}"]`,
+        ]
+      : []),
+  ].join(", ");
+}
+
+type FtcFillControlKind = "text" | "textarea" | "select" | "radio" | "checkbox" | "other";
+
+type FtcFillMatch = {
+  locator: Locator;
+  control: FtcFillControlKind;
+  visible: boolean;
+  enabled: boolean;
+};
+
+function classifyFtcFillControl(tag: string, inputType: string): FtcFillControlKind {
+  const type = inputType.toLowerCase();
+  if (tag === "textarea") return "textarea";
+  if (tag === "select") return "select";
+  if (tag === "input") {
+    if (type === "radio") return "radio";
+    if (type === "checkbox") return "checkbox";
+    if (
+      type === "" ||
+      type === "text" ||
+      type === "email" ||
+      type === "tel" ||
+      type === "number" ||
+      type === "search" ||
+      type === "url" ||
+      type === "password" ||
+      type === "date" ||
+      type === "datetime-local" ||
+      type === "month" ||
+      type === "week" ||
+      type === "time"
+    ) {
+      return "text";
+    }
+  }
+  return "other";
+}
+
+/**
+ * Verified FTC /form/main: company contact fields (email/address/phone/country/…) exist as
+ * duplicate hidden Angular controls. Blind page.fill waits the full action timeout on them.
+ * Resolve only a unique visible text/textarea/select before acting.
+ */
+async function resolveFtcFillTarget(
+  page: Page,
+  fieldSelector: string,
+  options: ApplyDecisionOptions
+): Promise<
+  | { ok: true; kind: "text" | "select"; locator: Locator; control: FtcFillControlKind }
+  | { ok: false; diagnostic: string }
+> {
+  const combined = buildOwnedFilingFillSelector(fieldSelector, true);
+  const root = page.locator(combined);
+  const count = await root.count();
+  if (count === 0) {
+    return {
+      ok: false,
+      diagnostic: fillTargetDiagnostic(fieldSelector, "none", 0, null, null, options, "missing"),
+    };
+  }
+
+  const matches: FtcFillMatch[] = [];
+  for (let i = 0; i < count; i++) {
+    const locator = root.nth(i);
+    const [tag, inputType, visible, enabled] = await Promise.all([
+      locator.evaluate((el) => el.tagName.toLowerCase()),
+      locator.evaluate((el) => {
+        const input = el as HTMLInputElement;
+        return (input.type || "").toLowerCase();
+      }),
+      locator.isVisible(),
+      locator.isEnabled(),
+    ]);
+    matches.push({
+      locator,
+      control: classifyFtcFillControl(tag, inputType),
+      visible,
+      enabled,
+    });
+  }
+
+  const visibleMatches = matches.filter((match) => match.visible);
+  if (visibleMatches.length === 0) {
+    const control =
+      matches.length === 1
+        ? matches[0]!.control
+        : [...new Set(matches.map((match) => match.control))].join("+") || "none";
+    return {
+      ok: false,
+      diagnostic: fillTargetDiagnostic(
+        fieldSelector,
+        control,
+        count,
+        false,
+        matches.some((match) => match.enabled),
+        options,
+        "hidden"
+      ),
+    };
+  }
+
+  if (visibleMatches.length !== 1) {
+    const control =
+      [...new Set(visibleMatches.map((match) => match.control))].join("+") || "mixed";
+    return {
+      ok: false,
+      diagnostic: fillTargetDiagnostic(
+        fieldSelector,
+        control,
+        visibleMatches.length,
+        true,
+        visibleMatches.every((match) => match.enabled),
+        options,
+        "ambiguous"
+      ),
+    };
+  }
+
+  const match = visibleMatches[0]!;
+  if (!match.enabled) {
+    return {
+      ok: false,
+      diagnostic: fillTargetDiagnostic(
+        fieldSelector,
+        match.control,
+        1,
+        true,
+        false,
+        options,
+        "disabled"
+      ),
+    };
+  }
+  if (match.control === "radio" || match.control === "checkbox" || match.control === "other") {
+    return {
+      ok: false,
+      diagnostic: fillTargetDiagnostic(
+        fieldSelector,
+        match.control,
+        1,
+        true,
+        true,
+        options,
+        "unsupported"
+      ),
+    };
+  }
+  return {
+    ok: true,
+    kind: match.control === "select" ? "select" : "text",
+    locator: match.locator,
+    control: match.control,
+  };
 }
 
 type FillFieldsResult =
@@ -425,24 +635,34 @@ async function fillFields(
       continue;
     }
     if (!field.selector?.trim()) continue;
+    const useFtcFillResolve =
+      Boolean(options.enableFtcChoiceControls) &&
+      isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "");
     try {
-      const key = field.selector.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const selector = [
-        `input[name="${key}"]`,
-        `input#${field.selector}`,
-        `textarea[name="${key}"]`,
-        `textarea#${field.selector}`,
-        `select[name="${key}"]`,
-        `select#${field.selector}`,
-        // Verified FTC /form/main Angular controls (e.g. comments) expose formcontrolname only.
-        ...(options.enableFtcChoiceControls
-          ? [
-              `textarea[formcontrolname="${key}"]`,
-              `input[formcontrolname="${key}"]`,
-              `select[formcontrolname="${key}"]`,
-            ]
-          : []),
-      ].join(", ");
+      if (useFtcFillResolve) {
+        const resolved = await resolveFtcFillTarget(page, field.selector, options);
+        if (!resolved.ok) {
+          return { ok: false, diagnostic: resolved.diagnostic };
+        }
+        if (resolved.kind === "select") {
+          if (options.actionTimeoutMs === undefined) {
+            await resolved.locator.selectOption(String(field.value ?? ""));
+          } else {
+            await resolved.locator.selectOption(String(field.value ?? ""), {
+              timeout: options.actionTimeoutMs,
+            });
+          }
+        } else if (options.actionTimeoutMs === undefined) {
+          await resolved.locator.fill(String(field.value ?? ""));
+        } else {
+          await resolved.locator.fill(String(field.value ?? ""), {
+            timeout: options.actionTimeoutMs,
+          });
+        }
+        continue;
+      }
+
+      const selector = buildOwnedFilingFillSelector(field.selector, false);
       if (options.actionTimeoutMs === undefined) {
         await page.fill(selector, String(field.value ?? ""));
       } else {
@@ -452,6 +672,21 @@ async function fillFields(
       }
     } catch (err: unknown) {
       propagateFtcActionError(err, options, "fill");
+      if (useFtcFillResolve) {
+        if (isClosedTargetError(err)) throw err;
+        return {
+          ok: false,
+          diagnostic: fillTargetDiagnostic(
+            field.selector,
+            "unknown",
+            1,
+            true,
+            true,
+            options,
+            "fill_rejected"
+          ),
+        };
+      }
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`${options.logPrefix}: could not fill "${field.selector}":`, message);
     }
