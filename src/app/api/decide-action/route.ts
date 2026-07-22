@@ -3,6 +3,11 @@ import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { resolveBbbDecideActionInternalUserId } from "@/lib/justice/bbbOwnedFilingProduction";
 import {
+  adaptFtcStructuredDecision,
+  DECIDE_ACTION_FTC_MODE,
+  FTC_STRUCTURED_DECISION_SCHEMA,
+} from "@/lib/justice/decideActionFtcStructured";
+import {
   buildPlaywrightMockRealBbbDecideActionDecision,
   isPlaywrightMockRealBbbBoundedSubmitLoopEnabled,
 } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
@@ -13,7 +18,7 @@ import { rateLimit } from "@/utils/rateLimiter";
 export const maxDuration = 300;
 
 /**
- * Model that supports Chat Completions `response_format: { type: "json_object" }`.
+ * Model that supports Chat Completions Structured Outputs (`json_schema` + `strict`).
  * Classic `gpt-4` does not; justice routes already use gpt-4.1-mini elsewhere.
  */
 const DECIDE_ACTION_MODEL = "gpt-4.1-mini";
@@ -95,6 +100,40 @@ function failureResponse(
   return NextResponse.json(body, { status: 500 });
 }
 
+function buildDefaultMessages(
+  pageData: unknown,
+  userProfile: unknown
+): ChatCompletionMessageParam[] {
+  return [
+    {
+      role: "system",
+      content:
+        "You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields. Respond with a single JSON object only.",
+    },
+    {
+      role: "user",
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When choiceControls exposes a required radio or checkbox, select the required option before Continue using one exact scraped structural key (name, id, or accessibleName) as selector, its exact optionValue as value, the matching choiceSelectorType, and controlKind "radio", "checkbox", or "choice". When optionValue equals accessibleName (FTC category radios omit value attributes), use that exact accessibleName as value and prefer choiceSelectorType "id" with the scraped id when present. When a text/textarea/select field has an empty name and id but exposes formControlName, use that exact formControlName as selector. Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice", choiceSelectorType?: "name" | "id" | "accessibleName" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
+    },
+  ];
+}
+
+function buildFtcStructuredMessages(
+  pageData: unknown,
+  userProfile: unknown
+): ChatCompletionMessageParam[] {
+  return [
+    {
+      role: "system",
+      content:
+        "You are a step-by-step FTC ReportFraud form submission agent. Respond with a single JSON object only. Choose exactly one best matching scraped radio candidate from choiceControls. Never return zero fields and never return multiple fields.",
+    },
+    {
+      role: "user",
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nSelect exactly one scraped subcategory radio that best matches the case, then Continue. Use the exact scraped id as selector, the exact scraped optionValue as value, controlKind "radio", and choiceSelectorType "id". Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  "fieldToFill": { "selector": "<scraped id>", "value": "<scraped optionValue>", "controlKind": "radio", "choiceSelectorType": "id" },\n  "nextButton": { "value": "Continue", "selectorType": "text" }\n}`,
+    },
+  ];
+}
+
 export async function POST(req: NextRequest) {
   const userId = resolveBbbDecideActionInternalUserId(req) ?? getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -110,8 +149,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { pageData, userProfile: userProfileField, userData } = body ?? {};
+    const { pageData, userProfile: userProfileField, userData, mode } = body ?? {};
     const userProfile = userProfileField ?? userData ?? {};
+    const ftcMode = mode === DECIDE_ACTION_FTC_MODE;
 
     if (isPlaywrightMockRealBbbBoundedSubmitLoopEnabled() && pageData) {
       const mockDecision = buildPlaywrightMockRealBbbDecideActionDecision(pageData, userProfile);
@@ -128,17 +168,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const messages: ChatCompletionMessageParam[] = [
-      {
-        role: "system",
-        content:
-          "You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields. Respond with a single JSON object only.",
-      },
-      {
-        role: "user",
-        content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When choiceControls exposes a required radio or checkbox, select the required option before Continue using one exact scraped structural key (name, id, or accessibleName) as selector, its exact optionValue as value, the matching choiceSelectorType, and controlKind "radio", "checkbox", or "choice". When optionValue equals accessibleName (FTC category radios omit value attributes), use that exact accessibleName as value and prefer choiceSelectorType "id" with the scraped id when present. When a text/textarea/select field has an empty name and id but exposes formControlName, use that exact formControlName as selector. Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice", choiceSelectorType?: "name" | "id" | "accessibleName" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
-      },
-    ];
+    const messages = ftcMode
+      ? buildFtcStructuredMessages(pageData, userProfile)
+      : buildDefaultMessages(pageData, userProfile);
 
     let responseText: string | null | undefined;
     try {
@@ -146,10 +178,22 @@ export async function POST(req: NextRequest) {
         model: DECIDE_ACTION_MODEL,
         messages,
         temperature: 0,
-        // Guarantees machine-parseable JSON on supported models (not classic gpt-4).
-        response_format: { type: "json_object" },
+        response_format: ftcMode
+          ? {
+              type: "json_schema",
+              json_schema: {
+                name: "ftc_structured_decision",
+                strict: true,
+                schema: FTC_STRUCTURED_DECISION_SCHEMA as unknown as Record<string, unknown>,
+              },
+            }
+          : { type: "json_object" },
       });
-      responseText = completion.choices[0]?.message?.content;
+      const message = completion.choices[0]?.message;
+      if (message && typeof message === "object" && "refusal" in message && message.refusal) {
+        return failureResponse("empty_model_content");
+      }
+      responseText = message?.content;
     } catch (err: unknown) {
       return failureResponse("openai_request_failed", extractOpenAiUpstreamStatus(err));
     }
@@ -160,6 +204,13 @@ export async function POST(req: NextRequest) {
 
     try {
       const parsed = parseDecideActionModelJson(responseText);
+      if (ftcMode) {
+        const adapted = adaptFtcStructuredDecision(parsed);
+        if (!adapted) {
+          return failureResponse("model_json_parse_failed");
+        }
+        return NextResponse.json({ decision: adapted });
+      }
       return NextResponse.json({ decision: parsed });
     } catch {
       return failureResponse("model_json_parse_failed");
