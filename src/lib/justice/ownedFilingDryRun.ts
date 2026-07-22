@@ -113,8 +113,10 @@ async function loadOpenOwnedFilingTask(
 function mapBoundedStopToDryRunStatus(
   stopReason: string | undefined
 ): OwnedFilingDryRunStatus {
+  // Only a verified irreversible Submit boundary is terminal for dry-run.
   if (stopReason === "blocked_irreversible_click") return "dry_run_blocked_at_submit";
-  if (stopReason === "blocked_unknown_click") return "dry_run_blocked_at_submit";
+  // Ambiguous/unknown mid-form clicks are fail-closed but retryable.
+  if (stopReason === "blocked_unknown_click") return "dry_run_failed";
   if (stopReason === "terminal_confirmation") {
     // Should not happen in dry-run without irreversible click; treat as failed safety violation.
     return "dry_run_failed";

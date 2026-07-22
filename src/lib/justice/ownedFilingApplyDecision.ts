@@ -345,6 +345,117 @@ type ClickNextButtonResult = {
   continueDisabled?: boolean;
 };
 
+function scrapedActionableContinueCount(options: ApplyDecisionOptions): number {
+  return (options.actionableButtonLabels ?? []).filter(
+    (label) => label.replace(/\u00a0/g, " ").trim() === "Continue"
+  ).length;
+}
+
+/**
+ * FTC Continue only: inspect every exact (or soft/NBSP) role match and keep visible+enabled.
+ * Never clicks the first unfiltered match. Requires exactly one scraped actionable Continue
+ * before clicking. A unique visible-but-disabled Continue can still defer after a choice apply.
+ */
+async function resolveFtcContinueClickTarget(
+  page: Page,
+  options: ApplyDecisionOptions
+): Promise<{ target: Locator } | ClickNextButtonResult> {
+  const scrapedContinues = scrapedActionableContinueCount(options);
+  if (scrapedContinues > 1) {
+    return {
+      clicked: false,
+      diagnostic: targetDiagnostic(
+        "continue",
+        scrapedContinues,
+        null,
+        null,
+        options,
+        "precheck_ambiguous"
+      ),
+    };
+  }
+
+  let roleMatches = page.getByRole("button", { name: "Continue", exact: true });
+  let rawCount = await roleMatches.count();
+  // Verified FTC Continue CTAs use a trailing NBSP in their accessible name
+  // ("Continue\u00a0") on /assistant and /form/main (including <a role="button">).
+  if (rawCount === 0) {
+    roleMatches = page.getByRole("button", { name: "Continue" });
+    rawCount = await roleMatches.count();
+  }
+
+  const visibleEnabled: Locator[] = [];
+  let visibleDisabledCount = 0;
+
+  for (let i = 0; i < rawCount; i += 1) {
+    const candidate = roleMatches.nth(i);
+    const [visible, enabled] = await Promise.all([
+      candidate.isVisible(),
+      candidate.isEnabled(),
+    ]);
+    if (visible && enabled) {
+      visibleEnabled.push(candidate);
+    } else if (visible && !enabled) {
+      visibleDisabledCount += 1;
+    }
+  }
+
+  if (visibleEnabled.length === 1) {
+    if (scrapedContinues !== 1) {
+      return {
+        clicked: false,
+        diagnostic: targetDiagnostic(
+          "continue",
+          scrapedContinues,
+          true,
+          true,
+          options,
+          "precheck_ambiguous"
+        ),
+      };
+    }
+    return { target: visibleEnabled[0]! };
+  }
+
+  if (visibleEnabled.length === 0 && visibleDisabledCount === 1) {
+    return {
+      clicked: false,
+      continueDisabled: true,
+      diagnostic: targetDiagnostic(
+        "continue",
+        1,
+        true,
+        false,
+        options,
+        "precheck_disabled"
+      ),
+    };
+  }
+
+  if (visibleEnabled.length === 0 && visibleDisabledCount === 0 && rawCount === 1) {
+    const only = roleMatches.nth(0);
+    const [visible, enabled] = await Promise.all([only.isVisible(), only.isEnabled()]);
+    const phase = !visible ? "precheck_hidden" : "precheck_disabled";
+    return {
+      clicked: false,
+      diagnostic: targetDiagnostic("continue", 1, visible, enabled, options, phase),
+      ...(phase === "precheck_disabled" ? { continueDisabled: true } : {}),
+    };
+  }
+
+  return {
+    clicked: false,
+    diagnostic: targetDiagnostic(
+      "continue",
+      visibleEnabled.length,
+      visibleEnabled.length === 0 ? null : true,
+      visibleEnabled.length === 0 ? null : true,
+      options,
+      "precheck_ambiguous"
+    ),
+  };
+}
+
 function matchingFtcChoiceControls(
   field: NonNullable<FormDecision["fieldsToFill"]>[number],
   options: ApplyDecisionOptions
@@ -728,18 +839,20 @@ async function clickNextButton(
         ]);
         if (buttonCount + linkCount !== 1) return { clicked: false };
         target = buttonCount === 1 ? buttonTarget : linkTarget;
+        const [visible, enabled] = await Promise.all([
+          target.isVisible(),
+          target.isEnabled(),
+        ]);
+        if (!visible || !enabled) return { clicked: false };
+      } else if (
+        decision.nextButton.value === "Continue" &&
+        isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "")
+      ) {
+        const resolved = await resolveFtcContinueClickTarget(page, options);
+        if (!("target" in resolved)) return resolved;
+        target = resolved.target;
       } else {
-        let count = await buttonTarget.count();
-        // Verified FTC Continue CTAs use a trailing NBSP in their accessible name
-        // ("Continue\u00a0") on /assistant and /form/main (including <a role="button">).
-        if (
-          count === 0 &&
-          decision.nextButton.value === "Continue" &&
-          isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "")
-        ) {
-          target = page.getByRole("button", { name: "Continue" });
-          count = await target.count();
-        }
+        const count = await buttonTarget.count();
         if (count !== 1) {
           return {
             clicked: false,
@@ -757,22 +870,22 @@ async function clickNextButton(
               : {}),
           };
         }
-      }
-      const [visible, enabled] = await Promise.all([
-        target.isVisible(),
-        target.isEnabled(),
-      ]);
-      if (!visible || !enabled) {
-        const phase = !visible ? "precheck_hidden" : "precheck_disabled";
-        return {
-          clicked: false,
-          ...(decision.nextButton.value === "Continue"
-            ? {
-                diagnostic: targetDiagnostic("continue", 1, visible, enabled, options, phase),
-                ...(phase === "precheck_disabled" ? { continueDisabled: true } : {}),
-              }
-            : {}),
-        };
+        const [visible, enabled] = await Promise.all([
+          target.isVisible(),
+          target.isEnabled(),
+        ]);
+        if (!visible || !enabled) {
+          const phase = !visible ? "precheck_hidden" : "precheck_disabled";
+          return {
+            clicked: false,
+            ...(decision.nextButton.value === "Continue"
+              ? {
+                  diagnostic: targetDiagnostic("continue", 1, visible, enabled, options, phase),
+                  ...(phase === "precheck_disabled" ? { continueDisabled: true } : {}),
+                }
+              : {}),
+          };
+        }
       }
       click = async () => {
         if (options.actionTimeoutMs === undefined) {
