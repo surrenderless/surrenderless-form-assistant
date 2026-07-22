@@ -43,6 +43,8 @@ export type AssistedFormChoiceControl = {
   accessibleName: string;
   visible: boolean;
   enabled: boolean;
+  /** Sanitized selected state for FTC deterministic wizard progression. */
+  checked?: boolean;
 };
 
 export type AssistedFormPageData = {

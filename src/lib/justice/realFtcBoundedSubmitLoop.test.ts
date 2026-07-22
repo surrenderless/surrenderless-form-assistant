@@ -40,6 +40,7 @@ function choice(
     accessibleName: "Online shopping",
     visible: false,
     enabled: true,
+    checked: false,
     ...overrides,
   };
 }
@@ -197,6 +198,142 @@ describe("buildFtcAssistantChoiceDecision", () => {
         { issue_type: "online purchase" }
       )
     ).toBeNull();
+  });
+
+  it("emits Continue-only when the matched parent is already checked and Continue is enabled", () => {
+    const decision = buildFtcAssistantChoiceDecision(
+      pageData({
+        url: assistantUrl,
+        buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+        choiceControls: [choice({ checked: true })],
+      }),
+      { issue_type: "online purchase" }
+    );
+    expect(decision).toEqual({
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    });
+    expect(decision).not.toHaveProperty("fieldsToFill");
+  });
+
+  it("never re-emits an already checked parent when Continue is disabled", () => {
+    const decision = buildFtcAssistantChoiceDecision(
+      pageData({
+        url: assistantUrl,
+        buttons: [],
+        choiceControls: [
+          choice({ checked: true }),
+          choice({
+            id: "sub-radio-1",
+            optionValue: "Did not receive what was ordered",
+            accessibleName: "Did not receive what was ordered",
+            checked: false,
+          }),
+        ],
+      }),
+      { issue_type: "online purchase" }
+    );
+    expect(decision?.fieldsToFill?.[0]?.selector).toBe("sub-radio-1");
+    expect(decision?.fieldsToFill?.[0]?.selector).not.toBe("cat-radio-2");
+  });
+
+  it("selects the unique enabled unchecked next radio when Continue is disabled", () => {
+    const decision = buildFtcAssistantChoiceDecision(
+      pageData({
+        url: assistantUrl,
+        buttons: [{ text: "Back", id: "", name: "", type: "button" }],
+        choiceControls: [
+          choice({ checked: true }),
+          choice({
+            id: "sub-radio-1",
+            optionValue: "Item never arrived",
+            accessibleName: "Item never arrived",
+            checked: false,
+          }),
+        ],
+      }),
+      { issue_type: "online purchase" }
+    );
+    expect(decision).toEqual({
+      fieldsToFill: [
+        {
+          selector: "sub-radio-1",
+          value: "Item never arrived",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    });
+  });
+
+  it("fails closed when Continue is disabled and there is no unchecked next radio", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: assistantUrl,
+          buttons: [],
+          choiceControls: [choice({ checked: true })],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+
+  it("fails closed when Continue is disabled and next radios are ambiguous", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: assistantUrl,
+          buttons: [],
+          choiceControls: [
+            choice({ checked: true }),
+            choice({
+              id: "sub-a",
+              optionValue: "Option A",
+              accessibleName: "Option A",
+              checked: false,
+            }),
+            choice({
+              id: "sub-b",
+              optionValue: "Option B",
+              accessibleName: "Option B",
+              checked: false,
+            }),
+          ],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+
+  it("ignores disabled unchecked next radios when selecting a unique next choice", () => {
+    expect(
+      buildFtcAssistantChoiceDecision(
+        pageData({
+          url: assistantUrl,
+          buttons: [],
+          choiceControls: [
+            choice({ checked: true }),
+            choice({
+              id: "sub-disabled",
+              optionValue: "Disabled option",
+              accessibleName: "Disabled option",
+              checked: false,
+              enabled: false,
+            }),
+            choice({
+              id: "sub-enabled",
+              optionValue: "Enabled option",
+              accessibleName: "Enabled option",
+              checked: false,
+            }),
+          ],
+        }),
+        { issue_type: "online purchase" }
+      )?.fieldsToFill?.[0]?.selector
+    ).toBe("sub-enabled");
   });
 });
 

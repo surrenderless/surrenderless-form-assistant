@@ -11,6 +11,7 @@ type FakeElement = {
   hidden: boolean;
   value: string;
   type: string;
+  checked?: boolean;
   labels: Array<{ innerText: string }>;
   styleState: { display: string; visibility: string };
   valueAttribute?: string | null;
@@ -168,6 +169,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       hidden: false,
       value: "fraud",
       type: "radio",
+      checked: false,
       labels: [{ innerText: "Fraud category" }],
       styleState: { display: "block", visibility: "visible" },
       getAttribute(name: string) {
@@ -205,6 +207,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         accessibleName: "Fraud category",
         visible: true,
         enabled: true,
+        checked: false,
       },
     ]);
     expect(JSON.stringify(result)).not.toContain(SECRET);
@@ -219,6 +222,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       hidden: true,
       value: "on",
       type: "radio",
+      checked: true,
       labels: [{ innerText: "Online shopping" }],
       styleState: { display: "block", visibility: "hidden" },
       getAttribute(name: string) {
@@ -244,6 +248,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         accessibleName: "Online shopping",
         visible: false,
         enabled: true,
+        checked: true,
       },
     ]);
     expect(result.choiceControls?.[0]?.optionValue).not.toBe("on");
@@ -265,6 +270,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         if (name === "aria-label") return "Imposter scams";
         if (name === "data-value") return "imposter";
         if (name === "aria-disabled") return "false";
+        if (name === "aria-checked") return "false";
         return null;
       },
       hasAttribute() {
@@ -286,6 +292,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         accessibleName: "Imposter scams",
         visible: true,
         enabled: true,
+        checked: false,
       },
     ]);
     expect(JSON.stringify(result.choiceControls)).not.toContain("Ignored broad text");
