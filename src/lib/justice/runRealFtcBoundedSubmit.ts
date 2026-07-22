@@ -16,9 +16,11 @@ import {
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
+  ftcAssistantAmbiguousSubcategoryCandidates,
   isFtcReportAssistantUrl,
   isFtcReportEntryUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
+  validateFtcAssistantStructuredSubcategoryDecision,
   type RealFtcSubmitStopReason,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
@@ -388,17 +390,46 @@ export async function runRealFtcBoundedSubmit(
         if (isFtcReportEntryUrl(pageData.url)) {
           return { ok: true as const, decision: buildFtcEntryReportNowDecision() };
         }
-        // Official /assistant only: case-appropriate choice from scraped controls + issue_type.
+        // Official /assistant: deterministic choice, or one structured decide when subcats are ambiguous.
         if (isFtcReportAssistantUrl(pageData.url)) {
           const decision = buildFtcAssistantChoiceDecision(pageData, userData);
-          if (!decision) {
+          if (decision) {
+            return { ok: true as const, decision };
+          }
+
+          const ambiguousCandidates = ftcAssistantAmbiguousSubcategoryCandidates(
+            pageData,
+            userData
+          );
+          if (!ambiguousCandidates) {
             return {
               ok: false as const,
               stopReason: "invalid_decision" as const,
               detail: "no unique enabled FTC assistant choice matched issue_type",
             };
           }
-          return { ok: true as const, decision };
+
+          const structured = await fetchOwnedFilingFtcFormDecision(
+            base,
+            forwardedHeaders,
+            pageData,
+            userData
+          );
+          if (!structured.ok) {
+            return structured;
+          }
+          const validated = validateFtcAssistantStructuredSubcategoryDecision(
+            structured.decision,
+            ambiguousCandidates
+          );
+          if (!validated) {
+            return {
+              ok: false as const,
+              stopReason: "invalid_decision" as const,
+              detail: "structured FTC assistant subcategory decision failed validation",
+            };
+          }
+          return { ok: true as const, decision: validated };
         }
         return fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
       };

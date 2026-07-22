@@ -5,16 +5,19 @@ import {
   buildRealFtcIncompleteError,
   detectRealFtcTerminalConfirmation,
   extractFtcConfirmationReference,
+  ftcAssistantAmbiguousSubcategoryCandidates,
   isFtcReportAssistantUrl,
   isFtcReportChoiceFlowUrl,
   isFtcReportEntryUrl,
   isFtcReportFormMainUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
+  validateFtcAssistantStructuredSubcategoryDecision,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import {
   REAL_BBB_MAX_SUBMIT_STEPS,
   hasReachedStepCap,
   type AssistedFormChoiceControl,
+  type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import type { AssistedFormPageData } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
@@ -334,6 +337,248 @@ describe("buildFtcAssistantChoiceDecision", () => {
         { issue_type: "online purchase" }
       )?.fieldsToFill?.[0]?.selector
     ).toBe("sub-enabled");
+  });
+});
+
+describe("ftcAssistantAmbiguousSubcategoryCandidates", () => {
+  const assistantUrl = "https://reportfraud.ftc.gov/assistant";
+  const ambiguousControls = [
+    choice({ checked: true }),
+    choice({
+      id: "sub-a",
+      optionValue: "Option A",
+      accessibleName: "Option A",
+      checked: false,
+    }),
+    choice({
+      id: "sub-b",
+      optionValue: "Option B",
+      accessibleName: "Option B",
+      checked: false,
+    }),
+  ];
+
+  it("returns multiple unchecked next radios when the parent is checked and Continue is disabled", () => {
+    const candidates = ftcAssistantAmbiguousSubcategoryCandidates(
+      pageData({ url: assistantUrl, buttons: [], choiceControls: ambiguousControls }),
+      { issue_type: "online purchase" }
+    );
+    expect(candidates?.map((c) => c.id)).toEqual(["sub-a", "sub-b"]);
+  });
+
+  it("returns null when Continue is actionable", () => {
+    expect(
+      ftcAssistantAmbiguousSubcategoryCandidates(
+        pageData({
+          url: assistantUrl,
+          buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+          choiceControls: ambiguousControls,
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for a unique next radio (deterministic path owns that case)", () => {
+    expect(
+      ftcAssistantAmbiguousSubcategoryCandidates(
+        pageData({
+          url: assistantUrl,
+          buttons: [],
+          choiceControls: [
+            choice({ checked: true }),
+            choice({
+              id: "sub-a",
+              optionValue: "Option A",
+              accessibleName: "Option A",
+              checked: false,
+            }),
+          ],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+
+  it("returns null when the parent is still unchecked", () => {
+    expect(
+      ftcAssistantAmbiguousSubcategoryCandidates(
+        pageData({
+          url: assistantUrl,
+          buttons: [],
+          choiceControls: [
+            choice({ checked: false }),
+            choice({
+              id: "sub-a",
+              optionValue: "Option A",
+              accessibleName: "Option A",
+              checked: false,
+            }),
+            choice({
+              id: "sub-b",
+              optionValue: "Option B",
+              accessibleName: "Option B",
+              checked: false,
+            }),
+          ],
+        }),
+        { issue_type: "online purchase" }
+      )
+    ).toBeNull();
+  });
+});
+
+describe("validateFtcAssistantStructuredSubcategoryDecision", () => {
+  const candidates: AssistedFormChoiceControl[] = [
+    choice({
+      id: "sub-a",
+      optionValue: "Option A",
+      accessibleName: "Option A",
+      checked: false,
+    }),
+    choice({
+      id: "sub-b",
+      optionValue: "Option B",
+      accessibleName: "Option B",
+      checked: false,
+    }),
+  ];
+
+  function validDecision(overrides: Partial<FormDecision> = {}): FormDecision {
+    return {
+      fieldsToFill: [
+        {
+          selector: "sub-a",
+          value: "Option A",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+      ...overrides,
+    };
+  }
+
+  it("accepts exactly one scraped candidate radio with Continue", () => {
+    expect(validateFtcAssistantStructuredSubcategoryDecision(validDecision(), candidates)).toEqual({
+      fieldsToFill: [
+        {
+          selector: "sub-a",
+          value: "Option A",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    });
+  });
+
+  it("fails closed on unknown id", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          fieldsToFill: [
+            {
+              selector: "sub-unknown",
+              value: "Option A",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+        }),
+        candidates
+      )
+    ).toBeNull();
+  });
+
+  it("fails closed on mismatched optionValue", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          fieldsToFill: [
+            {
+              selector: "sub-a",
+              value: "Option B",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+        }),
+        candidates
+      )
+    ).toBeNull();
+  });
+
+  it("fails closed on multiple fieldsToFill", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          fieldsToFill: [
+            {
+              selector: "sub-a",
+              value: "Option A",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+            {
+              selector: "sub-b",
+              value: "Option B",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+        }),
+        candidates
+      )
+    ).toBeNull();
+  });
+
+  it("fails closed on wrong controlKind", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          fieldsToFill: [
+            {
+              selector: "sub-a",
+              value: "Option A",
+              controlKind: "checkbox",
+              choiceSelectorType: "id",
+            },
+          ],
+        }),
+        candidates
+      )
+    ).toBeNull();
+  });
+
+  it("fails closed on wrong choiceSelectorType", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          fieldsToFill: [
+            {
+              selector: "sub-a",
+              value: "Option A",
+              controlKind: "radio",
+              choiceSelectorType: "accessibleName",
+            },
+          ],
+        }),
+        candidates
+      )
+    ).toBeNull();
+  });
+
+  it("fails closed when nextButton is not Continue", () => {
+    expect(
+      validateFtcAssistantStructuredSubcategoryDecision(
+        validDecision({
+          nextButton: { selectorType: "text", value: "Submit" },
+        }),
+        candidates
+      )
+    ).toBeNull();
   });
 });
 
