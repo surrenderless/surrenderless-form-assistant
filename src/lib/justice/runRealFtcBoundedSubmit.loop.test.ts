@@ -807,6 +807,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
   it.each([
     {
       name: "unknown id",
+      reason: "selector_not_found",
       decision: {
         fieldsToFill: [
           {
@@ -821,6 +822,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     },
     {
       name: "mismatched value",
+      reason: "option_value_mismatch",
       decision: {
         fieldsToFill: [
           {
@@ -835,6 +837,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     },
     {
       name: "multiple fields",
+      reason: "field_count",
       decision: {
         fieldsToFill: [
           {
@@ -855,6 +858,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     },
     {
       name: "wrong controlKind",
+      reason: "control_kind",
       decision: {
         fieldsToFill: [
           {
@@ -869,6 +873,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     },
     {
       name: "wrong choiceSelectorType",
+      reason: "selector_type",
       decision: {
         fieldsToFill: [
           {
@@ -883,6 +888,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     },
     {
       name: "non-Continue nextButton",
+      reason: "next_button",
       decision: {
         fieldsToFill: [
           {
@@ -897,7 +903,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     },
   ])(
     "fails closed without applying when structured subcategory decide returns $name",
-    async ({ decision }) => {
+    async ({ decision, reason }) => {
       h.state.evaluateQueue = [
         {
           ...pageData("https://reportfraud.ftc.gov/assistant"),
@@ -953,7 +959,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       expect(result.stopReason).toBe("invalid_decision");
       expect(result.stepsExecuted).toBe(0);
       expect(result.fillResult.stepLog.find((e) => e.action === "invalid_decision")?.detail).toBe(
-        "structured FTC assistant subcategory decision failed validation"
+        reason
       );
     }
   );

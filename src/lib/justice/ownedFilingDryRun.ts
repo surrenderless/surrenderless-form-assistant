@@ -15,6 +15,7 @@ import {
   type OwnedFilingDryRunRecord,
   type OwnedFilingDryRunStatus,
 } from "@/lib/justice/ownedFilingDryRunState";
+import { FTC_ASSISTANT_STRUCTURED_SUBCATEGORY_VALIDATION_FAILURES } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { intakeToRealBbbUserData } from "@/lib/justice/realBbbUserData";
 import { intakeToRealFtcUserData } from "@/lib/justice/realFtcUserData";
 import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
@@ -256,8 +257,8 @@ export async function runOwnedFilingDryRun(
         detail = "dry-run unexpectedly reached terminal confirmation without submit gate";
       } else {
         stopReason = bounded.stopReason;
-        // Prefer already-sanitized decide_failed step detail (allowlisted category/status)
-        // over the generic live/user-facing error string.
+        // Prefer already-sanitized step details (allowlisted enums/status) over the generic
+        // live/user-facing error string.
         const decideFailedDetail =
           stopReason === "decide_action_failed"
             ? bounded.fillResult.stepLog
@@ -265,7 +266,20 @@ export async function runOwnedFilingDryRun(
                 .reverse()
                 .find((e) => e.action === "decide_failed")?.detail?.trim()
             : undefined;
-        detail = decideFailedDetail || bounded.error;
+        const invalidDecisionDetail =
+          stopReason === "invalid_decision"
+            ? (() => {
+                const raw = bounded.fillResult.stepLog
+                  .slice()
+                  .reverse()
+                  .find((e) => e.action === "invalid_decision")
+                  ?.detail?.trim();
+                return raw && FTC_ASSISTANT_STRUCTURED_SUBCATEGORY_VALIDATION_FAILURES.has(raw)
+                  ? raw
+                  : undefined;
+              })()
+            : undefined;
+        detail = decideFailedDetail || invalidDecisionDetail || bounded.error;
         const blocked = bounded.fillResult.stepLog
           .slice()
           .reverse()
