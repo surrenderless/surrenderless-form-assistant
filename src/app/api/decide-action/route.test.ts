@@ -210,46 +210,66 @@ describe("POST /api/decide-action", () => {
     expect(await fenced.json()).toEqual({ decision: SAMPLE_DECISION });
   });
 
-  it("returns sanitized 500 for malformed JSON without echoing model text", async () => {
+  it("returns model_json_parse_failed for malformed JSON without echoing model text", async () => {
     const partial = await postWithModelContent('{ "fieldsToFill": [');
     expect(partial.status).toBe(500);
-    expect(await partial.json()).toEqual({ error: "Invalid JSON response from GPT" });
+    expect(await partial.json()).toEqual({ error: "model_json_parse_failed" });
 
     const brokenFence = await postWithModelContent(
       "```json\n{ broken secret@example.com\n```"
     );
     expect(brokenFence.status).toBe(500);
     const brokenBody = await brokenFence.json();
-    expect(brokenBody).toEqual({ error: "Invalid JSON response from GPT" });
+    expect(brokenBody).toEqual({ error: "model_json_parse_failed" });
     expect(JSON.stringify(brokenBody)).not.toContain("secret@example.com");
   });
 
-  it("returns 500 for prose-only model output", async () => {
+  it("returns model_json_parse_failed for prose-only model output", async () => {
     const res = await postWithModelContent(
       "Select the Online shopping subcategory and click Continue."
     );
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Invalid JSON response from GPT" });
+    expect(await res.json()).toEqual({ error: "model_json_parse_failed" });
   });
 
-  it("returns 500 when prose surrounds JSON or a fenced payload", async () => {
+  it("returns model_json_parse_failed when prose surrounds JSON or a fenced payload", async () => {
     const bareWrapped = await postWithModelContent(
       `Here is the decision:\n${JSON.stringify(SAMPLE_DECISION)}\nThanks!`
     );
     expect(bareWrapped.status).toBe(500);
+    expect(await bareWrapped.json()).toEqual({ error: "model_json_parse_failed" });
 
     const fenceWrapped = await postWithModelContent(
       `Here is the decision:\n\`\`\`json\n${JSON.stringify(SAMPLE_DECISION)}\n\`\`\`\nDone.`
     );
     expect(fenceWrapped.status).toBe(500);
+    expect(await fenceWrapped.json()).toEqual({ error: "model_json_parse_failed" });
 
     const trailing = await postWithModelContent(
       `${JSON.stringify(SAMPLE_DECISION)}\n// trailing note`
     );
     expect(trailing.status).toBe(500);
+    expect(await trailing.json()).toEqual({ error: "model_json_parse_failed" });
   });
 
-  it("returns sanitized 500 when OpenAI rejects or throws", async () => {
+  it("returns empty_model_content when the model returns null or blank content", async () => {
+    mockCreate.mockResolvedValue({ choices: [{ message: { content: null } }] });
+    const nullRes = await POST(buildRequest({ pageData: { fields: [] }, userData: {} }));
+    expect(nullRes.status).toBe(500);
+    expect(await nullRes.json()).toEqual({ error: "empty_model_content" });
+
+    mockCreate.mockResolvedValue({ choices: [{ message: { content: "   \n\t  " } }] });
+    const blankRes = await POST(buildRequest({ pageData: { fields: [] }, userData: {} }));
+    expect(blankRes.status).toBe(500);
+    expect(await blankRes.json()).toEqual({ error: "empty_model_content" });
+
+    mockCreate.mockResolvedValue({ choices: [{ message: {} }] });
+    const missingRes = await POST(buildRequest({ pageData: { fields: [] }, userData: {} }));
+    expect(missingRes.status).toBe(500);
+    expect(await missingRes.json()).toEqual({ error: "empty_model_content" });
+  });
+
+  it("returns openai_request_failed without leaking OpenAI error text", async () => {
     mockCreate.mockRejectedValue(
       new Error("401 incorrect API key for private@example.com case story")
     );
@@ -258,9 +278,38 @@ describe("POST /api/decide-action", () => {
 
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body).toEqual({ error: "decide-action model request failed" });
+    expect(body).toEqual({ error: "openai_request_failed" });
     expect(JSON.stringify(body)).not.toContain("private@example.com");
     expect(JSON.stringify(body)).not.toContain("API key");
+    expect(JSON.stringify(body)).not.toContain("case story");
+  });
+
+  it("includes numeric upstream_status only when present on the OpenAI error", async () => {
+    const err = Object.assign(new Error("Bad Request secret@example.com"), { status: 400 });
+    mockCreate.mockRejectedValue(err);
+
+    const res = await POST(buildRequest({ pageData: { fields: [] }, userData: {} }));
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "openai_request_failed", upstream_status: 400 });
+    expect(JSON.stringify(body)).not.toContain("secret@example.com");
+  });
+
+  it("returns route_exception for unexpected handler failures without leaking payloads", async () => {
+    const badReq = {
+      json: async () => {
+        throw new Error("body parse failed for private@example.com case story");
+      },
+      headers: new Headers(),
+    } as unknown as NextRequest;
+
+    const res = await POST(badReq);
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "route_exception" });
+    expect(JSON.stringify(body)).not.toContain("private@example.com");
     expect(JSON.stringify(body)).not.toContain("case story");
   });
 });
