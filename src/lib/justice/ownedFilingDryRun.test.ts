@@ -235,6 +235,107 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
   });
 
+  it("FTC decide_action_failed dry-run detail uses sanitized decide_failed stepLog entry", async () => {
+    const genericLiveError =
+      "FTC complaint autofill stopped: could not determine the next form action. You can retry.";
+    const sanitized =
+      "decide-action failed (500:openai_request_failed:upstream_400)";
+
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: genericLiveError,
+      stopReason: "decide_action_failed",
+      stepsExecuted: 2,
+      fillResult: {
+        screenshot: null,
+        pageData: {
+          url: "https://reportfraud.ftc.gov/assistant",
+          fields: [],
+          buttons: [],
+        },
+        stepsExecuted: 2,
+        stopReason: "decide_action_failed",
+        stepLog: [
+          {
+            step: 0,
+            url: "https://reportfraud.ftc.gov/",
+            action: "apply",
+            detail: "text:Report Now",
+          },
+          {
+            step: 1,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "apply",
+            detail: "id:cat-parent",
+          },
+          {
+            step: 2,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "decide_failed",
+            detail: sanitized,
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(ftcTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "ftc"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "ftc",
+      stop_reason: "decide_action_failed",
+      steps_executed: 2,
+      detail: sanitized,
+    });
+    expect(result.detail).not.toBe(genericLiveError);
+    expect(result.detail).not.toContain("secret@example.com");
+    expect(noteUpdates.at(-1)).toContain(`detail: ${sanitized}`);
+    expect(noteUpdates.at(-1)).toContain("decide_failed|");
+    expect(noteUpdates.at(-1)).toContain(sanitized);
+  });
+
+  it("FTC decide_action_failed falls back to generic error when decide_failed detail is missing", async () => {
+    const genericLiveError =
+      "FTC complaint autofill stopped: could not determine the next form action. You can retry.";
+
+    vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: genericLiveError,
+      stopReason: "decide_action_failed",
+      stepsExecuted: 0,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: "https://reportfraud.ftc.gov/assistant", fields: [], buttons: [] },
+        stepsExecuted: 0,
+        stopReason: "decide_action_failed",
+        stepLog: [
+          {
+            step: 0,
+            url: "https://reportfraud.ftc.gov/assistant",
+            action: "decide_failed",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const result = await runOwnedFilingDryRun(makeSupabase(ftcTask()), USER_ID, CASE_ID, "ftc");
+
+    expect(result).toMatchObject({
+      ok: false,
+      stop_reason: "decide_action_failed",
+      detail: genericLiveError,
+    });
+  });
+
   it("FTC provider throw before first step maps to dry_run_failed with steps_executed 0", async () => {
     vi.mocked(runRealFtcBoundedSubmit).mockRejectedValue(
       new Error("page.evaluate: Target page, context or browser has been closed")

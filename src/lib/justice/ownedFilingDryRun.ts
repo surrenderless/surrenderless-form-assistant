@@ -256,7 +256,16 @@ export async function runOwnedFilingDryRun(
         detail = "dry-run unexpectedly reached terminal confirmation without submit gate";
       } else {
         stopReason = bounded.stopReason;
-        detail = bounded.error;
+        // Prefer already-sanitized decide_failed step detail (allowlisted category/status)
+        // over the generic live/user-facing error string.
+        const decideFailedDetail =
+          stopReason === "decide_action_failed"
+            ? bounded.fillResult.stepLog
+                .slice()
+                .reverse()
+                .find((e) => e.action === "decide_failed")?.detail?.trim()
+            : undefined;
+        detail = decideFailedDetail || bounded.error;
         const blocked = bounded.fillResult.stepLog
           .slice()
           .reverse()
