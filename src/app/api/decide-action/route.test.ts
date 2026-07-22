@@ -117,7 +117,7 @@ describe("POST /api/decide-action", () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it("returns decision for authenticated requests and accepts userData alias", async () => {
+  it("requests JSON mode on a supported model and returns a structured decision", async () => {
     const decision = {
       fieldsToFill: [{ selector: "business", value: "Acme" }],
       nextButton: { selectorType: "text", value: "Continue" },
@@ -139,7 +139,14 @@ describe("POST /api/decide-action", () => {
     expect(getUserOr401).toHaveBeenCalled();
     expect(rateLimit).toHaveBeenCalledWith(USER_ID);
     expect(mockCreate).toHaveBeenCalledOnce();
-    const createArg = mockCreate.mock.calls[0]?.[0] as { messages: Array<{ content: string }> };
+    const createArg = mockCreate.mock.calls[0]?.[0] as {
+      model: string;
+      response_format?: { type: string };
+      messages: Array<{ content: string }>;
+    };
+    expect(createArg.model).toBe("gpt-4.1-mini");
+    expect(createArg.response_format).toEqual({ type: "json_object" });
+    expect(createArg.messages[0]?.content).toMatch(/JSON/i);
     expect(createArg.messages[1]?.content).toContain("Acme");
     expect(createArg.messages[1]?.content).toContain(
       "select the required option before Continue"
@@ -177,7 +184,7 @@ describe("POST /api/decide-action", () => {
     expect(await res.json()).toEqual({ decision: SAMPLE_DECISION });
   });
 
-  it("accepts fenced ```json JSON from the model", async () => {
+  it("accepts fenced ```json JSON from the model as a defensive fallback", async () => {
     const res = await postWithModelContent(
       `\`\`\`json\n${JSON.stringify(SAMPLE_DECISION, null, 2)}\n\`\`\``
     );
@@ -203,13 +210,18 @@ describe("POST /api/decide-action", () => {
     expect(await fenced.json()).toEqual({ decision: SAMPLE_DECISION });
   });
 
-  it("returns 500 for malformed JSON", async () => {
+  it("returns sanitized 500 for malformed JSON without echoing model text", async () => {
     const partial = await postWithModelContent('{ "fieldsToFill": [');
     expect(partial.status).toBe(500);
-    expect(await partial.json()).toMatchObject({ error: "Invalid JSON response from GPT" });
+    expect(await partial.json()).toEqual({ error: "Invalid JSON response from GPT" });
 
-    const brokenFence = await postWithModelContent("```json\n{ broken\n```");
+    const brokenFence = await postWithModelContent(
+      "```json\n{ broken secret@example.com\n```"
+    );
     expect(brokenFence.status).toBe(500);
+    const brokenBody = await brokenFence.json();
+    expect(brokenBody).toEqual({ error: "Invalid JSON response from GPT" });
+    expect(JSON.stringify(brokenBody)).not.toContain("secret@example.com");
   });
 
   it("returns 500 for prose-only model output", async () => {
@@ -217,7 +229,7 @@ describe("POST /api/decide-action", () => {
       "Select the Online shopping subcategory and click Continue."
     );
     expect(res.status).toBe(500);
-    expect(await res.json()).toMatchObject({ error: "Invalid JSON response from GPT" });
+    expect(await res.json()).toEqual({ error: "Invalid JSON response from GPT" });
   });
 
   it("returns 500 when prose surrounds JSON or a fenced payload", async () => {
@@ -235,5 +247,20 @@ describe("POST /api/decide-action", () => {
       `${JSON.stringify(SAMPLE_DECISION)}\n// trailing note`
     );
     expect(trailing.status).toBe(500);
+  });
+
+  it("returns sanitized 500 when OpenAI rejects or throws", async () => {
+    mockCreate.mockRejectedValue(
+      new Error("401 incorrect API key for private@example.com case story")
+    );
+
+    const res = await POST(buildRequest({ pageData: { fields: [] }, userData: {} }));
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "decide-action model request failed" });
+    expect(JSON.stringify(body)).not.toContain("private@example.com");
+    expect(JSON.stringify(body)).not.toContain("API key");
+    expect(JSON.stringify(body)).not.toContain("case story");
   });
 });

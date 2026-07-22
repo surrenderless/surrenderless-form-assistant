@@ -12,6 +12,12 @@ import { rateLimit } from "@/utils/rateLimiter";
 /** Enough time for OpenAI decide-action during owned BBB bounded-submit loops. */
 export const maxDuration = 300;
 
+/**
+ * Model that supports Chat Completions `response_format: { type: "json_object" }`.
+ * Classic `gpt-4` does not; justice routes already use gpt-4.1-mini elsewhere.
+ */
+const DECIDE_ACTION_MODEL = "gpt-4.1-mini";
+
 function getOpenAI(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) return null;
@@ -22,6 +28,7 @@ function getOpenAI(): OpenAI | null {
  * Parses decide-action model output as JSON.
  * Accepts bare JSON, or one complete markdown fence (``` / ```json) whose entire trimmed
  * payload is that fence. Rejects prose wrappers, incomplete fences, and malformed JSON.
+ * Kept as a defensive fallback when JSON mode still returns fenced text.
  */
 function parseDecideActionModelJson(responseText: string | null | undefined): unknown {
   if (typeof responseText !== "string") {
@@ -52,6 +59,15 @@ function parseDecideActionModelJson(responseText: string | null | undefined): un
   }
 
   return JSON.parse(jsonText);
+}
+
+function invalidModelJsonResponse(): NextResponse {
+  // Never echo model text — it can reflect pageData / user case content.
+  return NextResponse.json({ error: "Invalid JSON response from GPT" }, { status: 500 });
+}
+
+function modelRequestFailedResponse(): NextResponse {
+  return NextResponse.json({ error: "decide-action model request failed" }, { status: 500 });
 }
 
 export async function POST(req: NextRequest) {
@@ -90,29 +106,32 @@ export async function POST(req: NextRequest) {
     {
       role: "system",
       content:
-        "You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields.",
+        "You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields. Respond with a single JSON object only.",
     },
     {
       role: "user",
-      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When choiceControls exposes a required radio or checkbox, select the required option before Continue using one exact scraped structural key (name, id, or accessibleName) as selector, its exact optionValue as value, the matching choiceSelectorType, and controlKind "radio", "checkbox", or "choice". When optionValue equals accessibleName (FTC category radios omit value attributes), use that exact accessibleName as value and prefer choiceSelectorType "id" with the scraped id when present. When a text/textarea/select field has an empty name and id but exposes formControlName, use that exact formControlName as selector. Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice", choiceSelectorType?: "name" | "id" | "accessibleName" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When choiceControls exposes a required radio or checkbox, select the required option before Continue using one exact scraped structural key (name, id, or accessibleName) as selector, its exact optionValue as value, the matching choiceSelectorType, and controlKind "radio", "checkbox", or "choice". When optionValue equals accessibleName (FTC category radios omit value attributes), use that exact accessibleName as value and prefer choiceSelectorType "id" with the scraped id when present. When a text/textarea/select field has an empty name and id but exposes formControlName, use that exact formControlName as selector. Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice", choiceSelectorType?: "name" | "id" | "accessibleName" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
     },
   ];
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages,
-    temperature: 0,
-  });
-
-  const responseText = completion.choices[0].message.content;
+  let responseText: string | null | undefined;
+  try {
+    const completion = await openai.chat.completions.create({
+      model: DECIDE_ACTION_MODEL,
+      messages,
+      temperature: 0,
+      // Guarantees machine-parseable JSON on supported models (not classic gpt-4).
+      response_format: { type: "json_object" },
+    });
+    responseText = completion.choices[0]?.message?.content;
+  } catch {
+    return modelRequestFailedResponse();
+  }
 
   try {
     const parsed = parseDecideActionModelJson(responseText);
     return NextResponse.json({ decision: parsed });
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON response from GPT", raw: responseText },
-      { status: 500 }
-    );
+    return invalidModelJsonResponse();
   }
 }
