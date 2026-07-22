@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildDecideActionFailedDetail,
   fetchOwnedFilingFtcFormDecision,
   OWNED_FILING_FTC_DECIDE_TIMEOUT_MS,
 } from "@/lib/justice/ownedFilingFtcDecision";
@@ -84,5 +85,118 @@ describe("fetchOwnedFilingFtcFormDecision", () => {
       stopReason: "decide_action_failed",
       detail: "decide-action failed (500)",
     });
+  });
+
+  it("preserves allowlisted openai_request_failed with upstream_status in step detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: "openai_request_failed",
+            upstream_status: 400,
+            raw: "secret@example.com case story",
+          }),
+          { status: 500 }
+        )
+      )
+    );
+
+    const result = await fetchOwnedFilingFtcFormDecision(
+      "https://app.example",
+      {},
+      { url: "https://reportfraud.ftc.gov", fields: [], buttons: [] },
+      {}
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      stopReason: "decide_action_failed",
+      detail: "decide-action failed (500:openai_request_failed:upstream_400)",
+    });
+    expect(JSON.stringify(result)).not.toContain("secret@example.com");
+    expect(JSON.stringify(result)).not.toContain("case story");
+  });
+
+  it("preserves empty_model_content in step detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "empty_model_content" }), { status: 500 })
+      )
+    );
+
+    await expect(
+      fetchOwnedFilingFtcFormDecision(
+        "https://app.example",
+        {},
+        { url: "https://reportfraud.ftc.gov", fields: [], buttons: [] },
+        {}
+      )
+    ).resolves.toEqual({
+      ok: false,
+      stopReason: "decide_action_failed",
+      detail: "decide-action failed (500:empty_model_content)",
+    });
+  });
+
+  it("preserves model_json_parse_failed in step detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "model_json_parse_failed" }), { status: 500 })
+      )
+    );
+
+    await expect(
+      fetchOwnedFilingFtcFormDecision(
+        "https://app.example",
+        {},
+        { url: "https://reportfraud.ftc.gov", fields: [], buttons: [] },
+        {}
+      )
+    ).resolves.toEqual({
+      ok: false,
+      stopReason: "decide_action_failed",
+      detail: "decide-action failed (500:model_json_parse_failed)",
+    });
+  });
+
+  it("preserves route_exception in step detail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "route_exception" }), { status: 500 })
+      )
+    );
+
+    await expect(
+      fetchOwnedFilingFtcFormDecision(
+        "https://app.example",
+        {},
+        { url: "https://reportfraud.ftc.gov", fields: [], buttons: [] },
+        {}
+      )
+    ).resolves.toEqual({
+      ok: false,
+      stopReason: "decide_action_failed",
+      detail: "decide-action failed (500:route_exception)",
+    });
+  });
+
+  it("ignores non-allowlisted error strings and invalid upstream_status", async () => {
+    expect(
+      buildDecideActionFailedDetail(502, {
+        error: "openai_request_failed",
+        upstream_status: 999,
+      })
+    ).toBe("decide-action failed (502:openai_request_failed)");
+
+    expect(
+      buildDecideActionFailedDetail(500, {
+        error: "not_a_real_category",
+        upstream_status: 400,
+      })
+    ).toBe("decide-action failed (500)");
   });
 });

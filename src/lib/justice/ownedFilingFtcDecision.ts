@@ -6,6 +6,14 @@ import {
 
 export const OWNED_FILING_FTC_DECIDE_TIMEOUT_MS = 60_000;
 
+/** Allowlisted `/api/decide-action` failure categories — never free-form text. */
+const DECIDE_ACTION_FAILURE_CATEGORIES = new Set([
+  "openai_request_failed",
+  "empty_model_content",
+  "model_json_parse_failed",
+  "route_exception",
+]);
+
 type FtcDecisionResult =
   | { ok: true; decision: FormDecision }
   | { ok: false; stopReason: "decide_action_failed" | "invalid_decision"; detail: string };
@@ -17,6 +25,33 @@ function isAbortTimeout(err: unknown): boolean {
   return /\b(abort|timeout)\b/i.test(err instanceof Error ? err.message : String(err));
 }
 
+function sanitizeDecideActionFailureCategory(value: unknown): string | null {
+  return typeof value === "string" && DECIDE_ACTION_FAILURE_CATEGORIES.has(value) ? value : null;
+}
+
+function sanitizeUpstreamStatus(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const code = Math.trunc(value);
+  if (code < 100 || code > 599) return null;
+  return code;
+}
+
+/** Builds internal step detail: status, allowlisted category, optional upstream_status only. */
+export function buildDecideActionFailedDetail(
+  httpStatus: number,
+  payload: { error?: unknown; upstream_status?: unknown }
+): string {
+  const category = sanitizeDecideActionFailureCategory(payload.error);
+  const upstream = sanitizeUpstreamStatus(payload.upstream_status);
+  if (!category) {
+    return `decide-action failed (${httpStatus})`;
+  }
+  if (upstream != null) {
+    return `decide-action failed (${httpStatus}:${category}:upstream_${upstream})`;
+  }
+  return `decide-action failed (${httpStatus}:${category})`;
+}
+
 export async function fetchOwnedFilingFtcFormDecision(
   base: string,
   forwardedHeaders: Record<string, string>,
@@ -24,7 +59,7 @@ export async function fetchOwnedFilingFtcFormDecision(
   userData: Record<string, unknown>
 ): Promise<FtcDecisionResult> {
   let res: Response;
-  let payload: { decision?: unknown };
+  let payload: { decision?: unknown; error?: unknown; upstream_status?: unknown };
   try {
     res = await fetch(`${base}/api/decide-action`, {
       method: "POST",
@@ -35,7 +70,7 @@ export async function fetchOwnedFilingFtcFormDecision(
     payload = (await res.json().catch((err: unknown) => {
       if (isAbortTimeout(err)) throw err;
       return {};
-    })) as { decision?: unknown };
+    })) as { decision?: unknown; error?: unknown; upstream_status?: unknown };
   } catch (err: unknown) {
     if (isAbortTimeout(err)) {
       throw new Error(
@@ -49,7 +84,7 @@ export async function fetchOwnedFilingFtcFormDecision(
     return {
       ok: false,
       stopReason: "decide_action_failed",
-      detail: `decide-action failed (${res.status})`,
+      detail: buildDecideActionFailedDetail(res.status, payload),
     };
   }
   const normalized = normalizeFormDecision(payload.decision);

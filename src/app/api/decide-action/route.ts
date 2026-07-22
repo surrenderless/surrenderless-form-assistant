@@ -18,6 +18,13 @@ export const maxDuration = 300;
  */
 const DECIDE_ACTION_MODEL = "gpt-4.1-mini";
 
+/** Allowlisted decide-action failure categories — never free-form error text. */
+export type DecideActionFailureCategory =
+  | "openai_request_failed"
+  | "empty_model_content"
+  | "model_json_parse_failed"
+  | "route_exception";
+
 function getOpenAI(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) return null;
@@ -61,13 +68,31 @@ function parseDecideActionModelJson(responseText: string | null | undefined): un
   return JSON.parse(jsonText);
 }
 
-function invalidModelJsonResponse(): NextResponse {
-  // Never echo model text — it can reflect pageData / user case content.
-  return NextResponse.json({ error: "Invalid JSON response from GPT" }, { status: 500 });
+function isEmptyModelContent(responseText: string | null | undefined): boolean {
+  return typeof responseText !== "string" || !responseText.trim();
 }
 
-function modelRequestFailedResponse(): NextResponse {
-  return NextResponse.json({ error: "decide-action model request failed" }, { status: 500 });
+/** Numeric HTTP status from OpenAI SDK errors only — never messages or bodies. */
+function extractOpenAiUpstreamStatus(err: unknown): number | undefined {
+  if (!err || typeof err !== "object" || !("status" in err)) return undefined;
+  const status = (err as { status: unknown }).status;
+  if (typeof status !== "number" || !Number.isFinite(status)) return undefined;
+  const code = Math.trunc(status);
+  if (code < 100 || code > 599) return undefined;
+  return code;
+}
+
+function failureResponse(
+  category: DecideActionFailureCategory,
+  upstreamStatus?: number
+): NextResponse {
+  const body: { error: DecideActionFailureCategory; upstream_status?: number } = {
+    error: category,
+  };
+  if (upstreamStatus !== undefined) {
+    body.upstream_status = upstreamStatus;
+  }
+  return NextResponse.json(body, { status: 500 });
 }
 
 export async function POST(req: NextRequest) {
@@ -83,55 +108,63 @@ export async function POST(req: NextRequest) {
     console.warn("rateLimit failed, allowing:", message);
   }
 
-  const body = await req.json();
-  const { pageData, userProfile: userProfileField, userData } = body ?? {};
-  const userProfile = userProfileField ?? userData ?? {};
+  try {
+    const body = await req.json();
+    const { pageData, userProfile: userProfileField, userData } = body ?? {};
+    const userProfile = userProfileField ?? userData ?? {};
 
-  if (isPlaywrightMockRealBbbBoundedSubmitLoopEnabled() && pageData) {
-    const mockDecision = buildPlaywrightMockRealBbbDecideActionDecision(pageData, userProfile);
-    if (mockDecision !== null) {
-      return NextResponse.json({ decision: mockDecision });
+    if (isPlaywrightMockRealBbbBoundedSubmitLoopEnabled() && pageData) {
+      const mockDecision = buildPlaywrightMockRealBbbDecideActionDecision(pageData, userProfile);
+      if (mockDecision !== null) {
+        return NextResponse.json({ decision: mockDecision });
+      }
     }
-  }
 
-  const openai = getOpenAI();
-  if (!openai) {
-    return NextResponse.json(
-      { error: "OpenAI is not configured on this server." },
-      { status: 503 }
-    );
-  }
+    const openai = getOpenAI();
+    if (!openai) {
+      return NextResponse.json(
+        { error: "OpenAI is not configured on this server." },
+        { status: 503 }
+      );
+    }
 
-  const messages: ChatCompletionMessageParam[] = [
-    {
-      role: "system",
-      content:
-        "You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields. Respond with a single JSON object only.",
-    },
-    {
-      role: "user",
-      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When choiceControls exposes a required radio or checkbox, select the required option before Continue using one exact scraped structural key (name, id, or accessibleName) as selector, its exact optionValue as value, the matching choiceSelectorType, and controlKind "radio", "checkbox", or "choice". When optionValue equals accessibleName (FTC category radios omit value attributes), use that exact accessibleName as value and prefer choiceSelectorType "id" with the scraped id when present. When a text/textarea/select field has an empty name and id but exposes formControlName, use that exact formControlName as selector. Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice", choiceSelectorType?: "name" | "id" | "accessibleName" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
-    },
-  ];
+    const messages: ChatCompletionMessageParam[] = [
+      {
+        role: "system",
+        content:
+          "You are a step-by-step form submission agent. You must decide how to interact with the page, based on buttons and fields. Respond with a single JSON object only.",
+      },
+      {
+        role: "user",
+        content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill? What button should we click next? When choiceControls exposes a required radio or checkbox, select the required option before Continue using one exact scraped structural key (name, id, or accessibleName) as selector, its exact optionValue as value, the matching choiceSelectorType, and controlKind "radio", "checkbox", or "choice". When optionValue equals accessibleName (FTC category radios omit value attributes), use that exact accessibleName as value and prefer choiceSelectorType "id" with the scraped id when present. When a text/textarea/select field has an empty name and id but exposes formControlName, use that exact formControlName as selector. Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  fieldsToFill: [ { selector, value, controlKind?: "radio" | "checkbox" | "choice", choiceSelectorType?: "name" | "id" | "accessibleName" } ],\n  nextButton: { selectorType: "text" | "id" | "name", value: "Continue" },\n  waitForNavigation: true\n}`,
+      },
+    ];
 
-  let responseText: string | null | undefined;
-  try {
-    const completion = await openai.chat.completions.create({
-      model: DECIDE_ACTION_MODEL,
-      messages,
-      temperature: 0,
-      // Guarantees machine-parseable JSON on supported models (not classic gpt-4).
-      response_format: { type: "json_object" },
-    });
-    responseText = completion.choices[0]?.message?.content;
+    let responseText: string | null | undefined;
+    try {
+      const completion = await openai.chat.completions.create({
+        model: DECIDE_ACTION_MODEL,
+        messages,
+        temperature: 0,
+        // Guarantees machine-parseable JSON on supported models (not classic gpt-4).
+        response_format: { type: "json_object" },
+      });
+      responseText = completion.choices[0]?.message?.content;
+    } catch (err: unknown) {
+      return failureResponse("openai_request_failed", extractOpenAiUpstreamStatus(err));
+    }
+
+    if (isEmptyModelContent(responseText)) {
+      return failureResponse("empty_model_content");
+    }
+
+    try {
+      const parsed = parseDecideActionModelJson(responseText);
+      return NextResponse.json({ decision: parsed });
+    } catch {
+      return failureResponse("model_json_parse_failed");
+    }
   } catch {
-    return modelRequestFailedResponse();
-  }
-
-  try {
-    const parsed = parseDecideActionModelJson(responseText);
-    return NextResponse.json({ decision: parsed });
-  } catch {
-    return invalidModelJsonResponse();
+    return failureResponse("route_exception");
   }
 }
