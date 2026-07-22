@@ -107,6 +107,9 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
       enabled:
         !(isNative && input.disabled) &&
         element.getAttribute("aria-disabled")?.toLowerCase() !== "true",
+      checked: isNative
+        ? Boolean(input.checked)
+        : element.getAttribute("aria-checked")?.toLowerCase() === "true",
     };
   });
 

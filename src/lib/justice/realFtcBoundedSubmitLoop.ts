@@ -144,32 +144,14 @@ function choiceMatchesFtcAssistantIssue(
   return names.some((name) => matchLabels.includes(name));
 }
 
-/**
- * Case-appropriate /assistant category (or subcategory) decision from scraped choiceControls
- * and userData.issue_type. Returns null when the page is not assistant or no unique enabled
- * radio matches — caller must fail closed without inventing controls.
- */
-export function buildFtcAssistantChoiceDecision(
-  pageData: AssistedFormPageData,
-  userData: Record<string, unknown>
-): FormDecision | null {
-  if (!isFtcReportAssistantUrl(pageData.url ?? "")) return null;
+function ftcAssistantContinueOnlyDecision(): FormDecision {
+  return {
+    nextButton: { selectorType: "text", value: "Continue" },
+    waitForNavigation: true,
+  };
+}
 
-  const issueType =
-    typeof userData.issue_type === "string" ? userData.issue_type.trim() : "";
-  const matchLabels = ftcAssistantIssueMatchLabels(issueType);
-  if (matchLabels.length === 0) return null;
-
-  const matches = (pageData.choiceControls ?? []).filter(
-    (control) =>
-      control.kind === "radio" &&
-      control.enabled &&
-      Boolean(control.id?.trim()) &&
-      choiceMatchesFtcAssistantIssue(control, matchLabels)
-  );
-  if (matches.length !== 1) return null;
-
-  const control = matches[0]!;
+function ftcAssistantRadioChoiceDecision(control: AssistedFormChoiceControl): FormDecision {
   return {
     fieldsToFill: [
       {
@@ -182,6 +164,60 @@ export function buildFtcAssistantChoiceDecision(
     nextButton: { selectorType: "text", value: "Continue" },
     waitForNavigation: true,
   };
+}
+
+/** True when scraped actionable buttons include an enabled visible Continue CTA. */
+function ftcAssistantContinueIsEnabled(pageData: AssistedFormPageData): boolean {
+  return (pageData.buttons ?? []).some(
+    (button) => normalizeFtcAssistantChoiceLabel(button.text) === "continue"
+  );
+}
+
+/**
+ * Case-appropriate /assistant category/subcategory decision from scraped choiceControls
+ * and userData.issue_type. Never re-selects an already-checked parent. Returns null when the
+ * page is not assistant or progression is zero/ambiguous — caller must fail closed.
+ */
+export function buildFtcAssistantChoiceDecision(
+  pageData: AssistedFormPageData,
+  userData: Record<string, unknown>
+): FormDecision | null {
+  if (!isFtcReportAssistantUrl(pageData.url ?? "")) return null;
+
+  const issueType =
+    typeof userData.issue_type === "string" ? userData.issue_type.trim() : "";
+  const matchLabels = ftcAssistantIssueMatchLabels(issueType);
+  if (matchLabels.length === 0) return null;
+
+  const issueMatches = (pageData.choiceControls ?? []).filter(
+    (control) =>
+      control.kind === "radio" &&
+      control.enabled &&
+      Boolean(control.id?.trim()) &&
+      choiceMatchesFtcAssistantIssue(control, matchLabels)
+  );
+  if (issueMatches.length !== 1) return null;
+
+  const parent = issueMatches[0]!;
+  if (!parent.checked) {
+    return ftcAssistantRadioChoiceDecision(parent);
+  }
+
+  // Parent already selected — never re-emit it.
+  if (ftcAssistantContinueIsEnabled(pageData)) {
+    return ftcAssistantContinueOnlyDecision();
+  }
+
+  const nextCandidates = (pageData.choiceControls ?? []).filter(
+    (control) =>
+      control.kind === "radio" &&
+      control.enabled &&
+      Boolean(control.id?.trim()) &&
+      !control.checked &&
+      control.id !== parent.id
+  );
+  if (nextCandidates.length !== 1) return null;
+  return ftcAssistantRadioChoiceDecision(nextCandidates[0]!);
 }
 
 function hasConfirmationLikeFtcUrlPath(url: string): boolean {
