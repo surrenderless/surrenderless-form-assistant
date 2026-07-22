@@ -523,6 +523,14 @@ export async function runRealFtcBoundedSubmit(
           )
         );
       }
+      if (applyResult.diagnostic) {
+        stepLog.push({
+          step: stepsExecuted,
+          url: pageData.url,
+          action: "exact_target_diagnostic",
+          detail: applyResult.diagnostic,
+        });
+      }
       stepsExecuted += 1;
       stepLog.push({
         step: stepsExecuted,
