@@ -199,4 +199,38 @@ describe("fetchOwnedFilingFtcFormDecision", () => {
       })
     ).toBe("decide-action failed (500)");
   });
+
+  it("passes FTC structured mode only from the owned FTC decide caller", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      return new Response(
+        JSON.stringify({
+          decision: {
+            fieldsToFill: [
+              {
+                selector: "sub-a",
+                value: "Option A",
+                controlKind: "radio",
+                choiceSelectorType: "id",
+              },
+            ],
+            nextButton: { selectorType: "text", value: "Continue" },
+          },
+        }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOwnedFilingFtcFormDecision(
+      "https://app.example",
+      { "content-type": "application/json" },
+      { url: "https://reportfraud.ftc.gov/assistant", fields: [], buttons: [] },
+      {}
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+    expect(body.mode).toBe("ftc_structured");
+  });
 });

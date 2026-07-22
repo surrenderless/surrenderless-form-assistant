@@ -22,6 +22,13 @@ vi.mock("openai", () => ({
 }));
 
 import { POST } from "@/app/api/decide-action/route";
+import {
+  adaptFtcStructuredDecision,
+  DECIDE_ACTION_FTC_MODE,
+  FTC_STRUCTURED_DECISION_SCHEMA,
+} from "@/lib/justice/decideActionFtcStructured";
+import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import { validateFtcAssistantStructuredSubcategoryDecision } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
 
@@ -311,5 +318,227 @@ describe("POST /api/decide-action", () => {
     expect(body).toEqual({ error: "route_exception" });
     expect(JSON.stringify(body)).not.toContain("private@example.com");
     expect(JSON.stringify(body)).not.toContain("case story");
+  });
+
+  describe("FTC structured mode", () => {
+    const ftcExternal = {
+      fieldToFill: {
+        selector: "sub-a",
+        value: "Option A",
+        controlKind: "radio",
+        choiceSelectorType: "id",
+      },
+      nextButton: { value: "Continue", selectorType: "text" },
+    };
+
+    it("uses strict json_schema with a single fieldToFill object (no arrays)", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify(ftcExternal) } }],
+      });
+
+      const res = await POST(
+        buildRequest({
+          mode: DECIDE_ACTION_FTC_MODE,
+          pageData: { url: "https://reportfraud.ftc.gov/assistant", fields: [] },
+          userData: { issue_type: "online_purchase" },
+        })
+      );
+
+      expect(res.status).toBe(200);
+      const createArg = mockCreate.mock.calls[0]?.[0] as {
+        response_format?: {
+          type: string;
+          json_schema?: { strict?: boolean; schema?: unknown };
+        };
+      };
+      expect(createArg.response_format?.type).toBe("json_schema");
+      expect(createArg.response_format?.json_schema?.strict).toBe(true);
+      expect(createArg.response_format?.json_schema?.schema).toEqual(FTC_STRUCTURED_DECISION_SCHEMA);
+
+      const schemaJson = JSON.stringify(FTC_STRUCTURED_DECISION_SCHEMA);
+      expect(schemaJson).not.toContain('"type":"array"');
+      expect(schemaJson).not.toContain("fieldsToFill");
+      expect(FTC_STRUCTURED_DECISION_SCHEMA.required).toEqual(["fieldToFill", "nextButton"]);
+      expect(FTC_STRUCTURED_DECISION_SCHEMA.additionalProperties).toBe(false);
+      expect(FTC_STRUCTURED_DECISION_SCHEMA.properties.fieldToFill.additionalProperties).toBe(false);
+      expect(FTC_STRUCTURED_DECISION_SCHEMA.properties.nextButton.additionalProperties).toBe(false);
+      expect(FTC_STRUCTURED_DECISION_SCHEMA.properties.fieldToFill.required).toEqual([
+        "selector",
+        "value",
+        "controlKind",
+        "choiceSelectorType",
+      ]);
+      expect(FTC_STRUCTURED_DECISION_SCHEMA.properties.nextButton.required).toEqual([
+        "value",
+        "selectorType",
+      ]);
+    });
+
+    it("maps one fieldToFill object to exactly one internal fieldsToFill item", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify(ftcExternal) } }],
+      });
+
+      const res = await POST(
+        buildRequest({
+          mode: DECIDE_ACTION_FTC_MODE,
+          pageData: { fields: [] },
+          userData: {},
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        decision: {
+          fieldsToFill: [
+            {
+              selector: "sub-a",
+              value: "Option A",
+              controlKind: "radio",
+              choiceSelectorType: "id",
+            },
+          ],
+          nextButton: { value: "Continue", selectorType: "text" },
+        },
+      });
+    });
+
+    it("fails closed on missing, extra, or invalid FTC schema properties", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ nextButton: ftcExternal.nextButton }) } }],
+      });
+      const missing = await POST(
+        buildRequest({ mode: DECIDE_ACTION_FTC_MODE, pageData: {}, userData: {} })
+      );
+      expect(missing.status).toBe(500);
+      expect(await missing.json()).toEqual({ error: "model_json_parse_failed" });
+
+      mockCreate.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                ...ftcExternal,
+                extra: "secret@example.com",
+              }),
+            },
+          },
+        ],
+      });
+      const extra = await POST(
+        buildRequest({ mode: DECIDE_ACTION_FTC_MODE, pageData: {}, userData: {} })
+      );
+      expect(extra.status).toBe(500);
+      const extraBody = await extra.json();
+      expect(extraBody).toEqual({ error: "model_json_parse_failed" });
+      expect(JSON.stringify(extraBody)).not.toContain("secret@example.com");
+
+      mockCreate.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                fieldToFill: {
+                  ...ftcExternal.fieldToFill,
+                  controlKind: "checkbox",
+                },
+                nextButton: ftcExternal.nextButton,
+              }),
+            },
+          },
+        ],
+      });
+      const invalid = await POST(
+        buildRequest({ mode: DECIDE_ACTION_FTC_MODE, pageData: {}, userData: {} })
+      );
+      expect(invalid.status).toBe(500);
+      expect(await invalid.json()).toEqual({ error: "model_json_parse_failed" });
+    });
+
+    it("fails closed on model refusal without leaking refusal text", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: null, refusal: "cannot help with secret@example.com" } }],
+      });
+
+      const res = await POST(
+        buildRequest({ mode: DECIDE_ACTION_FTC_MODE, pageData: {}, userData: {} })
+      );
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body).toEqual({ error: "empty_model_content" });
+      expect(JSON.stringify(body)).not.toContain("secret@example.com");
+    });
+
+    it("keeps BBB callers on json_object without FTC mode", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify(SAMPLE_DECISION) } }],
+      });
+
+      await POST(
+        buildRequest({
+          pageData: { url: "https://www.bbb.org/complain/", fields: [] },
+          userData: {},
+        })
+      );
+
+      const createArg = mockCreate.mock.calls[0]?.[0] as {
+        response_format?: { type: string };
+      };
+      expect(createArg.response_format).toEqual({ type: "json_object" });
+    });
+
+    it("adapted FTC decision still fails the scraped-candidate validator on wrong selector/value", () => {
+      const adapted = adaptFtcStructuredDecision({
+        fieldToFill: {
+          selector: "sub-unknown",
+          value: "Option A",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+        nextButton: { value: "Continue", selectorType: "text" },
+      });
+      expect(adapted).not.toBeNull();
+      expect(
+        validateFtcAssistantStructuredSubcategoryDecision(adapted as FormDecision, [
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-a",
+            optionValue: "Option A",
+            accessibleName: "Option A",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+        ])
+      ).toEqual({ ok: false, reason: "selector_not_found" });
+
+      const mismatched = adaptFtcStructuredDecision({
+        fieldToFill: {
+          selector: "sub-a",
+          value: "Option B",
+          controlKind: "radio",
+          choiceSelectorType: "id",
+        },
+        nextButton: { value: "Continue", selectorType: "text" },
+      });
+      expect(
+        validateFtcAssistantStructuredSubcategoryDecision(mismatched as FormDecision, [
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-a",
+            optionValue: "Option A",
+            accessibleName: "Option A",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+        ])
+      ).toEqual({ ok: false, reason: "option_value_mismatch" });
+    });
   });
 });

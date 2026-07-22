@@ -1,3 +1,4 @@
+import { DECIDE_ACTION_FTC_MODE } from "@/lib/justice/decideActionFtcStructured";
 import {
   normalizeFormDecision,
   type AssistedFormPageData,
@@ -64,7 +65,12 @@ export async function fetchOwnedFilingFtcFormDecision(
     res = await fetch(`${base}/api/decide-action`, {
       method: "POST",
       headers: forwardedHeaders,
-      body: JSON.stringify({ pageData, userProfile: userData, userData }),
+      body: JSON.stringify({
+        pageData,
+        userProfile: userData,
+        userData,
+        mode: DECIDE_ACTION_FTC_MODE,
+      }),
       signal: AbortSignal.timeout(OWNED_FILING_FTC_DECIDE_TIMEOUT_MS),
     });
     payload = (await res.json().catch((err: unknown) => {
