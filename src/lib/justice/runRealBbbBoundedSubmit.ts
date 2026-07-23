@@ -25,6 +25,7 @@ import {
   assertOwnedFilingPageAliveBeforeEvaluate,
   openOwnedFilingPlaywrightSession,
   withOwnedFilingEvaluateLifecycle,
+  withOwnedFilingEvaluateTimeout,
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
@@ -118,33 +119,35 @@ async function collectPageData(
   browser: Browser
 ): Promise<AssistedFormPageData> {
   return withOwnedFilingEvaluateLifecycle(session, browser, () =>
-    page.evaluate(() => {
-      const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
-        const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
+    withOwnedFilingEvaluateTimeout(() =>
+      page.evaluate(() => {
+        const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
+          const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
+          return {
+            tag: field.tagName.toLowerCase(),
+            type: (field as HTMLInputElement).type || "",
+            name: field.getAttribute("name") || "",
+            id: (field as HTMLInputElement).id || "",
+            placeholder: field.getAttribute("placeholder") || "",
+            label,
+          };
+        });
+
+        const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
+          text: btn.textContent?.trim() || "",
+          id: (btn as HTMLElement).id || "",
+          name: btn.getAttribute("name") || "",
+          type: btn.getAttribute("type") || "",
+        }));
+
         return {
-          tag: field.tagName.toLowerCase(),
-          type: (field as HTMLInputElement).type || "",
-          name: field.getAttribute("name") || "",
-          id: (field as HTMLInputElement).id || "",
-          placeholder: field.getAttribute("placeholder") || "",
-          label,
+          fields,
+          buttons,
+          url: window.location.href,
+          pageText: document.body?.innerText?.slice(0, 8000) || "",
         };
-      });
-
-      const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
-        text: btn.textContent?.trim() || "",
-        id: (btn as HTMLElement).id || "",
-        name: btn.getAttribute("name") || "",
-        type: btn.getAttribute("type") || "",
-      }));
-
-      return {
-        fields,
-        buttons,
-        url: window.location.href,
-        pageText: document.body?.innerText?.slice(0, 8000) || "",
-      };
-    })
+      })
+    )
   );
 }
 
@@ -307,9 +310,7 @@ export async function runRealBbbBoundedSubmit(
     });
     page = playwrightSession.page;
     const navigationUrl = resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl(url, base);
-    await page.goto(navigationUrl, { timeout: 60000 });
-    await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(2000);
+    await page.goto(navigationUrl, { timeout: 60000, waitUntil: "domcontentloaded" });
 
     assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
 
