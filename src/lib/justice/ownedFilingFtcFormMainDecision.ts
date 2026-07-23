@@ -222,6 +222,21 @@ function resolveTextOrSelectValue(
   return null;
 }
 
+/** Normalize scraped/user values for already-satisfied inventory comparison. */
+function normalizeInventoryFieldValue(value: string | null | undefined): string {
+  return (value ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function fieldCurrentValueAlreadySatisfies(
+  field: AssistedFormPageData["fields"][number],
+  intended: string
+): boolean {
+  if (typeof field.currentValue !== "string") return false;
+  return (
+    normalizeInventoryFieldValue(field.currentValue) === normalizeInventoryFieldValue(intended)
+  );
+}
+
 function normalizeYesNoToken(value: string): "yes" | "no" | null {
   const normalized = value.replace(/\u00a0/g, " ").trim().toLowerCase();
   if (normalized === "yes" || normalized === "y") return "yes";
@@ -280,7 +295,9 @@ function preferredChoiceSelector(
 
 /**
  * Deterministic /form/main FormDecision from scrape inventory + case userData only.
- * Returns null when mapping is insufficient or ambiguous — caller falls back to model decide.
+ * Returns null when mapping is insufficient — caller falls back to model decide.
+ * Returns an empty decision (no fields, no nextButton) when every inventory target is already
+ * satisfied and Continue is not actionable — caller must fail closed (empty_decision), not model.
  * Never invents selectors or optionValues.
  */
 export function buildFtcFormMainInventoryDecision(
@@ -289,6 +306,8 @@ export function buildFtcFormMainInventoryDecision(
 ): FormDecision | null {
   const fieldsToFill: FormFieldDecision[] = [];
   const usedSelectors = new Set<string>();
+  /** Uniquely mapped text/select or binary yes/no targets seen (pending or already satisfied). */
+  let inventoryTargetsConsidered = 0;
 
   for (const field of pageData.fields ?? []) {
     if (isSkippedInputType(field.type) || field.tag.trim().toLowerCase() === "button") {
@@ -299,6 +318,8 @@ export function buildFtcFormMainInventoryDecision(
     const value = resolveTextOrSelectValue(field, selector, userData);
     if (!value) continue;
     usedSelectors.add(selector);
+    inventoryTargetsConsidered += 1;
+    if (fieldCurrentValueAlreadySatisfies(field, value)) continue;
     fieldsToFill.push({ selector, value });
   }
 
@@ -313,9 +334,12 @@ export function buildFtcFormMainInventoryDecision(
   }
 
   for (const [, group] of groups) {
-    if (group.some((control) => control.checked)) continue;
     const pair = binaryYesNoPair(group);
     if (!pair) continue;
+    if (group.some((control) => control.checked)) {
+      inventoryTargetsConsidered += 1;
+      continue;
+    }
     const want = resolveYesNoFromUserData(userData);
     const chosen = want === "yes" ? pair.yes : pair.no;
     const targeting = preferredChoiceSelector(chosen, group);
@@ -329,6 +353,7 @@ export function buildFtcFormMainInventoryDecision(
     );
     if (optionMatches.length !== 1) continue;
 
+    inventoryTargetsConsidered += 1;
     fieldsToFill.push({
       selector: targeting.selector,
       value: chosen.optionValue,
@@ -339,12 +364,18 @@ export function buildFtcFormMainInventoryDecision(
 
   const continueActionable = ftcFormMainContinueIsActionable(pageData);
   if (fieldsToFill.length === 0) {
-    if (!continueActionable) return null;
-    return {
-      fieldsToFill: [],
-      nextButton: { selectorType: "text", value: "Continue" },
-      waitForNavigation: true,
-    };
+    if (continueActionable) {
+      return {
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      };
+    }
+    // Inventory targets already satisfied (or checked) but no Continue — fail closed, no model.
+    if (inventoryTargetsConsidered > 0) {
+      return { fieldsToFill: [] };
+    }
+    return null;
   }
 
   // Fields without an actionable Continue: fill-only so apply does not fail-closed on a

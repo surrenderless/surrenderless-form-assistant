@@ -563,7 +563,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
   });
 
   it("form/main fill-only step reevaluates then advances when Continue becomes actionable", async () => {
-    const formFields = [
+    const formFieldsEmpty = [
       {
         tag: "textarea",
         type: "textarea",
@@ -572,6 +572,19 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
         placeholder: "",
         label: "Please describe what happened.",
         formControlName: "comments",
+        currentValue: "",
+      },
+    ];
+    const formFieldsFilled = [
+      {
+        tag: "textarea",
+        type: "textarea",
+        name: "",
+        id: "",
+        placeholder: "",
+        label: "Please describe what happened.",
+        formControlName: "comments",
+        currentValue: "Merchant refused a refund.",
       },
     ];
     const yesNo = [
@@ -602,13 +615,13 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       {
         ...pageData("https://reportfraud.ftc.gov/form/main"),
         buttons: [{ text: "Help", id: "", name: "", type: "button" }],
-        fields: formFields,
+        fields: formFieldsEmpty,
         choiceControls: yesNo,
       },
       {
         ...pageData("https://reportfraud.ftc.gov/form/main"),
         buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
-        fields: formFields,
+        fields: formFieldsFilled,
         choiceControls: yesNo.map((control, index) =>
           index === 1 ? { ...control, checked: true } : control
         ),
@@ -663,7 +676,7 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     });
     expect(mockedApplyDecision.mock.calls[0]?.[1]).not.toHaveProperty("nextButton");
     expect(mockedApplyDecision.mock.calls[1]?.[1]).toEqual({
-      fieldsToFill: [{ selector: "comments", value: "Merchant refused a refund." }],
+      fieldsToFill: [],
       nextButton: { selectorType: "text", value: "Continue" },
       waitForNavigation: true,
     });
@@ -671,6 +684,68 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     if (result.ok) throw new Error("expected incomplete");
     expect(result.stopReason).toBe("blocked_irreversible_click");
     expect(result.stepsExecuted).toBe(2);
+  });
+
+  it("form/main stops empty_decision when inventory is satisfied and Continue is absent", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/form/main"),
+        buttons: [{ text: "Help", id: "", name: "", type: "button" }],
+        fields: [
+          {
+            tag: "textarea",
+            type: "textarea",
+            name: "",
+            id: "",
+            placeholder: "",
+            label: "Please describe what happened.",
+            formControlName: "comments",
+            currentValue: "Merchant refused a refund.",
+          },
+        ],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "yesOrNoMoney",
+            id: "yes-or-no-money-yes",
+            optionValue: "yes",
+            accessibleName: "Yes",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+          {
+            source: "native",
+            kind: "radio",
+            name: "yesOrNoMoney",
+            id: "yes-or-no-money-no",
+            optionValue: "no",
+            accessibleName: "No",
+            visible: true,
+            enabled: true,
+            checked: true,
+          },
+        ],
+      },
+    ];
+    h.state.decideQueue = [];
+    h.state.applyQueue = [];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({
+        story: "Merchant refused a refund.",
+        amount_involved: "0",
+      })
+    );
+
+    expect(mockedFetchDecision).not.toHaveBeenCalled();
+    expect(mockedApplyDecision).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stopReason).toBe("empty_decision");
+    expect(result.stepsExecuted).toBe(0);
+    expect(result.fillResult.stepLog.some((e) => e.action === "empty_decision")).toBe(true);
   });
 
   it("does not inject Report Now for a non-FTC URL pageData", async () => {
