@@ -816,44 +816,253 @@ describe("FTC bounded actions", () => {
     expect(disabled.click).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the scraped actionable corpus lacks exactly one Continue", async () => {
+  it("clicks Continue after choice when scrape had zero Continues and one live active remains", async () => {
     const page = mockPage();
     const active = mockContinueCandidate({ visible: true, enabled: true });
     installContinueRoleMatches(page, [active]);
 
-    const missing = await applyOwnedFilingFormDecision(
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "sub-b",
+            value: "Option B",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+        actionableButtonLabels: [],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-b",
+            optionValue: "Option B",
+            accessibleName: "Option B",
+            visible: true,
+            enabled: true,
+          },
+        ],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.choiceLocator.check).toHaveBeenCalled();
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("clicks only the active Continue after choice when scrape is empty and duplicates are hidden/disabled", async () => {
+    const page = mockPage();
+    const hidden = mockContinueCandidate({ visible: false, enabled: true });
+    const disabled = mockContinueCandidate({ visible: true, enabled: false });
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [hidden, disabled, active]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "sub-a",
+            value: "Option A",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+        actionableButtonLabels: [],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-a",
+            optionValue: "Option A",
+            accessibleName: "Option A",
+            visible: true,
+            enabled: true,
+          },
+        ],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(hidden.click).not.toHaveBeenCalled();
+    expect(disabled.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when scrape has zero Continues and no choice was applied", async () => {
+    const page = mockPage();
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [active]);
+
+    const result = await applyOwnedFilingFormDecision(
       page,
       { nextButton: { selectorType: "text", value: "Continue" } },
       {
         ...ftcOptions,
-        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
-        actionableButtonLabels: ["Next"],
+        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+        actionableButtonLabels: [],
       }
     );
-    expect(missing).toMatchObject({
+
+    expect(result).toMatchObject({
       ok: false,
       blocked: true,
       reason: "unknown_fail_closed",
       diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
     });
     expect(active.click).not.toHaveBeenCalled();
+  });
 
-    const duplicateLabels = await applyOwnedFilingFormDecision(
+  it("fails closed when scrape is empty and two visible enabled Continues remain after choice", async () => {
+    const page = mockPage();
+    const first = mockContinueCandidate({ visible: true, enabled: true });
+    const second = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [first, second]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "sub-b",
+            value: "Option B",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+        actionableButtonLabels: [],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-b",
+            optionValue: "Option B",
+            accessibleName: "Option B",
+            visible: true,
+            enabled: true,
+          },
+        ],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
+    });
+    expect(first.click).not.toHaveBeenCalled();
+    expect(second.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when two Continues are scraped regardless of live matches", async () => {
+    const page = mockPage();
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [active]);
+
+    const result = await applyOwnedFilingFormDecision(
       page,
       { nextButton: { selectorType: "text", value: "Continue" } },
       {
         ...ftcOptions,
-        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
         actionableButtonLabels: ["Continue", "Continue"],
       }
     );
-    expect(duplicateLabels).toMatchObject({
+
+    expect(result).toMatchObject({
       ok: false,
       blocked: true,
       reason: "unknown_fail_closed",
       diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
     });
     expect(active.click).not.toHaveBeenCalled();
+  });
+
+  it("still clicks when one Continue is scraped and one live active remains", async () => {
+    const page = mockPage();
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [active]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("defers unique visible-disabled Continue after choice when scrape is empty", async () => {
+    const page = mockPage();
+    const disabled = mockContinueCandidate({ visible: true, enabled: false });
+    installContinueRoleMatches(page, [disabled]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [
+          {
+            selector: "sub-b",
+            value: "Option B",
+            controlKind: "radio",
+            choiceSelectorType: "id",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+        actionableButtonLabels: [],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "subcategory",
+            id: "sub-b",
+            optionValue: "Option B",
+            accessibleName: "Option B",
+            visible: true,
+            enabled: true,
+          },
+        ],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      clicked: false,
+      risk: "safe",
+      diagnostic: expect.stringContaining("phase=precheck_disabled"),
+    });
+    expect(page.choiceLocator.check).toHaveBeenCalled();
+    expect(disabled.click).not.toHaveBeenCalled();
   });
 
   it("defers disabled Continue on /form/main after a successful choice apply", async () => {
