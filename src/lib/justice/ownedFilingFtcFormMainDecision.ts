@@ -347,6 +347,12 @@ export function buildFtcFormMainInventoryDecision(
     };
   }
 
+  // Fields without an actionable Continue: fill-only so apply does not fail-closed on a
+  // missing live Continue (production: target=continue,count=0,phase=precheck_ambiguous).
+  if (!continueActionable) {
+    return { fieldsToFill };
+  }
+
   return {
     fieldsToFill,
     nextButton: { selectorType: "text", value: "Continue" },
