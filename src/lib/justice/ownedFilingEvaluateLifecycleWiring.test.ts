@@ -26,6 +26,14 @@ describe("owned-filing bounded submit evaluate paths use lifecycle enrichment", 
       );
       expect(collectCalls?.length).toBeGreaterThanOrEqual(2);
     });
+
+    it(`${rel} bounds collectPageData evaluate with withOwnedFilingEvaluateTimeout`, () => {
+      const source = read(rel);
+      expect(source).toContain("withOwnedFilingEvaluateTimeout");
+      expect(source).toMatch(
+        /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
+      );
+    });
   }
 });
 
@@ -84,12 +92,19 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     );
   });
 
-  it("BBB navigation sequence remains unchanged in this slice", () => {
+  it("BBB bounds collectPageData evaluate and uses domcontentloaded goto without fixed 2s delay", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
-    expect(source).toContain('await page.goto(navigationUrl, { timeout: 60000 })');
-    expect(source).toContain('await page.waitForLoadState("domcontentloaded")');
-    expect(source).toContain("await page.waitForTimeout(2000)");
-    expect(source).not.toContain("withOwnedFilingEvaluateTimeout");
+    expect(source).toContain("withOwnedFilingEvaluateTimeout");
+    expect(source).toMatch(
+      /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
+    );
+    expect(source).toMatch(
+      /page\.goto\(\s*navigationUrl,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
+    );
+    expect(source).not.toMatch(/waitForLoadState\(\s*["']domcontentloaded["']\s*\)/);
+    expect(source).not.toMatch(/waitForTimeout\(\s*2000\s*\)/);
+    expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser)");
+    // BBB does not adopt FTC-only ready/retry/stage machinery in this slice.
     expect(source).not.toContain("withOwnedFilingFirstEvaluateRetry");
     expect(source).not.toContain("waitForFtcReportFraudInteractiveReady");
     expect(source).not.toContain("createOwnedFilingFtcStageTiming");
