@@ -858,6 +858,82 @@ describe("FTC bounded actions", () => {
     expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
   });
 
+  it("clicks Continue after a text mutation when scrape is empty and one live active remains", async () => {
+    const page = mockPage({ tag: "TEXTAREA", type: "textarea", visible: true, enabled: true });
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [active]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "comments", value: "Merchant refused a refund." }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: [],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.fillMatchLocator.fill).toHaveBeenCalledWith("Merchant refused a refund.", {
+      timeout: 20_000,
+    });
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("clicks Continue after a select mutation when scrape is empty and one live active remains", async () => {
+    const page = mockPage({ tag: "SELECT", type: "select-one", visible: true, enabled: true });
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [active]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "paymentType", value: "credit" }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: [],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.fillMatchLocator.selectOption).toHaveBeenCalledWith("credit", {
+      timeout: 20_000,
+    });
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("clicks only the active Continue after a text mutation when scrape is empty and duplicates are hidden/disabled", async () => {
+    const page = mockPage({ tag: "TEXTAREA", type: "textarea", visible: true, enabled: true });
+    const hidden = mockContinueCandidate({ visible: false, enabled: true });
+    const disabled = mockContinueCandidate({ visible: true, enabled: false });
+    const active = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [hidden, disabled, active]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "comments", value: "Case narrative." }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: [],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(hidden.click).not.toHaveBeenCalled();
+    expect(disabled.click).not.toHaveBeenCalled();
+  });
+
   it("clicks only the active Continue after choice when scrape is empty and duplicates are hidden/disabled", async () => {
     const page = mockPage();
     const hidden = mockContinueCandidate({ visible: false, enabled: true });
@@ -903,7 +979,7 @@ describe("FTC bounded actions", () => {
     expect(disabled.click).not.toHaveBeenCalled();
   });
 
-  it("fails closed when scrape has zero Continues and no choice was applied", async () => {
+  it("fails closed when scrape has zero Continues and no field mutation was applied", async () => {
     const page = mockPage();
     const active = mockContinueCandidate({ visible: true, enabled: true });
     installContinueRoleMatches(page, [active]);
@@ -927,8 +1003,8 @@ describe("FTC bounded actions", () => {
     expect(active.click).not.toHaveBeenCalled();
   });
 
-  it("fails closed when scrape is empty and two visible enabled Continues remain after choice", async () => {
-    const page = mockPage();
+  it("fails closed when scrape is empty and two visible enabled Continues remain after mutation", async () => {
+    const page = mockPage({ tag: "TEXTAREA", type: "textarea", visible: true, enabled: true });
     const first = mockContinueCandidate({ visible: true, enabled: true });
     const second = mockContinueCandidate({ visible: true, enabled: true });
     installContinueRoleMatches(page, [first, second]);
@@ -936,32 +1012,13 @@ describe("FTC bounded actions", () => {
     const result = await applyOwnedFilingFormDecision(
       page,
       {
-        fieldsToFill: [
-          {
-            selector: "sub-b",
-            value: "Option B",
-            controlKind: "radio",
-            choiceSelectorType: "id",
-          },
-        ],
+        fieldsToFill: [{ selector: "comments", value: "Case narrative." }],
         nextButton: { selectorType: "text", value: "Continue" },
       },
       {
         ...ftcOptions,
-        currentPageUrl: "https://reportfraud.ftc.gov/assistant",
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
         actionableButtonLabels: [],
-        choiceControls: [
-          {
-            source: "native",
-            kind: "radio",
-            name: "subcategory",
-            id: "sub-b",
-            optionValue: "Option B",
-            accessibleName: "Option B",
-            visible: true,
-            enabled: true,
-          },
-        ],
       }
     );
 
@@ -1016,6 +1073,34 @@ describe("FTC bounded actions", () => {
 
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
     expect(active.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
+  it("defers unique visible-disabled Continue after a text mutation when scrape is empty", async () => {
+    const page = mockPage({ tag: "TEXTAREA", type: "textarea", visible: true, enabled: true });
+    const disabled = mockContinueCandidate({ visible: true, enabled: false });
+    installContinueRoleMatches(page, [disabled]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "comments", value: "Case narrative." }],
+        nextButton: { selectorType: "text", value: "Continue" },
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: [],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      clicked: false,
+      risk: "safe",
+      diagnostic: expect.stringContaining("phase=precheck_disabled"),
+    });
+    expect(page.fillMatchLocator.fill).toHaveBeenCalled();
+    expect(disabled.click).not.toHaveBeenCalled();
   });
 
   it("defers unique visible-disabled Continue after choice when scrape is empty", async () => {
