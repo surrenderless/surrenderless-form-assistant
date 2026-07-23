@@ -338,6 +338,60 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
+  it("omits CSS-hidden rcemail-style text fields while retaining visible controls", () => {
+    const hiddenRcEmail: FakeElement = {
+      tagName: "INPUT",
+      textContent: "",
+      id: "rcemail",
+      disabled: false,
+      hidden: false,
+      value: "honeypot@example.com",
+      type: "text",
+      labels: [],
+      styleState: { display: "none", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "name") return "email";
+        if (name === "formcontrolname") return "rcemail";
+        if (name === "placeholder") return null;
+        return null;
+      },
+      hasAttribute(name: string) {
+        return name === "name" || name === "formcontrolname";
+      },
+      getBoundingClientRect: () => ({ width: 200, height: 30 }),
+    };
+    const comments: FakeElement = {
+      tagName: "TEXTAREA",
+      textContent: "",
+      id: "",
+      disabled: false,
+      hidden: false,
+      value: SECRET,
+      type: "textarea",
+      labels: [],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "formcontrolname") return "comments";
+        if (name === "aria-labelledby") return "commentsLabel";
+        if (name === "name" || name === "placeholder") return null;
+        return null;
+      },
+      hasAttribute(name: string) {
+        return name === "formcontrolname" || name === "aria-labelledby";
+      },
+      getBoundingClientRect: () => ({ width: 400, height: 120 }),
+    };
+    installDom([], [], [hiddenRcEmail, comments]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+
+    expect(result.fields.some((field) => field.formControlName === "rcemail")).toBe(false);
+    expect(result.fields.some((field) => field.id === "rcemail")).toBe(false);
+    expect(result.fields.some((field) => field.formControlName === "comments")).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("honeypot@example.com");
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
   it("includes visible a[role=button] Continue and normalizes trailing NBSP text", () => {
     const continueLink: FakeElement = {
       tagName: "A",

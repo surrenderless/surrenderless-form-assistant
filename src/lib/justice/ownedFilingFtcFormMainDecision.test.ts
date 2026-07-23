@@ -158,6 +158,62 @@ describe("ownedFilingFtcFormMainDecision", () => {
       );
     });
 
+    it("does not emit rcemail when only a hidden-style email field would map userData.email", () => {
+      // After scrape visibility filtering, CSS-hidden rcemail is absent from pageData.fields.
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          fields: [],
+          choiceControls: [],
+          buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+        }),
+        { email: "pat@example.com", contact_email: "pat@example.com" }
+      );
+
+      expect(decision).toEqual({
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      });
+      expect(JSON.stringify(decision)).not.toContain("rcemail");
+      expect(JSON.stringify(decision)).not.toContain("pat@example.com");
+    });
+
+    it("still builds visible narrative and yes/no inventory without selecting rcemail", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          fields: [
+            {
+              tag: "textarea",
+              type: "textarea",
+              name: "",
+              id: "",
+              placeholder: "",
+              label: "Please describe what happened.",
+              formControlName: "comments",
+            },
+          ],
+          buttons: [],
+        }),
+        {
+          story: "Merchant refused a refund.",
+          amount_involved: "$50",
+          email: "pat@example.com",
+        }
+      );
+
+      expect(decision?.fieldsToFill).toEqual([
+        { selector: "comments", value: "Merchant refused a refund." },
+        {
+          selector: "yesOrNoMoney",
+          value: "yes",
+          controlKind: "radio",
+          choiceSelectorType: "name",
+        },
+      ]);
+      expect(JSON.stringify(decision)).not.toContain("rcemail");
+      expect(JSON.stringify(decision)).not.toContain("pat@example.com");
+    });
+
     it("returns Continue-only when Continue is uniquely actionable and nothing is mappable", () => {
       expect(
         buildFtcFormMainInventoryDecision(
