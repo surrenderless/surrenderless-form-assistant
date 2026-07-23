@@ -392,20 +392,20 @@ describe("closeOwnedFilingBrowserFailClosed", () => {
   });
 
   it("returns when browser.close settles before the bound", async () => {
-    const browser = mockBrowser({ contexts: [] }) as Browser & {
+    const browser = mockBrowser({ contexts: [] }) as unknown as Browser & {
       close: ReturnType<typeof vi.fn>;
     };
-    browser.close = vi.fn(async () => undefined);
+    browser.close = vi.fn(async (): Promise<void> => undefined);
     await closeOwnedFilingBrowserFailClosed(browser, { timeoutMs: 200, logLabel: "test" });
     expect(browser.close).toHaveBeenCalledTimes(1);
   });
 
   it("does not hang when browser.close never settles", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const browser = mockBrowser({ contexts: [] }) as Browser & {
+    const browser = mockBrowser({ contexts: [] }) as unknown as Browser & {
       close: ReturnType<typeof vi.fn>;
     };
-    browser.close = vi.fn(() => new Promise(() => {}));
+    browser.close = vi.fn((): Promise<void> => new Promise<void>(() => {}));
     const started = Date.now();
     await closeOwnedFilingBrowserFailClosed(browser, { timeoutMs: 40, logLabel: "test" });
     expect(Date.now() - started).toBeLessThan(1_500);
