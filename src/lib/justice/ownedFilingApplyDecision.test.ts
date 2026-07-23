@@ -349,6 +349,30 @@ describe("FTC bounded actions", () => {
     expect(page.fill).not.toHaveBeenCalled();
   });
 
+  it("applies a fill-only /form/main decision without clicking Continue", async () => {
+    const page = mockPage({ tag: "TEXTAREA", type: "textarea", visible: true, enabled: true });
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      {
+        fieldsToFill: [{ selector: "comments", value: "SENSITIVE_CASE_STORY_VALUE" }],
+      },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Help"],
+      }
+    );
+
+    expect(result).toEqual({ ok: true, clicked: false, risk: "none" });
+    expect(page.fillMatchLocator.fill).toHaveBeenCalledWith("SENSITIVE_CASE_STORY_VALUE", {
+      timeout: 20_000,
+    });
+    expect(page.getByRole).not.toHaveBeenCalled();
+    expect(page.exactButtonLocator.click).not.toHaveBeenCalled();
+    expect(page.waitForNavigation).not.toHaveBeenCalled();
+  });
+
   it("selects a verified unique visible /form/main select via selectOption", async () => {
     const page = mockPage({ tag: "SELECT", type: "select-one", visible: true, enabled: true });
 

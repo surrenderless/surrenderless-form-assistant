@@ -539,9 +539,9 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       })
     );
 
-    // First step is deterministic inventory — model decide only for the Submit page.
+    // First step is deterministic fill-only inventory (Continue not actionable yet).
     expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
-    expect(mockedApplyDecision.mock.calls[0]?.[1]).toMatchObject({
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
       fieldsToFill: [
         { selector: "comments", value: "Merchant refused a refund." },
         {
@@ -551,8 +551,8 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
           choiceSelectorType: "name",
         },
       ],
-      nextButton: { selectorType: "text", value: "Continue" },
     });
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).not.toHaveProperty("nextButton");
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected incomplete");
     expect(result.stopReason).toBe("blocked_irreversible_click");
@@ -560,6 +560,117 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(result.fillResult.stepLog.some((e) => e.action === "blocked_irreversible_click")).toBe(
       true
     );
+  });
+
+  it("form/main fill-only step reevaluates then advances when Continue becomes actionable", async () => {
+    const formFields = [
+      {
+        tag: "textarea",
+        type: "textarea",
+        name: "",
+        id: "",
+        placeholder: "",
+        label: "Please describe what happened.",
+        formControlName: "comments",
+      },
+    ];
+    const yesNo = [
+      {
+        source: "native" as const,
+        kind: "radio" as const,
+        name: "yesOrNoMoney",
+        id: "yes-or-no-money-yes",
+        optionValue: "yes",
+        accessibleName: "Yes",
+        visible: true,
+        enabled: true,
+        checked: false,
+      },
+      {
+        source: "native" as const,
+        kind: "radio" as const,
+        name: "yesOrNoMoney",
+        id: "yes-or-no-money-no",
+        optionValue: "no",
+        accessibleName: "No",
+        visible: true,
+        enabled: true,
+        checked: false,
+      },
+    ];
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/form/main"),
+        buttons: [{ text: "Help", id: "", name: "", type: "button" }],
+        fields: formFields,
+        choiceControls: yesNo,
+      },
+      {
+        ...pageData("https://reportfraud.ftc.gov/form/main"),
+        buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+        fields: formFields,
+        choiceControls: yesNo.map((control, index) =>
+          index === 1 ? { ...control, checked: true } : control
+        ),
+      },
+      {
+        ...pageData("https://reportfraud.ftc.gov/form/main"),
+        buttons: [{ text: "Submit report", id: "", name: "", type: "submit" }],
+        fields: [],
+        choiceControls: [],
+      },
+    ];
+    h.state.decideQueue = [
+      {
+        ok: true,
+        decision: {
+          nextButton: { selectorType: "text", value: "Submit report" },
+        },
+      },
+    ];
+    h.state.applyQueue = [
+      { result: { ok: true, clicked: false, risk: "none" } },
+      { result: applyOk() },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit report",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({
+        story: "Merchant refused a refund.",
+        amount_involved: "0",
+      })
+    );
+
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [
+        { selector: "comments", value: "Merchant refused a refund." },
+        {
+          selector: "yesOrNoMoney",
+          value: "no",
+          controlKind: "radio",
+          choiceSelectorType: "name",
+        },
+      ],
+    });
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).not.toHaveProperty("nextButton");
+    expect(mockedApplyDecision.mock.calls[1]?.[1]).toEqual({
+      fieldsToFill: [{ selector: "comments", value: "Merchant refused a refund." }],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(2);
   });
 
   it("does not inject Report Now for a non-FTC URL pageData", async () => {

@@ -114,8 +114,33 @@ describe("ownedFilingFtcFormMainDecision", () => {
   });
 
   describe("buildFtcFormMainInventoryDecision", () => {
-    it("builds inventory-backed narrative + yes/no decisions from scraped selectors only", () => {
-      const decision = buildFtcFormMainInventoryDecision(formMainPage({ buttons: [] }), {
+    it("returns fill-only when fields map but Continue is not actionable", () => {
+      const page = formMainPage({ buttons: [] });
+      const decision = buildFtcFormMainInventoryDecision(page, {
+        complaint_description: "Merchant refused a refund.",
+        amount_involved: "$120",
+        paymentType: "credit",
+      });
+
+      expect(decision).toEqual({
+        fieldsToFill: [
+          { selector: "comments", value: "Merchant refused a refund." },
+          { selector: "paymentType", value: "credit" },
+          {
+            selector: "yesOrNoMoney",
+            value: "yes",
+            controlKind: "radio",
+            choiceSelectorType: "name",
+          },
+        ],
+      });
+      expect(decision).not.toHaveProperty("nextButton");
+      expect(decision).not.toHaveProperty("waitForNavigation");
+      expect(validateFtcFormMainDecision(page, decision!)).toEqual({ ok: true });
+    });
+
+    it("returns fields plus Continue when Continue is uniquely actionable", () => {
+      const decision = buildFtcFormMainInventoryDecision(formMainPage(), {
         complaint_description: "Merchant refused a refund.",
         amount_involved: "$120",
         paymentType: "credit",
@@ -135,9 +160,7 @@ describe("ownedFilingFtcFormMainDecision", () => {
         nextButton: { selectorType: "text", value: "Continue" },
         waitForNavigation: true,
       });
-      expect(validateFtcFormMainDecision(formMainPage({ buttons: [] }), decision!)).toEqual({
-        ok: true,
-      });
+      expect(validateFtcFormMainDecision(formMainPage(), decision!)).toEqual({ ok: true });
     });
 
     it("uses exact scraped optionValue no when amount is empty/zero-like", () => {
@@ -210,6 +233,7 @@ describe("ownedFilingFtcFormMainDecision", () => {
           choiceSelectorType: "name",
         },
       ]);
+      expect(decision).not.toHaveProperty("nextButton");
       expect(JSON.stringify(decision)).not.toContain("rcemail");
       expect(JSON.stringify(decision)).not.toContain("pat@example.com");
     });
