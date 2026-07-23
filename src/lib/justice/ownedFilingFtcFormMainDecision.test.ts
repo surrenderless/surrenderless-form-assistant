@@ -337,6 +337,76 @@ describe("ownedFilingFtcFormMainDecision", () => {
       expect(decision).not.toHaveProperty("nextButton");
     });
 
+    it("proposes unique irreversible Submit when inventory is satisfied and Continue is absent", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          buttons: [
+            { text: "Here's how you know", id: "", name: "", type: "" },
+            { text: "Back", id: "goBackBtn", name: "", type: "" },
+            { text: "Submit", id: "", name: "", type: "button" },
+          ],
+          fields: [
+            {
+              tag: "textarea",
+              type: "textarea",
+              name: "",
+              id: "",
+              placeholder: "",
+              label: "Please describe what happened.",
+              formControlName: "comments",
+              currentValue: "Merchant refused a refund.",
+            },
+          ],
+          choiceControls: yesNoMoneyControls().map((control, index) =>
+            index === 1 ? { ...control, checked: true } : control
+          ),
+        }),
+        {
+          story: "Merchant refused a refund.",
+          amount_involved: "0",
+        }
+      );
+
+      expect(decision).toEqual({
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Submit" },
+      });
+      expect(decision).not.toHaveProperty("waitForNavigation");
+    });
+
+    it("keeps empty decision when multiple irreversible Submit-class buttons exist", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          buttons: [
+            { text: "Submit", id: "a", name: "", type: "button" },
+            { text: "Submit report", id: "b", name: "", type: "button" },
+          ],
+          fields: [
+            {
+              tag: "textarea",
+              type: "textarea",
+              name: "",
+              id: "",
+              placeholder: "",
+              label: "Please describe what happened.",
+              formControlName: "comments",
+              currentValue: "Merchant refused a refund.",
+            },
+          ],
+          choiceControls: yesNoMoneyControls().map((control, index) =>
+            index === 1 ? { ...control, checked: true } : control
+          ),
+        }),
+        {
+          story: "Merchant refused a refund.",
+          amount_involved: "0",
+        }
+      );
+
+      expect(decision).toEqual({ fieldsToFill: [] });
+      expect(decision).not.toHaveProperty("nextButton");
+    });
+
     it("returns Continue-only when Continue is uniquely actionable and nothing is mappable", () => {
       expect(
         buildFtcFormMainInventoryDecision(
@@ -451,6 +521,40 @@ describe("ownedFilingFtcFormMainDecision", () => {
           fieldsToFill: [],
           nextButton: { selectorType: "text", value: "Continue" },
         })
+      ).toEqual({ ok: false, reason: "fields_required" });
+    });
+
+    it("allows zero-field unique irreversible Submit when Continue is absent", () => {
+      expect(
+        validateFtcFormMainDecision(
+          formMainPage({
+            buttons: [
+              { text: "Back", id: "goBackBtn", name: "", type: "" },
+              { text: "Submit", id: "", name: "", type: "button" },
+            ],
+          }),
+          {
+            fieldsToFill: [],
+            nextButton: { selectorType: "text", value: "Submit" },
+          }
+        )
+      ).toEqual({ ok: true });
+    });
+
+    it("rejects Submit nextButton when irreversible buttons are not unique", () => {
+      expect(
+        validateFtcFormMainDecision(
+          formMainPage({
+            buttons: [
+              { text: "Submit", id: "a", name: "", type: "button" },
+              { text: "Submit report", id: "b", name: "", type: "button" },
+            ],
+          }),
+          {
+            fieldsToFill: [],
+            nextButton: { selectorType: "text", value: "Submit" },
+          }
+        )
       ).toEqual({ ok: false, reason: "fields_required" });
     });
 

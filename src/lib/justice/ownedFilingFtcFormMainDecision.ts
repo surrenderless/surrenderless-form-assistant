@@ -1,3 +1,4 @@
+import { classifyOwnedFilingClick } from "@/lib/justice/classifyOwnedFilingClick";
 import type {
   AssistedFormChoiceControl,
   AssistedFormPageData,
@@ -293,11 +294,34 @@ function preferredChoiceSelector(
   return null;
 }
 
+function normalizeButtonLabel(value: string | null | undefined): string {
+  return (value ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Exactly one scrape button whose text classifies as irreversible (verified FTC Submit).
+ * pageData.buttons are already visible + enabled from the FTC collector.
+ */
+export function uniqueFtcFormMainIrreversibleButton(
+  pageData: AssistedFormPageData
+): { selectorType: "text"; value: string } | null {
+  const irreversible: string[] = [];
+  for (const button of pageData.buttons ?? []) {
+    const value = normalizeButtonLabel(button.text);
+    if (!value) continue;
+    if (classifyOwnedFilingClick({ selectorType: "text", value }) === "irreversible") {
+      irreversible.push(value);
+    }
+  }
+  if (irreversible.length !== 1) return null;
+  return { selectorType: "text", value: irreversible[0]! };
+}
+
 /**
  * Deterministic /form/main FormDecision from scrape inventory + case userData only.
  * Returns null when mapping is insufficient — caller falls back to model decide.
- * Returns an empty decision (no fields, no nextButton) when every inventory target is already
- * satisfied and Continue is not actionable — caller must fail closed (empty_decision), not model.
+ * When inventory is satisfied and Continue is not actionable: proposes a unique irreversible
+ * Submit CTA when present; otherwise empty decision (fail closed, no model).
  * Never invents selectors or optionValues.
  */
 export function buildFtcFormMainInventoryDecision(
@@ -371,8 +395,12 @@ export function buildFtcFormMainInventoryDecision(
         waitForNavigation: true,
       };
     }
-    // Inventory targets already satisfied (or checked) but no Continue — fail closed, no model.
+    // Inventory satisfied, no Continue: unique irreversible Submit → dry-run stops at gate.
     if (inventoryTargetsConsidered > 0) {
+      const submit = uniqueFtcFormMainIrreversibleButton(pageData);
+      if (submit) {
+        return { fieldsToFill: [], nextButton: submit };
+      }
       return { fieldsToFill: [] };
     }
     return null;
@@ -394,7 +422,8 @@ export function buildFtcFormMainInventoryDecision(
 /**
  * Fail-closed preflight for FTC /form/main decisions against the evaluate scrape.
  * Rejects the entire decision when any field is unmatched/ambiguous, or when
- * Continue is not actionable and no inventory-backed field mutation is proposed.
+ * Continue is not actionable and no inventory-backed field mutation or unique
+ * irreversible Submit CTA is proposed.
  */
 export function validateFtcFormMainDecision(
   pageData: AssistedFormPageData,
@@ -434,6 +463,18 @@ export function validateFtcFormMainDecision(
   }
 
   if (!continueActionable && inventoryBackedFieldCount === 0) {
+    const next = decision.nextButton;
+    const nextValue = normalizeButtonLabel(next?.value);
+    if (
+      next?.selectorType === "text" &&
+      nextValue &&
+      classifyOwnedFilingClick(next) === "irreversible"
+    ) {
+      const uniqueSubmit = uniqueFtcFormMainIrreversibleButton(pageData);
+      if (uniqueSubmit && uniqueSubmit.value === nextValue) {
+        return { ok: true };
+      }
+    }
     return { ok: false, reason: "fields_required" };
   }
 
