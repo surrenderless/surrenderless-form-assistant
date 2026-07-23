@@ -8,6 +8,8 @@ import {
   DECIDE_ACTION_FTC_MODE,
   FTC_STRUCTURED_DECISION_SCHEMA,
 } from "@/lib/justice/decideActionFtcStructured";
+import { formatFtcFormMainInventoryForPrompt } from "@/lib/justice/ownedFilingFtcFormMainDecision";
+import type { AssistedFormPageData } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
   buildPlaywrightMockRealBbbDecideActionDecision,
   isPlaywrightMockRealBbbBoundedSubmitLoopEnabled,
@@ -139,15 +141,24 @@ function buildFtcFormMainMessages(
   pageData: unknown,
   userProfile: unknown
 ): ChatCompletionMessageParam[] {
+  const inventoryBlock =
+    pageData && typeof pageData === "object"
+      ? formatFtcFormMainInventoryForPrompt(pageData as AssistedFormPageData)
+      : formatFtcFormMainInventoryForPrompt({
+          fields: [],
+          buttons: [],
+          url: "",
+        });
+
   return [
     {
       role: "system",
       content:
-        "You are a step-by-step FTC ReportFraud /form/main submission agent. Respond with a single JSON object only. Fill every required visible field needed to unlock Continue on this step, then click Continue. Never invent selectors or choice metadata.",
+        "You are a step-by-step FTC ReportFraud /form/main submission agent. Respond with a single JSON object only. Fill every required visible field needed to unlock Continue on this step, then click Continue. Use only the allowed scraped selectors listed in the user message. Never invent selectors or choice metadata.",
     },
     {
       role: "user",
-      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill on this FTC main form step, and which button should we click next?\n- Prefer Continue as nextButton with selectorType "text" when Continue is the safe next action.\n- You may return multiple fieldsToFill entries in one decision.\n- For text/textarea/select controls, use the exact scraped name, id, or formControlName as selector and the case value as value (no controlKind).\n- For required radios/checkboxes from choiceControls, use controlKind "radio" | "checkbox" | "choice", the matching choiceSelectorType ("name" | "id" | "accessibleName"), the exact scraped structural key as selector, and the exact optionValue as value.\n- Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  "fieldsToFill": [\n    { "selector": "comments", "value": "<story>" },\n    { "selector": "yesOrNoMoney", "value": "no", "controlKind": "radio", "choiceSelectorType": "name" }\n  ],\n  "nextButton": { "selectorType": "text", "value": "Continue" },\n  "waitForNavigation": true\n}`,
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\n${inventoryBlock}\n\nWhat should we fill on this FTC main form step, and which button should we click next?\n- Prefer Continue as nextButton with selectorType "text" when Continue is the safe next action.\n- You may return multiple fieldsToFill entries in one decision.\n- For text/textarea/select controls, use an exact allowed field selector (name, id, or formControlName) and the case value as value (no controlKind).\n- For required radios/checkboxes, use controlKind "radio" | "checkbox" | "choice", the matching choiceSelectorType ("name" | "id" | "accessibleName"), an exact allowed choice key as selector, and the exact scraped optionValue as value.\n- Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  "fieldsToFill": [\n    { "selector": "comments", "value": "<story>" },\n    { "selector": "yesOrNoMoney", "value": "no", "controlKind": "radio", "choiceSelectorType": "name" }\n  ],\n  "nextButton": { "selectorType": "text", "value": "Continue" },\n  "waitForNavigation": true\n}`,
     },
   ];
 }

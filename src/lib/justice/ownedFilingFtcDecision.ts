@@ -3,6 +3,10 @@ import {
   DECIDE_ACTION_FTC_MODE,
 } from "@/lib/justice/decideActionFtcStructured";
 import {
+  FTC_FORM_MAIN_DECISION_VALIDATION_FAILURES,
+  validateFtcFormMainDecision,
+} from "@/lib/justice/ownedFilingFtcFormMainDecision";
+import {
   normalizeFormDecision,
   type AssistedFormPageData,
   type FormDecision,
@@ -112,5 +116,19 @@ export async function fetchOwnedFilingFtcFormDecision(
       detail: "decide-action returned an invalid decision shape",
     };
   }
+
+  if (isFtcReportFormMainUrl(pageData.url ?? "")) {
+    const preflight = validateFtcFormMainDecision(pageData, normalized);
+    if (!preflight.ok) {
+      return {
+        ok: false,
+        stopReason: "invalid_decision",
+        detail: FTC_FORM_MAIN_DECISION_VALIDATION_FAILURES.has(preflight.reason)
+          ? preflight.reason
+          : "decide-action returned an invalid decision shape",
+      };
+    }
+  }
+
   return { ok: true, decision: normalized };
 }
