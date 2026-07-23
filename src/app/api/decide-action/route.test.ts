@@ -24,10 +24,12 @@ vi.mock("openai", () => ({
 import { POST } from "@/app/api/decide-action/route";
 import {
   adaptFtcStructuredDecision,
+  DECIDE_ACTION_FTC_FORM_MAIN_MODE,
   DECIDE_ACTION_FTC_MODE,
   FTC_STRUCTURED_DECISION_SCHEMA,
 } from "@/lib/justice/decideActionFtcStructured";
 import type { FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import { normalizeFormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import { validateFtcAssistantStructuredSubcategoryDecision } from "@/lib/justice/realFtcBoundedSubmitLoop";
 import { getUserOr401 } from "@/server/requireUser";
 import { rateLimit } from "@/utils/rateLimiter";
@@ -539,6 +541,133 @@ describe("POST /api/decide-action", () => {
           },
         ])
       ).toEqual({ ok: false, reason: "option_value_mismatch" });
+    });
+  });
+
+  describe("FTC form/main mode", () => {
+    const formMainDecision = {
+      fieldsToFill: [
+        { selector: "comments", value: "Merchant refused a refund." },
+        {
+          selector: "yesOrNoMoney",
+          value: "no",
+          controlKind: "radio",
+          choiceSelectorType: "name",
+        },
+        { selector: "paymentType", value: "credit" },
+      ],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    };
+
+    it("uses json_object (not assistant radio json_schema) for form/main multi-field decisions", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify(formMainDecision) } }],
+      });
+
+      const res = await POST(
+        buildRequest({
+          mode: DECIDE_ACTION_FTC_FORM_MAIN_MODE,
+          pageData: { url: "https://reportfraud.ftc.gov/form/main", fields: [] },
+          userData: { story: "Merchant refused a refund." },
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ decision: formMainDecision });
+
+      const createArg = mockCreate.mock.calls[0]?.[0] as {
+        response_format?: { type: string; json_schema?: unknown };
+        messages?: Array<{ role: string; content: string }>;
+      };
+      expect(createArg.response_format).toEqual({ type: "json_object" });
+      expect(createArg.response_format).not.toHaveProperty("json_schema");
+      expect(createArg.messages?.[0]?.content).toContain("/form/main");
+      expect(createArg.messages?.[1]?.content).toContain("fieldsToFill");
+      expect(createArg.messages?.[1]?.content).not.toContain("subcategory radio");
+    });
+
+    it("returns multi-field text/select/choice decisions for form/main", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify(formMainDecision) } }],
+      });
+
+      const res = await POST(
+        buildRequest({
+          mode: DECIDE_ACTION_FTC_FORM_MAIN_MODE,
+          pageData: { url: "https://reportfraud.ftc.gov/form/main" },
+          userData: {},
+        })
+      );
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.decision.fieldsToFill).toHaveLength(3);
+      expect(body.decision.fieldsToFill[0]).toEqual({
+        selector: "comments",
+        value: "Merchant refused a refund.",
+      });
+      expect(body.decision.fieldsToFill[1].choiceSelectorType).toBe("name");
+      expect(body.decision.nextButton).toEqual({
+        selectorType: "text",
+        value: "Continue",
+      });
+    });
+
+    it("does not apply the assistant single-radio adapter to form/main responses", async () => {
+      mockCreate.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                fieldToFill: {
+                  selector: "sub-a",
+                  value: "Option A",
+                  controlKind: "radio",
+                  choiceSelectorType: "id",
+                },
+                nextButton: { value: "Continue", selectorType: "text" },
+              }),
+            },
+          },
+        ],
+      });
+
+      const res = await POST(
+        buildRequest({
+          mode: DECIDE_ACTION_FTC_FORM_MAIN_MODE,
+          pageData: { url: "https://reportfraud.ftc.gov/form/main" },
+          userData: {},
+        })
+      );
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // Returned as-is (no fieldToFill → fieldsToFill adaptation).
+      expect(body.decision.fieldToFill).toBeDefined();
+      expect(body.decision.fieldsToFill).toBeUndefined();
+    });
+
+    it("fail-closes malformed form/main decisions via normalizeFormDecision", () => {
+      expect(
+        normalizeFormDecision({
+          fieldsToFill: [{ selector: "comments", value: 12 }],
+          nextButton: { selectorType: "text", value: "Continue" },
+        })
+      ).toBeNull();
+      expect(
+        normalizeFormDecision({
+          fieldsToFill: [
+            {
+              selector: "yesOrNoMoney",
+              value: "no",
+              choiceSelectorType: "name",
+            },
+          ],
+          nextButton: { selectorType: "text", value: "Continue" },
+        })
+      ).toBeNull();
+      expect(normalizeFormDecision(formMainDecision)).toEqual(formMainDecision);
     });
   });
 });

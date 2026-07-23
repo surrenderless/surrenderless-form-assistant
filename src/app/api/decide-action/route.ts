@@ -4,6 +4,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { resolveBbbDecideActionInternalUserId } from "@/lib/justice/bbbOwnedFilingProduction";
 import {
   adaptFtcStructuredDecision,
+  DECIDE_ACTION_FTC_FORM_MAIN_MODE,
   DECIDE_ACTION_FTC_MODE,
   FTC_STRUCTURED_DECISION_SCHEMA,
 } from "@/lib/justice/decideActionFtcStructured";
@@ -134,6 +135,23 @@ function buildFtcStructuredMessages(
   ];
 }
 
+function buildFtcFormMainMessages(
+  pageData: unknown,
+  userProfile: unknown
+): ChatCompletionMessageParam[] {
+  return [
+    {
+      role: "system",
+      content:
+        "You are a step-by-step FTC ReportFraud /form/main submission agent. Respond with a single JSON object only. Fill every required visible field needed to unlock Continue on this step, then click Continue. Never invent selectors or choice metadata.",
+    },
+    {
+      role: "user",
+      content: `Page data: ${JSON.stringify(pageData, null, 2)}\n\nUser data: ${JSON.stringify(userProfile, null, 2)}\n\nWhat should we fill on this FTC main form step, and which button should we click next?\n- Prefer Continue as nextButton with selectorType "text" when Continue is the safe next action.\n- You may return multiple fieldsToFill entries in one decision.\n- For text/textarea/select controls, use the exact scraped name, id, or formControlName as selector and the case value as value (no controlKind).\n- For required radios/checkboxes from choiceControls, use controlKind "radio" | "checkbox" | "choice", the matching choiceSelectorType ("name" | "id" | "accessibleName"), the exact scraped structural key as selector, and the exact optionValue as value.\n- Never invent choice metadata. Do not treat Submit, confirm, file, or any final action as Continue.\nRespond with JSON like this:\n{\n  "fieldsToFill": [\n    { "selector": "comments", "value": "<story>" },\n    { "selector": "yesOrNoMoney", "value": "no", "controlKind": "radio", "choiceSelectorType": "name" }\n  ],\n  "nextButton": { "selectorType": "text", "value": "Continue" },\n  "waitForNavigation": true\n}`,
+    },
+  ];
+}
+
 export async function POST(req: NextRequest) {
   const userId = resolveBbbDecideActionInternalUserId(req) ?? getUserOr401(req);
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -151,7 +169,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { pageData, userProfile: userProfileField, userData, mode } = body ?? {};
     const userProfile = userProfileField ?? userData ?? {};
-    const ftcMode = mode === DECIDE_ACTION_FTC_MODE;
+    const ftcAssistantMode = mode === DECIDE_ACTION_FTC_MODE;
+    const ftcFormMainMode = mode === DECIDE_ACTION_FTC_FORM_MAIN_MODE;
 
     if (isPlaywrightMockRealBbbBoundedSubmitLoopEnabled() && pageData) {
       const mockDecision = buildPlaywrightMockRealBbbDecideActionDecision(pageData, userProfile);
@@ -168,9 +187,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const messages = ftcMode
+    const messages = ftcAssistantMode
       ? buildFtcStructuredMessages(pageData, userProfile)
-      : buildDefaultMessages(pageData, userProfile);
+      : ftcFormMainMode
+        ? buildFtcFormMainMessages(pageData, userProfile)
+        : buildDefaultMessages(pageData, userProfile);
 
     let responseText: string | null | undefined;
     try {
@@ -178,7 +199,10 @@ export async function POST(req: NextRequest) {
         model: DECIDE_ACTION_MODEL,
         messages,
         temperature: 0,
-        response_format: ftcMode
+        // /assistant: strict single-radio schema. /form/main: json_object (variable optional
+        // multi-field metadata is not safely expressible under strict schema without
+        // unsupported array-length keywords). BBB/default: json_object.
+        response_format: ftcAssistantMode
           ? {
               type: "json_schema",
               json_schema: {
@@ -204,7 +228,7 @@ export async function POST(req: NextRequest) {
 
     try {
       const parsed = parseDecideActionModelJson(responseText);
-      if (ftcMode) {
+      if (ftcAssistantMode) {
         const adapted = adaptFtcStructuredDecision(parsed);
         if (!adapted) {
           return failureResponse("model_json_parse_failed");
