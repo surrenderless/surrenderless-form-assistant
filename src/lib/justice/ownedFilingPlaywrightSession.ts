@@ -273,6 +273,9 @@ export function assertOwnedFilingPageAliveBeforeEvaluate(
 /** Wall-clock bound for owned-filing page.evaluate (Playwright evaluate has no native timeout). */
 export const OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS = 45_000;
 
+/** Fail-closed bound for browser.close so cleanup cannot burn remaining Browserless budget. */
+export const OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS = 5_000;
+
 /** Brief wait for ReportFraud interactive controls before the first FTC evaluate. */
 export const OWNED_FILING_FTC_READY_WAIT_MS = 15_000;
 
@@ -296,23 +299,98 @@ export function isOwnedFilingEvaluateTimeoutError(err: unknown): boolean {
 }
 
 /**
+ * Best-effort abort of an in-flight page.evaluate by closing the page.
+ * Closing the execution context forces Playwright's pending evaluate to reject.
+ */
+export async function abortOwnedFilingPageEvaluate(page: Page): Promise<void> {
+  try {
+    if (!page.isClosed()) {
+      await page.close();
+    }
+  } catch {
+    // best-effort — timeout path still rejects with evaluate_timeout
+  }
+}
+
+/**
  * Bounds an async evaluate (or similar) with a wall-clock timeout.
- * Does not cancel the underlying Playwright call; callers should close the browser/page on failure.
+ * When the timer fires, optionally aborts the in-flight Playwright call (typically via
+ * page.close / abortOwnedFilingPageEvaluate) so the session is not held until Browserless
+ * kills it. Always rethrows OwnedFilingEvaluateTimeoutError (never the abort's target-closed).
  */
 export async function withOwnedFilingEvaluateTimeout<T>(
   run: () => Promise<T>,
-  timeoutMs: number = OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS
+  timeoutMs: number = OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+  onTimeoutAbort?: () => void | Promise<void>
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  let abortStarted = false;
+
+  const runPromise = (async () => {
+    try {
+      return await run();
+    } catch (err: unknown) {
+      // After abort begins, ignore target-closed (etc.) so evaluate_timeout wins the race.
+      if (abortStarted) {
+        return await new Promise<T>(() => {});
+      }
+      throw err;
+    }
+  })();
+
   try {
     return await Promise.race([
-      run(),
+      runPromise.then((value) => {
+        settled = true;
+        return value;
+      }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new OwnedFilingEvaluateTimeoutError(timeoutMs));
+          void (async () => {
+            if (settled) return;
+            abortStarted = true;
+            try {
+              await onTimeoutAbort?.();
+            } catch {
+              // best-effort abort
+            }
+            if (!settled) {
+              reject(new OwnedFilingEvaluateTimeoutError(timeoutMs));
+            }
+          })();
         }, timeoutMs);
       }),
     ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Closes a Playwright browser with a short fail-closed timeout.
+ * Logs and swallows close errors so cleanup cannot hang the request.
+ */
+export async function closeOwnedFilingBrowserFailClosed(
+  browser: Browser | null | undefined,
+  options?: { timeoutMs?: number; logLabel?: string }
+): Promise<void> {
+  if (!browser) return;
+  const timeoutMs = options?.timeoutMs ?? OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS;
+  const logLabel = options?.logLabel ?? "owned-filing";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      browser.close(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${logLabel}: browser.close timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (closeErr: unknown) {
+    const message = closeErr instanceof Error ? closeErr.message : String(closeErr);
+    console.warn(`${logLabel}: browser close error:`, message);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
