@@ -91,6 +91,15 @@ describe("classifyOwnedFilingClick", () => {
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "  report now  " })).toBe("safe");
   });
 
+  it("classifies BBB landing Start Complaint as safe navigation (not final submit)", () => {
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "Start Complaint" })).toBe(
+      "safe"
+    );
+    expect(classifyOwnedFilingClick({ selectorType: "text", value: "  start complaint  " })).toBe(
+      "safe"
+    );
+  });
+
   it("classifies submit/file/confirm as irreversible", () => {
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "Submit complaint" })).toBe(
       "irreversible"
