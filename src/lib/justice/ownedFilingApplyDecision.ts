@@ -353,12 +353,17 @@ function scrapedActionableContinueCount(options: ApplyDecisionOptions): number {
 
 /**
  * FTC Continue only: inspect every exact (or soft/NBSP) role match and keep visible+enabled.
- * Never clicks the first unfiltered match. Requires exactly one scraped actionable Continue
- * before clicking. A unique visible-but-disabled Continue can still defer after a choice apply.
+ * Never clicks the first unfiltered match.
+ * - scrapedContinues > 1: fail closed
+ * - scrapedContinues === 1: click only when exactly one live visible+enabled match remains
+ * - scrapedContinues === 0: click only when choiceApplied and exactly one live visible+enabled
+ *   match remains (assistant subcategory: Continue was disabled at evaluate, then enabled)
+ * A unique visible-but-disabled Continue can still defer after a choice apply.
  */
 async function resolveFtcContinueClickTarget(
   page: Page,
-  options: ApplyDecisionOptions
+  options: ApplyDecisionOptions,
+  choiceApplied: boolean
 ): Promise<{ target: Locator } | ClickNextButtonResult> {
   const scrapedContinues = scrapedActionableContinueCount(options);
   if (scrapedContinues > 1) {
@@ -401,7 +406,8 @@ async function resolveFtcContinueClickTarget(
   }
 
   if (visibleEnabled.length === 1) {
-    if (scrapedContinues !== 1) {
+    const allowEmptyScrapeAfterChoice = scrapedContinues === 0 && choiceApplied;
+    if (scrapedContinues !== 1 && !allowEmptyScrapeAfterChoice) {
       return {
         clicked: false,
         diagnostic: targetDiagnostic(
@@ -813,7 +819,8 @@ async function fillFields(
 async function clickNextButton(
   page: Page,
   decision: FormDecision,
-  options: ApplyDecisionOptions
+  options: ApplyDecisionOptions,
+  choiceApplied = false
 ): Promise<ClickNextButtonResult> {
   if (!decision.nextButton?.value?.trim()) return { clicked: false };
   const buttonSelector = buildButtonSelector(decision.nextButton);
@@ -848,7 +855,7 @@ async function clickNextButton(
         decision.nextButton.value === "Continue" &&
         isFtcReportChoiceFlowUrl(options.currentPageUrl ?? "")
       ) {
-        const resolved = await resolveFtcContinueClickTarget(page, options);
+        const resolved = await resolveFtcContinueClickTarget(page, options, choiceApplied);
         if (!("target" in resolved)) return resolved;
         target = resolved.target;
       } else {
@@ -979,7 +986,12 @@ export async function applyOwnedFilingFormDecision(
   const buttonLabel = `${next.selectorType}:${next.value}`.slice(0, 200);
 
   if (risk === "safe") {
-    const clickResult = await clickNextButton(page, decision, options);
+    const clickResult = await clickNextButton(
+      page,
+      decision,
+      options,
+      fieldsResult.choiceApplied
+    );
     if (!clickResult.clicked && options.useExactTextButtonLocator) {
       // Verified FTC choice-flow pages: after a required choice, Continue can stay uniquely
       // visible but disabled until remaining required controls are set. Preserve progress.
@@ -1043,7 +1055,12 @@ export async function applyOwnedFilingFormDecision(
     };
   }
 
-  const clickResult = await clickNextButton(page, decision, options);
+  const clickResult = await clickNextButton(
+    page,
+    decision,
+    options,
+    fieldsResult.choiceApplied
+  );
   if (!clickResult.clicked && options.useExactTextButtonLocator) {
     return {
       ok: false,
