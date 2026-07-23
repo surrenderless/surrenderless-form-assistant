@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { classifyOwnedFilingClick } from "@/lib/justice/classifyOwnedFilingClick";
 import {
+  isOwnedFilingLiveCaseAllowlisted,
   isOwnedFilingSubmitArmed,
   OWNED_FILING_SUBMIT_UNARMED_REASON,
+  parseOwnedFilingLiveCaseAllowlist,
 } from "@/lib/justice/ownedFilingSubmitArmed";
 import {
   formatOwnedFilingDryRunStepLog,
@@ -16,6 +18,9 @@ import {
   parseBbbOwnedFilingDeliveryRecord,
   upsertBbbOwnedFilingDeliveryNotes,
 } from "@/lib/justice/bbbOwnedFilingDeliveryState";
+
+const CASE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const CASE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("isOwnedFilingSubmitArmed (fail closed)", () => {
   it("is false when unset, empty, or falsey", () => {
@@ -45,6 +50,32 @@ describe("isOwnedFilingSubmitArmed (fail closed)", () => {
 
   it("exports a clear unarmed reason", () => {
     expect(OWNED_FILING_SUBMIT_UNARMED_REASON).toContain("OWNED_FILING_SUBMIT_ARMED");
+  });
+});
+
+describe("OWNED_FILING_LIVE_CASE_ALLOWLIST (fail closed while armed)", () => {
+  it("parses comma-separated case ids and ignores blanks", () => {
+    const set = parseOwnedFilingLiveCaseAllowlist({
+      OWNED_FILING_LIVE_CASE_ALLOWLIST: ` ${CASE_A},,${CASE_B} `,
+    });
+    expect([...set].sort()).toEqual([CASE_A, CASE_B].sort());
+  });
+
+  it("is empty when unset and never reads NEXT_PUBLIC_*", () => {
+    expect(parseOwnedFilingLiveCaseAllowlist({}).size).toBe(0);
+    expect(
+      parseOwnedFilingLiveCaseAllowlist({
+        NEXT_PUBLIC_OWNED_FILING_LIVE_CASE_ALLOWLIST: CASE_A,
+      }).size
+    ).toBe(0);
+  });
+
+  it("allowlists only exact trimmed case ids", () => {
+    const env = { OWNED_FILING_LIVE_CASE_ALLOWLIST: CASE_A };
+    expect(isOwnedFilingLiveCaseAllowlisted(CASE_A, env)).toBe(true);
+    expect(isOwnedFilingLiveCaseAllowlisted(` ${CASE_A} `, env)).toBe(true);
+    expect(isOwnedFilingLiveCaseAllowlisted(CASE_B, env)).toBe(false);
+    expect(isOwnedFilingLiveCaseAllowlisted("", env)).toBe(false);
   });
 });
 

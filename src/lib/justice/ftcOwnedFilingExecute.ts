@@ -22,7 +22,9 @@ import {
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
+  isOwnedFilingLiveCaseAllowlisted,
   isOwnedFilingSubmitArmed,
+  OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
   OWNED_FILING_SUBMIT_UNARMED_REASON,
 } from "@/lib/justice/ownedFilingSubmitArmed";
 import { intakeToRealFtcUserData } from "@/lib/justice/realFtcUserData";
@@ -110,6 +112,18 @@ export async function executeClaimedFtcFiling(
     return markFailed(supabase, userId, trimmedCaseId, claimedTask, startedAt, OWNED_FILING_SUBMIT_UNARMED_REASON, {
       stopReason: "submit_unarmed",
     });
+  }
+  // Defense in depth: armed live execute requires per-case allowlist (no Browserless).
+  if (!isOwnedFilingLiveCaseAllowlisted(trimmedCaseId)) {
+    return markFailed(
+      supabase,
+      userId,
+      trimmedCaseId,
+      claimedTask,
+      startedAt,
+      OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
+      { stopReason: "live_case_not_allowlisted" }
+    );
   }
 
   const { data: caseRow, error: caseErr } = await supabase

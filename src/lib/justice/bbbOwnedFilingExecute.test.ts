@@ -132,6 +132,7 @@ describe("executeClaimedBbbFiling (worker execution off the request path)", () =
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
     vi.stubEnv("BROWSERLESS_URL", "");
     vi.stubEnv("OWNED_FILING_SUBMIT_ARMED", "true");
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", CASE_ID);
   });
 
   afterEach(() => {
@@ -164,6 +165,22 @@ describe("executeClaimedBbbFiling (worker execution off the request path)", () =
     expect(completeBbbOperatorFiling).not.toHaveBeenCalled();
     expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
     expect(noteUpdates.at(-1)).toContain("submit_unarmed");
+  });
+
+  it("refuses when case_id is not allowlisted (no Playwright)", async () => {
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", "99999999-9999-4999-8999-999999999999");
+    const noteUpdates: string[] = [];
+    const result = await executeClaimedBbbFiling(
+      makeSupabase((n) => noteUpdates.push(n)),
+      USER_ID,
+      CASE_ID,
+      claimedTask()
+    );
+    expect(result.status).toBe("failed");
+    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+    expect(completeBbbOperatorFiling).not.toHaveBeenCalled();
+    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
+    expect(noteUpdates.at(-1)).toContain("live_case_not_allowlisted");
   });
 
   it("marks failed and leaves task open when bounded submit does not confirm", async () => {

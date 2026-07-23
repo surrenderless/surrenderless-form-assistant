@@ -17,6 +17,11 @@ import {
   upsertFtcOwnedFilingDeliveryNotes,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { FTC_OWNED_FILING_PROVIDER } from "@/lib/justice/ftcOwnedFilingDelivery";
+import {
+  isOwnedFilingLiveCaseAllowlisted,
+  isOwnedFilingSubmitArmed,
+  parseOwnedFilingLiveCaseAllowlist,
+} from "@/lib/justice/ownedFilingSubmitArmed";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -120,13 +125,23 @@ async function listQueuedCandidates(
  * `delivery_state: "queued" → "submitting"` with a compare-and-swap on the exact prior notes.
  * Parallel workers cannot both win the claim: the second CAS matches zero rows. Only "queued"
  * tasks are eligible — submitting/filed/failed/completed are never claimed.
+ *
+ * When OWNED_FILING_SUBMIT_ARMED is true, only case_ids in OWNED_FILING_LIVE_CASE_ALLOWLIST
+ * are eligible. Empty/unset allowlist while armed → claim nothing (fail closed).
+ * Unarmed callers (tests / non-worker) keep legacy claim behavior; the worker never claims unarmed.
  */
 export async function findAndClaimNextQueuedOwnedFiling(
   supabase: SupabaseClient,
-  options: { nowMs?: number; candidateLimit?: number } = {}
+  options: { nowMs?: number; candidateLimit?: number; env?: Record<string, string | undefined> } = {}
 ): Promise<ClaimedOwnedFiling | null> {
   const nowMs = options.nowMs ?? Date.now();
   const candidateLimit = options.candidateLimit ?? 50;
+  const env = options.env ?? process.env;
+
+  // Armed live path: require an explicit non-empty per-case allowlist before scanning.
+  if (isOwnedFilingSubmitArmed(env) && parseOwnedFilingLiveCaseAllowlist(env).size === 0) {
+    return null;
+  }
 
   const candidates: QueuedCandidate[] = [];
   for (const cfg of DESTINATIONS) {
@@ -136,6 +151,13 @@ export async function findAndClaimNextQueuedOwnedFiling(
 
   for (const candidate of candidates) {
     const { cfg, task } = candidate;
+    const caseIdForGate = task.case_id?.trim() ?? "";
+    if (
+      isOwnedFilingSubmitArmed(env) &&
+      !isOwnedFilingLiveCaseAllowlisted(caseIdForGate, env)
+    ) {
+      continue;
+    }
     const priorNotes = task.notes ?? "";
     const claimedAt = new Date(nowMs).toISOString();
     const record = cfg.parseRecord(priorNotes);
