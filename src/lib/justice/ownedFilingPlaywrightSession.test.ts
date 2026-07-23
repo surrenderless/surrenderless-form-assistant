@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
+  abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
+  closeOwnedFilingBrowserFailClosed,
   enrichOwnedFilingTargetClosedError,
   formatOwnedFilingLifecycleDetail,
   isOwnedFilingClosedTargetProviderError,
   isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
+  OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
   OWNED_FILING_FTC_READY_SELECTOR,
   OWNED_FILING_FTC_READY_WAIT_MS,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
@@ -341,6 +344,73 @@ describe("withOwnedFilingEvaluateTimeout", () => {
 
   it("exports the production 45s evaluate bound", () => {
     expect(OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS).toBe(45_000);
+  });
+
+  it("invokes onTimeoutAbort then throws evaluate_timeout", async () => {
+    const abortOrder: string[] = [];
+    const abort = vi.fn(async () => {
+      abortOrder.push("abort");
+    });
+
+    let caught: unknown;
+    try {
+      await withOwnedFilingEvaluateTimeout(() => new Promise(() => {}), 40, abort);
+    } catch (err) {
+      abortOrder.push("reject");
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(OwnedFilingEvaluateTimeoutError);
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(abortOrder).toEqual(["abort", "reject"]);
+  });
+
+  it("does not let abort-driven target-closed replace evaluate_timeout", async () => {
+    const page = mockPage();
+    let rejectEvaluate: ((err: Error) => void) | undefined;
+    const hungEvaluate = new Promise<string>((_, reject) => {
+      rejectEvaluate = reject;
+    });
+
+    const abort = vi.fn(async () => {
+      rejectEvaluate?.(new Error("page.evaluate: Target page, context or browser has been closed"));
+      await abortOwnedFilingPageEvaluate(page);
+    });
+
+    await expect(
+      withOwnedFilingEvaluateTimeout(() => hungEvaluate, 30, abort)
+    ).rejects.toBeInstanceOf(OwnedFilingEvaluateTimeoutError);
+
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(page.close).toHaveBeenCalled();
+  });
+});
+
+describe("closeOwnedFilingBrowserFailClosed", () => {
+  it("exports a short fail-closed close bound", () => {
+    expect(OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS).toBe(5_000);
+  });
+
+  it("returns when browser.close settles before the bound", async () => {
+    const browser = mockBrowser({ contexts: [] }) as unknown as Browser & {
+      close: ReturnType<typeof vi.fn>;
+    };
+    browser.close = vi.fn(async (): Promise<void> => undefined);
+    await closeOwnedFilingBrowserFailClosed(browser, { timeoutMs: 200, logLabel: "test" });
+    expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hang when browser.close never settles", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const browser = mockBrowser({ contexts: [] }) as unknown as Browser & {
+      close: ReturnType<typeof vi.fn>;
+    };
+    browser.close = vi.fn((): Promise<void> => new Promise<void>(() => {}));
+    const started = Date.now();
+    await closeOwnedFilingBrowserFailClosed(browser, { timeoutMs: 40, logLabel: "test" });
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

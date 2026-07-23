@@ -31,9 +31,12 @@ import {
   OWNED_FILING_FTC_ACTION_TIMEOUT_MS,
 } from "@/lib/justice/ownedFilingApplyDecision";
 import {
+  abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
+  closeOwnedFilingBrowserFailClosed,
   isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
+  OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
   replaceOwnedFilingPlaywrightSessionPage,
   waitForFtcReportFraudInteractiveReady,
   withOwnedFilingEvaluateLifecycle,
@@ -150,8 +153,10 @@ async function collectPageData(
   browser: Browser
 ): Promise<AssistedFormPageData> {
   return withOwnedFilingEvaluateLifecycle(session, browser, () =>
-    withOwnedFilingEvaluateTimeout(() =>
-      page.evaluate(collectOwnedFilingFtcPageDataInBrowser)
+    withOwnedFilingEvaluateTimeout(
+      () => page.evaluate(collectOwnedFilingFtcPageDataInBrowser),
+      OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+      () => abortOwnedFilingPageEvaluate(page)
     )
   );
 }
@@ -680,11 +685,6 @@ export async function runRealFtcBoundedSubmit(
     throw stageTiming.attachToError(err);
   } finally {
     playwrightSession?.disposeListeners();
-    try {
-      if (browser) await browser.close();
-    } catch (closeErr: unknown) {
-      const message = closeErr instanceof Error ? closeErr.message : String(closeErr);
-      console.warn("real-ftc-submit: browser close error:", message);
-    }
+    await closeOwnedFilingBrowserFailClosed(browser, { logLabel: "real-ftc-submit" });
   }
 }

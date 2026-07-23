@@ -55,17 +55,22 @@ vi.mock("@/lib/justice/bbbOwnedFilingProduction", () => ({
   resolveChromiumConnectionForRealBbbSubmit: () => ({ mode: "browserless", url: "ws://fake" }),
 }));
 
-vi.mock("@/lib/justice/ownedFilingPlaywrightSession", () => ({
-  openOwnedFilingPlaywrightSession: vi.fn(async () => h.session),
-  assertOwnedFilingPageAliveBeforeEvaluate: vi.fn(),
-  waitForFtcReportFraudInteractiveReady: vi.fn(async () => undefined),
-  withOwnedFilingEvaluateLifecycle: vi.fn(
-    async (_s: unknown, _b: unknown, fn: () => Promise<unknown>) => fn()
-  ),
-  withOwnedFilingEvaluateTimeout: vi.fn(async (fn: () => Promise<unknown>) => fn()),
-  replaceOwnedFilingPlaywrightSessionPage: vi.fn(async (s: unknown) => s),
-  isOwnedFilingEvaluateTimeoutError: vi.fn(() => false),
-}));
+vi.mock("@/lib/justice/ownedFilingPlaywrightSession", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/justice/ownedFilingPlaywrightSession")>();
+  return {
+    ...actual,
+    openOwnedFilingPlaywrightSession: vi.fn(async () => h.session),
+    assertOwnedFilingPageAliveBeforeEvaluate: vi.fn(),
+    waitForFtcReportFraudInteractiveReady: vi.fn(async () => undefined),
+    withOwnedFilingEvaluateLifecycle: vi.fn(
+      async (_s: unknown, _b: unknown, fn: () => Promise<unknown>) => fn()
+    ),
+    withOwnedFilingEvaluateTimeout: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+    replaceOwnedFilingPlaywrightSessionPage: vi.fn(async (s: unknown) => s),
+    isOwnedFilingEvaluateTimeoutError: vi.fn(() => false),
+    closeOwnedFilingBrowserFailClosed: vi.fn(async () => undefined),
+  };
+});
 
 vi.mock("@/lib/justice/ownedFilingFtcDecision", () => ({
   fetchOwnedFilingFtcFormDecision: vi.fn(async () => h.state.decideQueue.shift()),

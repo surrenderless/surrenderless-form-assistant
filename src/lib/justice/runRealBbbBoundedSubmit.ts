@@ -22,10 +22,13 @@ import {
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
 import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
 import {
+  abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
+  closeOwnedFilingBrowserFailClosed,
   openOwnedFilingPlaywrightSession,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
+  OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
@@ -119,34 +122,37 @@ async function collectPageData(
   browser: Browser
 ): Promise<AssistedFormPageData> {
   return withOwnedFilingEvaluateLifecycle(session, browser, () =>
-    withOwnedFilingEvaluateTimeout(() =>
-      page.evaluate(() => {
-        const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
-          const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
+    withOwnedFilingEvaluateTimeout(
+      () =>
+        page.evaluate(() => {
+          const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
+            const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
+            return {
+              tag: field.tagName.toLowerCase(),
+              type: (field as HTMLInputElement).type || "",
+              name: field.getAttribute("name") || "",
+              id: (field as HTMLInputElement).id || "",
+              placeholder: field.getAttribute("placeholder") || "",
+              label,
+            };
+          });
+
+          const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
+            text: btn.textContent?.trim() || "",
+            id: (btn as HTMLElement).id || "",
+            name: btn.getAttribute("name") || "",
+            type: btn.getAttribute("type") || "",
+          }));
+
           return {
-            tag: field.tagName.toLowerCase(),
-            type: (field as HTMLInputElement).type || "",
-            name: field.getAttribute("name") || "",
-            id: (field as HTMLInputElement).id || "",
-            placeholder: field.getAttribute("placeholder") || "",
-            label,
+            fields,
+            buttons,
+            url: window.location.href,
+            pageText: document.body?.innerText?.slice(0, 8000) || "",
           };
-        });
-
-        const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
-          text: btn.textContent?.trim() || "",
-          id: (btn as HTMLElement).id || "",
-          name: btn.getAttribute("name") || "",
-          type: btn.getAttribute("type") || "",
-        }));
-
-        return {
-          fields,
-          buttons,
-          url: window.location.href,
-          pageText: document.body?.innerText?.slice(0, 8000) || "",
-        };
-      })
+        }),
+      OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+      () => abortOwnedFilingPageEvaluate(page)
     )
   );
 }
@@ -487,11 +493,6 @@ export async function runRealBbbBoundedSubmit(
     );
   } finally {
     playwrightSession?.disposeListeners();
-    try {
-      if (browser) await browser.close();
-    } catch (closeErr: unknown) {
-      const message = closeErr instanceof Error ? closeErr.message : String(closeErr);
-      console.warn("real-bbb-submit: browser close error:", message);
-    }
+    await closeOwnedFilingBrowserFailClosed(browser, { logLabel: "real-bbb-submit" });
   }
 }

@@ -34,6 +34,14 @@ describe("owned-filing bounded submit evaluate paths use lifecycle enrichment", 
         /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
       );
     });
+
+    it(`${rel} aborts in-flight evaluate on timeout via page close`, () => {
+      const source = read(rel);
+      expect(source).toContain("abortOwnedFilingPageEvaluate");
+      expect(source).toMatch(
+        /withOwnedFilingEvaluateTimeout\(\s*\(\)\s*=>[\s\S]*?page\.evaluate[\s\S]*?OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS\s*,\s*\(\)\s*=>\s*abortOwnedFilingPageEvaluate\(page\)/
+      );
+    });
   }
 });
 
@@ -51,6 +59,8 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
   it("bounds every FTC collectPageData evaluate and retries once on first evaluate_timeout", () => {
     const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
     expect(source).toContain("withOwnedFilingEvaluateTimeout");
+    expect(source).toContain("abortOwnedFilingPageEvaluate");
+    expect(source).toContain("closeOwnedFilingBrowserFailClosed");
     expect(source).toContain("waitForFtcReportFraudInteractiveReady");
     expect(source).toContain("replaceOwnedFilingPlaywrightSessionPage");
     // Every iteration is staged (evaluate_n / decide_n / apply_n), not only the first.
@@ -79,6 +89,9 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
     );
+    expect(source).toMatch(
+      /withOwnedFilingEvaluateTimeout\(\s*\(\)\s*=>[\s\S]*?page\.evaluate[\s\S]*?OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS\s*,\s*\(\)\s*=>\s*abortOwnedFilingPageEvaluate\(page\)/
+    );
   });
 
   it("passes waitForFunction timeout as options (selector arg, then options object)", () => {
@@ -95,8 +108,13 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
   it("BBB bounds collectPageData evaluate and uses domcontentloaded goto without fixed 2s delay", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
     expect(source).toContain("withOwnedFilingEvaluateTimeout");
+    expect(source).toContain("abortOwnedFilingPageEvaluate");
+    expect(source).toContain("closeOwnedFilingBrowserFailClosed");
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
+    );
+    expect(source).toMatch(
+      /withOwnedFilingEvaluateTimeout\(\s*\(\)\s*=>[\s\S]*?page\.evaluate[\s\S]*?OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS\s*,\s*\(\)\s*=>\s*abortOwnedFilingPageEvaluate\(page\)/
     );
     expect(source).toMatch(
       /page\.goto\(\s*navigationUrl,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
