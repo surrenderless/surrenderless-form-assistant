@@ -189,4 +189,59 @@ describe("findAndClaimNextQueuedOwnedFiling", () => {
     const claimed = await findAndClaimNextQueuedOwnedFiling(client);
     expect(claimed).toBeNull();
   });
+
+  it("armed + empty allowlist claims nothing (fail closed)", async () => {
+    const { client, tasks } = makeStatefulSupabase([
+      queuedTask("bbb", BBB_CASE, "t-bbb", "2026-07-14T01:00:00.000Z"),
+      queuedTask("ftc", FTC_CASE, "t-ftc", "2026-07-14T02:00:00.000Z"),
+    ]);
+    const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+      env: { OWNED_FILING_SUBMIT_ARMED: "true", OWNED_FILING_LIVE_CASE_ALLOWLIST: "" },
+    });
+    expect(claimed).toBeNull();
+    expect(parseBbbOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("queued");
+    expect(parseFtcOwnedFilingDeliveryRecord(tasks[1].notes)?.delivery_state).toBe("queued");
+  });
+
+  it("armed + allowlist claims only the matching case", async () => {
+    const { client, tasks } = makeStatefulSupabase([
+      queuedTask("bbb", BBB_CASE, "t-bbb", "2026-07-14T01:00:00.000Z"),
+      queuedTask("ftc", FTC_CASE, "t-ftc", "2026-07-14T02:00:00.000Z"),
+    ]);
+    const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+      env: {
+        OWNED_FILING_SUBMIT_ARMED: "true",
+        OWNED_FILING_LIVE_CASE_ALLOWLIST: FTC_CASE,
+      },
+    });
+    expect(claimed?.kind).toBe("ftc");
+    expect(claimed?.caseId).toBe(FTC_CASE);
+    expect(parseBbbOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("queued");
+    expect(parseFtcOwnedFilingDeliveryRecord(tasks[1].notes)?.delivery_state).toBe("submitting");
+  });
+
+  it("armed + non-matching queued tasks remain queued", async () => {
+    const { client, tasks } = makeStatefulSupabase([
+      queuedTask("bbb", BBB_CASE, "t-bbb", "2026-07-14T01:00:00.000Z"),
+    ]);
+    const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+      env: {
+        OWNED_FILING_SUBMIT_ARMED: "true",
+        OWNED_FILING_LIVE_CASE_ALLOWLIST: FTC_CASE,
+      },
+    });
+    expect(claimed).toBeNull();
+    expect(parseBbbOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("queued");
+  });
+
+  it("unarmed claim behavior is unchanged (allowlist not required)", async () => {
+    const { client, tasks } = makeStatefulSupabase([
+      queuedTask("bbb", BBB_CASE, "t-bbb", "2026-07-14T01:00:00.000Z"),
+    ]);
+    const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+      env: { OWNED_FILING_SUBMIT_ARMED: "", OWNED_FILING_LIVE_CASE_ALLOWLIST: "" },
+    });
+    expect(claimed?.caseId).toBe(BBB_CASE);
+    expect(parseBbbOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("submitting");
+  });
 });
