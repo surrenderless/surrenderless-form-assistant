@@ -568,7 +568,42 @@ describe("POST /api/decide-action", () => {
       const res = await POST(
         buildRequest({
           mode: DECIDE_ACTION_FTC_FORM_MAIN_MODE,
-          pageData: { url: "https://reportfraud.ftc.gov/form/main", fields: [] },
+          pageData: {
+            url: "https://reportfraud.ftc.gov/form/main",
+            fields: [
+              {
+                tag: "textarea",
+                type: "textarea",
+                name: "",
+                id: "",
+                placeholder: "",
+                label: "Story",
+                formControlName: "comments",
+              },
+              {
+                tag: "select",
+                type: "select-one",
+                name: "paymentType",
+                id: "payment-type",
+                placeholder: "",
+                label: "Payment",
+              },
+            ],
+            choiceControls: [
+              {
+                source: "native",
+                kind: "radio",
+                name: "yesOrNoMoney",
+                id: "yes-or-no-money-no",
+                optionValue: "no",
+                accessibleName: "No",
+                visible: true,
+                enabled: true,
+                checked: false,
+              },
+            ],
+            buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+          },
           userData: { story: "Merchant refused a refund." },
         })
       );
@@ -584,6 +619,11 @@ describe("POST /api/decide-action", () => {
       expect(createArg.response_format).not.toHaveProperty("json_schema");
       expect(createArg.messages?.[0]?.content).toContain("/form/main");
       expect(createArg.messages?.[1]?.content).toContain("fieldsToFill");
+      expect(createArg.messages?.[1]?.content).toContain(
+        "Allowed field selectors (use exactly): comments, payment-type, paymentType"
+      );
+      expect(createArg.messages?.[1]?.content).toContain("name:yesOrNoMoney");
+      expect(createArg.messages?.[1]?.content).toContain("Continue actionable in scrape: yes");
       expect(createArg.messages?.[1]?.content).not.toContain("subcategory radio");
     });
 
