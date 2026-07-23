@@ -53,23 +53,25 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
     return rect.width > 0 && rect.height > 0;
   };
 
-  const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
-    const input = field as HTMLInputElement;
-    const type = input.type || "";
-    const formControlName = sanitizeChoiceMetadata(field.getAttribute("formcontrolname"));
-    return {
-      tag: field.tagName.toLowerCase(),
-      type,
-      name: field.getAttribute("name") || "",
-      id: input.id || "",
-      placeholder: field.getAttribute("placeholder") || "",
-      label: fieldLabel(field),
-      ...(formControlName ? { formControlName } : {}),
-      ...(type === "radio" || type === "checkbox"
-        ? { optionValue: input.value }
-        : {}),
-    };
-  });
+  const fields = Array.from(document.querySelectorAll("input, textarea, select"))
+    .filter((field) => elementIsVisible(field as HTMLElement))
+    .map((field) => {
+      const input = field as HTMLInputElement;
+      const type = input.type || "";
+      const formControlName = sanitizeChoiceMetadata(field.getAttribute("formcontrolname"));
+      return {
+        tag: field.tagName.toLowerCase(),
+        type,
+        name: field.getAttribute("name") || "",
+        id: input.id || "",
+        placeholder: field.getAttribute("placeholder") || "",
+        label: fieldLabel(field),
+        ...(formControlName ? { formControlName } : {}),
+        ...(type === "radio" || type === "checkbox"
+          ? { optionValue: input.value }
+          : {}),
+      };
+    });
 
   const choiceControls = Array.from(
     document.querySelectorAll<HTMLElement>(
