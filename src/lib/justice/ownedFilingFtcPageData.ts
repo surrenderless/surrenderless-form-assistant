@@ -1,12 +1,16 @@
 import type { AssistedFormPageData } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 /**
- * Runs inside the FTC page. It records field metadata only, except for the non-user option value
- * required to address a radio/checkbox exactly, and exposes only actionable buttons.
+ * Runs inside the FTC page. It records field metadata, sanitized current values for visible
+ * text/textarea/select (inventory skip-when-satisfied), non-user radio/checkbox option values for
+ * exact choice addressing, and actionable buttons only.
  */
 export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
   const sanitizeChoiceMetadata = (value: string | null | undefined): string =>
     (value ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+  /** Live control values for inventory equality — capped; never logged in step diagnostics. */
+  const sanitizeCurrentValue = (value: string | null | undefined): string =>
+    (value ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
   const accessibleChoiceName = (element: HTMLElement): string => {
     const ariaLabel = sanitizeChoiceMetadata(element.getAttribute("aria-label"));
     if (ariaLabel) return ariaLabel;
@@ -57,19 +61,22 @@ export function collectOwnedFilingFtcPageDataInBrowser(): AssistedFormPageData {
     .filter((field) => elementIsVisible(field as HTMLElement))
     .map((field) => {
       const input = field as HTMLInputElement;
+      const tag = field.tagName.toLowerCase();
       const type = input.type || "";
       const formControlName = sanitizeChoiceMetadata(field.getAttribute("formcontrolname"));
+      const isChoice = type === "radio" || type === "checkbox";
+      const includeCurrentValue =
+        !isChoice && (tag === "input" || tag === "textarea" || tag === "select");
       return {
-        tag: field.tagName.toLowerCase(),
+        tag,
         type,
         name: field.getAttribute("name") || "",
         id: input.id || "",
         placeholder: field.getAttribute("placeholder") || "",
         label: fieldLabel(field),
         ...(formControlName ? { formControlName } : {}),
-        ...(type === "radio" || type === "checkbox"
-          ? { optionValue: input.value }
-          : {}),
+        ...(isChoice ? { optionValue: input.value } : {}),
+        ...(includeCurrentValue ? { currentValue: sanitizeCurrentValue(input.value) } : {}),
       };
     });
 

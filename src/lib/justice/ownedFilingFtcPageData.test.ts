@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectOwnedFilingFtcPageDataInBrowser } from "@/lib/justice/ownedFilingFtcPageData";
+import { formatOwnedFilingDryRunStepLog } from "@/lib/justice/ownedFilingDryRunState";
 
 const SECRET = "SENSITIVE_FIELD_VALUE";
 
@@ -131,7 +132,7 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
     expect(collectOwnedFilingFtcPageDataInBrowser().buttons).toEqual([]);
   });
 
-  it("retains enabled visible Continue and Next without collecting field values", () => {
+  it("retains enabled visible Continue and Next and scrapes sanitized currentValue", () => {
     installDom([button("Continue"), button("Next")]);
 
     const result = collectOwnedFilingFtcPageDataInBrowser();
@@ -145,9 +146,9 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         id: "story",
         placeholder: "Describe the issue",
         label: "What happened?",
+        currentValue: SECRET,
       },
     ]);
-    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
   it("does not send a disabled Continue in the actionable button corpus", () => {
@@ -196,6 +197,12 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       label: "Fraud category",
       optionValue: "fraud",
     });
+    expect(result.fields[0]).toMatchObject({
+      tag: "input",
+      type: "text",
+      name: "story",
+      currentValue: SECRET,
+    });
     expect(result.fields[0]).not.toHaveProperty("optionValue");
     expect(result.choiceControls).toEqual([
       {
@@ -210,7 +217,6 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
         checked: false,
       },
     ]);
-    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
   it("uses accessibleName as optionValue for FTC category radios that omit value attributes", () => {
@@ -296,10 +302,9 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       },
     ]);
     expect(JSON.stringify(result.choiceControls)).not.toContain("Ignored broad text");
-    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
-  it("scrapes verified /form/main comments formControlName and aria-labelledby label", () => {
+  it("scrapes verified /form/main comments formControlName, aria-labelledby label, and currentValue", () => {
     const comments: FakeElement = {
       tagName: "TEXTAREA",
       textContent: "",
@@ -334,8 +339,104 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
       placeholder: "",
       label: "Please describe what happened.",
       formControlName: "comments",
+      currentValue: SECRET,
     });
-    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  it("scrapes currentValue for visible text, textarea, and select only", () => {
+    const text: FakeElement = {
+      tagName: "INPUT",
+      textContent: "",
+      id: "merchant",
+      disabled: false,
+      hidden: false,
+      value: "Acme Co",
+      type: "text",
+      labels: [{ innerText: "Merchant" }],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "name") return "merchant";
+        if (name === "placeholder") return null;
+        return null;
+      },
+      hasAttribute() {
+        return false;
+      },
+      getBoundingClientRect: () => ({ width: 200, height: 30 }),
+    };
+    const select: FakeElement = {
+      tagName: "SELECT",
+      textContent: "",
+      id: "payment-type",
+      disabled: false,
+      hidden: false,
+      value: "credit",
+      type: "select-one",
+      labels: [{ innerText: "Payment type" }],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "name") return "paymentType";
+        if (name === "placeholder") return null;
+        return null;
+      },
+      hasAttribute() {
+        return false;
+      },
+      getBoundingClientRect: () => ({ width: 200, height: 30 }),
+    };
+    const radio: FakeElement = {
+      tagName: "INPUT",
+      textContent: "",
+      id: "yes-or-no-money-yes",
+      disabled: false,
+      hidden: false,
+      value: "yes",
+      type: "radio",
+      checked: false,
+      labels: [{ innerText: "Yes" }],
+      styleState: { display: "block", visibility: "visible" },
+      getAttribute(name: string) {
+        if (name === "name") return "yesOrNoMoney";
+        if (name === "value") return "yes";
+        if (name === "placeholder") return null;
+        return null;
+      },
+      hasAttribute(name: string) {
+        return name === "value";
+      },
+      getBoundingClientRect: () => ({ width: 20, height: 20 }),
+    };
+    installDom([button("Continue")], [radio], [text, select]);
+
+    const result = collectOwnedFilingFtcPageDataInBrowser();
+    const byName = (name: string) => result.fields.find((field) => field.name === name);
+
+    expect(byName("story")?.currentValue).toBe(SECRET);
+    expect(byName("merchant")?.currentValue).toBe("Acme Co");
+    expect(byName("paymentType")?.currentValue).toBe("credit");
+    expect(byName("yesOrNoMoney")).not.toHaveProperty("currentValue");
+    expect(byName("yesOrNoMoney")?.optionValue).toBe("yes");
+  });
+
+  it("never puts currentValue into persisted step_log formatting", () => {
+    installDom([button("Continue")]);
+    const pageData = collectOwnedFilingFtcPageDataInBrowser();
+    expect(pageData.fields.some((field) => field.currentValue === SECRET)).toBe(true);
+
+    const stepLog = formatOwnedFilingDryRunStepLog([
+      { action: "decide", url: pageData.url, detail: "text:Continue" },
+      { action: "apply", url: pageData.url, detail: "text:Continue" },
+      {
+        action: "exact_target_diagnostic",
+        url: pageData.url,
+        detail:
+          "target=continue,count=1,visible=true,enabled=true,phase=nav_soft_timeout,labels=Continue",
+      },
+    ]);
+
+    expect(stepLog).not.toContain(SECRET);
+    expect(stepLog).not.toContain("currentValue");
+    expect(JSON.stringify(stepLog)).not.toContain(SECRET);
   });
 
   it("omits CSS-hidden rcemail-style text fields while retaining visible controls", () => {
@@ -388,8 +489,10 @@ describe("collectOwnedFilingFtcPageDataInBrowser", () => {
     expect(result.fields.some((field) => field.formControlName === "rcemail")).toBe(false);
     expect(result.fields.some((field) => field.id === "rcemail")).toBe(false);
     expect(result.fields.some((field) => field.formControlName === "comments")).toBe(true);
+    expect(result.fields.find((field) => field.formControlName === "comments")?.currentValue).toBe(
+      SECRET
+    );
     expect(JSON.stringify(result)).not.toContain("honeypot@example.com");
-    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
   it("includes visible a[role=button] Continue and normalizes trailing NBSP text", () => {

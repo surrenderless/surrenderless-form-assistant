@@ -59,6 +59,11 @@ export type AssistedFormPageData = {
     formControlName?: string;
     /** Non-user option value exposed only for radio/checkbox choice controls. */
     optionValue?: string;
+    /**
+     * Sanitized live value for visible text/textarea/select (FTC inventory skip-when-satisfied).
+     * Evaluate/inventory only — never copy into diagnostics or persisted step_log.
+     */
+    currentValue?: string;
   }>;
   /** FTC-only sanitized structural inventory for deterministic required-choice selection. */
   choiceControls?: AssistedFormChoiceControl[];

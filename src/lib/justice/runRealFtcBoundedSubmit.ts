@@ -440,6 +440,15 @@ export async function runRealFtcBoundedSubmit(
         if (isFtcReportFormMainUrl(pageData.url)) {
           const deterministic = buildFtcFormMainInventoryDecision(pageData, userData);
           if (deterministic) {
+            // All inventory targets already satisfied and Continue not actionable — fail closed
+            // without model fallback or fill-only no-progress loops (max_steps_reached).
+            if (isEmptyFormDecision(deterministic)) {
+              return {
+                ok: false as const,
+                stopReason: "empty_decision" as const,
+                detail: "form_main_inventory_exhausted",
+              };
+            }
             const preflight = validateFtcFormMainDecision(pageData, deterministic);
             if (!preflight.ok) {
               return {
@@ -460,10 +469,16 @@ export async function runRealFtcBoundedSubmit(
         getCloseSnapshot
       );
       if (!decisionResult.ok) {
+        const failAction =
+          decisionResult.stopReason === "invalid_decision"
+            ? "invalid_decision"
+            : decisionResult.stopReason === "empty_decision"
+              ? "empty_decision"
+              : "decide_failed";
         stepLog.push({
           step: stepsExecuted,
           url: pageData.url,
-          action: decisionResult.stopReason === "invalid_decision" ? "invalid_decision" : "decide_failed",
+          action: failAction,
           detail: decisionResult.detail,
         });
         const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({

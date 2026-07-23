@@ -238,6 +238,105 @@ describe("ownedFilingFtcFormMainDecision", () => {
       expect(JSON.stringify(decision)).not.toContain("pat@example.com");
     });
 
+    it("omits text/select when normalized currentValue already matches userData", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          fields: [
+            {
+              tag: "textarea",
+              type: "textarea",
+              name: "",
+              id: "",
+              placeholder: "",
+              label: "Please describe what happened.",
+              formControlName: "comments",
+              currentValue: "  Merchant refused a refund.  ",
+            },
+            {
+              tag: "select",
+              type: "select-one",
+              name: "paymentType",
+              id: "payment-type",
+              placeholder: "",
+              label: "Payment type",
+              currentValue: "credit",
+            },
+          ],
+          choiceControls: yesNoMoneyControls().map((control, index) =>
+            index === 0 ? { ...control, checked: true } : control
+          ),
+        }),
+        {
+          complaint_description: "Merchant refused a refund.",
+          paymentType: "credit",
+          amount_involved: "$120",
+        }
+      );
+
+      expect(decision).toEqual({
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      });
+    });
+
+    it("emits a differing currentValue field once as fill-only without Continue", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          buttons: [],
+          fields: [
+            {
+              tag: "textarea",
+              type: "textarea",
+              name: "",
+              id: "",
+              placeholder: "",
+              label: "Please describe what happened.",
+              formControlName: "comments",
+              currentValue: "stale narrative",
+            },
+          ],
+          choiceControls: [],
+        }),
+        { story: "Merchant refused a refund." }
+      );
+
+      expect(decision).toEqual({
+        fieldsToFill: [{ selector: "comments", value: "Merchant refused a refund." }],
+      });
+      expect(decision).not.toHaveProperty("nextButton");
+    });
+
+    it("returns empty decision when all inventory targets are satisfied and Continue is absent", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          buttons: [{ text: "Help", id: "", name: "", type: "button" }],
+          fields: [
+            {
+              tag: "textarea",
+              type: "textarea",
+              name: "",
+              id: "",
+              placeholder: "",
+              label: "Please describe what happened.",
+              formControlName: "comments",
+              currentValue: "Merchant refused a refund.",
+            },
+          ],
+          choiceControls: yesNoMoneyControls().map((control, index) =>
+            index === 1 ? { ...control, checked: true } : control
+          ),
+        }),
+        {
+          story: "Merchant refused a refund.",
+          amount_involved: "0",
+        }
+      );
+
+      expect(decision).toEqual({ fieldsToFill: [] });
+      expect(decision).not.toHaveProperty("nextButton");
+    });
+
     it("returns Continue-only when Continue is uniquely actionable and nothing is mappable", () => {
       expect(
         buildFtcFormMainInventoryDecision(
