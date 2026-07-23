@@ -748,6 +748,88 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(result.fillResult.stepLog.some((e) => e.action === "empty_decision")).toBe(true);
   });
 
+  it("form/main dry-run blocks at unique irreversible Submit after inventory is satisfied", async () => {
+    h.state.evaluateQueue = [
+      {
+        ...pageData("https://reportfraud.ftc.gov/form/main"),
+        buttons: [
+          { text: "Here's how you know", id: "", name: "", type: "" },
+          { text: "Back", id: "goBackBtn", name: "", type: "" },
+          { text: "Submit", id: "", name: "", type: "button" },
+        ],
+        fields: [
+          {
+            tag: "textarea",
+            type: "textarea",
+            name: "",
+            id: "",
+            placeholder: "",
+            label: "Please describe what happened.",
+            formControlName: "comments",
+            currentValue: "Merchant refused a refund.",
+          },
+        ],
+        choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "yesOrNoMoney",
+            id: "yes-or-no-money-yes",
+            optionValue: "yes",
+            accessibleName: "Yes",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
+          {
+            source: "native",
+            kind: "radio",
+            name: "yesOrNoMoney",
+            id: "yes-or-no-money-no",
+            optionValue: "no",
+            accessibleName: "No",
+            visible: true,
+            enabled: true,
+            checked: true,
+          },
+        ],
+      },
+    ];
+    h.state.decideQueue = [];
+    h.state.applyQueue = [
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealFtcBoundedSubmit(
+      runParams({
+        story: "Merchant refused a refund.",
+        amount_involved: "0",
+      })
+    );
+
+    expect(mockedFetchDecision).not.toHaveBeenCalled();
+    expect(mockedApplyDecision).toHaveBeenCalledTimes(1);
+    expect(mockedApplyDecision.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "Submit" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(0);
+    expect(result.fillResult.stepLog.some((e) => e.action === "blocked_irreversible_click")).toBe(
+      true
+    );
+  });
+
   it("does not inject Report Now for a non-FTC URL pageData", async () => {
     h.state.evaluateQueue = [pageData("https://example.com/")];
     h.state.decideQueue = [decideContinue()];
