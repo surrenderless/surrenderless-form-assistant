@@ -200,7 +200,7 @@ describe("fetchOwnedFilingFtcFormDecision", () => {
     ).toBe("decide-action failed (500)");
   });
 
-  it("passes FTC structured mode only from the owned FTC decide caller", async () => {
+  it("passes FTC structured mode from assistant and form-main mode from /form/main", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       return new Response(
         JSON.stringify({
@@ -227,10 +227,60 @@ describe("fetchOwnedFilingFtcFormDecision", () => {
       { url: "https://reportfraud.ftc.gov/assistant", fields: [], buttons: [] },
       {}
     );
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)).mode).toBe(
+      "ftc_structured"
+    );
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(init.body));
-    expect(body.mode).toBe("ftc_structured");
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          decision: {
+            fieldsToFill: [{ selector: "comments", value: "story" }],
+            nextButton: { selectorType: "text", value: "Continue" },
+          },
+        }),
+        { status: 200 }
+      )
+    );
+
+    await fetchOwnedFilingFtcFormDecision(
+      "https://app.example",
+      { "content-type": "application/json" },
+      { url: "https://reportfraud.ftc.gov/form/main", fields: [], buttons: [] },
+      {}
+    );
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)).mode).toBe(
+      "ftc_form_main"
+    );
+  });
+
+  it("rejects malformed form/main decisions after a successful decide-action response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            decision: {
+              fieldsToFill: [{ selector: "comments", value: 99 }],
+              nextButton: { selectorType: "text", value: "Continue" },
+            },
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    const result = await fetchOwnedFilingFtcFormDecision(
+      "https://app.example",
+      {},
+      { url: "https://reportfraud.ftc.gov/form/main", fields: [], buttons: [] },
+      {}
+    );
+    expect(result).toEqual({
+      ok: false,
+      stopReason: "invalid_decision",
+      detail: "decide-action returned an invalid decision shape",
+    });
   });
 });

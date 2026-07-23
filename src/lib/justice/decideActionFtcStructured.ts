@@ -1,13 +1,21 @@
 /**
- * FTC-only decide-action Structured Output contract and boundary adapter.
- * External schema uses a single fieldToFill object (no arrays); mapped to FormDecision.
+ * FTC-only decide-action contracts and boundary adapters.
+ *
+ * - `ftc_structured`: /assistant ambiguous subcategory — single radio object (no arrays),
+ *   strict json_schema.
+ * - `ftc_form_main`: /form/main — multi-field FormDecision via json_object (variable optional
+ *   field metadata is not safely expressible under strict schema without unsupported
+ *   array-length keywords); normalizeFormDecision + apply remain fail-closed.
  */
 
-/** Request body mode sent only by owned FTC decide-action callers. */
+/** Request body mode for FTC /assistant structured single-radio decisions. */
 export const DECIDE_ACTION_FTC_MODE = "ftc_structured";
 
+/** Request body mode for FTC /form/main multi-field decisions. */
+export const DECIDE_ACTION_FTC_FORM_MAIN_MODE = "ftc_form_main";
+
 /**
- * External FTC-only response contract (no arrays). Mapped at the API boundary to the
+ * External FTC /assistant response contract (no arrays). Mapped at the API boundary to the
  * internal FormDecision shape: fieldsToFill: [fieldToFill].
  */
 export const FTC_STRUCTURED_DECISION_SCHEMA = {

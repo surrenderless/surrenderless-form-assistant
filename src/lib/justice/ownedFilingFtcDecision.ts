@@ -1,9 +1,13 @@
-import { DECIDE_ACTION_FTC_MODE } from "@/lib/justice/decideActionFtcStructured";
+import {
+  DECIDE_ACTION_FTC_FORM_MAIN_MODE,
+  DECIDE_ACTION_FTC_MODE,
+} from "@/lib/justice/decideActionFtcStructured";
 import {
   normalizeFormDecision,
   type AssistedFormPageData,
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import { isFtcReportFormMainUrl } from "@/lib/justice/realFtcBoundedSubmitLoop";
 
 export const OWNED_FILING_FTC_DECIDE_TIMEOUT_MS = 60_000;
 
@@ -18,6 +22,13 @@ const DECIDE_ACTION_FAILURE_CATEGORIES = new Set([
 type FtcDecisionResult =
   | { ok: true; decision: FormDecision }
   | { ok: false; stopReason: "decide_action_failed" | "invalid_decision"; detail: string };
+
+/** FTC decide-action mode from the live page URL (/form/main vs assistant). */
+export function decideActionModeForFtcPageUrl(url: string | undefined): string {
+  return isFtcReportFormMainUrl(url ?? "")
+    ? DECIDE_ACTION_FTC_FORM_MAIN_MODE
+    : DECIDE_ACTION_FTC_MODE;
+}
 
 function isAbortTimeout(err: unknown): boolean {
   if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
@@ -69,7 +80,7 @@ export async function fetchOwnedFilingFtcFormDecision(
         pageData,
         userProfile: userData,
         userData,
-        mode: DECIDE_ACTION_FTC_MODE,
+        mode: decideActionModeForFtcPageUrl(pageData.url),
       }),
       signal: AbortSignal.timeout(OWNED_FILING_FTC_DECIDE_TIMEOUT_MS),
     });
