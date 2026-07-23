@@ -352,8 +352,12 @@ function scrapedActionableContinueCount(options: ApplyDecisionOptions): number {
 }
 
 /**
- * FTC Continue only: inspect every exact (or soft/NBSP) role match and keep visible+enabled.
- * Never clicks the first unfiltered match.
+ * FTC Continue only: inspect every role match and keep visible+enabled.
+ * Resolution order (never clicks the first unfiltered match):
+ * 1. exact accessible name "Continue\u00a0" (verified FTC CTA)
+ * 2. exact accessible name "Continue"
+ * 3. non-exact soft "Continue" only when both exact counts are zero
+ * Gates:
  * - scrapedContinues > 1: fail closed
  * - scrapedContinues === 1: click only when exactly one live visible+enabled match remains
  * - scrapedContinues === 0: click only after a verified field mutation in this apply and only
@@ -380,10 +384,15 @@ async function resolveFtcContinueClickTarget(
     };
   }
 
-  let roleMatches = page.getByRole("button", { name: "Continue", exact: true });
+  // Verified FTC Continue CTAs use a trailing NBSP ("Continue\u00a0") on /assistant and
+  // /form/main (including <a role="button">). Prefer that exact name before soft matching,
+  // which can over-match other Continues and fail closed as ambiguous.
+  let roleMatches = page.getByRole("button", { name: "Continue\u00a0", exact: true });
   let rawCount = await roleMatches.count();
-  // Verified FTC Continue CTAs use a trailing NBSP in their accessible name
-  // ("Continue\u00a0") on /assistant and /form/main (including <a role="button">).
+  if (rawCount === 0) {
+    roleMatches = page.getByRole("button", { name: "Continue", exact: true });
+    rawCount = await roleMatches.count();
+  }
   if (rawCount === 0) {
     roleMatches = page.getByRole("button", { name: "Continue" });
     rawCount = await roleMatches.count();

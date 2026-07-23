@@ -116,25 +116,26 @@ function mockContinueCandidate(state: {
 function installContinueRoleMatches(
   page: MockPage,
   candidates: Locator[],
-  softCandidates?: Locator[]
+  softCandidates?: Locator[],
+  nbspExactCandidates?: Locator[]
 ): void {
-  const exactRoot = {
-    count: vi.fn(async () => candidates.length),
-    nth: vi.fn((index: number) => candidates[index]!),
-    isVisible: vi.fn(async () => candidates[0] ? candidates[0].isVisible() : false),
-    isEnabled: vi.fn(async () => candidates[0] ? candidates[0].isEnabled() : false),
-    click: vi.fn(async () => undefined),
-  } as unknown as Locator;
-  const softRoot = {
-    count: vi.fn(async () => (softCandidates ?? []).length),
-    nth: vi.fn((index: number) => (softCandidates ?? [])[index]!),
-    isVisible: vi.fn(async () => false),
-    isEnabled: vi.fn(async () => false),
-    click: vi.fn(async () => undefined),
-  } as unknown as Locator;
+  const makeRoot = (list: Locator[]) =>
+    ({
+      count: vi.fn(async () => list.length),
+      nth: vi.fn((index: number) => list[index]!),
+      isVisible: vi.fn(async () => (list[0] ? list[0].isVisible() : false)),
+      isEnabled: vi.fn(async () => (list[0] ? list[0].isEnabled() : false)),
+      click: vi.fn(async () => undefined),
+    }) as unknown as Locator;
+
+  const nbspExactRoot = makeRoot(nbspExactCandidates ?? []);
+  const exactRoot = makeRoot(candidates);
+  const softRoot = makeRoot(softCandidates ?? []);
+
   vi.mocked(page.getByRole).mockImplementation((role, opts) => {
     if (role === "link") return page.exactLinkLocator;
     if (role === "button" && opts && "exact" in opts && opts.exact === true) {
+      if (opts.name === "Continue\u00a0") return nbspExactRoot;
       return exactRoot;
     }
     if (role === "button") return softCandidates ? softRoot : exactRoot;
@@ -674,6 +675,107 @@ describe("FTC bounded actions", () => {
     );
   });
 
+  it("clicks exact Continue\\u00a0 and ignores other soft-name Continue matches", async () => {
+    const page = mockPage();
+    const nbspContinue = mockContinueCandidate({ visible: true, enabled: true });
+    const softExtra = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [], [softExtra], [nbspContinue]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue\u00a0",
+      exact: true,
+    });
+    expect(page.getByRole).not.toHaveBeenCalledWith("button", { name: "Continue" });
+    expect(nbspContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(softExtra.click).not.toHaveBeenCalled();
+  });
+
+  it("clicks exact ordinary Continue when the NBSP exact name is absent", async () => {
+    const page = mockPage();
+    const exactContinue = mockContinueCandidate({ visible: true, enabled: true });
+    const softExtra = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [exactContinue], [softExtra], []);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue\u00a0",
+      exact: true,
+    });
+    expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue", exact: true });
+    expect(page.getByRole).not.toHaveBeenCalledWith("button", { name: "Continue" });
+    expect(exactContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+    expect(softExtra.click).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when multiple exact visible-enabled Continue matches remain", async () => {
+    const page = mockPage();
+    const first = mockContinueCandidate({ visible: true, enabled: true });
+    const second = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [first, second]);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      {
+        ...ftcOptions,
+        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
+        actionableButtonLabels: ["Continue"],
+      }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      blocked: true,
+      reason: "unknown_fail_closed",
+      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
+    });
+    expect(result.diagnostic).toContain("count=2");
+    expect(first.click).not.toHaveBeenCalled();
+    expect(second.click).not.toHaveBeenCalled();
+  });
+
+  it("uses soft Continue fallback only when both exact name variants are absent", async () => {
+    const page = mockPage();
+    const softContinue = mockContinueCandidate({ visible: true, enabled: true });
+    installContinueRoleMatches(page, [], [softContinue], []);
+
+    const result = await applyOwnedFilingFormDecision(
+      page,
+      { nextButton: { selectorType: "text", value: "Continue" } },
+      ftcOptions
+    );
+
+    expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue\u00a0",
+      exact: true,
+    });
+    expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue", exact: true });
+    expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue" });
+    expect(softContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
+  });
+
   it("advances Continue when exact accessible name misses trailing NBSP on FTC assistant", async () => {
     const page = mockPage();
     const softContinue = mockContinueCandidate({ visible: true, enabled: true });
@@ -686,6 +788,10 @@ describe("FTC bounded actions", () => {
     );
 
     expect(result).toMatchObject({ ok: true, clicked: true, risk: "safe" });
+    expect(page.getByRole).toHaveBeenCalledWith("button", {
+      name: "Continue\u00a0",
+      exact: true,
+    });
     expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue", exact: true });
     expect(page.getByRole).toHaveBeenCalledWith("button", { name: "Continue" });
     expect(softContinue.click).toHaveBeenCalledWith({ timeout: 20_000 });
@@ -762,35 +868,7 @@ describe("FTC bounded actions", () => {
     expect(disabled.click).not.toHaveBeenCalled();
   });
 
-  it("fails closed when two visible enabled Continue controls remain", async () => {
-    const page = mockPage();
-    const first = mockContinueCandidate({ visible: true, enabled: true });
-    const second = mockContinueCandidate({ visible: true, enabled: true });
-    installContinueRoleMatches(page, [first, second]);
-
-    const result = await applyOwnedFilingFormDecision(
-      page,
-      { nextButton: { selectorType: "text", value: "Continue" } },
-      {
-        ...ftcOptions,
-        currentPageUrl: "https://reportfraud.ftc.gov/form/main",
-        actionableButtonLabels: ["Continue"],
-      }
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      blocked: true,
-      reason: "unknown_fail_closed",
-      diagnostic: expect.stringContaining("phase=precheck_ambiguous"),
-    });
-    expect(result.diagnostic).toContain("count=2");
-    expect(first.click).not.toHaveBeenCalled();
-    expect(second.click).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when no visible enabled Continue remains", async () => {
-    const page = mockPage();
+  it("fails closed when no visible enabled Continue remains", async () => {    const page = mockPage();
     const hidden = mockContinueCandidate({ visible: false, enabled: true });
     const disabled = mockContinueCandidate({ visible: true, enabled: false });
     installContinueRoleMatches(page, [hidden, disabled]);
