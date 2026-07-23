@@ -1,12 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFtcFormMainInventoryAllowlist,
+  buildFtcFormMainInventoryDecision,
   formatFtcFormMainInventoryForPrompt,
   validateFtcFormMainDecision,
 } from "@/lib/justice/ownedFilingFtcFormMainDecision";
 import type { AssistedFormPageData, FormDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
 
 const FORM_MAIN_URL = "https://reportfraud.ftc.gov/form/main";
+
+function yesNoMoneyControls() {
+  return [
+    {
+      source: "native" as const,
+      kind: "radio" as const,
+      name: "yesOrNoMoney",
+      id: "yes-or-no-money-yes",
+      optionValue: "yes",
+      accessibleName: "Yes",
+      visible: true,
+      enabled: true,
+      checked: false,
+    },
+    {
+      source: "native" as const,
+      kind: "radio" as const,
+      name: "yesOrNoMoney",
+      id: "yes-or-no-money-no",
+      optionValue: "no",
+      accessibleName: "No",
+      visible: true,
+      enabled: true,
+      checked: false,
+    },
+  ];
+}
 
 function formMainPage(overrides: Partial<AssistedFormPageData> = {}): AssistedFormPageData {
   return {
@@ -30,19 +58,7 @@ function formMainPage(overrides: Partial<AssistedFormPageData> = {}): AssistedFo
         label: "Payment type",
       },
     ],
-    choiceControls: [
-      {
-        source: "native",
-        kind: "radio",
-        name: "yesOrNoMoney",
-        id: "yes-or-no-money-no",
-        optionValue: "no",
-        accessibleName: "No",
-        visible: true,
-        enabled: true,
-        checked: false,
-      },
-    ],
+    choiceControls: yesNoMoneyControls(),
     buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
     pageText: "",
     ...overrides,
@@ -97,6 +113,128 @@ describe("ownedFilingFtcFormMainDecision", () => {
     });
   });
 
+  describe("buildFtcFormMainInventoryDecision", () => {
+    it("builds inventory-backed narrative + yes/no decisions from scraped selectors only", () => {
+      const decision = buildFtcFormMainInventoryDecision(formMainPage({ buttons: [] }), {
+        complaint_description: "Merchant refused a refund.",
+        amount_involved: "$120",
+        paymentType: "credit",
+      });
+
+      expect(decision).toEqual({
+        fieldsToFill: [
+          { selector: "comments", value: "Merchant refused a refund." },
+          { selector: "paymentType", value: "credit" },
+          {
+            selector: "yesOrNoMoney",
+            value: "yes",
+            controlKind: "radio",
+            choiceSelectorType: "name",
+          },
+        ],
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      });
+      expect(validateFtcFormMainDecision(formMainPage({ buttons: [] }), decision!)).toEqual({
+        ok: true,
+      });
+    });
+
+    it("uses exact scraped optionValue no when amount is empty/zero-like", () => {
+      const decision = buildFtcFormMainInventoryDecision(formMainPage(), {
+        story: "No money lost.",
+        amount_involved: "0",
+      });
+      expect(decision?.fieldsToFill).toEqual(
+        expect.arrayContaining([
+          { selector: "comments", value: "No money lost." },
+          {
+            selector: "yesOrNoMoney",
+            value: "no",
+            controlKind: "radio",
+            choiceSelectorType: "name",
+          },
+        ])
+      );
+    });
+
+    it("returns Continue-only when Continue is uniquely actionable and nothing is mappable", () => {
+      expect(
+        buildFtcFormMainInventoryDecision(
+          formMainPage({ fields: [], choiceControls: [] }),
+          {}
+        )
+      ).toEqual({
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Continue" },
+        waitForNavigation: true,
+      });
+    });
+
+    it("returns null when Continue is not actionable and inventory cannot be mapped", () => {
+      expect(
+        buildFtcFormMainInventoryDecision(
+          formMainPage({ fields: [], choiceControls: [], buttons: [] }),
+          { story: "unused without fields" }
+        )
+      ).toBeNull();
+    });
+
+    it("returns null for incomplete yes/no groups instead of inventing an optionValue", () => {
+      expect(
+        buildFtcFormMainInventoryDecision(
+          formMainPage({
+            fields: [],
+            buttons: [],
+            choiceControls: [yesNoMoneyControls()[1]!],
+          }),
+          { amount_involved: "$50" }
+        )
+      ).toBeNull();
+    });
+
+    it("skips ambiguous duplicate field selectors instead of inventing a match", () => {
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({
+          fields: [
+            {
+              tag: "input",
+              type: "text",
+              name: "dup",
+              id: "",
+              placeholder: "",
+              label: "A",
+            },
+            {
+              tag: "input",
+              type: "text",
+              name: "dup",
+              id: "",
+              placeholder: "",
+              label: "B",
+            },
+          ],
+          choiceControls: [],
+          buttons: [],
+        }),
+        { dup: "value" }
+      );
+      expect(decision).toBeNull();
+    });
+
+    it("skips already-checked yes/no groups", () => {
+      const controls = yesNoMoneyControls().map((control, index) =>
+        index === 0 ? { ...control, checked: true } : control
+      );
+      const decision = buildFtcFormMainInventoryDecision(
+        formMainPage({ choiceControls: controls, fields: [] }),
+        { amount_involved: "$50" }
+      );
+      expect(decision?.fieldsToFill ?? []).toEqual([]);
+      expect(decision?.nextButton).toEqual({ selectorType: "text", value: "Continue" });
+    });
+  });
+
   describe("validateFtcFormMainDecision", () => {
     it("rejects invented unmatched form-main choices", () => {
       const result = validateFtcFormMainDecision(formMainPage(), {
@@ -130,13 +268,10 @@ describe("ownedFilingFtcFormMainDecision", () => {
 
     it("rejects zero fields when Continue is not actionable", () => {
       expect(
-        validateFtcFormMainDecision(
-          formMainPage({ buttons: [] }),
-          {
-            fieldsToFill: [],
-            nextButton: { selectorType: "text", value: "Continue" },
-          }
-        )
+        validateFtcFormMainDecision(formMainPage({ buttons: [] }), {
+          fieldsToFill: [],
+          nextButton: { selectorType: "text", value: "Continue" },
+        })
       ).toEqual({ ok: false, reason: "fields_required" });
     });
 

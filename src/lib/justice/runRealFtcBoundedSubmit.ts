@@ -19,6 +19,7 @@ import {
   ftcAssistantAmbiguousSubcategoryCandidates,
   isFtcReportAssistantUrl,
   isFtcReportEntryUrl,
+  isFtcReportFormMainUrl,
   REAL_FTC_MAX_SUBMIT_STEPS,
   validateFtcAssistantStructuredSubcategoryDecision,
   type RealFtcSubmitStopReason,
@@ -41,6 +42,10 @@ import {
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 import { createOwnedFilingFtcStageTiming } from "@/lib/justice/ownedFilingFtcStageTiming";
 import { fetchOwnedFilingFtcFormDecision } from "@/lib/justice/ownedFilingFtcDecision";
+import {
+  buildFtcFormMainInventoryDecision,
+  validateFtcFormMainDecision,
+} from "@/lib/justice/ownedFilingFtcFormMainDecision";
 import { collectOwnedFilingFtcPageDataInBrowser } from "@/lib/justice/ownedFilingFtcPageData";
 
 export type RealFtcBoundedSubmitStepLogEntry = {
@@ -430,6 +435,22 @@ export async function runRealFtcBoundedSubmit(
             };
           }
           return { ok: true as const, decision: validated.decision };
+        }
+        // Official /form/main: inventory-backed fields when uniquely mappable; else model + preflight.
+        if (isFtcReportFormMainUrl(pageData.url)) {
+          const deterministic = buildFtcFormMainInventoryDecision(pageData, userData);
+          if (deterministic) {
+            const preflight = validateFtcFormMainDecision(pageData, deterministic);
+            if (!preflight.ok) {
+              return {
+                ok: false as const,
+                stopReason: "invalid_decision" as const,
+                detail: preflight.reason,
+              };
+            }
+            return { ok: true as const, decision: deterministic };
+          }
+          return fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
         }
         return fetchOwnedFilingFtcFormDecision(base, forwardedHeaders, pageData, userData);
       };

@@ -465,11 +465,11 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     expect(result.stepsExecuted).toBe(1);
   });
 
-  it("applies multi-field form/main decisions then dry-run blocks at Submit", async () => {
+  it("applies inventory-backed form/main fields then dry-run blocks at Submit", async () => {
     h.state.evaluateQueue = [
       {
         ...pageData("https://reportfraud.ftc.gov/form/main"),
-        buttons: [{ text: "Continue", id: "", name: "", type: "button" }],
+        buttons: [],
         fields: [
           {
             tag: "textarea",
@@ -482,6 +482,17 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
           },
         ],
         choiceControls: [
+          {
+            source: "native",
+            kind: "radio",
+            name: "yesOrNoMoney",
+            id: "yes-or-no-money-yes",
+            optionValue: "yes",
+            accessibleName: "Yes",
+            visible: true,
+            enabled: true,
+            checked: false,
+          },
           {
             source: "native",
             kind: "radio",
@@ -504,22 +515,6 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
       {
         ok: true,
         decision: {
-          fieldsToFill: [
-            { selector: "comments", value: "Merchant refused a refund." },
-            {
-              selector: "yesOrNoMoney",
-              value: "no",
-              controlKind: "radio",
-              choiceSelectorType: "name",
-            },
-          ],
-          nextButton: { selectorType: "text", value: "Continue" },
-          waitForNavigation: true,
-        },
-      },
-      {
-        ok: true,
-        decision: {
           nextButton: { selectorType: "text", value: "Submit report" },
         },
       },
@@ -538,10 +533,14 @@ describe("runRealFtcBoundedSubmit loop persistence", () => {
     ];
 
     const result = await runRealFtcBoundedSubmit(
-      runParams({ story: "Merchant refused a refund." })
+      runParams({
+        story: "Merchant refused a refund.",
+        amount_involved: "0",
+      })
     );
 
-    expect(mockedFetchDecision).toHaveBeenCalledTimes(2);
+    // First step is deterministic inventory — model decide only for the Submit page.
+    expect(mockedFetchDecision).toHaveBeenCalledTimes(1);
     expect(mockedApplyDecision.mock.calls[0]?.[1]).toMatchObject({
       fieldsToFill: [
         { selector: "comments", value: "Merchant refused a refund." },

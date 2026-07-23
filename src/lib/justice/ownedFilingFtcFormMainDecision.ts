@@ -150,6 +150,210 @@ function countFieldSelectorMatches(
   return countFieldsMatchingSelector(selector, pageData);
 }
 
+function userDataString(
+  userData: Record<string, unknown>,
+  key: string
+): string | null {
+  const raw = userData[key];
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  return value ? value : null;
+}
+
+function narrativeValueFromUserData(userData: Record<string, unknown>): string | null {
+  return (
+    userDataString(userData, "complaint_description") ||
+    userDataString(userData, "what_happened") ||
+    userDataString(userData, "story")
+  );
+}
+
+function isSkippedInputType(type: string): boolean {
+  const normalized = type.trim().toLowerCase();
+  return (
+    normalized === "radio" ||
+    normalized === "checkbox" ||
+    normalized === "hidden" ||
+    normalized === "submit" ||
+    normalized === "button" ||
+    normalized === "file" ||
+    normalized === "image" ||
+    normalized === "reset"
+  );
+}
+
+function uniqueSelectorForField(
+  field: AssistedFormPageData["fields"][number],
+  pageData: AssistedFormPageData
+): string | null {
+  for (const raw of [field.formControlName, field.name, field.id]) {
+    const key = sanitizeInventoryToken(raw);
+    if (!key) continue;
+    if (countFieldsMatchingSelector(key, pageData) === 1) return key;
+  }
+  return null;
+}
+
+function isNarrativeField(
+  field: AssistedFormPageData["fields"][number],
+  selector: string
+): boolean {
+  const tag = field.tag.trim().toLowerCase();
+  if (tag === "textarea") return true;
+  const haystack = [selector, field.label, field.placeholder, field.name, field.formControlName]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /comment|story|description|what\s*happened|narrative/.test(haystack);
+}
+
+function resolveTextOrSelectValue(
+  field: AssistedFormPageData["fields"][number],
+  selector: string,
+  userData: Record<string, unknown>
+): string | null {
+  const exact =
+    userDataString(userData, selector) ||
+    userDataString(userData, field.name) ||
+    userDataString(userData, field.id) ||
+    (field.formControlName ? userDataString(userData, field.formControlName) : null);
+  if (exact) return exact;
+  if (isNarrativeField(field, selector)) return narrativeValueFromUserData(userData);
+  return null;
+}
+
+function normalizeYesNoToken(value: string): "yes" | "no" | null {
+  const normalized = value.replace(/\u00a0/g, " ").trim().toLowerCase();
+  if (normalized === "yes" || normalized === "y") return "yes";
+  if (normalized === "no" || normalized === "n") return "no";
+  return null;
+}
+
+function controlYesNoSide(control: AssistedFormChoiceControl): "yes" | "no" | null {
+  return (
+    normalizeYesNoToken(control.optionValue) || normalizeYesNoToken(control.accessibleName)
+  );
+}
+
+/** Non-empty, non-zero amounts → yes; empty/zero-like → no. */
+function resolveYesNoFromUserData(userData: Record<string, unknown>): "yes" | "no" {
+  const amount =
+    userDataString(userData, "amount_involved") ||
+    userDataString(userData, "money_involved") ||
+    "";
+  const stripped = amount.replace(/[$,\s]/g, "").toLowerCase();
+  if (!stripped || /^(0+|0+\.0+|none|n\/a|na|no|zero)$/.test(stripped)) {
+    return "no";
+  }
+  return "yes";
+}
+
+function binaryYesNoPair(
+  group: AssistedFormChoiceControl[]
+): { yes: AssistedFormChoiceControl; no: AssistedFormChoiceControl } | null {
+  const yesMatches = group.filter((control) => controlYesNoSide(control) === "yes");
+  const noMatches = group.filter((control) => controlYesNoSide(control) === "no");
+  if (yesMatches.length !== 1 || noMatches.length !== 1) return null;
+  const yes = yesMatches[0]!;
+  const no = noMatches[0]!;
+  if (yes === no) return null;
+  return { yes, no };
+}
+
+function preferredChoiceSelector(
+  control: AssistedFormChoiceControl,
+  group: AssistedFormChoiceControl[]
+): { choiceSelectorType: "name" | "id"; selector: string } | null {
+  const name = sanitizeInventoryToken(control.name);
+  if (name && group.every((entry) => entry.name === control.name)) {
+    return { choiceSelectorType: "name", selector: name };
+  }
+  const id = sanitizeInventoryToken(control.id);
+  if (id) {
+    const idMatches = group.filter((entry) => entry.id === control.id);
+    if (idMatches.length === 1) {
+      return { choiceSelectorType: "id", selector: id };
+    }
+  }
+  return null;
+}
+
+/**
+ * Deterministic /form/main FormDecision from scrape inventory + case userData only.
+ * Returns null when mapping is insufficient or ambiguous — caller falls back to model decide.
+ * Never invents selectors or optionValues.
+ */
+export function buildFtcFormMainInventoryDecision(
+  pageData: AssistedFormPageData,
+  userData: Record<string, unknown>
+): FormDecision | null {
+  const fieldsToFill: FormFieldDecision[] = [];
+  const usedSelectors = new Set<string>();
+
+  for (const field of pageData.fields ?? []) {
+    if (isSkippedInputType(field.type) || field.tag.trim().toLowerCase() === "button") {
+      continue;
+    }
+    const selector = uniqueSelectorForField(field, pageData);
+    if (!selector || usedSelectors.has(selector)) continue;
+    const value = resolveTextOrSelectValue(field, selector, userData);
+    if (!value) continue;
+    usedSelectors.add(selector);
+    fieldsToFill.push({ selector, value });
+  }
+
+  const enabledChoices = (pageData.choiceControls ?? []).filter((control) => control.enabled);
+  const groups = new Map<string, AssistedFormChoiceControl[]>();
+  for (const control of enabledChoices) {
+    const name = sanitizeInventoryToken(control.name);
+    if (!name) continue;
+    const list = groups.get(name) ?? [];
+    list.push(control);
+    groups.set(name, list);
+  }
+
+  for (const [, group] of groups) {
+    if (group.some((control) => control.checked)) continue;
+    const pair = binaryYesNoPair(group);
+    if (!pair) continue;
+    const want = resolveYesNoFromUserData(userData);
+    const chosen = want === "yes" ? pair.yes : pair.no;
+    const targeting = preferredChoiceSelector(chosen, group);
+    if (!targeting) continue;
+    const optionMatches = group.filter(
+      (control) =>
+        control.optionValue === chosen.optionValue &&
+        (targeting.choiceSelectorType === "name"
+          ? control.name === targeting.selector
+          : control.id === targeting.selector)
+    );
+    if (optionMatches.length !== 1) continue;
+
+    fieldsToFill.push({
+      selector: targeting.selector,
+      value: chosen.optionValue,
+      controlKind: chosen.kind,
+      choiceSelectorType: targeting.choiceSelectorType,
+    });
+  }
+
+  const continueActionable = ftcFormMainContinueIsActionable(pageData);
+  if (fieldsToFill.length === 0) {
+    if (!continueActionable) return null;
+    return {
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "Continue" },
+      waitForNavigation: true,
+    };
+  }
+
+  return {
+    fieldsToFill,
+    nextButton: { selectorType: "text", value: "Continue" },
+    waitForNavigation: true,
+  };
+}
+
 /**
  * Fail-closed preflight for FTC /form/main decisions against the evaluate scrape.
  * Rejects the entire decision when any field is unmatched/ambiguous, or when
