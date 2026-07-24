@@ -209,4 +209,18 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     );
     expect(source).toContain("mock_form_controls");
   });
+
+  it("BBB goal reveal dedupes nested matches and clicks one scoped host", () => {
+    const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
+    expect(source).toContain("collectOwnedFilingBbbReadyDomInBrowser");
+    expect(source).toContain("complaintGoalSelector");
+    expect(source).toContain("clickOwnedFilingBbbUniqueSelector");
+    // Ancestor/descendant collapse must drive the semantic goal counts.
+    expect(source).toMatch(/goalRoots[\s\S]*?goalMatches\.some\(\(other\) => wraps\(other, el\)\)/);
+    expect(source).toMatch(/complaintGoalVisibleCount:\s*visibleGoalHosts\.length/);
+    expect(source).toMatch(/visibleGoalHosts\.length === 1\s*\?\s*cssPathOf/);
+    // Uniqueness is re-verified at click time; no first()-style text guessing for the goal.
+    expect(source).toMatch(/locator\.count\(\)\)\s*!==\s*1/);
+    expect(source).not.toMatch(/getByText\(\s*OWNED_FILING_BBB_COMPLAINT_GOAL_RE/);
+  });
 });

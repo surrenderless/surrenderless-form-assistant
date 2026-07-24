@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
   abortOwnedFilingPageEvaluate,
@@ -14,6 +14,8 @@ import {
   isOwnedFilingBbbComplainPortalPath,
   evaluateOwnedFilingBbbPortalReady,
   shouldRevealBbbStartComplaintViaGoal,
+  collectOwnedFilingBbbReadyDomInBrowser,
+  OWNED_FILING_BBB_COMPLAINT_GOAL_RE,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
   OWNED_FILING_BBB_READY_WAIT_MS,
@@ -755,6 +757,7 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
       startComplaintVisibleCount: 0,
       complaintGoalFound: 0,
       complaintGoalVisibleCount: 0,
+      complaintGoalSelector: "",
       cookieAcceptVisibleCount: 0,
       fieldCount: 0,
       interactiveControlCount: 0,
@@ -768,14 +771,14 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
     title?: string;
     frames?: number;
     probe?: Record<string, unknown> | (() => Record<string, unknown>);
-    onGoalClick?: () => void;
+    onGoalClick?: (selector: string) => void;
+    locatorCount?: number;
     evaluateHang?: boolean;
     closed?: boolean;
-  }): Page {
-    const click = vi.fn(async () => {
-      options.onGoalClick?.();
-    });
-    return mockPage({
+  }): Page & { locatorSelectors: string[] } {
+    const locatorSelectors: string[] = [];
+    const textClick = vi.fn(async () => undefined);
+    const page = mockPage({
       urlValue: options.urlValue ?? "https://www.bbb.org/file-a-complaint",
       isClosed: vi.fn(() => !!options.closed),
       title: vi.fn(async () => options.title ?? "File a Complaint | BBB"),
@@ -785,10 +788,18 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
         : vi.fn(async () =>
             typeof options.probe === "function" ? options.probe() : options.probe ?? mockBbbProbe()
           ),
-      getByText: vi.fn(() => ({
-        first: () => ({ click }),
-      })),
+      getByText: vi.fn(() => ({ first: () => ({ click: textClick }) })),
+      locator: vi.fn((selector: string) => {
+        locatorSelectors.push(selector);
+        return {
+          count: async () => options.locatorCount ?? 1,
+          click: async () => {
+            options.onGoalClick?.(selector);
+          },
+        };
+      }),
     } as unknown as Partial<Page>);
+    return Object.assign(page, { locatorSelectors });
   }
 
   it("treats official /complain, /file-a-complaint, and Playwright mock entry as complain-portal paths", () => {
@@ -900,8 +911,9 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
     expect(OWNED_FILING_BBB_READY_WAIT_MS).toBe(15_000);
   });
 
-  it("clicks unique complaint goal then becomes ready when Start Complaint turns visible", async () => {
+  it("clicks the scoped unique complaint goal then becomes ready when Start Complaint turns visible", async () => {
     let revealed = false;
+    const goalSelector = "body > main > ul > li:nth-of-type(1) > button";
     const page = pageWithBbbProbe({
       probe: () =>
         revealed
@@ -920,6 +932,7 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
               startComplaintVisibleCount: 0,
               complaintGoalFound: 1,
               complaintGoalVisibleCount: 1,
+              complaintGoalSelector: goalSelector,
               interactiveControlCount: 1,
               haystack: "I want help resolving a problem with a business",
             }),
@@ -932,6 +945,56 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
       ready_signal: "start_complaint",
     });
     expect(revealed).toBe(true);
+    expect(page.locatorSelectors).toContain(goalSelector);
+  });
+
+  it("never clicks a goal when two semantic goals remain visible after dedupe", async () => {
+    let clicked = false;
+    const page = pageWithBbbProbe({
+      probe: mockBbbProbe({
+        pathname: "/file-a-complaint",
+        startComplaintFound: 1,
+        startComplaintVisibleCount: 0,
+        complaintGoalFound: 2,
+        complaintGoalVisibleCount: 2,
+        complaintGoalSelector: "",
+        interactiveControlCount: 2,
+        haystack: "I want help resolving a problem with a business",
+      }),
+      onGoalClick: () => {
+        clicked = true;
+      },
+    });
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 250)).rejects.toBeInstanceOf(
+      OwnedFilingBbbReadyTimeoutError
+    );
+    expect(clicked).toBe(false);
+    expect(page.locatorSelectors).toEqual([]);
+  });
+
+  it("fails closed when the resolved goal selector stops being unique at click time", async () => {
+    let clicked = false;
+    const page = pageWithBbbProbe({
+      probe: mockBbbProbe({
+        pathname: "/file-a-complaint",
+        startComplaintFound: 1,
+        startComplaintVisibleCount: 0,
+        complaintGoalFound: 1,
+        complaintGoalVisibleCount: 1,
+        complaintGoalSelector: "body > main > ul > li > button",
+        interactiveControlCount: 1,
+      }),
+      locatorCount: 2,
+      onGoalClick: () => {
+        clicked = true;
+      },
+    });
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 250)).rejects.toBeInstanceOf(
+      OwnedFilingBbbReadyTimeoutError
+    );
+    expect(clicked).toBe(false);
   });
 
   it("resolves on Playwright mock form+Continue via mock_form_controls signal", async () => {
@@ -1034,5 +1097,210 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
     expect(formatOwnedFilingBbbPostNavDiagnostics(diagnostics)).toContain(
       "start_complaint_visible_count=0"
     );
+  });
+});
+
+describe("collectOwnedFilingBbbReadyDomInBrowser", () => {
+  const GOAL_TEXT = "I want help resolving a problem with a business.";
+  const REVIEW_GOAL_TEXT =
+    "I want to share my experience with a business, and I don't need a resolution.";
+
+  type FakeEl = {
+    tagName: string;
+    children: FakeEl[];
+    parentElement: FakeEl | null;
+    ownText: string;
+    role: string | null;
+    href: string | null;
+    visible: boolean;
+    hidden: boolean;
+    readonly textContent: string;
+    getAttribute(name: string): string | null;
+    contains(other: FakeEl): boolean;
+    matches(selector: string): boolean;
+    getBoundingClientRect(): { width: number; height: number };
+  };
+
+  function el(
+    tagName: string,
+    options: { text?: string; role?: string; href?: string; visible?: boolean } = {},
+    children: FakeEl[] = []
+  ): FakeEl {
+    const node: FakeEl = {
+      tagName: tagName.toUpperCase(),
+      children,
+      parentElement: null,
+      ownText: options.text ?? "",
+      role: options.role ?? null,
+      href: options.href ?? null,
+      visible: options.visible ?? true,
+      hidden: false,
+      get textContent(): string {
+        return [node.ownText, ...node.children.map((child) => child.textContent)]
+          .filter(Boolean)
+          .join(" ");
+      },
+      getAttribute: (name: string) =>
+        name === "role" ? node.role : name === "href" ? node.href : null,
+      contains: (other: FakeEl) =>
+        other === node || node.children.some((child) => child.contains(other)),
+      matches: (selector: string) => {
+        const control =
+          node.tagName === "BUTTON" ||
+          (node.tagName === "A" && !!node.href) ||
+          node.role === "button";
+        if (!selector.includes("role=\"radio\"")) return control;
+        return control || node.role === "radio" || node.role === "option" || node.tagName === "LABEL";
+      },
+      getBoundingClientRect: () => ({
+        width: node.visible ? 100 : 0,
+        height: node.visible ? 20 : 0,
+      }),
+    };
+    for (const child of children) child.parentElement = node;
+    return node;
+  }
+
+  function flatten(node: FakeEl): FakeEl[] {
+    return [node, ...node.children.flatMap(flatten)];
+  }
+
+  function installDom(body: FakeEl, pathname = "/file-a-complaint"): void {
+    const all = flatten(body).filter((node) => node !== body);
+    vi.stubGlobal("document", {
+      body: Object.assign(body, { innerText: body.textContent }),
+      title: "File a Complaint | Consumer Complaints | Better Business Bureau",
+      querySelectorAll(selector: string) {
+        if (selector === "input, textarea, select") return [];
+        if (selector.includes("h1")) return all;
+        return all.filter((node) => node.matches('button, a[href], [role="button"]'));
+      },
+    });
+    vi.stubGlobal("window", {
+      location: { pathname },
+      getComputedStyle: () => ({
+        display: "block",
+        visibility: "visible",
+        opacity: "1",
+        pointerEvents: "auto",
+      }),
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the browser-world goal pattern in sync with the exported constant", () => {
+    expect(collectOwnedFilingBbbReadyDomInBrowser.toString()).toContain(
+      OWNED_FILING_BBB_COMPLAINT_GOAL_RE.source
+    );
+  });
+
+  it("collapses nested wrappers of one goal into a single semantic candidate", () => {
+    // Reproduces production complaint_goal_visible_count=3 on /file-a-complaint.
+    installDom(
+      el("body", {}, [
+        el("ul", {}, [
+          el("li", {}, [el("div", {}, [el("span", { text: GOAL_TEXT })])]),
+          el("li", {}, [el("div", {}, [el("span", { text: REVIEW_GOAL_TEXT })])]),
+        ]),
+      ])
+    );
+
+    const probe = collectOwnedFilingBbbReadyDomInBrowser();
+    expect(probe.complaintGoalFound).toBe(1);
+    expect(probe.complaintGoalVisibleCount).toBe(1);
+    expect(probe.complaintGoalSelector).toBe("body > ul > li:nth-of-type(1)");
+  });
+
+  it("resolves the innermost actionable host inside the collapsed chain", () => {
+    installDom(
+      el("body", {}, [
+        el("ul", {}, [
+          el("li", {}, [el("button", {}, [el("span", { text: GOAL_TEXT })])]),
+          el("li", {}, [el("button", {}, [el("span", { text: REVIEW_GOAL_TEXT })])]),
+        ]),
+      ])
+    );
+
+    const probe = collectOwnedFilingBbbReadyDomInBrowser();
+    expect(probe.complaintGoalFound).toBe(1);
+    expect(probe.complaintGoalVisibleCount).toBe(1);
+    expect(probe.complaintGoalSelector).toBe("body > ul > li:nth-of-type(1) > button");
+  });
+
+  it("keeps genuinely distinct sibling goals ambiguous and offers no selector", () => {
+    installDom(
+      el("body", {}, [
+        el("ul", {}, [
+          el("li", {}, [el("button", { text: GOAL_TEXT })]),
+          el("li", {}, [el("button", { text: GOAL_TEXT })]),
+        ]),
+      ])
+    );
+
+    const probe = collectOwnedFilingBbbReadyDomInBrowser();
+    expect(probe.complaintGoalFound).toBe(2);
+    expect(probe.complaintGoalVisibleCount).toBe(2);
+    expect(probe.complaintGoalSelector).toBe("");
+    expect(
+      shouldRevealBbbStartComplaintViaGoal({
+        startComplaintVisibleCount: 0,
+        complaintGoalVisibleCount: probe.complaintGoalVisibleCount,
+      })
+    ).toBe(false);
+  });
+
+  it("reports collapsed goal and Start Complaint as present but not visible", () => {
+    installDom(
+      el("body", {}, [
+        el("ul", {}, [
+          el("li", { visible: false }, [
+            el("div", { visible: false }, [el("span", { text: GOAL_TEXT, visible: false })]),
+          ]),
+          el("li", {}, [el("span", { text: REVIEW_GOAL_TEXT })]),
+        ]),
+        el("button", { text: "Start Complaint", visible: false }),
+      ])
+    );
+
+    const probe = collectOwnedFilingBbbReadyDomInBrowser();
+    expect(probe.complaintGoalFound).toBe(1);
+    expect(probe.complaintGoalVisibleCount).toBe(0);
+    expect(probe.complaintGoalSelector).toBe("");
+    expect(probe.startComplaintFound).toBe(1);
+    expect(probe.startComplaintVisibleCount).toBe(0);
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: probe.pathname,
+        startComplaintVisibleCount: probe.startComplaintVisibleCount,
+        fieldCount: probe.fieldCount,
+        interactiveControlCount: probe.interactiveControlCount,
+      })
+    ).toEqual({ ready: false, ready_signal: null });
+  });
+
+  it("reports the revealed unique Start Complaint as ready after goal selection", () => {
+    installDom(
+      el("body", {}, [
+        el("ul", {}, [
+          el("li", {}, [el("button", {}, [el("span", { text: GOAL_TEXT })])]),
+          el("li", {}, [el("button", {}, [el("span", { text: REVIEW_GOAL_TEXT })])]),
+        ]),
+        el("button", { text: "Start Complaint" }),
+      ])
+    );
+
+    const probe = collectOwnedFilingBbbReadyDomInBrowser();
+    expect(probe.startComplaintVisibleCount).toBe(1);
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: probe.pathname,
+        startComplaintVisibleCount: probe.startComplaintVisibleCount,
+        fieldCount: probe.fieldCount,
+        interactiveControlCount: probe.interactiveControlCount,
+      })
+    ).toEqual({ ready: true, ready_signal: "start_complaint" });
   });
 });
