@@ -326,7 +326,10 @@ export type OwnedFilingNavigationRaceWinner =
   | "navigation_target_closed"
   | "navigation_error";
 
-export type OwnedFilingSessionRaceWinner = "session_timeout" | "session_result";
+export type OwnedFilingSessionRaceWinner =
+  | "session_timeout"
+  | "session_result"
+  | "provider_session_kill";
 
 /** Durable observability for evaluate timeout / race outcomes (safe for dry-run notes). */
 export type OwnedFilingEvaluateTimeoutDiagnostics = {
@@ -457,7 +460,7 @@ export class OwnedFilingSessionTimeoutError extends Error {
 export function isOwnedFilingSessionTimeoutError(err: unknown): boolean {
   if (err instanceof OwnedFilingSessionTimeoutError) return true;
   const message = err instanceof Error ? err.message : String(err);
-  return /session_timeout/i.test(message);
+  return /session_timeout|provider_session_kill|session_bound_ms=/i.test(message);
 }
 
 export type OwnedFilingSessionBudgetControl = {
@@ -466,13 +469,45 @@ export type OwnedFilingSessionBudgetControl = {
   clear: () => void;
 };
 
+type PlaywrightCdpConnection = {
+  close?: () => void;
+  _ws?: { terminate?: () => void; close?: () => void };
+  _transport?: { _ws?: { terminate?: () => void; close?: () => void } };
+};
+
 /**
  * Fire-and-forget browser teardown — must not await wedged CDP close.
+ * Best-effort terminates the underlying WebSocket before browser.close().
  */
 export function destroyOwnedFilingBrowserBestEffort(
   browser: Browser | null | undefined
 ): void {
   if (!browser) return;
+  try {
+    const maybe = browser as Browser & {
+      _connection?: PlaywrightCdpConnection;
+      connection?: PlaywrightCdpConnection;
+    };
+    const conn = maybe._connection ?? maybe.connection;
+    const ws = conn?._ws ?? conn?._transport?._ws;
+    try {
+      ws?.terminate?.();
+    } catch {
+      // ignore
+    }
+    try {
+      ws?.close?.();
+    } catch {
+      // ignore
+    }
+    try {
+      conn?.close?.();
+    } catch {
+      // ignore
+    }
+  } catch {
+    // ignore internal access failures
+  }
   try {
     void browser.close().catch(() => undefined);
   } catch {
@@ -485,6 +520,8 @@ export function destroyOwnedFilingBrowserBestEffort(
  * On timer fire: immediately reject OwnedFilingSessionTimeoutError, then fire-and-forget
  * onTimeoutAbort (typically destroyOwnedFilingBrowserBestEffort). Never awaits abort before reject.
  * Call control.clear() after the first successful page evaluate to disarm for the rest of the loop.
+ * If Browserless kills the session first, target-closed errors are annotated with session_bound_ms
+ * / provider_session_kill so dry-run detail still proves the 60s-class bound.
  */
 export async function withOwnedFilingSessionBudget<T>(
   run: (control: OwnedFilingSessionBudgetControl) => Promise<T>,
@@ -521,11 +558,27 @@ export async function withOwnedFilingSessionBudget<T>(
     },
   };
 
+  const annotateProviderKill = (err: unknown): Error => {
+    const message = err instanceof Error ? err.message : String(err);
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    return new Error(
+      [
+        message,
+        `session_bound_ms=${timeoutMs}`,
+        `budget_fired_at_ms=null`,
+        `phase=${phase ?? "null"}`,
+        `elapsed_ms=${elapsed}`,
+        `race_winner=provider_session_kill`,
+      ].join(" ")
+    );
+  };
+
   const runPromise = Promise.resolve()
     .then(() => run(control))
     .then(
       (value) => {
-        if (settled && !disarmed) {
+        // Timeout already won the race — swallow late success.
+        if (settled) {
           return undefined as unknown as T;
         }
         settled = true;
@@ -533,11 +586,16 @@ export async function withOwnedFilingSessionBudget<T>(
         return value;
       },
       (err: unknown) => {
-        if (settled && !disarmed) {
+        // Timeout already won the race — swallow late rejections (including post-abort target-closed).
+        if (settled) {
           return undefined as unknown as T;
         }
         settled = true;
+        const stillArmed = !disarmed;
         control.clear();
+        if (stillArmed && isOwnedFilingTargetClosedError(err)) {
+          throw annotateProviderKill(err);
+        }
         throw err;
       }
     );

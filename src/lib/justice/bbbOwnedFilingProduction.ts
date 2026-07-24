@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import type { NextRequest } from "next/server";
 import { isPlaywrightMockRealBbbBoundedSubmitLoopEnabled } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { resolveAutomatedBbbFilingBase } from "@/lib/justice/bbbOwnedFilingSubmitContext";
+import { OWNED_FILING_SESSION_BUDGET_MS } from "@/lib/justice/ownedFilingPlaywrightSession";
 
 /** Vercel Pro-compatible timeout for owned BBB autofill + bounded-submit callers. */
 export const BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS = 300;
@@ -48,30 +49,21 @@ export type ChromiumConnectionForRealBbbSubmit =
 
 /**
  * Owned-filing Browserless session `timeout` query value in milliseconds.
- * Kept under the historical 300s provider kill and above the 60s Node session budget
- * so wedged CDP fails closed sooner if Node timers also fail to win. Must not raise caps.
+ * Forced to the Node session budget (60s) so provider kill is the hard backstop when
+ * setTimeout+Promise.race fails to win under wedged CDP. Must not raise caps.
  */
-export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS = 120_000;
+export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS = OWNED_FILING_SESSION_BUDGET_MS;
 
 /**
  * Upgraded Browserless plan maximum for the `timeout` query parameter (milliseconds).
- * Values above this are rejected and replaced with the owned-filing budget.
+ * Used only as an upper sanity bound; owned-filing always forces the session budget.
  */
 export const BROWSERLESS_TIMEOUT_MAX_MS = 900_000;
 
-function isValidBrowserlessOwnedFilingTimeoutMs(value: number): boolean {
-  return (
-    Number.isInteger(value) &&
-    value >= OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS &&
-    value <= BROWSERLESS_TIMEOUT_MAX_MS
-  );
-}
-
 /**
- * Ensures a Browserless CDP WebSocket URL has a single valid session `timeout` (ms).
- * Missing, invalid, below budget (including stale 60000/300000 when above new floor), or above plan max
- * → owned-filing budget. Preserves the first timeout already in [budget, plan max]. Collapses duplicates.
- * Preserves token and all other query params.
+ * Ensures a Browserless CDP WebSocket URL has a single session `timeout` equal to the
+ * owned-filing Node session budget. Always overwrites (including stale 120s/300s) so
+ * wedged CDP cannot outlive withOwnedFilingSessionBudget. Preserves token and other params.
  */
 export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: string): string {
   const trimmed = browserlessUrl.trim();
@@ -84,22 +76,8 @@ export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: strin
     return trimmed;
   }
 
-  const candidates = parsed.searchParams.getAll("timeout");
-  let chosen: number | null = null;
-  for (const raw of candidates) {
-    const candidate = raw.trim();
-    if (!/^\d+$/.test(candidate)) continue;
-    const ms = Number.parseInt(candidate, 10);
-    if (isValidBrowserlessOwnedFilingTimeoutMs(ms)) {
-      chosen = ms;
-      break;
-    }
-  }
-
-  parsed.searchParams.set(
-    "timeout",
-    String(chosen ?? OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS)
-  );
+  parsed.searchParams.delete("timeout");
+  parsed.searchParams.set("timeout", String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS));
   return parsed.toString();
 }
 

@@ -593,6 +593,34 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
   });
 
+  it("BBB provider_session_kill annotation maps to dry_run_failed with 60s-bound telemetry", async () => {
+    vi.mocked(runRealBbbBoundedSubmit).mockRejectedValue(
+      new Error(
+        "owned-filing playwright evaluate target closed: elapsed_ms=60112 original_error=page.evaluate: Target page, context or browser has been closed session_bound_ms=60000 budget_fired_at_ms=null phase=evaluate elapsed_ms=60120 race_winner=provider_session_kill"
+      )
+    );
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(bbbTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "bbb"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "bbb",
+      steps_executed: 0,
+      stop_reason: "provider",
+    });
+    expect(result.detail).toContain("session_bound_ms=60000");
+    expect(result.detail).toContain("race_winner=provider_session_kill");
+    expect(noteUpdates.at(-1)).toContain("provider_session_kill");
+    expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
+  });
+
   it("unknown click is recorded as dry_run_failed (retryable, fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,
