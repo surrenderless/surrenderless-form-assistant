@@ -21,6 +21,22 @@ export function intakeToRealBbbUserData(intake: JusticeIntake): Record<string, s
     out.business_website = intake.company_website.trim();
   }
 
+  if (intake.company_contact_email?.trim()) {
+    out.business_email = intake.company_contact_email.trim();
+  }
+
+  // Postal identity is optional on intake and must never be invented from consumer_us_state.
+  const street = intake.company_street_address?.trim();
+  if (street) out.business_address = street;
+  const city = intake.company_city?.trim();
+  if (city) out.business_city = city;
+  const state = intake.company_state?.trim();
+  if (state) out.business_state = state;
+  const country = normalizeBbbBusinessCountry(intake.company_country);
+  if (country) out.business_country = country;
+  const postal = intake.company_postal_code?.trim();
+  if (postal) out.business_postal_code = postal;
+
   if (intake.order_confirmation_details?.trim()) {
     out.order_confirmation_details = intake.order_confirmation_details.trim();
   }
@@ -30,6 +46,17 @@ export function intakeToRealBbbUserData(intake: JusticeIntake): Record<string, s
   }
 
   return out;
+}
+
+/** Normalize country aliases to BBB Business Information Form select labels. */
+export function normalizeBbbBusinessCountry(raw: string | null | undefined): string {
+  const t = (raw ?? "").trim();
+  if (!t) return "";
+  if (/^(usa|u\.?s\.?a?\.?|united\s+states(\s+of\s+america)?)$/i.test(t)) {
+    return "United States";
+  }
+  if (/^(can|canada)$/i.test(t)) return "Canada";
+  return t;
 }
 
 function buildRealBbbComplaintNarrative(intake: JusticeIntake): string {

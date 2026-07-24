@@ -51,6 +51,9 @@ function identityFields(): AssistedFormPageData["fields"] {
     { tag: "select", type: "select-one", name: "state", id: "", placeholder: "", label: "State/Province" },
     { tag: "select", type: "select-one", name: "country", id: "", placeholder: "", label: "Country" },
     { tag: "input", type: "text", name: "postalCode", id: "", placeholder: "", label: "Postal Code" },
+    { tag: "input", type: "text", name: "phone", id: "", placeholder: "", label: "Phone number (optional)" },
+    { tag: "input", type: "email", name: "businessEmail", id: "", placeholder: "", label: "Business email (optional)" },
+    { tag: "input", type: "url", name: "url", id: "", placeholder: "", label: "URL (optional)" },
   ];
 }
 
@@ -59,7 +62,7 @@ const FULL_IDENTITY = {
   business_address: "1 Example Way",
   business_city: "Austin",
   business_state: "TX",
-  business_country: "USA",
+  business_country: "United States",
   business_postal_code: "78701",
 };
 
@@ -232,7 +235,7 @@ describe("buildOwnedFilingBbbSearchDecision — result selection", () => {
     expect(decision).toEqual({
       ok: false,
       failure: "search_business_name_missing",
-      detail: "search_business_name_missing results=1 matches=0",
+      detail: "search_business_name_missing results=1 matches=0 missing=business_name",
     });
   });
 });
@@ -246,7 +249,25 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
     expect(decision).toEqual({
       ok: false,
       failure: "search_no_results_identity_incomplete",
-      detail: "search_no_results_identity_incomplete results=0 matches=0",
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 missing=business_address,business_city,business_state,business_country,business_postal_code",
+    });
+  });
+
+  it("names only allowlisted missing keys when postal identity is incomplete", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields: identityFields() }),
+      {
+        business_name: "Fictional Digital Services",
+        business_address: "1 Example Way",
+        business_city: "Austin",
+      }
+    );
+    expect(decision).toEqual({
+      ok: false,
+      failure: "search_no_results_identity_incomplete",
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 missing=business_state,business_country,business_postal_code",
     });
   });
 
@@ -271,7 +292,7 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
           { selector: "address", value: "1 Example Way" },
           { selector: "city", value: "Austin" },
           { selector: "state", value: "TX" },
-          { selector: "country", value: "USA" },
+          { selector: "country", value: "United States" },
           { selector: "postalCode", value: "78701" },
         ],
         nextButton: { selectorType: "text", value: "File a Complaint" },
@@ -280,6 +301,45 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
     });
     if (!decision.ok) throw new Error("expected a decision");
     expect(normalizeFormDecision(decision.decision)).toEqual(decision.decision);
+  });
+
+  it("also fills approved optional website and business email when uniquely addressable", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: identityFields(),
+        buttons: [{ text: "File a Complaint", id: "", name: "", type: "button" }],
+      }),
+      {
+        ...FULL_IDENTITY,
+        business_website: "https://fictional.example",
+        business_email: "help@example.invalid",
+      }
+    );
+    if (!decision.ok) throw new Error("expected a decision");
+    expect(decision.decision.fieldsToFill).toEqual(
+      expect.arrayContaining([
+        { selector: "url", value: "https://fictional.example" },
+        { selector: "businessEmail", value: "help@example.invalid" },
+      ])
+    );
+  });
+
+  it("does not invent postal identity from consumer_us_state", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields: identityFields() }),
+      {
+        business_name: "Fictional Digital Services",
+        consumer_us_state: "TX",
+      }
+    );
+    expect(decision).toMatchObject({
+      ok: false,
+      failure: "search_no_results_identity_incomplete",
+    });
+    if (decision.ok) throw new Error("expected a failure");
+    expect(decision.detail).toContain("missing=business_address");
+    expect(decision.detail).not.toContain("consumer_us_state");
   });
 
   it("fails closed when an identity field is not uniquely resolvable", () => {
@@ -294,7 +354,12 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
       }),
       FULL_IDENTITY
     );
-    expect(decision).toMatchObject({ ok: false, failure: "search_no_results_identity_incomplete" });
+    expect(decision).toMatchObject({
+      ok: false,
+      failure: "search_no_results_identity_incomplete",
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 missing=business_city",
+    });
   });
 
   it("fails closed when the proceed control is not uniquely actionable", () => {
@@ -321,6 +386,13 @@ describe("parseOwnedFilingBbbSearchFailureDetail", () => {
   it("passes through allowlisted enums with counts", () => {
     expect(parseOwnedFilingBbbSearchFailureDetail("search_result_ambiguous results=3 matches=2")).toBe(
       "search_result_ambiguous results=3 matches=2"
+    );
+    expect(
+      parseOwnedFilingBbbSearchFailureDetail(
+        "search_no_results_identity_incomplete results=0 matches=0 missing=business_address,business_city"
+      )
+    ).toBe(
+      "search_no_results_identity_incomplete results=0 matches=0 missing=business_address,business_city"
     );
   });
 

@@ -88,8 +88,25 @@ const SEARCH_URL =
   "https://www.bbb.org/file-a-complaint/search?find_country=USA&find_text=Fictional%20Digital%20Services&page=1&touched=1";
 const mockedApply = vi.mocked(applyOwnedFilingFormDecision);
 
-function searchPage(results: unknown[]) {
-  return { fields: [], buttons: [], url: SEARCH_URL, pageText: "", bbbSearchResults: results };
+function searchPage(results: unknown[], fields: unknown[] = []) {
+  return {
+    fields,
+    buttons: results.length === 0 ? [{ text: "File a Complaint", id: "", name: "", type: "button" }] : [],
+    url: SEARCH_URL,
+    pageText: "",
+    bbbSearchResults: results,
+  };
+}
+
+function identityFields() {
+  return [
+    { tag: "input", type: "text", name: "businessName", id: "", placeholder: "", label: "Business Name" },
+    { tag: "input", type: "text", name: "address", id: "", placeholder: "", label: "Address" },
+    { tag: "input", type: "text", name: "city", id: "", placeholder: "", label: "City" },
+    { tag: "select", type: "select-one", name: "state", id: "", placeholder: "", label: "State/Province" },
+    { tag: "select", type: "select-one", name: "country", id: "", placeholder: "", label: "Country" },
+    { tag: "input", type: "text", name: "postalCode", id: "", placeholder: "", label: "Postal Code" },
+  ];
 }
 
 function resultCard(overrides: Record<string, unknown> = {}) {
@@ -146,7 +163,7 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
 
   it("reproduces the production zero-result run: fails closed without calling decide-action", async () => {
     const fetchMock = stubDecideAction({ decision: { nextButton: { selectorType: "text", value: "x" } } });
-    h.state.evaluateQueue = [searchPage([])];
+    h.state.evaluateQueue = [searchPage([], identityFields())];
 
     const result = await runRealBbbBoundedSubmit(runParams());
 
@@ -159,8 +176,64 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     expect(result.fillResult.stepLog.at(-1)).toMatchObject({
       action: "blocked_unknown_click",
       url: SEARCH_URL,
-      detail: "search_no_results_identity_incomplete results=0 matches=0",
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 missing=business_address,business_city,business_state,business_country,business_postal_code",
     });
+  });
+
+  it("fills the Business Information Form and proceeds when approved postal identity is complete", async () => {
+    stubDecideAction({
+      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
+    });
+    const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
+    h.state.evaluateQueue = [
+      searchPage([], identityFields()),
+      {
+        fields: [],
+        buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }],
+        url: wizardUrl,
+        pageText: "",
+      },
+    ];
+    h.state.applyQueue = [
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit Complaint",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealBbbBoundedSubmit(
+      runParams({
+        business_address: "1 Example Way",
+        business_city: "Austin",
+        business_state: "TX",
+        business_country: "United States",
+        business_postal_code: "78701",
+      })
+    );
+
+    expect(mockedApply.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [
+        { selector: "businessName", value: "Fictional Digital Services" },
+        { selector: "address", value: "1 Example Way" },
+        { selector: "city", value: "Austin" },
+        { selector: "state", value: "TX" },
+        { selector: "country", value: "United States" },
+        { selector: "postalCode", value: "78701" },
+      ],
+      nextButton: { selectorType: "text", value: "File a Complaint" },
+      waitForNavigation: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(1);
   });
 
   it("fails closed on ambiguous results with sanitized counts and no click", async () => {

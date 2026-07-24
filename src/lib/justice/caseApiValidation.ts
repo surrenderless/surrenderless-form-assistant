@@ -76,6 +76,15 @@ export function isJusticeIntakePayload(v: unknown): v is JusticeIntake {
   if (o.card_issuer_contact_email !== undefined && typeof o.card_issuer_contact_email !== "string") {
     return false;
   }
+  if (o.company_street_address !== undefined && typeof o.company_street_address !== "string") {
+    return false;
+  }
+  if (o.company_city !== undefined && typeof o.company_city !== "string") return false;
+  if (o.company_state !== undefined && typeof o.company_state !== "string") return false;
+  if (o.company_country !== undefined && typeof o.company_country !== "string") return false;
+  if (o.company_postal_code !== undefined && typeof o.company_postal_code !== "string") {
+    return false;
+  }
 
   return true;
 }

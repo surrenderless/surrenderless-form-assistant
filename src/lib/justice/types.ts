@@ -42,6 +42,17 @@ export type JusticeIntake = {
   company_contact_email?: string;
   /** Optional bank/card issuer contact email for Surrenderless payment-dispute delivery. */
   card_issuer_contact_email?: string;
+  /**
+   * Optional merchant postal identity for BBB Business Information Form when the business is
+   * not in BBB search results. Never invent these from consumer_us_state or narrative text.
+   */
+  company_street_address?: string;
+  company_city?: string;
+  /** Merchant state/province (e.g. TX); distinct from consumer_us_state. */
+  company_state?: string;
+  /** Merchant country (e.g. United States / Canada). */
+  company_country?: string;
+  company_postal_code?: string;
 };
 
 export type DestinationId =

@@ -64,6 +64,12 @@ export type BuildJusticeIntakeParts = {
   company_contact_email: string;
   /** Optional bank/card issuer outreach email (empty when unknown). */
   card_issuer_contact_email: string;
+  /** Optional merchant postal identity for BBB no-results Business Information Form. */
+  company_street_address?: string;
+  company_city?: string;
+  company_state?: string;
+  company_country?: string;
+  company_postal_code?: string;
 };
 
 export type ContactProofValidationInput = {
@@ -111,6 +117,11 @@ export function defaultBuildJusticeIntakeParts(): BuildJusticeIntakeParts {
     consumer_us_state: "",
     company_contact_email: "",
     card_issuer_contact_email: "",
+    company_street_address: "",
+    company_city: "",
+    company_state: "",
+    company_country: "",
+    company_postal_code: "",
   };
 }
 
@@ -165,6 +176,11 @@ export function justiceIntakeToBuildJusticeIntakeParts(intake: JusticeIntake): B
     card_issuer_contact_email: normalizeCompanyContactEmail(
       intake.card_issuer_contact_email ?? ""
     ),
+    company_street_address: intake.company_street_address?.trim() ?? "",
+    company_city: intake.company_city?.trim() ?? "",
+    company_state: intake.company_state?.trim() ?? "",
+    company_country: intake.company_country?.trim() ?? "",
+    company_postal_code: intake.company_postal_code?.trim() ?? "",
   };
 
   if (already_contacted === "yes") {
@@ -241,6 +257,17 @@ export function buildJusticeIntakeFromParts(parts: BuildJusticeIntakeParts): Jus
   if (issuerEmail) {
     intake.card_issuer_contact_email = issuerEmail;
   }
+
+  const street = (parts.company_street_address ?? "").trim();
+  if (street) intake.company_street_address = street;
+  const city = (parts.company_city ?? "").trim();
+  if (city) intake.company_city = city;
+  const companyState = (parts.company_state ?? "").trim();
+  if (companyState) intake.company_state = companyState;
+  const companyCountry = (parts.company_country ?? "").trim();
+  if (companyCountry) intake.company_country = companyCountry;
+  const postal = (parts.company_postal_code ?? "").trim();
+  if (postal) intake.company_postal_code = postal;
 
   return intake;
 }
