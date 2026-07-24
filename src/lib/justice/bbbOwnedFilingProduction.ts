@@ -48,10 +48,10 @@ export type ChromiumConnectionForRealBbbSubmit =
 
 /**
  * Owned-filing Browserless session `timeout` query value in milliseconds.
- * Derived from the route maxDuration budget (300s → 300_000 ms).
+ * Kept under the historical 300s provider kill and above the 60s Node session budget
+ * so wedged CDP fails closed sooner if Node timers also fail to win. Must not raise caps.
  */
-export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS =
-  BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS * 1000;
+export const OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS = 120_000;
 
 /**
  * Upgraded Browserless plan maximum for the `timeout` query parameter (milliseconds).
@@ -69,8 +69,8 @@ function isValidBrowserlessOwnedFilingTimeoutMs(value: number): boolean {
 
 /**
  * Ensures a Browserless CDP WebSocket URL has a single valid session `timeout` (ms).
- * Missing, invalid, below budget (including stale 60000), or above plan max → 300000.
- * Preserves the first timeout already in [300000, plan max]. Collapses duplicates.
+ * Missing, invalid, below budget (including stale 60000/300000 when above new floor), or above plan max
+ * → owned-filing budget. Preserves the first timeout already in [budget, plan max]. Collapses duplicates.
  * Preserves token and all other query params.
  */
 export function ensureBrowserlessOwnedFilingSessionTimeout(browserlessUrl: string): string {

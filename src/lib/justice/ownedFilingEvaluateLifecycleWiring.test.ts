@@ -49,6 +49,7 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
   it("uses gotoOwnedFilingPage (wall-clock bound) and has no fixed 2s pre-evaluate delay", () => {
     const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
     expect(source).toContain("gotoOwnedFilingPage");
+    expect(source).toContain("withOwnedFilingSessionBudget");
     expect(source).toMatch(/gotoOwnedFilingPage\(\s*page!?,\s*url\s*\)/);
     expect(source).not.toMatch(/page!?\.goto\(\s*url,\s*\{\s*timeout:\s*60000/);
     expect(source).not.toMatch(/waitForLoadState\(\s*["']domcontentloaded["']\s*\)/);
@@ -128,12 +129,30 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     );
   });
 
+  it("session budget rejects before awaiting abort with budget diagnostics", () => {
+    const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
+    expect(source).toContain("budget_fired_at_ms");
+    expect(source).toContain("OWNED_FILING_SESSION_TIMEOUT_REASON");
+    expect(source).toContain("withOwnedFilingSessionBudget");
+    expect(source).toContain("destroyOwnedFilingBrowserBestEffort");
+    expect(source).toMatch(
+      /reject\(\s*new OwnedFilingSessionTimeoutError[\s\S]*?\)\s*;\s*void \(async \(\) => \{[\s\S]*?await onTimeoutAbort/
+    );
+  });
+
   it("BBB bounds collectPageData evaluate and wall-clock-bounds goto before first evaluate", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
     expect(source).toContain("withOwnedFilingEvaluateTimeout");
     expect(source).toContain("abortOwnedFilingPageEvaluate");
     expect(source).toContain("closeOwnedFilingBrowserFailClosed");
     expect(source).toContain("gotoOwnedFilingPage");
+    expect(source).toContain("withOwnedFilingSessionBudget");
+    expect(source).toContain("destroyOwnedFilingBrowserBestEffort");
+    expect(source).toContain("OWNED_FILING_SESSION_BUDGET_MS");
+    // Session budget must wrap connect before first evaluate.
+    expect(source).toMatch(
+      /withOwnedFilingSessionBudget\([\s\S]*?setPhase\(\s*["']connect["']\s*\)[\s\S]*?connectOverCDP[\s\S]*?setPhase\(\s*["']evaluate["']\s*\)[\s\S]*?collectPageData/
+    );
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
     );

@@ -295,6 +295,13 @@ export const OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS = 45_000;
  */
 export const OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS = 60_000;
 
+/**
+ * Hard outer Node wall-clock budget for connect → first successful evaluate.
+ * Cleared after first evaluate progress so healthy multi-step runs can continue.
+ * Must stay well under Browserless’s historical ~300s session kill.
+ */
+export const OWNED_FILING_SESSION_BUDGET_MS = 60_000;
+
 /** Fail-closed bound for browser.close so cleanup cannot burn remaining Browserless budget. */
 export const OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS = 5_000;
 
@@ -304,6 +311,8 @@ export const OWNED_FILING_FTC_READY_WAIT_MS = 15_000;
 export const OWNED_FILING_EVALUATE_TIMEOUT_REASON = "evaluate_timeout";
 
 export const OWNED_FILING_NAVIGATION_TIMEOUT_REASON = "navigation_timeout";
+
+export const OWNED_FILING_SESSION_TIMEOUT_REASON = "session_timeout";
 
 export type OwnedFilingEvaluateRaceWinner =
   | "evaluate_timeout"
@@ -317,6 +326,8 @@ export type OwnedFilingNavigationRaceWinner =
   | "navigation_target_closed"
   | "navigation_error";
 
+export type OwnedFilingSessionRaceWinner = "session_timeout" | "session_result";
+
 /** Durable observability for evaluate timeout / race outcomes (safe for dry-run notes). */
 export type OwnedFilingEvaluateTimeoutDiagnostics = {
   abort_timer_fired_at_ms: number | null;
@@ -329,6 +340,14 @@ export type OwnedFilingNavigationTimeoutDiagnostics = {
   nav_timer_fired_at_ms: number | null;
   abort_close_ms: number | null;
   race_winner: OwnedFilingNavigationRaceWinner;
+};
+
+/** Durable observability for outer session budget outcomes (safe for dry-run notes). */
+export type OwnedFilingSessionTimeoutDiagnostics = {
+  budget_fired_at_ms: number | null;
+  abort_close_ms: number | null;
+  phase: string | null;
+  race_winner: OwnedFilingSessionRaceWinner;
 };
 
 export function formatOwnedFilingEvaluateTimeoutDiagnostics(
@@ -347,6 +366,17 @@ export function formatOwnedFilingNavigationTimeoutDiagnostics(
   return [
     `nav_timer_fired_at_ms=${diagnostics.nav_timer_fired_at_ms ?? "null"}`,
     `abort_close_ms=${diagnostics.abort_close_ms ?? "null"}`,
+    `race_winner=${diagnostics.race_winner}`,
+  ].join(" ");
+}
+
+export function formatOwnedFilingSessionTimeoutDiagnostics(
+  diagnostics: OwnedFilingSessionTimeoutDiagnostics
+): string {
+  return [
+    `budget_fired_at_ms=${diagnostics.budget_fired_at_ms ?? "null"}`,
+    `abort_close_ms=${diagnostics.abort_close_ms ?? "null"}`,
+    `phase=${diagnostics.phase ?? "null"}`,
     `race_winner=${diagnostics.race_winner}`,
   ].join(" ");
 }
@@ -401,6 +431,150 @@ export function isOwnedFilingNavigationTimeoutError(err: unknown): boolean {
   if (err instanceof OwnedFilingNavigationTimeoutError) return true;
   const message = err instanceof Error ? err.message : String(err);
   return /navigation_timeout/i.test(message);
+}
+
+export class OwnedFilingSessionTimeoutError extends Error {
+  readonly reason = OWNED_FILING_SESSION_TIMEOUT_REASON;
+  readonly diagnostics: OwnedFilingSessionTimeoutDiagnostics;
+
+  constructor(
+    timeoutMs: number = OWNED_FILING_SESSION_BUDGET_MS,
+    diagnostics: OwnedFilingSessionTimeoutDiagnostics = {
+      budget_fired_at_ms: null,
+      abort_close_ms: null,
+      phase: null,
+      race_winner: "session_timeout",
+    }
+  ) {
+    super(
+      `owned-filing playwright session_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_SESSION_TIMEOUT_REASON}) ${formatOwnedFilingSessionTimeoutDiagnostics(diagnostics)}`
+    );
+    this.name = "OwnedFilingSessionTimeoutError";
+    this.diagnostics = diagnostics;
+  }
+}
+
+export function isOwnedFilingSessionTimeoutError(err: unknown): boolean {
+  if (err instanceof OwnedFilingSessionTimeoutError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /session_timeout/i.test(message);
+}
+
+export type OwnedFilingSessionBudgetControl = {
+  setPhase: (phase: string) => void;
+  /** Disarm after first successful evaluate so healthy multi-step runs can continue. */
+  clear: () => void;
+};
+
+/**
+ * Fire-and-forget browser teardown — must not await wedged CDP close.
+ */
+export function destroyOwnedFilingBrowserBestEffort(
+  browser: Browser | null | undefined
+): void {
+  if (!browser) return;
+  try {
+    void browser.close().catch(() => undefined);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Hard outer Node wall-clock budget around connect → first evaluate progress.
+ * On timer fire: immediately reject OwnedFilingSessionTimeoutError, then fire-and-forget
+ * onTimeoutAbort (typically destroyOwnedFilingBrowserBestEffort). Never awaits abort before reject.
+ * Call control.clear() after the first successful page evaluate to disarm for the rest of the loop.
+ */
+export async function withOwnedFilingSessionBudget<T>(
+  run: (control: OwnedFilingSessionBudgetControl) => Promise<T>,
+  timeoutMs: number = OWNED_FILING_SESSION_BUDGET_MS,
+  onTimeoutAbort?: () => void | Promise<void>
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  let disarmed = false;
+  let budgetFiredAtMs: number | null = null;
+  let abortCloseMs: number | null = null;
+  let phase: string | null = null;
+  const startedAt = Date.now();
+
+  const diagnostics = (
+    winner: OwnedFilingSessionRaceWinner
+  ): OwnedFilingSessionTimeoutDiagnostics => ({
+    budget_fired_at_ms: budgetFiredAtMs,
+    abort_close_ms: abortCloseMs,
+    phase,
+    race_winner: winner,
+  });
+
+  const control: OwnedFilingSessionBudgetControl = {
+    setPhase: (next) => {
+      if (!disarmed && !settled) phase = next;
+    },
+    clear: () => {
+      disarmed = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+  };
+
+  const runPromise = Promise.resolve()
+    .then(() => run(control))
+    .then(
+      (value) => {
+        if (settled && !disarmed) {
+          return undefined as unknown as T;
+        }
+        settled = true;
+        control.clear();
+        return value;
+      },
+      (err: unknown) => {
+        if (settled && !disarmed) {
+          return undefined as unknown as T;
+        }
+        settled = true;
+        control.clear();
+        throw err;
+      }
+    );
+
+  void runPromise.catch(() => undefined);
+
+  try {
+    return await Promise.race([
+      runPromise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          if (settled || disarmed) return;
+          settled = true;
+          budgetFiredAtMs = Math.max(0, Date.now() - startedAt);
+          reject(
+            new OwnedFilingSessionTimeoutError(timeoutMs, diagnostics("session_timeout"))
+          );
+          void (async () => {
+            const closeStarted = Date.now();
+            try {
+              await onTimeoutAbort?.();
+            } catch {
+              // best-effort
+            } finally {
+              abortCloseMs = Math.max(0, Date.now() - closeStarted);
+              console.warn(
+                "owned-filing session_timeout abort finished:",
+                formatOwnedFilingSessionTimeoutDiagnostics(diagnostics("session_timeout"))
+              );
+            }
+          })();
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    control.clear();
+  }
 }
 
 /**

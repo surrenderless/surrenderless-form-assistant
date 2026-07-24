@@ -24,6 +24,11 @@ import {
   withOwnedFilingEvaluateTimeout,
   withOwnedFilingFirstEvaluateRetry,
   withOwnedFilingNavigationTimeout,
+  withOwnedFilingSessionBudget,
+  destroyOwnedFilingBrowserBestEffort,
+  OWNED_FILING_SESSION_BUDGET_MS,
+  OwnedFilingSessionTimeoutError,
+  isOwnedFilingSessionTimeoutError,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
 function mockPage(overrides: Partial<Page> & { urlValue?: string } = {}): Page {
@@ -482,6 +487,73 @@ describe("gotoOwnedFilingPage", () => {
       "https://example.test/complain",
       expect.objectContaining({ waitUntil: "domcontentloaded" })
     );
+  });
+});
+
+describe("withOwnedFilingSessionBudget", () => {
+  it("exports the production 60s session budget", () => {
+    expect(OWNED_FILING_SESSION_BUDGET_MS).toBe(60_000);
+  });
+
+  it("rejects session_timeout immediately without waiting for hung browser.close", async () => {
+    const abort = vi.fn(() => new Promise<void>(() => {}));
+    const started = Date.now();
+    let caught: unknown;
+    try {
+      await withOwnedFilingSessionBudget(
+        async (budget) => {
+          budget.setPhase("evaluate");
+          await new Promise(() => {});
+        },
+        40,
+        abort
+      );
+    } catch (err) {
+      caught = err;
+    }
+    const elapsed = Date.now() - started;
+    expect(caught).toBeInstanceOf(OwnedFilingSessionTimeoutError);
+    expect(isOwnedFilingSessionTimeoutError(caught)).toBe(true);
+    expect((caught as OwnedFilingSessionTimeoutError).message).toContain(
+      "race_winner=session_timeout"
+    );
+    expect((caught as OwnedFilingSessionTimeoutError).message).toMatch(/budget_fired_at_ms=\d+/);
+    expect((caught as OwnedFilingSessionTimeoutError).message).toContain("phase=evaluate");
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(elapsed).toBeGreaterThanOrEqual(35);
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it("still surfaces session_timeout when hung goto never settles", async () => {
+    const started = Date.now();
+    await expect(
+      withOwnedFilingSessionBudget(async (budget) => {
+        budget.setPhase("goto");
+        await new Promise(() => {});
+      }, 40)
+    ).rejects.toBeInstanceOf(OwnedFilingSessionTimeoutError);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("clears budget after progress so later work is not cut off", async () => {
+    const result = await withOwnedFilingSessionBudget(async (budget) => {
+      budget.setPhase("evaluate");
+      budget.clear();
+      await new Promise((r) => setTimeout(r, 60));
+      return "ok";
+    }, 40);
+    expect(result).toBe("ok");
+  });
+
+  it("destroyOwnedFilingBrowserBestEffort does not await hung close", () => {
+    const browser = mockBrowser({ contexts: [] }) as unknown as Browser & {
+      close: ReturnType<typeof vi.fn>;
+    };
+    browser.close = vi.fn((): Promise<void> => new Promise(() => {}));
+    const started = Date.now();
+    destroyOwnedFilingBrowserBestEffort(browser);
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(browser.close).toHaveBeenCalled();
   });
 });
 

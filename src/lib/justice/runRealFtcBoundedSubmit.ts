@@ -34,14 +34,17 @@ import {
   abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
   closeOwnedFilingBrowserFailClosed,
+  destroyOwnedFilingBrowserBestEffort,
   gotoOwnedFilingPage,
   isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+  OWNED_FILING_SESSION_BUDGET_MS,
   replaceOwnedFilingPlaywrightSessionPage,
   waitForFtcReportFraudInteractiveReady,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
+  withOwnedFilingSessionBudget,
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 import { createOwnedFilingFtcStageTiming } from "@/lib/justice/ownedFilingFtcStageTiming";
@@ -262,6 +265,11 @@ export async function runRealFtcBoundedSubmit(
   const storageConfigured = !!(process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL);
   const stepLog: RealFtcBoundedSubmitStepLogEntry[] = [];
   let stepsExecuted = 0;
+  const runtime: {
+    browser: Browser | null;
+    page: Page | null;
+    session: OwnedFilingPlaywrightSession | null;
+  } = { browser: null, page: null, session: null };
   let browser: Browser | null = null;
   let page: Page | null = null;
   let playwrightSession: OwnedFilingPlaywrightSession | null = null;
@@ -293,78 +301,89 @@ export async function runRealFtcBoundedSubmit(
   };
 
   try {
-    const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
-    if (chromiumConnection.mode === "unavailable") {
-      throw new Error(chromiumConnection.error);
-    }
-    if (chromiumConnection.mode === "browserless") {
-      browser = await stageTiming.run("connect_cdp", () =>
-        chromium.connectOverCDP(chromiumConnection.url)
-      );
-    } else {
-      browser = await stageTiming.run("connect_cdp", () => chromium.launch({ headless: true }));
-    }
-
-    playwrightSession = await stageTiming.run("open_session", () =>
-      openOwnedFilingPlaywrightSession(browser!, {
-        chromiumMode: chromiumConnection.mode,
-        contextOptions: contextOptions(),
-      })
-    );
-    page = playwrightSession.page;
-    await stageTiming.run(
-      "goto_1",
-      () => gotoOwnedFilingPage(page!, url),
-      getCloseSnapshot
-    );
-
-    assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
-    await stageTiming.run(
-      "ready_1",
-      () => waitForFtcReportFraudInteractiveReady(page!),
-      getCloseSnapshot
-    );
-
-    let firstEvaluateCompleted = false;
-    let iteration = 0;
-
-    while (!hasReachedStepCap(stepsExecuted, REAL_FTC_MAX_SUBMIT_STEPS)) {
-      iteration += 1;
-      const collect = () => collectPageData(page!, playwrightSession!, browser!);
-      let pageData: AssistedFormPageData;
-      if (firstEvaluateCompleted) {
-        pageData = await stageTiming.run(`evaluate_${iteration}`, collect, getCloseSnapshot);
-      } else {
-        try {
-          pageData = await stageTiming.run(`evaluate_${iteration}`, collect, getCloseSnapshot);
-        } catch (err: unknown) {
-          if (!isOwnedFilingEvaluateTimeoutError(err)) throw err;
-          await stageTiming.run(
-            "retry_replace",
-            async () => {
-              playwrightSession = await replaceOwnedFilingPlaywrightSessionPage(
-                playwrightSession!,
-                browser!
-              );
-              page = playwrightSession.page;
-            },
-            getCloseSnapshot
-          );
-          await stageTiming.run(
-            "goto_retry",
-            () => gotoOwnedFilingPage(page!, url),
-            getCloseSnapshot
-          );
-          assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser!);
-          await stageTiming.run(
-            "ready_retry",
-            () => waitForFtcReportFraudInteractiveReady(page!),
-            getCloseSnapshot
-          );
-          pageData = await stageTiming.run("evaluate_retry", collect, getCloseSnapshot);
+    return await withOwnedFilingSessionBudget(
+      async (budget) => {
+        const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
+        if (chromiumConnection.mode === "unavailable") {
+          throw new Error(chromiumConnection.error);
         }
-        firstEvaluateCompleted = true;
-      }
+        budget.setPhase("connect");
+        if (chromiumConnection.mode === "browserless") {
+          browser = await stageTiming.run("connect_cdp", () =>
+            chromium.connectOverCDP(chromiumConnection.url)
+          );
+        } else {
+          browser = await stageTiming.run("connect_cdp", () => chromium.launch({ headless: true }));
+        }
+        runtime.browser = browser;
+
+        playwrightSession = await stageTiming.run("open_session", () =>
+          openOwnedFilingPlaywrightSession(browser!, {
+            chromiumMode: chromiumConnection.mode,
+            contextOptions: contextOptions(),
+          })
+        );
+        runtime.session = playwrightSession;
+        page = playwrightSession.page;
+        runtime.page = page;
+        budget.setPhase("goto");
+        await stageTiming.run(
+          "goto_1",
+          () => gotoOwnedFilingPage(page!, url),
+          getCloseSnapshot
+        );
+
+        assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
+        await stageTiming.run(
+          "ready_1",
+          () => waitForFtcReportFraudInteractiveReady(page!),
+          getCloseSnapshot
+        );
+
+        budget.setPhase("evaluate");
+        let firstEvaluateCompleted = false;
+        let iteration = 0;
+
+        while (!hasReachedStepCap(stepsExecuted, REAL_FTC_MAX_SUBMIT_STEPS)) {
+          iteration += 1;
+          const collect = () => collectPageData(page!, playwrightSession!, browser!);
+          let pageData: AssistedFormPageData;
+          if (firstEvaluateCompleted) {
+            pageData = await stageTiming.run(`evaluate_${iteration}`, collect, getCloseSnapshot);
+          } else {
+            try {
+              pageData = await stageTiming.run(`evaluate_${iteration}`, collect, getCloseSnapshot);
+            } catch (err: unknown) {
+              if (!isOwnedFilingEvaluateTimeoutError(err)) throw err;
+              await stageTiming.run(
+                "retry_replace",
+                async () => {
+                  playwrightSession = await replaceOwnedFilingPlaywrightSessionPage(
+                    playwrightSession!,
+                    browser!
+                  );
+                  runtime.session = playwrightSession;
+                  page = playwrightSession.page;
+                  runtime.page = page;
+                },
+                getCloseSnapshot
+              );
+              await stageTiming.run(
+                "goto_retry",
+                () => gotoOwnedFilingPage(page!, url),
+                getCloseSnapshot
+              );
+              assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser!);
+              await stageTiming.run(
+                "ready_retry",
+                () => waitForFtcReportFraudInteractiveReady(page!),
+                getCloseSnapshot
+              );
+              pageData = await stageTiming.run("evaluate_retry", collect, getCloseSnapshot);
+            }
+            firstEvaluateCompleted = true;
+            budget.clear();
+          }
       if (detectRealFtcTerminalConfirmation(pageData)) {
         stepLog.push({ step: stepsExecuted, url: pageData.url, action: "terminal_detected" });
         const confirmationReference = extractFtcConfirmationReference(pageData.pageText);
@@ -682,10 +701,16 @@ export async function runRealFtcBoundedSubmit(
         capture.storageReason
       )
     );
+      },
+      OWNED_FILING_SESSION_BUDGET_MS,
+      () => destroyOwnedFilingBrowserBestEffort(runtime.browser ?? browser)
+    );
   } catch (err: unknown) {
     throw stageTiming.attachToError(err);
   } finally {
-    playwrightSession?.disposeListeners();
-    await closeOwnedFilingBrowserFailClosed(browser, { logLabel: "real-ftc-submit" });
+    (runtime.session ?? playwrightSession)?.disposeListeners();
+    await closeOwnedFilingBrowserFailClosed(runtime.browser ?? browser, {
+      logLabel: "real-ftc-submit",
+    });
   }
 }
