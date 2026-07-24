@@ -505,7 +505,7 @@ describe("runOwnedFilingDryRun", () => {
   it("BBB evaluate_timeout provider failure maps to dry_run_failed without filing", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockRejectedValue(
       new Error(
-        "owned-filing playwright evaluate_timeout after 45000ms (provider/evaluate_timeout)"
+        "owned-filing playwright evaluate_timeout after 45000ms (provider/evaluate_timeout) abort_timer_fired_at_ms=45012 abort_close_ms=null race_winner=evaluate_timeout"
       )
     );
 
@@ -525,8 +525,11 @@ describe("runOwnedFilingDryRun", () => {
       stop_reason: "provider",
     });
     expect(result.detail).toContain("evaluate_timeout");
+    expect(result.detail).toContain("race_winner=evaluate_timeout");
+    expect(result.detail).toContain("abort_timer_fired_at_ms=");
     expect(noteUpdates.at(-1)).toContain("dry_run_failed");
     expect(noteUpdates.at(-1)).toContain("evaluate_timeout");
+    expect(noteUpdates.at(-1)).toContain("race_winner=evaluate_timeout");
     expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
   });
 
