@@ -16,6 +16,7 @@ import {
   type OwnedFilingDryRunStatus,
 } from "@/lib/justice/ownedFilingDryRunState";
 import { FTC_ASSISTANT_STRUCTURED_SUBCATEGORY_VALIDATION_FAILURES } from "@/lib/justice/realFtcBoundedSubmitLoop";
+import { parseOwnedFilingBbbSearchFailureDetail } from "@/lib/justice/ownedFilingBbbSearchDecision";
 import { intakeToRealBbbUserData } from "@/lib/justice/realBbbUserData";
 import { intakeToRealFtcUserData } from "@/lib/justice/realFtcUserData";
 import { runRealBbbBoundedSubmit } from "@/lib/justice/runRealBbbBoundedSubmit";
@@ -223,20 +224,27 @@ export async function runOwnedFilingDryRun(
       pageUrl = bounded.ok
         ? bounded.fillResult.pageData?.url
         : bounded.fillResult.pageData?.url ?? undefined;
+      const bbbStepLog = bounded.fillResult.stepLog;
+      if (bbbStepLog.length > 0) {
+        stepLog = formatOwnedFilingDryRunStepLog(bbbStepLog);
+      }
       if (bounded.ok) {
         stopReason = "terminal_confirmation";
         detail = "dry-run unexpectedly reached terminal confirmation without submit gate";
       } else {
         stopReason = bounded.stopReason;
-        detail = bounded.error;
-        const blocked = bounded.fillResult.stepLog
+        const blocked = bbbStepLog
           .slice()
           .reverse()
           .find(
             (e) =>
               e.action === "blocked_irreversible_click" || e.action === "blocked_unknown_click"
           );
-        buttonLabel = blocked?.detail;
+        // Search fail-closed details are already sanitized enums + counts; they describe the
+        // page state rather than a button, so they never become button_label.
+        const searchFailure = parseOwnedFilingBbbSearchFailureDetail(blocked?.detail);
+        detail = searchFailure || bounded.error;
+        buttonLabel = searchFailure ? undefined : blocked?.detail;
       }
     } else {
       const bounded = await runRealFtcBoundedSubmit({

@@ -196,6 +196,43 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).not.toContain("useExactTextButtonLocator");
   });
 
+  it("BBB resolves the business-search step deterministically before decide-action", () => {
+    const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
+    expect(source).toContain("collectOwnedFilingBbbPageDataInBrowser");
+    expect(source).toContain("isOwnedFilingBbbBusinessSearchUrl");
+    // The search branch must be evaluated before the generic model call and must fail closed.
+    expect(source).toMatch(
+      /isOwnedFilingBbbBusinessSearchUrl\(pageData\.url\)[\s\S]*?buildOwnedFilingBbbSearchDecision\(pageData,\s*userData\)[\s\S]*?if\s*\(searchStep\s*&&\s*!searchStep\.ok\)[\s\S]*?buildIncompleteResult\(\s*["']blocked_unknown_click["']/
+    );
+    expect(source).toMatch(
+      /const decisionResult = searchStep[\s\S]*?:\s*await fetchFormDecision\(/
+    );
+    // Click classification needs the page URL for the search-step wizard-entry exception.
+    expect(source).toMatch(/applyOwnedFilingFormDecision\(page, decision, \{[\s\S]*?currentPageUrl: pageData\.url/);
+  });
+
+  it("BBB search fail-closed telemetry stays sanitized and reaches dry-run notes", () => {
+    const decision = read("src/lib/justice/ownedFilingBbbSearchDecision.ts");
+    // Durable detail is enum + counts only — never scraped names or model output.
+    expect(decision).toContain("`${failure} results=${resultCount} matches=${matchCount}`");
+    expect(decision).toContain("OWNED_FILING_BBB_SEARCH_DECISION_FAILURES");
+
+    const dryRun = read("src/lib/justice/ownedFilingDryRun.ts");
+    expect(dryRun).toContain("parseOwnedFilingBbbSearchFailureDetail");
+    expect(dryRun).toMatch(/const bbbStepLog = bounded\.fillResult\.stepLog[\s\S]*?formatOwnedFilingDryRunStepLog\(bbbStepLog\)/);
+  });
+
+  it("BBB search wizard entry is the only File a Complaint click exception", () => {
+    const source = read("src/lib/justice/classifyOwnedFilingClick.ts");
+    expect(source).toContain("isBbbBusinessSearchWizardEntry");
+    // Exception is URL-scoped and exact-label; the global file/submit gates stay intact.
+    expect(source).toMatch(
+      /isBbbBusinessSearchWizardEntry[\s\S]*?isOwnedFilingBbbBusinessSearchUrl\(context\?\.pageUrl\)/
+    );
+    expect(source).toContain("/\\bfile\\b/i");
+    expect(source).toContain("/\\bsubmit\\b/i");
+  });
+
   it("BBB live readiness requires visible Start Complaint after optional goal reveal", () => {
     const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
     expect(source).toContain("start_complaint_visible_count");

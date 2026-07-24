@@ -47,6 +47,19 @@ export type AssistedFormChoiceControl = {
   checked?: boolean;
 };
 
+/** BBB-only sanitized business-result candidate scraped on the complaint search step. */
+export type AssistedFormBbbSearchResult = {
+  kind: "button" | "link";
+  /** Collapsed visible text of the whole result control. */
+  text: string;
+  /** Primary business-name text (heading or aria-label) when the card exposes one. */
+  headingText: string;
+  id: string;
+  name: string;
+  visible: boolean;
+  enabled: boolean;
+};
+
 export type AssistedFormPageData = {
   fields: Array<{
     tag: string;
@@ -67,6 +80,8 @@ export type AssistedFormPageData = {
   }>;
   /** FTC-only sanitized structural inventory for deterministic required-choice selection. */
   choiceControls?: AssistedFormChoiceControl[];
+  /** BBB-only, populated on the complaint search step for deterministic result selection. */
+  bbbSearchResults?: AssistedFormBbbSearchResult[];
   buttons: Array<{
     text: string;
     id: string;

@@ -1,4 +1,5 @@
 import type { FormButtonDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import { isOwnedFilingBbbBusinessSearchUrl } from "@/lib/justice/ownedFilingBbbSearchDecision";
 
 /**
  * Click risk for owned BBB/FTC bounded-submit automation.
@@ -59,13 +60,33 @@ function buttonCorpus(button: FormButtonDecision): string {
   return [button.selectorType, button.value].filter(Boolean).join(" ").trim();
 }
 
+export type OwnedFilingClickContext = {
+  /** Current page URL. Only used for URL-scoped wizard-entry exceptions. */
+  pageUrl?: string;
+};
+
+/**
+ * BBB business-search step only: the no-results Business Information form's "File a Complaint"
+ * button enters the wizard with the typed business, exactly like Start Complaint. The true
+ * final submit lives on a later wizard URL, so the global /\bfile\b/ gate stays intact.
+ */
+function isBbbBusinessSearchWizardEntry(
+  button: FormButtonDecision,
+  context: OwnedFilingClickContext | undefined
+): boolean {
+  if (!isOwnedFilingBbbBusinessSearchUrl(context?.pageUrl)) return false;
+  if (button.selectorType !== "text") return false;
+  return /^\s*file\s+a\s+complaint\s*$/i.test(button.value.replace(/\u00a0/g, " "));
+}
+
 /**
  * Classify a decide-action nextButton before any click.
  * Missing/blank buttons are unknown (fail closed).
  * type=submit is irreversible. Ambiguous labels that match neither list are unknown.
  */
 export function classifyOwnedFilingClick(
-  button: FormButtonDecision | null | undefined
+  button: FormButtonDecision | null | undefined,
+  context?: OwnedFilingClickContext
 ): OwnedFilingClickRisk {
   if (!button || typeof button !== "object") return "unknown";
   const value = button.value?.trim() ?? "";
@@ -74,6 +95,8 @@ export function classifyOwnedFilingClick(
   if (button.selectorType === "type" && /^submit$/i.test(value)) {
     return "irreversible";
   }
+
+  if (isBbbBusinessSearchWizardEntry(button, context)) return "safe";
 
   const corpus = buttonCorpus(button);
 
