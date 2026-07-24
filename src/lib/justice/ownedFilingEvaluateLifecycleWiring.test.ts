@@ -180,8 +180,9 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     // BBB requires post-goto interactive readiness before first collectPageData evaluate.
     expect(source).toContain("waitForBbbComplainPortalInteractiveReady");
     expect(source).toContain('setPhase("ready")');
+    expect(source).toContain("setReadySignal");
     expect(source).toMatch(
-      /gotoOwnedFilingPage\([\s\S]*?waitForBbbComplainPortalInteractiveReady\(page\)[\s\S]*?setPhase\(\s*["']evaluate["']\s*\)[\s\S]*?collectPageData/
+      /waitForBbbComplainPortalInteractiveReady\(page\)[\s\S]*?setReadySignal\(ready\.ready_signal\)[\s\S]*?setPhase\(\s*["']evaluate["']\s*\)[\s\S]*?collectPageData/
     );
     expect(source).toContain("collectOwnedFilingBbbPostNavDiagnostics");
     expect(source).toContain("formatOwnedFilingBbbPostNavDiagnostics");

@@ -349,7 +349,8 @@ export async function runRealBbbBoundedSubmit(
 
         // Fail closed before first evaluate if complain portal controls never become interactive.
         budget.setPhase("ready");
-        await waitForBbbComplainPortalInteractiveReady(page);
+        const ready = await waitForBbbComplainPortalInteractiveReady(page);
+        budget.setReadySignal(ready.ready_signal);
 
         budget.setPhase("evaluate");
         while (!hasReachedStepCap(stepsExecuted)) {
