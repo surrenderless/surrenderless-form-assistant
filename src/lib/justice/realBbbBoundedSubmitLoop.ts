@@ -60,6 +60,20 @@ export type AssistedFormBbbSearchResult = {
   enabled: boolean;
 };
 
+/**
+ * BBB-only sanitized continuation control scraped on the complaint search step. Only the
+ * allowlisted no-results wizard-entry labels are collected, never arbitrary page controls.
+ */
+export type AssistedFormBbbActionControl = {
+  kind: "button" | "link";
+  /** Collapsed visible text of the control. */
+  text: string;
+  id: string;
+  name: string;
+  visible: boolean;
+  enabled: boolean;
+};
+
 export type AssistedFormPageData = {
   fields: Array<{
     tag: string;
@@ -68,8 +82,15 @@ export type AssistedFormPageData = {
     id: string;
     placeholder: string;
     label: string;
-    /** Angular formControlName when name/id are absent (FTC /form/main). */
+    /** Angular formControlName when name/id are absent (FTC /form/main, BBB business form). */
     formControlName?: string;
+    /** aria-label, used when a BBB Angular control exposes no associated <label>. */
+    ariaLabel?: string;
+    /** BBB-only: control sits inside the no-results Business Information form section. */
+    inBusinessInfoForm?: boolean;
+    /** BBB-only sanitized live state; absent means "unknown", which is treated as usable. */
+    visible?: boolean;
+    enabled?: boolean;
     /** Non-user option value exposed only for radio/checkbox choice controls. */
     optionValue?: string;
     /**
@@ -82,11 +103,16 @@ export type AssistedFormPageData = {
   choiceControls?: AssistedFormChoiceControl[];
   /** BBB-only, populated on the complaint search step for deterministic result selection. */
   bbbSearchResults?: AssistedFormBbbSearchResult[];
+  /** BBB-only, populated on the complaint search step for the no-results continuation. */
+  bbbNoResultsControls?: AssistedFormBbbActionControl[];
   buttons: Array<{
     text: string;
     id: string;
     name: string;
     type: string;
+    /** BBB-only sanitized live state; absent means "unknown", which is treated as usable. */
+    visible?: boolean;
+    enabled?: boolean;
   }>;
   url: string;
   pageText?: string;

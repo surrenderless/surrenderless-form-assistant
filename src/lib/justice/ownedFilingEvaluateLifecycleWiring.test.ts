@@ -202,13 +202,24 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain("isOwnedFilingBbbBusinessSearchUrl");
     // The search branch must be evaluated before the generic model call and must fail closed.
     expect(source).toMatch(
-      /isOwnedFilingBbbBusinessSearchUrl\(pageData\.url\)[\s\S]*?buildOwnedFilingBbbSearchDecision\(pageData,\s*userData\)[\s\S]*?if\s*\(searchStep\s*&&\s*!searchStep\.ok\)[\s\S]*?buildIncompleteResult\(\s*["']blocked_unknown_click["']/
+      /isOwnedFilingBbbBusinessSearchUrl\(pageData\.url\)[\s\S]*?buildOwnedFilingBbbSearchDecision\(pageData,\s*userData,[\s\S]*?if\s*\(searchStep\s*&&\s*!searchStep\.ok\)[\s\S]*?buildIncompleteResult\(\s*["']blocked_unknown_click["']/
     );
     expect(source).toMatch(
       /const decisionResult = searchStep[\s\S]*?:\s*await fetchFormDecision\(/
     );
+    // Only one reversible reveal click may be spent on the no-results business form.
+    expect(source).toMatch(
+      /let businessFormRevealAttempts = 0[\s\S]*?revealAttempts: businessFormRevealAttempts[\s\S]*?searchStep\.step === "reveal_business_form"[\s\S]*?businessFormRevealAttempts \+= 1/
+    );
     // Click classification needs the page URL for the search-step wizard-entry exception.
     expect(source).toMatch(/applyOwnedFilingFormDecision\(page, decision, \{[\s\S]*?currentPageUrl: pageData\.url/);
+    // Angular business-form controls are nameless, so the fill path must accept formControlName.
+    expect(source).toContain("includeFormControlNameFill: true");
+
+    const scrape = read("src/lib/justice/ownedFilingBbbPageData.ts");
+    expect(scrape).toContain("formcontrolname");
+    expect(scrape).toContain("inBusinessInfoForm");
+    expect(scrape).toContain("bbbNoResultsControls");
   });
 
   it("BBB search fail-closed telemetry stays sanitized and reaches dry-run notes", () => {
@@ -216,10 +227,14 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     // Durable detail is enum + counts (+ allowlisted missing keys) — never scraped names or values.
     expect(decision).toContain("OWNED_FILING_BBB_SEARCH_DECISION_FAILURES");
     expect(decision).toContain("OWNED_FILING_BBB_NO_RESULTS_IDENTITY_KEYS");
-    expect(decision).toContain("missing=${sanitizedMissing.join(\",\")}");
+    // Missing approved values and unaddressable controls need different recoveries, so the
+    // durable detail keeps them apart — allowlisted keys only, never values.
+    expect(decision).toContain("missing=${missing.join(\",\")}");
+    expect(decision).toContain("unaddressable=${unaddressable.join(\",\")}");
     expect(decision).toMatch(
-      /\$\{failure\} results=\$\{resultCount\} matches=\$\{matchCount\}\$\{missingSuffix\}/
+      /\$\{failure\} results=\$\{resultCount\} matches=\$\{matchCount\}\$\{suffix\}/
     );
+    expect(decision).toMatch(/allowlisted\(missingKeys\)[\s\S]*?allowlisted\(unaddressableKeys\)/);
 
     const dryRun = read("src/lib/justice/ownedFilingDryRun.ts");
     expect(dryRun).toContain("parseOwnedFilingBbbSearchFailureDetail");
@@ -240,6 +255,7 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
   it("BBB search wizard entry is the only File a Complaint click exception", () => {
     const source = read("src/lib/justice/classifyOwnedFilingClick.ts");
     expect(source).toContain("isBbbBusinessSearchWizardEntry");
+    expect(source).toContain("BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS");
     // Exception is URL-scoped and exact-label; the global file/submit gates stay intact.
     expect(source).toMatch(
       /isBbbBusinessSearchWizardEntry[\s\S]*?isOwnedFilingBbbBusinessSearchUrl\(context\?\.pageUrl\)/
