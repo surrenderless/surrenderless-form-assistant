@@ -52,7 +52,7 @@ describe("bbbOwnedFilingProduction execution gates", () => {
     });
   });
 
-  it("uses Browserless when configured in production and injects timeout=120000 ms", () => {
+  it("uses Browserless when configured in production and forces timeout=60000 ms", () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("BROWSERLESS_URL", "wss://chrome.browserless.io?token=test");
     const connection = resolveChromiumConnectionForRealBbbSubmit();
@@ -60,14 +60,14 @@ describe("bbbOwnedFilingProduction execution gates", () => {
     if (connection.mode !== "browserless") return;
     const resolved = new URL(connection.url);
     expect(resolved.searchParams.get("token")).toBe("test");
-    expect(resolved.searchParams.get("timeout")).toBe("120000");
+    expect(resolved.searchParams.get("timeout")).toBe("60000");
     expect(resolved.searchParams.get("timeout")).toBe(
       String(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS)
     );
   });
 
-  it("sets owned-filing Browserless timeout under the historical 300s kill and above session budget", () => {
-    expect(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS).toBe(120_000);
+  it("aligns Browserless session timeout exactly to the Node 60s session budget", () => {
+    expect(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS).toBe(60_000);
     expect(OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS).toBeLessThan(
       BBB_OWNED_AUTOFILL_ROUTE_MAX_DURATION_SECONDS * 1000
     );
@@ -81,82 +81,51 @@ describe("bbbOwnedFilingProduction execution gates", () => {
     {
       name: "missing",
       input: "wss://production-sfo.browserless.io/?token=abc&stealth=true",
-      expected: "120000",
     },
     {
-      name: "stale 60000",
-      input: "wss://production-sfo.browserless.io/?token=abc&timeout=60000&stealth=true",
-      expected: "120000",
-    },
-    {
-      name: "59000",
+      name: "stale 59000",
       input: "wss://production-sfo.browserless.io/?token=abc&timeout=59000&stealth=true",
-      expected: "120000",
+    },
+    {
+      name: "stale 120000",
+      input: "wss://production-sfo.browserless.io/?token=abc&timeout=120000&stealth=true",
+    },
+    {
+      name: "stale 300000",
+      input: "wss://production-sfo.browserless.io/?token=abc&timeout=300000&stealth=true",
     },
     {
       name: "invalid",
       input: "wss://production-sfo.browserless.io/?token=abc&timeout=not-a-number&stealth=true",
-      expected: "120000",
     },
     {
-      name: "duplicate low+stale",
+      name: "duplicate stale",
       input:
-        "wss://production-sfo.browserless.io/?token=abc&timeout=60000&timeout=59000&stealth=true",
-      expected: "120000",
+        "wss://production-sfo.browserless.io/?token=abc&timeout=120000&timeout=300000&stealth=true",
     },
-  ])("replaces $name timeout with 120000 and preserves token/extra params", ({ input, expected }) => {
+  ])("forces $name timeout to 60000 and preserves token/extra params", ({ input }) => {
     const out = ensureBrowserlessOwnedFilingSessionTimeout(input);
     const resolved = new URL(out);
     expect(resolved.searchParams.get("token")).toBe("abc");
     expect(resolved.searchParams.get("stealth")).toBe("true");
-    expect(resolved.searchParams.get("timeout")).toBe(expected);
-    expect(resolved.searchParams.getAll("timeout")).toEqual([expected]);
+    expect(resolved.searchParams.get("timeout")).toBe("60000");
+    expect(resolved.searchParams.getAll("timeout")).toEqual(["60000"]);
   });
 
-  it("preserves an already-valid timeout at the owned-filing budget", () => {
+  it("forces an already-budget timeout to a single 60000 param", () => {
     const out = ensureBrowserlessOwnedFilingSessionTimeout(
-      "wss://production-sfo.browserless.io/?token=abc&timeout=120000&stealth=true"
+      "wss://production-sfo.browserless.io/?token=abc&timeout=60000&stealth=true"
     );
     const resolved = new URL(out);
-    expect(resolved.searchParams.get("token")).toBe("abc");
-    expect(resolved.searchParams.get("stealth")).toBe("true");
-    expect(resolved.searchParams.getAll("timeout")).toEqual(["120000"]);
+    expect(resolved.searchParams.getAll("timeout")).toEqual(["60000"]);
   });
 
-  it("preserves a valid timeout between the budget and upgraded-plan maximum", () => {
-    const out = ensureBrowserlessOwnedFilingSessionTimeout(
-      "wss://production-sfo.browserless.io/?token=abc&timeout=600000&stealth=true"
-    );
-    const resolved = new URL(out);
-    expect(resolved.searchParams.get("token")).toBe("abc");
-    expect(resolved.searchParams.get("stealth")).toBe("true");
-    expect(resolved.searchParams.getAll("timeout")).toEqual(["600000"]);
-  });
-
-  it("replaces a timeout above the upgraded-plan maximum with the owned-filing budget", () => {
+  it("forces timeouts above the upgraded-plan maximum down to the session budget", () => {
     const out = ensureBrowserlessOwnedFilingSessionTimeout(
       `wss://production-sfo.browserless.io/?token=abc&timeout=${BROWSERLESS_TIMEOUT_MAX_MS + 1}&stealth=true`
     );
     const resolved = new URL(out);
-    expect(resolved.searchParams.getAll("timeout")).toEqual(["120000"]);
-  });
-
-  it("collapses duplicates preferring the first valid timeout in range", () => {
-    const out = ensureBrowserlessOwnedFilingSessionTimeout(
-      "wss://production-sfo.browserless.io/?token=abc&timeout=59000&timeout=120000&stealth=true"
-    );
-    const resolved = new URL(out);
-    expect(resolved.searchParams.get("token")).toBe("abc");
-    expect(resolved.searchParams.get("stealth")).toBe("true");
-    expect(resolved.searchParams.getAll("timeout")).toEqual(["120000"]);
-  });
-
-  it("preserves a legacy 300000 timeout as still within [budget, plan max]", () => {
-    const out = ensureBrowserlessOwnedFilingSessionTimeout(
-      "wss://production-sfo.browserless.io/?token=abc&timeout=300000&stealth=true"
-    );
-    const resolved = new URL(out);
-    expect(resolved.searchParams.getAll("timeout")).toEqual(["300000"]);
+    expect(resolved.searchParams.getAll("timeout")).toEqual(["60000"]);
   });
   it("allows local Chromium outside production when Browserless is unset", () => {
     vi.stubEnv("VERCEL_ENV", "preview");

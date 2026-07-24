@@ -135,9 +135,21 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).toContain("OWNED_FILING_SESSION_TIMEOUT_REASON");
     expect(source).toContain("withOwnedFilingSessionBudget");
     expect(source).toContain("destroyOwnedFilingBrowserBestEffort");
+    expect(source).toContain("provider_session_kill");
+    expect(source).toContain("session_bound_ms=");
     expect(source).toMatch(
       /reject\(\s*new OwnedFilingSessionTimeoutError[\s\S]*?\)\s*;\s*void \(async \(\) => \{[\s\S]*?await onTimeoutAbort/
     );
+  });
+
+  it("Browserless session timeout is forced to the 60s Node session budget", () => {
+    const source = read("src/lib/justice/bbbOwnedFilingProduction.ts");
+    expect(source).toContain("OWNED_FILING_SESSION_BUDGET_MS");
+    expect(source).toMatch(
+      /OWNED_FILING_BROWSERLESS_SESSION_TIMEOUT_MS\s*=\s*OWNED_FILING_SESSION_BUDGET_MS/
+    );
+    expect(source).toContain('parsed.searchParams.set("timeout"');
+    expect(source).toContain('parsed.searchParams.delete("timeout")');
   });
 
   it("BBB bounds collectPageData evaluate and wall-clock-bounds goto before first evaluate", () => {

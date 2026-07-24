@@ -545,14 +545,33 @@ describe("withOwnedFilingSessionBudget", () => {
     expect(result).toBe("ok");
   });
 
-  it("destroyOwnedFilingBrowserBestEffort does not await hung close", () => {
+  it("annotates target-closed while budget still armed as provider_session_kill with session_bound_ms", async () => {
+    await expect(
+      withOwnedFilingSessionBudget(async (budget) => {
+        budget.setPhase("evaluate");
+        throw new Error("page.evaluate: Target page, context or browser has been closed");
+      }, 500)
+    ).rejects.toThrow(/race_winner=provider_session_kill/);
+    await expect(
+      withOwnedFilingSessionBudget(async (budget) => {
+        budget.setPhase("evaluate");
+        throw new Error("page.evaluate: Target page, context or browser has been closed");
+      }, 500)
+    ).rejects.toThrow(/session_bound_ms=500/);
+  });
+
+  it("destroyOwnedFilingBrowserBestEffort terminates underlying ws without awaiting hung close", () => {
+    const terminate = vi.fn();
     const browser = mockBrowser({ contexts: [] }) as unknown as Browser & {
       close: ReturnType<typeof vi.fn>;
+      _connection: { _ws: { terminate: ReturnType<typeof vi.fn> } };
     };
     browser.close = vi.fn((): Promise<void> => new Promise(() => {}));
+    browser._connection = { _ws: { terminate } };
     const started = Date.now();
     destroyOwnedFilingBrowserBestEffort(browser);
     expect(Date.now() - started).toBeLessThan(100);
+    expect(terminate).toHaveBeenCalled();
     expect(browser.close).toHaveBeenCalled();
   });
 });
