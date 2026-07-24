@@ -1,6 +1,7 @@
 import type { Locator, Page } from "playwright";
 import {
   buildButtonSelector,
+  type AssistedFormBbbActionControl,
   type AssistedFormChoiceControl,
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
@@ -51,6 +52,8 @@ type ApplyDecisionOptions = {
    * BBB no-results business form, whose inputs expose no name/id.
    */
   includeFormControlNameFill?: boolean;
+  /** Sanitized deduped BBB continuation inventory, used to verify an id/name wizard entry. */
+  bbbContinuationControls?: AssistedFormBbbActionControl[];
   /** Sanitized labels from the FTC actionable button corpus. */
   actionableButtonLabels?: string[];
   /** FTC-only sanitized structural inventory used to resolve exact choice decisions. */
@@ -1004,7 +1007,10 @@ export async function applyOwnedFilingFormDecision(
     return { ok: true, clicked: false, risk: "none" };
   }
 
-  const risk = classifyOwnedFilingClick(next, { pageUrl: options.currentPageUrl });
+  const risk = classifyOwnedFilingClick(next, {
+    pageUrl: options.currentPageUrl,
+    bbbContinuationControls: options.bbbContinuationControls,
+  });
   const buttonLabel = `${next.selectorType}:${next.value}`.slice(0, 200);
 
   if (risk === "safe") {

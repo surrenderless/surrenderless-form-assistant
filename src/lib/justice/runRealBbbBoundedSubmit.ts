@@ -474,6 +474,7 @@ export async function runRealBbbBoundedSubmit(
             logPrefix: "real-bbb-submit",
             currentPageUrl: pageData.url,
             includeFormControlNameFill: true,
+            bbbContinuationControls: pageData.bbbNoResultsControls,
           });
           if (!applyResult.ok) {
             const stopReason =

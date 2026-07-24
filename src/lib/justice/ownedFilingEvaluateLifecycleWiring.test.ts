@@ -216,10 +216,19 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     // Angular business-form controls are nameless, so the fill path must accept formControlName.
     expect(source).toContain("includeFormControlNameFill: true");
 
+    // The scraped continuation inventory must reach the click gate for id/name verification.
+    expect(source).toContain("bbbContinuationControls: pageData.bbbNoResultsControls");
+
     const scrape = read("src/lib/justice/ownedFilingBbbPageData.ts");
     expect(scrape).toContain("formcontrolname");
     expect(scrape).toContain("inBusinessInfoForm");
     expect(scrape).toContain("bbbNoResultsControls");
+    // One semantic continuation rendered as nested wrappers must collapse to its innermost host,
+    // and site chrome must never compete with the no-results CTA.
+    expect(scrape).toMatch(/labelMatches\.filter\(\(el\) => !labelMatches\.some\(\(other\) => wraps\(other, el\)\)\)/);
+    expect(scrape).toMatch(/actionable\.length > 0 \? actionable\[actionable\.length - 1\] : root/);
+    expect(scrape).toContain("chromeSelector");
+    expect(scrape).toMatch(/'header, nav, footer, \[role="banner"\]/);
   });
 
   it("BBB search fail-closed telemetry stays sanitized and reaches dry-run notes", () => {
@@ -235,6 +244,9 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
       /\$\{failure\} results=\$\{resultCount\} matches=\$\{matchCount\}\$\{suffix\}/
     );
     expect(decision).toMatch(/allowlisted\(missingKeys\)[\s\S]*?allowlisted\(unaddressableKeys\)/);
+    // Continuation fail-closed carries shape counts only — no scraped labels or hrefs.
+    expect(decision).toContain("continuation_candidates=${continuation.candidates}");
+    expect(decision).toMatch(/buttons=\$\{continuation\.buttons\} links=\$\{continuation\.links\}/);
 
     const dryRun = read("src/lib/justice/ownedFilingDryRun.ts");
     expect(dryRun).toContain("parseOwnedFilingBbbSearchFailureDetail");
@@ -256,6 +268,10 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     const source = read("src/lib/justice/classifyOwnedFilingClick.ts");
     expect(source).toContain("isBbbBusinessSearchWizardEntry");
     expect(source).toContain("BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS");
+    // An id/name continuation is verified against the scraped inventory, never caller-asserted.
+    expect(source).toMatch(
+      /selectorType !== "id" && button\.selectorType !== "name"[\s\S]*?matches\.length !== 1[\s\S]*?isBbbWizardEntryLabel\(target\.text/
+    );
     // Exception is URL-scoped and exact-label; the global file/submit gates stay intact.
     expect(source).toMatch(
       /isBbbBusinessSearchWizardEntry[\s\S]*?isOwnedFilingBbbBusinessSearchUrl\(context\?\.pageUrl\)/

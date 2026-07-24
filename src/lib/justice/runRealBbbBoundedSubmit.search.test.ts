@@ -305,6 +305,11 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
       nextButton: { selectorType: "text", value: "File a Complaint" },
       waitForNavigation: true,
     });
+    // The scraped continuation inventory must reach the click gate so an id/name-addressed
+    // continuation can be verified instead of trusted.
+    expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
+      bbbContinuationControls: [WIZARD_ENTRY_CONTROL],
+    });
     expect(mockedApply.mock.calls[1]?.[1]).toEqual({
       fieldsToFill: [
         { selector: "companyName", value: "Fictional Digital Services" },
@@ -327,6 +332,67 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
         .filter((entry) => entry.action === "decide")
         .map((entry) => entry.detail)
     ).toEqual(["reveal_business_form", "submit_business_form", undefined]);
+  });
+
+  it("reveals through an anchor continuation addressed by id, then fills and stops at Submit", async () => {
+    stubDecideAction({
+      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
+    });
+    const anchorControl = {
+      kind: "link",
+      text: "Business Information Form",
+      id: "biz-info-form",
+      name: "",
+      visible: true,
+      enabled: true,
+    };
+    const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
+    h.state.evaluateQueue = [
+      searchPage([], [], [anchorControl]),
+      searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]),
+      { fields: [], buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }], url: wizardUrl, pageText: "" },
+    ];
+    h.state.applyQueue = [
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit Complaint",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
+
+    expect(mockedApply.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "id", value: "biz-info-form" },
+      waitForNavigation: true,
+    });
+    expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
+      currentPageUrl: SEARCH_URL,
+      bbbContinuationControls: [anchorControl],
+    });
+    expect(mockedApply.mock.calls[1]?.[1]).toEqual({
+      fieldsToFill: [
+        { selector: "companyName", value: "Fictional Digital Services" },
+        { selector: "address", value: "1 Example Way" },
+        { selector: "city", value: "Austin" },
+        { selector: "state", value: "TX" },
+        { selector: "country", value: "United States" },
+        { selector: "postalCode", value: "78701" },
+      ],
+      nextButton: { selectorType: "text", value: "File a Complaint" },
+      waitForNavigation: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(2);
   });
 
   it("never clicks the continuation twice when the form stays unaddressable", async () => {

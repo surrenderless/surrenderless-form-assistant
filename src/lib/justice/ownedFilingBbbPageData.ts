@@ -150,24 +150,56 @@ export function collectOwnedFilingBbbPageDataInBrowser(): AssistedFormPageData {
     });
 
     // Allowlisted no-results continuation labels only — never an arbitrary control corpus.
-    bbbNoResultsControls = Array.from(
-      document.querySelectorAll("button, input[type='submit'], [role='button'], a[href]")
-    )
+    // The live CTA renders as nested wrappers (e.g. `a > button`, `div > a`) whose text is each
+    // exactly the label, so raw node matching over-counts one semantic continuation. Collapse
+    // ancestor/descendant chains to the innermost actionable host, exactly like the goal picker.
+    const continuationPattern = /^(file\s+a\s+complaint|business\s+information\s+form)$/i;
+    const actionableSelector = 'button, input[type="submit"], a[href], [role="button"]';
+    const continuationScopeSelector = `${actionableSelector}, div, span, li, p, h1, h2, h3, h4`;
+    const chromeSelector =
+      'header, nav, footer, [role="banner"], [role="navigation"], [role="contentinfo"]';
+
+    const labelCandidates = (el: Element): string[] => [
+      collapse(el.textContent),
+      collapse(el.getAttribute("value")),
+    ];
+    const matchedLabel = (el: Element): string =>
+      labelCandidates(el).find((text) => text && continuationPattern.test(text)) ?? "";
+    const wraps = (outer: Element, inner: Element): boolean =>
+      outer !== inner && typeof outer.contains === "function" && outer.contains(inner);
+
+    const labelMatches = Array.from(
+      document.querySelectorAll(continuationScopeSelector)
+    ).filter((el) => matchedLabel(el).length > 0);
+    const roots = labelMatches.filter((el) => !labelMatches.some((other) => wraps(other, el)));
+    const hosts = roots.map((root) => {
+      const chain = labelMatches.filter((el) => el === root || wraps(root, el));
+      const actionable = chain.filter(
+        (el) => typeof el.matches === "function" && el.matches(actionableSelector)
+      );
+      return actionable.length > 0 ? actionable[actionable.length - 1] : root;
+    });
+
+    // Site-wide "File a Complaint" chrome must never compete with the no-results continuation.
+    const contentHosts = hosts
+      .filter((host, index) => hosts.indexOf(host) === index)
+      .filter((host) => !(typeof host.closest === "function" && host.closest(chromeSelector)));
+    const mainRegion = document.querySelector('main, [role="main"]');
+    const scopedHosts = mainRegion
+      ? contentHosts.filter((host) => mainRegion.contains(host))
+      : contentHosts;
+
+    bbbNoResultsControls = (scopedHosts.length > 0 ? scopedHosts : contentHosts)
+      .filter((host) => isVisible(host) && isEnabled(host))
       .map((el) => ({
-        el,
-        text: collapse(el.textContent || el.getAttribute("value")),
-      }))
-      .filter(({ text }) =>
-        /^(file\s+a\s+complaint|business\s+information\s+form)$/i.test(text)
-      )
-      .map(({ el, text }) => ({
-        // Only a real <button> is addressable by text (`button:has-text(...)`).
+        // Only a real <button> is addressable by text (`button:has-text(...)`); every other host
+        // has to expose a unique id or name.
         kind: el.tagName.toLowerCase() === "button" ? ("button" as const) : ("link" as const),
-        text,
+        text: matchedLabel(el),
         id: (el as HTMLElement).id || "",
         name: el.getAttribute("name") || "",
-        visible: isVisible(el),
-        enabled: isEnabled(el),
+        visible: true,
+        enabled: true,
       }));
   }
 
