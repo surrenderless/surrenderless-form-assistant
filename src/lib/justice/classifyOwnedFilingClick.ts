@@ -34,6 +34,8 @@ const SAFE_PATTERNS: RegExp[] = [
   /^\s*report\s+now\s*$/i,
   /** BBB file-a-complaint landing CTA — starts the wizard; finalization is Submit/File later. */
   /^\s*start\s+complaint\s*$/i,
+  /** BBB goal-picker complaint option — reveals Start Complaint; reversible setup only. */
+  /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i,
   /^\s*back\s*$/i,
   /^\s*back[_-]?btn\s*$/i,
   /^\s*previous\s*$/i,
