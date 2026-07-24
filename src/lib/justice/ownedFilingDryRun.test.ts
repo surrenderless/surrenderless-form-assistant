@@ -683,6 +683,83 @@ describe("runOwnedFilingDryRun", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("BBB search fail-closed persists the sanitized reason enum and a step log", async () => {
+    const searchUrl =
+      "https://www.bbb.org/file-a-complaint/search?find_country=USA&find_text=Fictional&page=1";
+    vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: "BBB assisted submission stopped after 2 steps (blocked_unknown_click)",
+      stopReason: "blocked_unknown_click",
+      stepsExecuted: 2,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: searchUrl, fields: [], buttons: [] },
+        stepsExecuted: 2,
+        stopReason: "blocked_unknown_click",
+        stepLog: [
+          { step: 2, url: "https://www.bbb.org/file-a-complaint", action: "apply" },
+          {
+            step: 2,
+            url: searchUrl,
+            action: "blocked_unknown_click",
+            detail: "search_result_ambiguous results=3 matches=2",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(bbbTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "bbb"
+    );
+
+    expect(result).toMatchObject({
+      status: "dry_run_failed",
+      stop_reason: "blocked_unknown_click",
+      detail: "search_result_ambiguous results=3 matches=2",
+      page_url: searchUrl,
+    });
+    // Sanitized page-state reasons describe results, not a button.
+    expect(result.button_label).toBeUndefined();
+    const notes = noteUpdates.at(-1) ?? "";
+    expect(notes).toContain("detail: search_result_ambiguous results=3 matches=2");
+    expect(notes).toContain(`step_log: apply||https://www.bbb.org/file-a-complaint;`);
+    expect(notes).toContain("blocked_unknown_click|search_result_ambiguous results=3 matches=2|");
+    expect(notes).not.toContain("delivery_state: filed");
+  });
+
+  it("BBB blocked click details that are not search enums still surface as button_label", async () => {
+    vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
+      ok: false,
+      error: "unknown",
+      stopReason: "blocked_unknown_click",
+      stepsExecuted: 1,
+      fillResult: {
+        screenshot: null,
+        pageData: { url: "https://www.bbb.org/complain", fields: [], buttons: [] },
+        stepsExecuted: 1,
+        stopReason: "blocked_unknown_click",
+        stepLog: [
+          {
+            step: 1,
+            url: "https://www.bbb.org/complain",
+            action: "blocked_unknown_click",
+            detail: "text:Do the thing",
+          },
+        ],
+      },
+      technicalDetails: {},
+    });
+
+    const result = await runOwnedFilingDryRun(makeSupabase(bbbTask()), USER_ID, CASE_ID, "bbb");
+    expect(result.button_label).toBe("text:Do the thing");
+    expect(result.detail).toBe("unknown");
+  });
+
   it("FTC blocked_unknown_click is dry_run_failed and does not duplicate-skip a retry", async () => {
     vi.mocked(runRealFtcBoundedSubmit).mockResolvedValue({
       ok: false,

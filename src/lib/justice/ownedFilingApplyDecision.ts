@@ -39,7 +39,10 @@ type ApplyDecisionOptions = {
   propagateCriticalErrors?: boolean;
   /** FTC text buttons use an exact accessible-name locator and require exactly one match. */
   useExactTextButtonLocator?: boolean;
-  /** Current FTC page URL, used only for the root-scoped Report Now link exception. */
+  /**
+   * Current page URL. Scopes the FTC Report Now link exception and the BBB business-search
+   * wizard-entry click classification.
+   */
   currentPageUrl?: string;
   /** FTC-only support for exact radio/checkbox decisions. Omitted by BBB. */
   enableFtcChoiceControls?: boolean;
@@ -993,7 +996,7 @@ export async function applyOwnedFilingFormDecision(
     return { ok: true, clicked: false, risk: "none" };
   }
 
-  const risk = classifyOwnedFilingClick(next);
+  const risk = classifyOwnedFilingClick(next, { pageUrl: options.currentPageUrl });
   const buttonLabel = `${next.selectorType}:${next.value}`.slice(0, 200);
 
   if (risk === "safe") {

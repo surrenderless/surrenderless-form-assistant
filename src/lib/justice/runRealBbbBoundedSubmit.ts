@@ -21,6 +21,11 @@ import {
 } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 import { resolveChromiumConnectionForRealBbbSubmit } from "@/lib/justice/bbbOwnedFilingProduction";
 import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDecision";
+import { collectOwnedFilingBbbPageDataInBrowser } from "@/lib/justice/ownedFilingBbbPageData";
+import {
+  buildOwnedFilingBbbSearchDecision,
+  isOwnedFilingBbbBusinessSearchUrl,
+} from "@/lib/justice/ownedFilingBbbSearchDecision";
 import {
   abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
@@ -132,33 +137,7 @@ async function collectPageData(
     return await withOwnedFilingEvaluateLifecycle(session, browser, () =>
       withOwnedFilingEvaluateTimeout(
         () =>
-          page.evaluate(() => {
-            const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((field) => {
-              const label = (field as HTMLInputElement).labels?.[0]?.innerText || "";
-              return {
-                tag: field.tagName.toLowerCase(),
-                type: (field as HTMLInputElement).type || "",
-                name: field.getAttribute("name") || "",
-                id: (field as HTMLInputElement).id || "",
-                placeholder: field.getAttribute("placeholder") || "",
-                label,
-              };
-            });
-
-            const buttons = Array.from(document.querySelectorAll("button, input[type='submit']")).map((btn) => ({
-              text: btn.textContent?.trim() || "",
-              id: (btn as HTMLElement).id || "",
-              name: btn.getAttribute("name") || "",
-              type: btn.getAttribute("type") || "",
-            }));
-
-            return {
-              fields,
-              buttons,
-              url: window.location.href,
-              pageText: document.body?.innerText?.slice(0, 8000) || "",
-            };
-          }),
+          page.evaluate(collectOwnedFilingBbbPageDataInBrowser),
         OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
         () => abortOwnedFilingPageEvaluate(page)
       )
@@ -394,12 +373,39 @@ export async function runRealBbbBoundedSubmit(
             };
           }
 
-          const decisionResult = await fetchFormDecision(
-            base,
-            forwardedHeaders,
-            pageData,
-            userData
-          );
+          // Business-search step is resolved deterministically: the generic model cannot see
+          // result cards and invents out-of-schema actions on zero/ambiguous result pages.
+          const searchStep = isOwnedFilingBbbBusinessSearchUrl(pageData.url)
+            ? buildOwnedFilingBbbSearchDecision(pageData, userData)
+            : null;
+          if (searchStep && !searchStep.ok) {
+            stepLog.push({
+              step: stepsExecuted,
+              url: pageData.url,
+              action: "blocked_unknown_click",
+              detail: searchStep.detail,
+            });
+            const capture = await captureScreenshot(page, supabase, storageConfigured).catch(
+              () => ({
+                screenshot: null,
+                storageSkipped: true,
+                storageReason: "Screenshot capture failed",
+              })
+            );
+            return buildIncompleteResult(
+              "blocked_unknown_click",
+              stepsExecuted,
+              stepLog,
+              pageData,
+              capture.screenshot,
+              capture.storageSkipped,
+              capture.storageReason
+            );
+          }
+
+          const decisionResult = searchStep
+            ? ({ ok: true as const, decision: searchStep.decision })
+            : await fetchFormDecision(base, forwardedHeaders, pageData, userData);
           if (!decisionResult.ok) {
             stepLog.push({
               step: stepsExecuted,
@@ -453,6 +459,7 @@ export async function runRealBbbBoundedSubmit(
           const applyResult = await applyOwnedFilingFormDecision(page, decision, {
             mode,
             logPrefix: "real-bbb-submit",
+            currentPageUrl: pageData.url,
           });
           if (!applyResult.ok) {
             const stopReason =
