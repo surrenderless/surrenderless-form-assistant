@@ -52,6 +52,8 @@ function isReusableBlankPage(page: Page): boolean {
  * Opens a page for owned BBB/FTC bounded submit.
  * Browserless CDP: reuse the default context (and a blank page when safe).
  * Local Chromium: create a fresh context with the provided options (unchanged behavior).
+ * newContext/newPage are wall-clock bounded — CDP wedges must not burn the Browserless session
+ * before the first goto/evaluate.
  */
 export async function openOwnedFilingPlaywrightSession(
   browser: Browser,
@@ -67,16 +69,30 @@ export async function openOwnedFilingPlaywrightSession(
     if (firstCloseEvent == null) firstCloseEvent = event;
   };
 
-  let context: BrowserContext;
-  if (options.chromiumMode === "browserless") {
-    const existing = browser.contexts()[0];
-    context = existing ?? (await browser.newContext(options.contextOptions ?? {}));
-  } else {
-    context = await browser.newContext(options.contextOptions ?? {});
-  }
+  let openedPage: Page | null = null;
 
-  const blank = context.pages().find(isReusableBlankPage);
-  const page = blank ?? (await context.newPage());
+  const { context, page } = await withOwnedFilingNavigationTimeout(
+    async () => {
+      let context: BrowserContext;
+      if (options.chromiumMode === "browserless") {
+        const existing = browser.contexts()[0];
+        context = existing ?? (await browser.newContext(options.contextOptions ?? {}));
+      } else {
+        context = await browser.newContext(options.contextOptions ?? {});
+      }
+
+      const blank = context.pages().find(isReusableBlankPage);
+      const page = blank ?? (await context.newPage());
+      openedPage = page;
+      return { context, page };
+    },
+    OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS,
+    async () => {
+      if (openedPage && !openedPage.isClosed()) {
+        await abortOwnedFilingPageEvaluate(openedPage);
+      }
+    }
+  );
 
   const onDisconnected = () => noteClose("browser_disconnected");
   const onContextClose = () => noteClose("context_close");
@@ -273,6 +289,12 @@ export function assertOwnedFilingPageAliveBeforeEvaluate(
 /** Wall-clock bound for owned-filing page.evaluate (Playwright evaluate has no native timeout). */
 export const OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS = 45_000;
 
+/**
+ * Node-local wall-clock bound for owned-filing page.goto / session CDP open.
+ * Playwright's own goto timeout is CDP-mediated and ineffective when Browserless is wedged.
+ */
+export const OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS = 60_000;
+
 /** Fail-closed bound for browser.close so cleanup cannot burn remaining Browserless budget. */
 export const OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS = 5_000;
 
@@ -281,11 +303,19 @@ export const OWNED_FILING_FTC_READY_WAIT_MS = 15_000;
 
 export const OWNED_FILING_EVALUATE_TIMEOUT_REASON = "evaluate_timeout";
 
+export const OWNED_FILING_NAVIGATION_TIMEOUT_REASON = "navigation_timeout";
+
 export type OwnedFilingEvaluateRaceWinner =
   | "evaluate_timeout"
   | "evaluate_result"
   | "evaluate_target_closed"
   | "evaluate_error";
+
+export type OwnedFilingNavigationRaceWinner =
+  | "navigation_timeout"
+  | "navigation_result"
+  | "navigation_target_closed"
+  | "navigation_error";
 
 /** Durable observability for evaluate timeout / race outcomes (safe for dry-run notes). */
 export type OwnedFilingEvaluateTimeoutDiagnostics = {
@@ -294,11 +324,28 @@ export type OwnedFilingEvaluateTimeoutDiagnostics = {
   race_winner: OwnedFilingEvaluateRaceWinner;
 };
 
+/** Durable observability for navigation timeout / race outcomes (safe for dry-run notes). */
+export type OwnedFilingNavigationTimeoutDiagnostics = {
+  nav_timer_fired_at_ms: number | null;
+  abort_close_ms: number | null;
+  race_winner: OwnedFilingNavigationRaceWinner;
+};
+
 export function formatOwnedFilingEvaluateTimeoutDiagnostics(
   diagnostics: OwnedFilingEvaluateTimeoutDiagnostics
 ): string {
   return [
     `abort_timer_fired_at_ms=${diagnostics.abort_timer_fired_at_ms ?? "null"}`,
+    `abort_close_ms=${diagnostics.abort_close_ms ?? "null"}`,
+    `race_winner=${diagnostics.race_winner}`,
+  ].join(" ");
+}
+
+export function formatOwnedFilingNavigationTimeoutDiagnostics(
+  diagnostics: OwnedFilingNavigationTimeoutDiagnostics
+): string {
+  return [
+    `nav_timer_fired_at_ms=${diagnostics.nav_timer_fired_at_ms ?? "null"}`,
     `abort_close_ms=${diagnostics.abort_close_ms ?? "null"}`,
     `race_winner=${diagnostics.race_winner}`,
   ].join(" ");
@@ -328,6 +375,32 @@ export function isOwnedFilingEvaluateTimeoutError(err: unknown): boolean {
   if (err instanceof OwnedFilingEvaluateTimeoutError) return true;
   const message = err instanceof Error ? err.message : String(err);
   return /evaluate_timeout/i.test(message);
+}
+
+export class OwnedFilingNavigationTimeoutError extends Error {
+  readonly reason = OWNED_FILING_NAVIGATION_TIMEOUT_REASON;
+  readonly diagnostics: OwnedFilingNavigationTimeoutDiagnostics;
+
+  constructor(
+    timeoutMs: number = OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS,
+    diagnostics: OwnedFilingNavigationTimeoutDiagnostics = {
+      nav_timer_fired_at_ms: null,
+      abort_close_ms: null,
+      race_winner: "navigation_timeout",
+    }
+  ) {
+    super(
+      `owned-filing playwright navigation_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_NAVIGATION_TIMEOUT_REASON}) ${formatOwnedFilingNavigationTimeoutDiagnostics(diagnostics)}`
+    );
+    this.name = "OwnedFilingNavigationTimeoutError";
+    this.diagnostics = diagnostics;
+  }
+}
+
+export function isOwnedFilingNavigationTimeoutError(err: unknown): boolean {
+  if (err instanceof OwnedFilingNavigationTimeoutError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /navigation_timeout/i.test(message);
 }
 
 /**
@@ -437,6 +510,127 @@ export async function withOwnedFilingEvaluateTimeout<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/**
+ * Bounds an async navigation (or session CDP open) with a Node-local wall-clock timeout.
+ * On timer fire: immediately reject with OwnedFilingNavigationTimeoutError, then fire-and-forget
+ * onTimeoutAbort (typically page.close). Never awaits abort before reject — Playwright's own
+ * goto timeout is CDP-mediated and must not be the only bound when Browserless is wedged.
+ * Post-abort navigation rejections are swallowed.
+ */
+export async function withOwnedFilingNavigationTimeout<T>(
+  run: () => Promise<T>,
+  timeoutMs: number = OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS,
+  onTimeoutAbort?: () => void | Promise<void>
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  let abortStarted = false;
+  let navTimerFiredAtMs: number | null = null;
+  let abortCloseMs: number | null = null;
+  const startedAt = Date.now();
+
+  const diagnostics = (
+    winner: OwnedFilingNavigationRaceWinner
+  ): OwnedFilingNavigationTimeoutDiagnostics => ({
+    nav_timer_fired_at_ms: navTimerFiredAtMs,
+    abort_close_ms: abortCloseMs,
+    race_winner: winner,
+  });
+
+  const runPromise = Promise.resolve()
+    .then(() => run())
+    .then(
+      (value) => {
+        if (abortStarted || settled) {
+          return undefined as unknown as T;
+        }
+        settled = true;
+        return value;
+      },
+      (err: unknown) => {
+        if (abortStarted || settled) {
+          return undefined as unknown as T;
+        }
+        settled = true;
+        if (isOwnedFilingTargetClosedError(err)) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `${message} ${formatOwnedFilingNavigationTimeoutDiagnostics(
+              diagnostics("navigation_target_closed")
+            )}`
+          );
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `${message} ${formatOwnedFilingNavigationTimeoutDiagnostics(
+            diagnostics("navigation_error")
+          )}`
+        );
+      }
+    );
+
+  void runPromise.catch(() => undefined);
+
+  try {
+    return await Promise.race([
+      runPromise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          if (settled) return;
+          abortStarted = true;
+          navTimerFiredAtMs = Math.max(0, Date.now() - startedAt);
+          settled = true;
+          reject(
+            new OwnedFilingNavigationTimeoutError(timeoutMs, diagnostics("navigation_timeout"))
+          );
+          void (async () => {
+            const closeStarted = Date.now();
+            try {
+              await onTimeoutAbort?.();
+            } catch {
+              // best-effort abort
+            } finally {
+              abortCloseMs = Math.max(0, Date.now() - closeStarted);
+              console.warn(
+                "owned-filing navigation_timeout abort finished:",
+                formatOwnedFilingNavigationTimeoutDiagnostics(diagnostics("navigation_timeout"))
+              );
+            }
+          })();
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * page.goto with a Node-local wall-clock bound. Playwright's timeout option is kept as a
+ * secondary CDP-side hint but is not relied on when Browserless is wedged.
+ */
+export async function gotoOwnedFilingPage(
+  page: Page,
+  url: string,
+  options?: {
+    timeoutMs?: number;
+    playwrightGotoTimeoutMs?: number;
+  }
+): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS;
+  const playwrightGotoTimeoutMs =
+    options?.playwrightGotoTimeoutMs ?? Math.min(timeoutMs, OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS);
+  await withOwnedFilingNavigationTimeout(
+    () =>
+      page.goto(url, {
+        timeout: playwrightGotoTimeoutMs,
+        waitUntil: "domcontentloaded",
+      }),
+    timeoutMs,
+    () => abortOwnedFilingPageEvaluate(page)
+  );
 }
 
 /**

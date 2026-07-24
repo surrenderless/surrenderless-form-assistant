@@ -25,6 +25,7 @@ import {
   abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
   closeOwnedFilingBrowserFailClosed,
+  gotoOwnedFilingPage,
   openOwnedFilingPlaywrightSession,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
@@ -316,7 +317,7 @@ export async function runRealBbbBoundedSubmit(
     });
     page = playwrightSession.page;
     const navigationUrl = resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl(url, base);
-    await page.goto(navigationUrl, { timeout: 60000, waitUntil: "domcontentloaded" });
+    await gotoOwnedFilingPage(page, navigationUrl);
 
     assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
 

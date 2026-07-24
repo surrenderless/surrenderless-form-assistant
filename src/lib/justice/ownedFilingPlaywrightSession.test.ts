@@ -6,19 +6,24 @@ import {
   closeOwnedFilingBrowserFailClosed,
   enrichOwnedFilingTargetClosedError,
   formatOwnedFilingLifecycleDetail,
+  gotoOwnedFilingPage,
   isOwnedFilingClosedTargetProviderError,
   isOwnedFilingEvaluateTimeoutError,
+  isOwnedFilingNavigationTimeoutError,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
   OWNED_FILING_FTC_READY_SELECTOR,
   OWNED_FILING_FTC_READY_WAIT_MS,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+  OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS,
   OwnedFilingEvaluateTimeoutError,
+  OwnedFilingNavigationTimeoutError,
   replaceOwnedFilingPlaywrightSessionPage,
   waitForFtcReportFraudInteractiveReady,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
   withOwnedFilingFirstEvaluateRetry,
+  withOwnedFilingNavigationTimeout,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
 function mockPage(overrides: Partial<Page> & { urlValue?: string } = {}): Page {
@@ -397,6 +402,86 @@ describe("withOwnedFilingEvaluateTimeout", () => {
         throw new Error("page.evaluate: Target page, context or browser has been closed");
       }, 500)
     ).rejects.toThrow(/race_winner=evaluate_target_closed/);
+  });
+});
+
+describe("withOwnedFilingNavigationTimeout", () => {
+  it("exports the production 60s navigation bound", () => {
+    expect(OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS).toBe(60_000);
+  });
+
+  it("fails within the wall-clock bound when navigation never settles", async () => {
+    const started = Date.now();
+    await expect(
+      withOwnedFilingNavigationTimeout(() => new Promise(() => {}), 40)
+    ).rejects.toBeInstanceOf(OwnedFilingNavigationTimeoutError);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(35);
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
+  it("rejects navigation_timeout immediately without waiting for hung abort/page.close", async () => {
+    const abort = vi.fn(() => new Promise<void>(() => {}));
+    const started = Date.now();
+    let caught: unknown;
+    try {
+      await withOwnedFilingNavigationTimeout(() => new Promise(() => {}), 40, abort);
+    } catch (err) {
+      caught = err;
+    }
+    const elapsed = Date.now() - started;
+    expect(caught).toBeInstanceOf(OwnedFilingNavigationTimeoutError);
+    expect(isOwnedFilingNavigationTimeoutError(caught)).toBe(true);
+    expect((caught as OwnedFilingNavigationTimeoutError).message).toContain(
+      "race_winner=navigation_timeout"
+    );
+    expect((caught as OwnedFilingNavigationTimeoutError).message).toMatch(
+      /nav_timer_fired_at_ms=\d+/
+    );
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(elapsed).toBeGreaterThanOrEqual(35);
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it("keeps navigation_timeout as race winner when abort later surfaces target-closed", async () => {
+    let rejectNav: ((err: Error) => void) | undefined;
+    const hungNav = new Promise<void>((_, reject) => {
+      rejectNav = reject;
+    });
+    const abort = vi.fn(async () => {
+      rejectNav?.(new Error("page.goto: Target page, context or browser has been closed"));
+    });
+
+    await expect(
+      withOwnedFilingNavigationTimeout(() => hungNav, 30, abort)
+    ).rejects.toMatchObject({
+      name: "OwnedFilingNavigationTimeoutError",
+      message: expect.stringContaining("race_winner=navigation_timeout"),
+    });
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("gotoOwnedFilingPage", () => {
+  it("rejects on wall-clock bound when page.goto never settles (does not wait for CDP)", async () => {
+    const page = mockPage() as Page & { goto: ReturnType<typeof vi.fn> };
+    page.goto = vi.fn((): Promise<null> => new Promise(() => {}));
+    const started = Date.now();
+    await expect(gotoOwnedFilingPage(page, "https://example.test/complain", { timeoutMs: 40 })).rejects.toBeInstanceOf(
+      OwnedFilingNavigationTimeoutError
+    );
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(page.close).toHaveBeenCalled();
+  });
+
+  it("resolves when page.goto finishes before the bound", async () => {
+    const page = mockPage() as Page & { goto: ReturnType<typeof vi.fn> };
+    page.goto = vi.fn(async (): Promise<null> => null);
+    await expect(gotoOwnedFilingPage(page, "https://example.test/complain", { timeoutMs: 500 })).resolves.toBeUndefined();
+    expect(page.goto).toHaveBeenCalledWith(
+      "https://example.test/complain",
+      expect.objectContaining({ waitUntil: "domcontentloaded" })
+    );
   });
 });
 

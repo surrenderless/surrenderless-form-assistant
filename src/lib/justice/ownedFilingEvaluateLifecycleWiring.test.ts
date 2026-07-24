@@ -46,11 +46,11 @@ describe("owned-filing bounded submit evaluate paths use lifecycle enrichment", 
 });
 
 describe("FTC navigation avoids blind settle delay under Browserless budget", () => {
-  it("uses goto waitUntil domcontentloaded and has no fixed 2s pre-evaluate delay", () => {
+  it("uses gotoOwnedFilingPage (wall-clock bound) and has no fixed 2s pre-evaluate delay", () => {
     const source = read("src/lib/justice/runRealFtcBoundedSubmit.ts");
-    expect(source).toMatch(
-      /page!?\.goto\(\s*url,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
-    );
+    expect(source).toContain("gotoOwnedFilingPage");
+    expect(source).toMatch(/gotoOwnedFilingPage\(\s*page!?,\s*url\s*\)/);
+    expect(source).not.toMatch(/page!?\.goto\(\s*url,\s*\{\s*timeout:\s*60000/);
     expect(source).not.toMatch(/waitForLoadState\(\s*["']domcontentloaded["']\s*\)/);
     expect(source).not.toMatch(/waitForTimeout\(\s*2000\s*\)/);
     expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser");
@@ -117,20 +117,32 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).not.toContain("new Promise<T>(() => {})");
   });
 
-  it("BBB bounds collectPageData evaluate and uses domcontentloaded goto without fixed 2s delay", () => {
+  it("navigation timeout rejects before awaiting abort with nav diagnostics", () => {
+    const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
+    expect(source).toContain("nav_timer_fired_at_ms");
+    expect(source).toContain("OWNED_FILING_NAVIGATION_TIMEOUT_REASON");
+    expect(source).toContain("withOwnedFilingNavigationTimeout");
+    expect(source).toContain("gotoOwnedFilingPage");
+    expect(source).toMatch(
+      /reject\(\s*new OwnedFilingNavigationTimeoutError[\s\S]*?\)\s*;\s*void \(async \(\) => \{[\s\S]*?await onTimeoutAbort/
+    );
+  });
+
+  it("BBB bounds collectPageData evaluate and wall-clock-bounds goto before first evaluate", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
     expect(source).toContain("withOwnedFilingEvaluateTimeout");
     expect(source).toContain("abortOwnedFilingPageEvaluate");
     expect(source).toContain("closeOwnedFilingBrowserFailClosed");
+    expect(source).toContain("gotoOwnedFilingPage");
     expect(source).toMatch(
       /withOwnedFilingEvaluateLifecycle\([\s\S]*?withOwnedFilingEvaluateTimeout\([\s\S]*?page\.evaluate/
     );
     expect(source).toMatch(
       /withOwnedFilingEvaluateTimeout\(\s*\(\)\s*=>[\s\S]*?page\.evaluate[\s\S]*?OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS\s*,\s*\(\)\s*=>\s*abortOwnedFilingPageEvaluate\(page\)/
     );
-    expect(source).toMatch(
-      /page\.goto\(\s*navigationUrl,\s*\{\s*timeout:\s*60000,\s*waitUntil:\s*"domcontentloaded"\s*\}\s*\)/
-    );
+    // Navigation must use Node-local wall-clock bound before first evaluate — not bare page.goto.
+    expect(source).toMatch(/gotoOwnedFilingPage\(\s*page,\s*navigationUrl\s*\)/);
+    expect(source).not.toMatch(/page\.goto\(\s*navigationUrl/);
     expect(source).not.toMatch(/waitForLoadState\(\s*["']domcontentloaded["']\s*\)/);
     expect(source).not.toMatch(/waitForTimeout\(\s*2000\s*\)/);
     expect(source).toContain("assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser)");
