@@ -12,6 +12,7 @@ import {
 import {
   buildButtonSelector,
   normalizeFormDecision,
+  type AssistedFormBbbActionControl,
   type AssistedFormBbbSearchResult,
   type AssistedFormPageData,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
@@ -43,9 +44,25 @@ function pageData(overrides: Partial<AssistedFormPageData> = {}): AssistedFormPa
   };
 }
 
-function identityFields(): AssistedFormPageData["fields"] {
+type ScrapedField = AssistedFormPageData["fields"][number];
+
+/**
+ * The BBB no-results Business Information form. `businessName` overrides the business-name control
+ * (or drops it entirely when null) to exercise addressing and sequencing.
+ */
+function identityFields(
+  businessName?: Partial<ScrapedField> | null
+): AssistedFormPageData["fields"] {
+  const nameControl: ScrapedField = {
+    tag: "input",
+    type: "text",
+    name: "businessName",
+    id: "",
+    placeholder: "",
+    label: "Business Name",
+  };
   return [
-    { tag: "input", type: "text", name: "businessName", id: "", placeholder: "", label: "Business Name" },
+    ...(businessName === null ? [] : [{ ...nameControl, ...businessName }]),
     { tag: "input", type: "text", name: "address", id: "", placeholder: "", label: "Address" },
     { tag: "input", type: "text", name: "city", id: "", placeholder: "", label: "City" },
     { tag: "select", type: "select-one", name: "state", id: "", placeholder: "", label: "State/Province" },
@@ -112,6 +129,7 @@ describe("buildOwnedFilingBbbSearchDecision — result selection", () => {
 
     expect(decision).toEqual({
       ok: true,
+      step: "select_result",
       decision: {
         fieldsToFill: [],
         nextButton: { selectorType: "id", value: "result-1" },
@@ -286,6 +304,7 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
 
     expect(decision).toEqual({
       ok: true,
+      step: "submit_business_form",
       decision: {
         fieldsToFill: [
           { selector: "businessName", value: "Fictional Digital Services" },
@@ -342,7 +361,7 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
     expect(decision.detail).not.toContain("consumer_us_state");
   });
 
-  it("fails closed when an identity field is not uniquely resolvable", () => {
+  it("fails closed before clicking when an identity control is ambiguous", () => {
     const decision = buildOwnedFilingBbbSearchDecision(
       pageData({
         bbbSearchResults: [],
@@ -354,11 +373,11 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
       }),
       FULL_IDENTITY
     );
-    expect(decision).toMatchObject({
+    expect(decision).toEqual({
       ok: false,
       failure: "search_no_results_identity_incomplete",
       detail:
-        "search_no_results_identity_incomplete results=0 matches=0 missing=business_city",
+        "search_no_results_identity_incomplete results=0 matches=0 unaddressable=business_city",
     });
   });
 
@@ -378,6 +397,281 @@ describe("buildOwnedFilingBbbSearchDecision — no results", () => {
       ok: false,
       failure: "search_no_results_form_ambiguous",
       detail: "search_no_results_form_ambiguous results=0 matches=0",
+    });
+  });
+});
+
+describe("buildOwnedFilingBbbSearchDecision — no-results business-name addressing", () => {
+  const proceedButton = { text: "File a Complaint", id: "", name: "", type: "button" };
+
+  function businessNameSelector(fields: AssistedFormPageData["fields"]): string | undefined {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields, buttons: [proceedButton] }),
+      FULL_IDENTITY
+    );
+    if (!decision.ok) throw new Error(`expected a decision, got ${decision.detail}`);
+    return decision.decision.fieldsToFill?.[0]?.selector;
+  }
+
+  it("addresses the nameless Angular control by formControlName", () => {
+    expect(
+      businessNameSelector(
+        identityFields({ name: "", id: "", formControlName: "companyName", label: "Business name *" })
+      )
+    ).toBe("companyName");
+  });
+
+  it("falls back to id when the control has no name", () => {
+    expect(businessNameSelector(identityFields({ name: "", id: "biz-name" }))).toBe("biz-name");
+  });
+
+  it("resolves the label through aria-label or placeholder", () => {
+    expect(
+      businessNameSelector(
+        identityFields({ name: "", formControlName: "companyName", label: "", ariaLabel: "Business name" })
+      )
+    ).toBe("companyName");
+    expect(
+      businessNameSelector(
+        identityFields({ name: "", formControlName: "companyName", label: "", placeholder: "Business Name" })
+      )
+    ).toBe("companyName");
+  });
+
+  it("accepts BBB label decoration and business-name synonyms without fuzzy matching", () => {
+    for (const label of [
+      "Business name:",
+      "Business Name (required)",
+      "Company name",
+      "Business/Organization Name",
+      "Name of business",
+    ]) {
+      expect(businessNameSelector(identityFields({ label }))).toBe("businessName");
+    }
+    // Not a business-name control: stays unmatched instead of being filled with the company name.
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: identityFields({ label: "Your name" }),
+        buttons: [proceedButton],
+      }),
+      FULL_IDENTITY
+    );
+    expect(decision).toMatchObject({ ok: true, step: "reveal_business_form" });
+  });
+
+  it("prefers Business Information Form controls over search filters with the same wording", () => {
+    const fields = [
+      { tag: "input", type: "text", name: "find_text", id: "", placeholder: "Business Name", label: "" },
+      ...identityFields({ name: "", formControlName: "companyName", label: "Business name" }).map(
+        (field) => ({ ...field, inBusinessInfoForm: true })
+      ),
+    ];
+    expect(businessNameSelector(fields)).toBe("companyName");
+  });
+
+  it("ignores BBB search filters that carry business-name wording, even unscoped", () => {
+    const fields = [
+      { tag: "input", type: "text", name: "find_text", id: "", placeholder: "Business Name", label: "Business Name" },
+      { tag: "input", type: "text", name: "find_country", id: "", placeholder: "", label: "Country" },
+      ...identityFields(),
+    ];
+    expect(businessNameSelector(fields)).toBe("businessName");
+  });
+
+  it("ignores hidden and disabled duplicates of the business form", () => {
+    const fields = [
+      ...identityFields(),
+      { tag: "input", type: "text", name: "businessNameGhost", id: "", placeholder: "", label: "Business name", visible: false },
+      { tag: "input", type: "text", name: "businessNameOff", id: "", placeholder: "", label: "Business name", enabled: false },
+    ];
+    expect(businessNameSelector(fields)).toBe("businessName");
+  });
+
+  it("fails closed when two visible controls both look like the business name", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [
+          ...identityFields(),
+          { tag: "input", type: "text", name: "companyName", id: "", placeholder: "", label: "Company Name" },
+        ],
+        buttons: [proceedButton],
+      }),
+      FULL_IDENTITY
+    );
+    expect(decision).toEqual({
+      ok: false,
+      failure: "search_no_results_identity_incomplete",
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 unaddressable=business_name",
+    });
+  });
+
+  it("fails closed when the resolved key would match another control on the page", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [
+          ...identityFields({ name: "", formControlName: "companyName", label: "Business name" }),
+          // A different visible control already answers to that key, so the fill selector is not unique.
+          { tag: "input", type: "hidden", name: "companyName", id: "", placeholder: "", label: "" },
+        ],
+        buttons: [proceedButton],
+      }),
+      FULL_IDENTITY
+    );
+    expect(decision).toMatchObject({
+      ok: false,
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 unaddressable=business_name",
+    });
+  });
+});
+
+describe("buildOwnedFilingBbbSearchDecision — no-results sequencing", () => {
+  function control(
+    overrides: Partial<AssistedFormBbbActionControl> = {}
+  ): AssistedFormBbbActionControl {
+    return { kind: "button", text: "File a Complaint", id: "", name: "", visible: true, enabled: true, ...overrides };
+  }
+
+  const ALL_IDENTITY_KEYS =
+    "business_name,business_address,business_city,business_state,business_country,business_postal_code";
+
+  it("prefers the explicit form opener over the wizard-entry CTA", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [],
+        bbbNoResultsControls: [control({ text: "Business Information Form" }), control()],
+      }),
+      FULL_IDENTITY
+    );
+
+    expect(decision).toMatchObject({
+      ok: true,
+      step: "reveal_business_form",
+      decision: { nextButton: { selectorType: "text", value: "Business Information Form" } },
+    });
+  });
+
+  it("reveals through the unique continuation control and fills nothing on that click", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [],
+        bbbNoResultsControls: [control({ text: "Business Information Form" })],
+      }),
+      FULL_IDENTITY
+    );
+
+    expect(decision).toEqual({
+      ok: true,
+      step: "reveal_business_form",
+      decision: {
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Business Information Form" },
+        waitForNavigation: true,
+      },
+    });
+    if (!decision.ok) throw new Error("expected a decision");
+    expect(normalizeFormDecision(decision.decision)).toEqual(decision.decision);
+    // Reversible reveal on the search step only.
+    expect(classifyOwnedFilingClick(decision.decision.nextButton, { pageUrl: SEARCH_URL })).toBe(
+      "safe"
+    );
+    expect(classifyOwnedFilingClick(decision.decision.nextButton)).toBe("unknown");
+  });
+
+  it("reveals through File a Complaint when there is no separate opener", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields: [], bbbNoResultsControls: [control()] }),
+      FULL_IDENTITY
+    );
+    expect(decision).toMatchObject({
+      ok: true,
+      step: "reveal_business_form",
+      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "File a Complaint" } },
+    });
+  });
+
+  it("never spends a second reveal click on a form that stayed unaddressable", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields: [], bbbNoResultsControls: [control()] }),
+      FULL_IDENTITY,
+      { revealAttempts: 1 }
+    );
+    expect(decision).toEqual({
+      ok: false,
+      failure: "search_no_results_identity_incomplete",
+      detail: `search_no_results_identity_incomplete results=0 matches=0 unaddressable=${ALL_IDENTITY_KEYS}`,
+    });
+  });
+
+  it("fails closed when the continuation control is ambiguous or not text-addressable", () => {
+    const ambiguous = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields: [], bbbNoResultsControls: [control(), control()] }),
+      FULL_IDENTITY
+    );
+    expect(ambiguous).toEqual({
+      ok: false,
+      failure: "search_no_results_form_ambiguous",
+      detail: `search_no_results_form_ambiguous results=0 matches=0 unaddressable=${ALL_IDENTITY_KEYS}`,
+    });
+
+    // A link cannot be clicked through button:has-text(...), so it is not a usable continuation.
+    const linkOnly = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [],
+        bbbNoResultsControls: [control({ kind: "link", text: "Business Information Form" })],
+      }),
+      FULL_IDENTITY
+    );
+    expect(linkOnly).toMatchObject({ ok: false, failure: "search_no_results_form_ambiguous" });
+  });
+
+  it("requires approved values before any click, even when the form is missing", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({ bbbSearchResults: [], fields: [], bbbNoResultsControls: [control()] }),
+      { business_name: "Fictional Digital Services" }
+    );
+    expect(decision).toMatchObject({
+      ok: false,
+      failure: "search_no_results_identity_incomplete",
+      detail:
+        "search_no_results_identity_incomplete results=0 matches=0 missing=business_address,business_city,business_state,business_country,business_postal_code unaddressable=business_name",
+    });
+  });
+
+  it("fills and proceeds once the revealed form is uniquely addressable", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: identityFields({ name: "", formControlName: "companyName", label: "Business name *" }).map(
+          (field) => ({ ...field, inBusinessInfoForm: true })
+        ),
+        bbbNoResultsControls: [control(), control({ visible: false })],
+      }),
+      FULL_IDENTITY,
+      { revealAttempts: 1 }
+    );
+
+    expect(decision).toMatchObject({
+      ok: true,
+      step: "submit_business_form",
+      decision: {
+        fieldsToFill: [
+          { selector: "companyName", value: "Fictional Digital Services" },
+          { selector: "address", value: "1 Example Way" },
+          { selector: "city", value: "Austin" },
+          { selector: "state", value: "TX" },
+          { selector: "country", value: "United States" },
+          { selector: "postalCode", value: "78701" },
+        ],
+        nextButton: { selectorType: "text", value: "File a Complaint" },
+      },
     });
   });
 });
@@ -435,74 +729,163 @@ describe("classifyOwnedFilingClick — BBB search wizard entry", () => {
   });
 });
 
-describe("collectOwnedFilingBbbPageDataInBrowser", () => {
-  type FakeEl = {
-    tagName: string;
-    id: string;
-    disabled: boolean;
-    attributes: Record<string, string>;
-    textContent: string;
-    heading: string | null;
-    visible: boolean;
-    getAttribute(name: string): string | null;
-    querySelector(selector: string): { textContent: string } | null;
-    getBoundingClientRect(): { width: number; height: number };
+/**
+ * Minimal fake DOM. `environment: "node"` gives us no document, and only a handful of selector
+ * shapes are used by the scrape, so a tiny matcher is enough to exercise it on realistic markup.
+ */
+type FakeEl = {
+  tagName: string;
+  attrs: Record<string, string>;
+  textContent: string;
+  visible: boolean;
+  disabled: boolean;
+  labels?: FakeEl[];
+  parentElement: FakeEl | null;
+  children: FakeEl[];
+  id: string;
+  type: string;
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): { width: number; height: number };
+  querySelector(selector: string): FakeEl | null;
+  querySelectorAll(selector: string): FakeEl[];
+  closest(selector: string): FakeEl | null;
+};
+
+function matchesSelector(node: FakeEl, selector: string): boolean {
+  return selector.split(",").some((part) => {
+    const simple = part.trim();
+    const parsed = /^([a-z0-9]*)((?:\[[^\]]+\])*)$/i.exec(simple);
+    if (!parsed) return false;
+    const [, tag, rawAttrs] = parsed;
+    if (tag && node.tagName.toLowerCase() !== tag.toLowerCase()) return false;
+    const attrTests = rawAttrs.match(/\[[^\]]+\]/g) ?? [];
+    return attrTests.every((attrTest) => {
+      const body = attrTest.slice(1, -1);
+      const withValue = /^([a-z0-9-]+)(\*?)=['"]?([^'"]*)['"]?$/i.exec(body);
+      if (!withValue) return node.getAttribute(body) !== null;
+      const [, name, operator, value] = withValue;
+      const actual = node.getAttribute(name);
+      if (actual === null) return false;
+      return operator === "*" ? actual.includes(value) : actual === value;
+    });
+  });
+}
+
+function el(
+  tag: string,
+  options: {
+    attrs?: Record<string, string>;
+    text?: string;
+    visible?: boolean;
+    disabled?: boolean;
+    children?: FakeEl[];
+    labelled?: boolean;
+  } = {}
+): FakeEl {
+  const attrs = options.attrs ?? {};
+  const children = options.children ?? [];
+  const descendants = (): FakeEl[] =>
+    children.flatMap((child) => [child, ...child.querySelectorAll("*")]);
+  const node: FakeEl = {
+    tagName: tag.toUpperCase(),
+    attrs,
+    textContent: options.text ?? "",
+    visible: options.visible !== false,
+    disabled: options.disabled ?? false,
+    parentElement: null,
+    children,
+    get id() {
+      return attrs.id ?? "";
+    },
+    get type() {
+      return attrs.type ?? "";
+    },
+    getAttribute: (name) => attrs[name.toLowerCase()] ?? null,
+    getBoundingClientRect: () => ({
+      width: node.visible ? 120 : 0,
+      height: node.visible ? 24 : 0,
+    }),
+    querySelectorAll: (selector) =>
+      selector === "*"
+        ? descendants()
+        : descendants().filter((child) => matchesSelector(child, selector)),
+    querySelector: (selector) => node.querySelectorAll(selector)[0] ?? null,
+    closest: (selector) => {
+      let current: FakeEl | null = node;
+      while (current) {
+        if (matchesSelector(current, selector)) return current;
+        current = current.parentElement;
+      }
+      return null;
+    },
   };
-
-  function anchor(overrides: Partial<FakeEl> = {}): FakeEl {
-    const node: FakeEl = {
-      tagName: "A",
-      id: "",
-      disabled: false,
-      attributes: {},
-      textContent: "",
-      heading: null,
-      visible: true,
-      getAttribute: (name: string) => node.attributes[name] ?? null,
-      querySelector: () => (node.heading === null ? null : { textContent: node.heading }),
-      getBoundingClientRect: () => ({
-        width: node.visible ? 200 : 0,
-        height: node.visible ? 40 : 0,
-      }),
-      ...overrides,
-    };
-    return node;
+  for (const child of children) child.parentElement = node;
+  if (options.labelled) {
+    const label = children.find((child) => child.tagName === "LABEL");
+    const control = children.find((child) => child.tagName === "INPUT");
+    if (label && control) control.labels = [label];
   }
+  return node;
+}
 
-  function installDom(results: FakeEl[], pathname: string): void {
-    vi.stubGlobal("document", {
-      body: { innerText: "search results" },
-      querySelectorAll(selector: string) {
-        if (selector === "input, textarea, select") return [];
-        if (selector === "button, input[type='submit']") return [];
-        return results;
-      },
-    });
-    vi.stubGlobal("window", {
-      location: { pathname, href: `https://www.bbb.org${pathname}` },
-      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
-    });
-  }
+function installDom(root: FakeEl, pathname: string): void {
+  const all = [root, ...root.querySelectorAll("*")];
+  vi.stubGlobal("document", {
+    body: { innerText: "no results available" },
+    querySelectorAll: (selector: string) =>
+      all.filter((node) => matchesSelector(node, selector)),
+    getElementById: (id: string) => all.find((node) => node.attrs.id === id) ?? null,
+  });
+  vi.stubGlobal("window", {
+    location: { pathname, href: `https://www.bbb.org${pathname}` },
+    getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+  });
+}
 
+/** Verified BBB no-results markup: Angular controls with no name/id, labelled by a sibling. */
+function businessInformationForm(): FakeEl {
+  const group = (label: string, control: FakeEl) =>
+    el("div", { children: [el("label", { text: label }), control] });
+  return el("form", {
+    children: [
+      el("h3", { text: "Enter Business Information" }),
+      group("Business name *", el("input", { attrs: { formcontrolname: "companyName" } })),
+      group("Address *", el("input", { attrs: { formcontrolname: "address" } })),
+      group("City *", el("input", { attrs: { formcontrolname: "city" } })),
+      group("State/Province *", el("select", { attrs: { formcontrolname: "state" } })),
+      group("Country *", el("select", { attrs: { formcontrolname: "country" } })),
+      group("Postal Code *", el("input", { attrs: { formcontrolname: "postalCode" } })),
+      el("button", { text: "File a Complaint" }),
+    ],
+  });
+}
+
+describe("collectOwnedFilingBbbPageDataInBrowser", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it("scrapes profile-link results with heading text on the search step", () => {
     installDom(
-      [
-        anchor({
-          id: "result-1",
-          textContent: "  Fictional Digital\u00a0Services   A+ ",
-          heading: "Fictional Digital Services",
-        }),
-        anchor({ textContent: "Hidden Co", heading: "Hidden Co", visible: false }),
-      ],
+      el("div", {
+        children: [
+          el("a", {
+            attrs: { id: "result-1", href: "/us/tx/austin/profile/x" },
+            text: "  Fictional Digital\u00a0Services   A+ ",
+            children: [el("h3", { text: "Fictional Digital Services" })],
+          }),
+          el("a", {
+            attrs: { href: "/us/tx/austin/profile/y" },
+            text: "Hidden Co",
+            visible: false,
+            children: [el("h3", { text: "Hidden Co" })],
+          }),
+        ],
+      }),
       "/file-a-complaint/search"
     );
 
-    const data = collectOwnedFilingBbbPageDataInBrowser();
-    expect(data.bbbSearchResults).toEqual([
+    expect(collectOwnedFilingBbbPageDataInBrowser().bbbSearchResults).toEqual([
       {
         kind: "link",
         text: "Fictional Digital Services A+",
@@ -524,8 +907,127 @@ describe("collectOwnedFilingBbbPageDataInBrowser", () => {
     ]);
   });
 
-  it("omits the result inventory on non-search steps", () => {
-    installDom([anchor({ textContent: "Fictional Digital Services" })], "/file-a-complaint");
-    expect(collectOwnedFilingBbbPageDataInBrowser().bbbSearchResults).toBeUndefined();
+  it("omits the search-step inventories on other steps", () => {
+    installDom(businessInformationForm(), "/file-a-complaint");
+    const data = collectOwnedFilingBbbPageDataInBrowser();
+    expect(data.bbbSearchResults).toBeUndefined();
+    expect(data.bbbNoResultsControls).toBeUndefined();
+    expect(data.fields[0]?.inBusinessInfoForm).toBeUndefined();
+  });
+
+  it("keys nameless business-form controls and scopes them to the business form", () => {
+    installDom(
+      el("div", {
+        children: [
+          el("form", {
+            children: [
+              el("input", { attrs: { name: "find_text", placeholder: "Business Name" } }),
+              el("button", { text: "Search" }),
+            ],
+          }),
+          businessInformationForm(),
+        ],
+      }),
+      "/file-a-complaint/search"
+    );
+
+    const data = collectOwnedFilingBbbPageDataInBrowser();
+    expect(data.fields[0]).toMatchObject({
+      name: "find_text",
+      placeholder: "Business Name",
+      visible: true,
+      enabled: true,
+    });
+    expect(data.fields[0].inBusinessInfoForm).toBeUndefined();
+    expect(data.fields[1]).toMatchObject({
+      name: "",
+      id: "",
+      formControlName: "companyName",
+      label: "Business name *",
+      inBusinessInfoForm: true,
+      visible: true,
+      enabled: true,
+    });
+    expect(data.bbbNoResultsControls).toEqual([
+      { kind: "button", text: "File a Complaint", id: "", name: "", visible: true, enabled: true },
+    ]);
+    expect(data.buttons).toEqual([
+      { text: "Search", id: "", name: "", type: "", visible: true, enabled: true },
+      { text: "File a Complaint", id: "", name: "", type: "", visible: true, enabled: true },
+    ]);
+  });
+
+  it("resolves labels from aria-label, an associated label, and aria-labelledby", () => {
+    installDom(
+      el("div", {
+        children: [
+          el("input", { attrs: { name: "aria", "aria-label": "Business name" } }),
+          el("div", {
+            labelled: true,
+            children: [
+              el("label", { attrs: { id: "lbl-city", for: "city" }, text: "City" }),
+              el("input", { attrs: { id: "city", name: "city" } }),
+            ],
+          }),
+          el("div", {
+            children: [
+              el("span", { attrs: { id: "postal-hint" }, text: "Postal Code" }),
+              el("input", { attrs: { name: "postal", "aria-labelledby": "postal-hint" } }),
+            ],
+          }),
+        ],
+      }),
+      "/file-a-complaint/search"
+    );
+
+    const data = collectOwnedFilingBbbPageDataInBrowser();
+    expect(data.fields.map((field) => field.label)).toEqual([
+      "Business name",
+      "City",
+      "Postal Code",
+    ]);
+    expect(data.fields[0].ariaLabel).toBe("Business name");
+  });
+
+  it("never lets a control inherit a sibling control's label", () => {
+    installDom(
+      el("div", {
+        children: [
+          el("div", {
+            children: [
+              el("label", { text: "City" }),
+              el("input", { attrs: { name: "a" } }),
+              el("input", { attrs: { name: "b" } }),
+            ],
+          }),
+        ],
+      }),
+      "/file-a-complaint/search"
+    );
+    expect(collectOwnedFilingBbbPageDataInBrowser().fields.map((f) => f.label)).toEqual(["", ""]);
+  });
+
+  it("feeds a fill-ready decision for the real no-results markup", () => {
+    installDom(businessInformationForm(), "/file-a-complaint/search");
+    const decision = buildOwnedFilingBbbSearchDecision(
+      collectOwnedFilingBbbPageDataInBrowser(),
+      FULL_IDENTITY
+    );
+
+    expect(decision).toMatchObject({
+      ok: true,
+      step: "submit_business_form",
+      decision: {
+        fieldsToFill: [
+          { selector: "companyName", value: "Fictional Digital Services" },
+          { selector: "address", value: "1 Example Way" },
+          { selector: "city", value: "Austin" },
+          { selector: "state", value: "TX" },
+          { selector: "country", value: "United States" },
+          { selector: "postalCode", value: "78701" },
+        ],
+        nextButton: { selectorType: "text", value: "File a Complaint" },
+      },
+    });
   });
 });

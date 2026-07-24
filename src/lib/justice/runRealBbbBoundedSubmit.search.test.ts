@@ -88,15 +88,56 @@ const SEARCH_URL =
   "https://www.bbb.org/file-a-complaint/search?find_country=USA&find_text=Fictional%20Digital%20Services&page=1&touched=1";
 const mockedApply = vi.mocked(applyOwnedFilingFormDecision);
 
-function searchPage(results: unknown[], fields: unknown[] = []) {
+function searchPage(results: unknown[], fields: unknown[] = [], controls?: unknown[]) {
   return {
     fields,
     buttons: results.length === 0 ? [{ text: "File a Complaint", id: "", name: "", type: "button" }] : [],
     url: SEARCH_URL,
     pageText: "",
     bbbSearchResults: results,
+    ...(controls ? { bbbNoResultsControls: controls } : {}),
   };
 }
+
+const WIZARD_ENTRY_CONTROL = {
+  kind: "button",
+  text: "File a Complaint",
+  id: "",
+  name: "",
+  visible: true,
+  enabled: true,
+};
+
+/** Verified BBB no-results markup: nameless Angular controls keyed by formControlName. */
+function angularIdentityFields() {
+  return [
+    ["companyName", "Business name *"],
+    ["address", "Address *"],
+    ["city", "City *"],
+    ["state", "State/Province *"],
+    ["country", "Country *"],
+    ["postalCode", "Postal Code *"],
+  ].map(([formControlName, label]) => ({
+    tag: "input",
+    type: "text",
+    name: "",
+    id: "",
+    placeholder: "",
+    label,
+    formControlName,
+    inBusinessInfoForm: true,
+    visible: true,
+    enabled: true,
+  }));
+}
+
+const APPROVED_POSTAL_IDENTITY = {
+  business_address: "1 Example Way",
+  business_city: "Austin",
+  business_state: "TX",
+  business_country: "United States",
+  business_postal_code: "78701",
+};
 
 function identityFields() {
   return [
@@ -208,16 +249,12 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
       },
     ];
 
-    const result = await runRealBbbBoundedSubmit(
-      runParams({
-        business_address: "1 Example Way",
-        business_city: "Austin",
-        business_state: "TX",
-        business_country: "United States",
-        business_postal_code: "78701",
-      })
-    );
+    const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
 
+    expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
+      currentPageUrl: SEARCH_URL,
+      includeFormControlNameFill: true,
+    });
     expect(mockedApply.mock.calls[0]?.[1]).toEqual({
       fieldsToFill: [
         { selector: "businessName", value: "Fictional Digital Services" },
@@ -234,6 +271,82 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     if (result.ok) throw new Error("expected incomplete result");
     expect(result.stopReason).toBe("blocked_irreversible_click");
     expect(result.stepsExecuted).toBe(1);
+  });
+
+  it("opens the business form first, then fills it and stops at the true Submit", async () => {
+    stubDecideAction({
+      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
+    });
+    const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
+    h.state.evaluateQueue = [
+      // Business Information form not rendered yet: only the reversible wizard-entry CTA exists.
+      searchPage([], [], [WIZARD_ENTRY_CONTROL]),
+      searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]),
+      { fields: [], buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }], url: wizardUrl, pageText: "" },
+    ];
+    h.state.applyQueue = [
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit Complaint",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
+
+    expect(mockedApply.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "File a Complaint" },
+      waitForNavigation: true,
+    });
+    expect(mockedApply.mock.calls[1]?.[1]).toEqual({
+      fieldsToFill: [
+        { selector: "companyName", value: "Fictional Digital Services" },
+        { selector: "address", value: "1 Example Way" },
+        { selector: "city", value: "Austin" },
+        { selector: "state", value: "TX" },
+        { selector: "country", value: "United States" },
+        { selector: "postalCode", value: "78701" },
+      ],
+      nextButton: { selectorType: "text", value: "File a Complaint" },
+      waitForNavigation: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(2);
+    // Deterministic search steps are labelled in durable telemetry; the wizard step is the model's.
+    expect(
+      result.fillResult.stepLog
+        .filter((entry) => entry.action === "decide")
+        .map((entry) => entry.detail)
+    ).toEqual(["reveal_business_form", "submit_business_form", undefined]);
+  });
+
+  it("never clicks the continuation twice when the form stays unaddressable", async () => {
+    stubDecideAction({});
+    h.state.evaluateQueue = [
+      searchPage([], [], [WIZARD_ENTRY_CONTROL]),
+      searchPage([], [], [WIZARD_ENTRY_CONTROL]),
+    ];
+    h.state.applyQueue = [{ result: { ok: true, clicked: true, risk: "safe" } }];
+
+    const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
+
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.stopReason).toBe("blocked_unknown_click");
+    expect(result.stepsExecuted).toBe(1);
+    expect(result.fillResult.stepLog.at(-1)?.detail).toBe(
+      "search_no_results_identity_incomplete results=0 matches=0 unaddressable=business_name,business_address,business_city,business_state,business_country,business_postal_code"
+    );
   });
 
   it("fails closed on ambiguous results with sanitized counts and no click", async () => {

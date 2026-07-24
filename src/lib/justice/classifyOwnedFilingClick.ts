@@ -67,16 +67,23 @@ export type OwnedFilingClickContext = {
 
 /**
  * BBB business-search step only: the no-results Business Information form's "File a Complaint"
- * button enters the wizard with the typed business, exactly like Start Complaint. The true
- * final submit lives on a later wizard URL, so the global /\bfile\b/ gate stays intact.
+ * button enters the wizard with the typed business, exactly like Start Complaint, and
+ * "Business Information Form" only reveals that form. The true final submit lives on a later
+ * wizard URL, so the global /\bfile\b/ gate stays intact.
  */
+const BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS: RegExp[] = [
+  /^\s*file\s+a\s+complaint\s*$/i,
+  /^\s*business\s+information\s+form\s*$/i,
+];
+
 function isBbbBusinessSearchWizardEntry(
   button: FormButtonDecision,
   context: OwnedFilingClickContext | undefined
 ): boolean {
   if (!isOwnedFilingBbbBusinessSearchUrl(context?.pageUrl)) return false;
   if (button.selectorType !== "text") return false;
-  return /^\s*file\s+a\s+complaint\s*$/i.test(button.value.replace(/\u00a0/g, " "));
+  const value = button.value.replace(/\u00a0/g, " ");
+  return BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS.some((pattern) => pattern.test(value));
 }
 
 /**

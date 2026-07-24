@@ -46,6 +46,11 @@ type ApplyDecisionOptions = {
   currentPageUrl?: string;
   /** FTC-only support for exact radio/checkbox decisions. Omitted by BBB. */
   enableFtcChoiceControls?: boolean;
+  /**
+   * Lets the legacy fill path address Angular nameless controls by formControlName. Used by the
+   * BBB no-results business form, whose inputs expose no name/id.
+   */
+  includeFormControlNameFill?: boolean;
   /** Sanitized labels from the FTC actionable button corpus. */
   actionableButtonLabels?: string[];
   /** FTC-only sanitized structural inventory used to resolve exact choice decisions. */
@@ -792,7 +797,10 @@ async function fillFields(
         continue;
       }
 
-      const selector = buildOwnedFilingFillSelector(field.selector, false);
+      const selector = buildOwnedFilingFillSelector(
+        field.selector,
+        Boolean(options.includeFormControlNameFill)
+      );
       if (options.actionTimeoutMs === undefined) {
         await page.fill(selector, String(field.value ?? ""));
       } else {

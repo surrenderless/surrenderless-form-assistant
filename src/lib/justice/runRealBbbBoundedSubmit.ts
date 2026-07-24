@@ -332,6 +332,9 @@ export async function runRealBbbBoundedSubmit(
         budget.setReadySignal(ready.ready_signal);
 
         budget.setPhase("evaluate");
+        // One reversible reveal click is allowed on the no-results business form; after that the
+        // search step fails closed instead of clicking the same CTA again.
+        let businessFormRevealAttempts = 0;
         while (!hasReachedStepCap(stepsExecuted)) {
           const pageData = await collectPageData(page, playwrightSession, browser);
           // First successful evaluate — disarm outer budget so multi-step runs can continue.
@@ -376,8 +379,13 @@ export async function runRealBbbBoundedSubmit(
           // Business-search step is resolved deterministically: the generic model cannot see
           // result cards and invents out-of-schema actions on zero/ambiguous result pages.
           const searchStep = isOwnedFilingBbbBusinessSearchUrl(pageData.url)
-            ? buildOwnedFilingBbbSearchDecision(pageData, userData)
+            ? buildOwnedFilingBbbSearchDecision(pageData, userData, {
+                revealAttempts: businessFormRevealAttempts,
+              })
             : null;
+          if (searchStep?.ok && searchStep.step === "reveal_business_form") {
+            businessFormRevealAttempts += 1;
+          }
           if (searchStep && !searchStep.ok) {
             stepLog.push({
               step: stepsExecuted,
@@ -455,11 +463,17 @@ export async function runRealBbbBoundedSubmit(
             );
           }
 
-          stepLog.push({ step: stepsExecuted, url: pageData.url, action: "decide" });
+          stepLog.push({
+            step: stepsExecuted,
+            url: pageData.url,
+            action: "decide",
+            ...(searchStep?.ok ? { detail: searchStep.step } : {}),
+          });
           const applyResult = await applyOwnedFilingFormDecision(page, decision, {
             mode,
             logPrefix: "real-bbb-submit",
             currentPageUrl: pageData.url,
+            includeFormControlNameFill: true,
           });
           if (!applyResult.ok) {
             const stopReason =
