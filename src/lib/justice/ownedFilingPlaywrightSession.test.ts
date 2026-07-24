@@ -346,26 +346,29 @@ describe("withOwnedFilingEvaluateTimeout", () => {
     expect(OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS).toBe(45_000);
   });
 
-  it("invokes onTimeoutAbort then throws evaluate_timeout", async () => {
-    const abortOrder: string[] = [];
-    const abort = vi.fn(async () => {
-      abortOrder.push("abort");
-    });
-
+  it("rejects evaluate_timeout immediately without waiting for hung abort/page.close", async () => {
+    const abort = vi.fn(() => new Promise<void>(() => {}));
+    const started = Date.now();
     let caught: unknown;
     try {
       await withOwnedFilingEvaluateTimeout(() => new Promise(() => {}), 40, abort);
     } catch (err) {
-      abortOrder.push("reject");
       caught = err;
     }
-
+    const elapsed = Date.now() - started;
     expect(caught).toBeInstanceOf(OwnedFilingEvaluateTimeoutError);
+    expect((caught as OwnedFilingEvaluateTimeoutError).message).toContain(
+      "race_winner=evaluate_timeout"
+    );
+    expect((caught as OwnedFilingEvaluateTimeoutError).message).toMatch(
+      /abort_timer_fired_at_ms=\d+/
+    );
     expect(abort).toHaveBeenCalledTimes(1);
-    expect(abortOrder).toEqual(["abort", "reject"]);
+    expect(elapsed).toBeGreaterThanOrEqual(35);
+    expect(elapsed).toBeLessThan(500);
   });
 
-  it("does not let abort-driven target-closed replace evaluate_timeout", async () => {
+  it("keeps evaluate_timeout as race winner when abort later surfaces target-closed", async () => {
     const page = mockPage();
     let rejectEvaluate: ((err: Error) => void) | undefined;
     const hungEvaluate = new Promise<string>((_, reject) => {
@@ -379,10 +382,21 @@ describe("withOwnedFilingEvaluateTimeout", () => {
 
     await expect(
       withOwnedFilingEvaluateTimeout(() => hungEvaluate, 30, abort)
-    ).rejects.toBeInstanceOf(OwnedFilingEvaluateTimeoutError);
+    ).rejects.toMatchObject({
+      name: "OwnedFilingEvaluateTimeoutError",
+      message: expect.stringContaining("race_winner=evaluate_timeout"),
+    });
 
     expect(abort).toHaveBeenCalledTimes(1);
     expect(page.close).toHaveBeenCalled();
+  });
+
+  it("annotates pre-abort target-closed with race_winner diagnostics", async () => {
+    await expect(
+      withOwnedFilingEvaluateTimeout(async () => {
+        throw new Error("page.evaluate: Target page, context or browser has been closed");
+      }, 500)
+    ).rejects.toThrow(/race_winner=evaluate_target_closed/);
   });
 });
 

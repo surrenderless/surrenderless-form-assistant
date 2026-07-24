@@ -105,6 +105,18 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     );
   });
 
+  it("evaluate timeout rejects before awaiting abort and never forever-parks", () => {
+    const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
+    expect(source).toContain("race_winner");
+    expect(source).toContain("abort_timer_fired_at_ms");
+    expect(source).toContain("abort_close_ms");
+    // Reject OwnedFilingEvaluateTimeoutError first; abort is fire-and-forget after.
+    expect(source).toMatch(
+      /reject\(\s*new OwnedFilingEvaluateTimeoutError[\s\S]*?\)\s*;\s*void \(async \(\) => \{[\s\S]*?await onTimeoutAbort/
+    );
+    expect(source).not.toContain("new Promise<T>(() => {})");
+  });
+
   it("BBB bounds collectPageData evaluate and uses domcontentloaded goto without fixed 2s delay", () => {
     const source = read("src/lib/justice/runRealBbbBoundedSubmit.ts");
     expect(source).toContain("withOwnedFilingEvaluateTimeout");

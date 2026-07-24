@@ -281,14 +281,46 @@ export const OWNED_FILING_FTC_READY_WAIT_MS = 15_000;
 
 export const OWNED_FILING_EVALUATE_TIMEOUT_REASON = "evaluate_timeout";
 
+export type OwnedFilingEvaluateRaceWinner =
+  | "evaluate_timeout"
+  | "evaluate_result"
+  | "evaluate_target_closed"
+  | "evaluate_error";
+
+/** Durable observability for evaluate timeout / race outcomes (safe for dry-run notes). */
+export type OwnedFilingEvaluateTimeoutDiagnostics = {
+  abort_timer_fired_at_ms: number | null;
+  abort_close_ms: number | null;
+  race_winner: OwnedFilingEvaluateRaceWinner;
+};
+
+export function formatOwnedFilingEvaluateTimeoutDiagnostics(
+  diagnostics: OwnedFilingEvaluateTimeoutDiagnostics
+): string {
+  return [
+    `abort_timer_fired_at_ms=${diagnostics.abort_timer_fired_at_ms ?? "null"}`,
+    `abort_close_ms=${diagnostics.abort_close_ms ?? "null"}`,
+    `race_winner=${diagnostics.race_winner}`,
+  ].join(" ");
+}
+
 export class OwnedFilingEvaluateTimeoutError extends Error {
   readonly reason = OWNED_FILING_EVALUATE_TIMEOUT_REASON;
+  readonly diagnostics: OwnedFilingEvaluateTimeoutDiagnostics;
 
-  constructor(timeoutMs: number = OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS) {
+  constructor(
+    timeoutMs: number = OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+    diagnostics: OwnedFilingEvaluateTimeoutDiagnostics = {
+      abort_timer_fired_at_ms: null,
+      abort_close_ms: null,
+      race_winner: "evaluate_timeout",
+    }
+  ) {
     super(
-      `owned-filing playwright evaluate_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_EVALUATE_TIMEOUT_REASON})`
+      `owned-filing playwright evaluate_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_EVALUATE_TIMEOUT_REASON}) ${formatOwnedFilingEvaluateTimeoutDiagnostics(diagnostics)}`
     );
     this.name = "OwnedFilingEvaluateTimeoutError";
+    this.diagnostics = diagnostics;
   }
 }
 
@@ -314,9 +346,9 @@ export async function abortOwnedFilingPageEvaluate(page: Page): Promise<void> {
 
 /**
  * Bounds an async evaluate (or similar) with a wall-clock timeout.
- * When the timer fires, optionally aborts the in-flight Playwright call (typically via
- * page.close / abortOwnedFilingPageEvaluate) so the session is not held until Browserless
- * kills it. Always rethrows OwnedFilingEvaluateTimeoutError (never the abort's target-closed).
+ * On timer fire: immediately reject with OwnedFilingEvaluateTimeoutError, then fire-and-forget
+ * onTimeoutAbort (typically page.close). Never awaits abort before reject — a wedged Browserless
+ * CDP close must not delay evaluate_timeout. Post-abort evaluate rejections are swallowed.
  */
 export async function withOwnedFilingEvaluateTimeout<T>(
   run: () => Promise<T>,
@@ -326,37 +358,77 @@ export async function withOwnedFilingEvaluateTimeout<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
   let abortStarted = false;
+  let abortTimerFiredAtMs: number | null = null;
+  let abortCloseMs: number | null = null;
+  const startedAt = Date.now();
 
-  const runPromise = (async () => {
-    try {
-      return await run();
-    } catch (err: unknown) {
-      // After abort begins, ignore target-closed (etc.) so evaluate_timeout wins the race.
-      if (abortStarted) {
-        return await new Promise<T>(() => {});
+  const diagnostics = (
+    winner: OwnedFilingEvaluateRaceWinner
+  ): OwnedFilingEvaluateTimeoutDiagnostics => ({
+    abort_timer_fired_at_ms: abortTimerFiredAtMs,
+    abort_close_ms: abortCloseMs,
+    race_winner: winner,
+  });
+
+  const runPromise = Promise.resolve()
+    .then(() => run())
+    .then(
+      (value) => {
+        if (abortStarted || settled) {
+          return undefined as unknown as T;
+        }
+        settled = true;
+        return value;
+      },
+      (err: unknown) => {
+        if (abortStarted || settled) {
+          // Swallow post-abort / late rejections — race already settled or settling via timeout.
+          return undefined as unknown as T;
+        }
+        settled = true;
+        if (isOwnedFilingTargetClosedError(err)) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `${message} ${formatOwnedFilingEvaluateTimeoutDiagnostics(
+              diagnostics("evaluate_target_closed")
+            )}`
+          );
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `${message} ${formatOwnedFilingEvaluateTimeoutDiagnostics(diagnostics("evaluate_error"))}`
+        );
       }
-      throw err;
-    }
-  })();
+    );
+
+  // Avoid unhandledRejection if evaluate settles after timeout already won the race.
+  void runPromise.catch(() => undefined);
 
   try {
     return await Promise.race([
-      runPromise.then((value) => {
-        settled = true;
-        return value;
-      }),
+      runPromise,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
+          if (settled) return;
+          abortStarted = true;
+          abortTimerFiredAtMs = Math.max(0, Date.now() - startedAt);
+          settled = true;
+          // Reject immediately — do not await abort/page.close on a possibly wedged CDP.
+          reject(
+            new OwnedFilingEvaluateTimeoutError(timeoutMs, diagnostics("evaluate_timeout"))
+          );
           void (async () => {
-            if (settled) return;
-            abortStarted = true;
+            const closeStarted = Date.now();
             try {
               await onTimeoutAbort?.();
             } catch {
               // best-effort abort
-            }
-            if (!settled) {
-              reject(new OwnedFilingEvaluateTimeoutError(timeoutMs));
+            } finally {
+              abortCloseMs = Math.max(0, Date.now() - closeStarted);
+              console.warn(
+                "owned-filing evaluate_timeout abort finished:",
+                formatOwnedFilingEvaluateTimeoutDiagnostics(diagnostics("evaluate_timeout"))
+              );
             }
           })();
         }, timeoutMs);
