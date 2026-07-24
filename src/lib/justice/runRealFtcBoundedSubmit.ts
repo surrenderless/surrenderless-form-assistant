@@ -34,6 +34,7 @@ import {
   abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
   closeOwnedFilingBrowserFailClosed,
+  gotoOwnedFilingPage,
   isOwnedFilingEvaluateTimeoutError,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
@@ -313,7 +314,7 @@ export async function runRealFtcBoundedSubmit(
     page = playwrightSession.page;
     await stageTiming.run(
       "goto_1",
-      () => page!.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" }),
+      () => gotoOwnedFilingPage(page!, url),
       getCloseSnapshot
     );
 
@@ -351,7 +352,7 @@ export async function runRealFtcBoundedSubmit(
           );
           await stageTiming.run(
             "goto_retry",
-            () => page!.goto(url, { timeout: 60000, waitUntil: "domcontentloaded" }),
+            () => gotoOwnedFilingPage(page!, url),
             getCloseSnapshot
           );
           assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser!);
