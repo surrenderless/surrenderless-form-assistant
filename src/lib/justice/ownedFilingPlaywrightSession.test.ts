@@ -13,6 +13,7 @@ import {
   isOwnedFilingBbbReadyTimeoutError,
   isOwnedFilingBbbComplainPortalPath,
   evaluateOwnedFilingBbbPortalReady,
+  shouldRevealBbbStartComplaintViaGoal,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
   OWNED_FILING_BBB_READY_WAIT_MS,
@@ -747,10 +748,55 @@ describe("waitForFtcReportFraudInteractiveReady", () => {
 });
 
 describe("waitForBbbComplainPortalInteractiveReady", () => {
-  it("treats official /complain and Playwright mock entry as complain-portal paths", () => {
+  function mockBbbProbe(partial: Record<string, unknown> = {}) {
+    return {
+      pathname: "/file-a-complaint",
+      startComplaintFound: 0,
+      startComplaintVisibleCount: 0,
+      complaintGoalFound: 0,
+      complaintGoalVisibleCount: 0,
+      cookieAcceptVisibleCount: 0,
+      fieldCount: 0,
+      interactiveControlCount: 0,
+      haystack: "",
+      ...partial,
+    };
+  }
+
+  function pageWithBbbProbe(options: {
+    urlValue?: string;
+    title?: string;
+    frames?: number;
+    probe?: Record<string, unknown> | (() => Record<string, unknown>);
+    onGoalClick?: () => void;
+    evaluateHang?: boolean;
+    closed?: boolean;
+  }): Page {
+    const click = vi.fn(async () => {
+      options.onGoalClick?.();
+    });
+    return mockPage({
+      urlValue: options.urlValue ?? "https://www.bbb.org/file-a-complaint",
+      isClosed: vi.fn(() => !!options.closed),
+      title: vi.fn(async () => options.title ?? "File a Complaint | BBB"),
+      frames: vi.fn(() => Array.from({ length: options.frames ?? 1 }, () => ({}))),
+      evaluate: options.evaluateHang
+        ? vi.fn(() => new Promise(() => undefined))
+        : vi.fn(async () =>
+            typeof options.probe === "function" ? options.probe() : options.probe ?? mockBbbProbe()
+          ),
+      getByText: vi.fn(() => ({
+        first: () => ({ click }),
+      })),
+    } as unknown as Partial<Page>);
+  }
+
+  it("treats official /complain, /file-a-complaint, and Playwright mock entry as complain-portal paths", () => {
     expect(isOwnedFilingBbbComplainPortalPath("/complain")).toBe(true);
     expect(isOwnedFilingBbbComplainPortalPath("/complain/")).toBe(true);
     expect(isOwnedFilingBbbComplainPortalPath("/complain/business-details")).toBe(true);
+    expect(isOwnedFilingBbbComplainPortalPath("/file-a-complaint")).toBe(true);
+    expect(isOwnedFilingBbbComplainPortalPath("/file-a-complaint/search")).toBe(true);
     expect(isOwnedFilingBbbComplainPortalPath(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH)).toBe(
       true
     );
@@ -773,10 +819,33 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
     expect(decision).toEqual({ ready: false, ready_signal: null });
   });
 
-  it("accepts unique visible Start Complaint on live /complain", () => {
+  it("treats collapsed Start Complaint (present, not visible) as not ready", () => {
     expect(
       evaluateOwnedFilingBbbPortalReady({
-        pathname: "/complain/",
+        pathname: "/file-a-complaint",
+        startComplaintVisibleCount: 0,
+        fieldCount: 0,
+        interactiveControlCount: 4,
+      })
+    ).toEqual({ ready: false, ready_signal: null });
+    expect(
+      shouldRevealBbbStartComplaintViaGoal({
+        startComplaintVisibleCount: 0,
+        complaintGoalVisibleCount: 1,
+      })
+    ).toBe(true);
+    expect(
+      shouldRevealBbbStartComplaintViaGoal({
+        startComplaintVisibleCount: 1,
+        complaintGoalVisibleCount: 1,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts unique visible Start Complaint on live /file-a-complaint", () => {
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: "/file-a-complaint",
         startComplaintVisibleCount: 1,
         fieldCount: 0,
         interactiveControlCount: 1,
@@ -804,7 +873,6 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
         interactiveControlCount: 1,
       })
     ).toEqual({ ready: true, ready_signal: "mock_form_controls" });
-    // Same chrome on live /complain must NOT pass (production false-accept regression).
     expect(
       evaluateOwnedFilingBbbPortalReady({
         pathname: "/complain/",
@@ -815,79 +883,84 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
     ).toEqual({ ready: false, ready_signal: null });
   });
 
-  it("resolves when waitForFunction finds unique visible Start Complaint", async () => {
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({
-      jsonValue: async () => "start_complaint",
-    }));
-    const page = mockPage({
-      waitForFunction,
-      urlValue: "https://www.bbb.org/complain/",
-      title: vi.fn(async () => "File a Complaint | BBB"),
-      frames: vi.fn(() => [{}]),
-      evaluate: vi.fn(async () => ({
-        startComplaintFound: true,
+  it("resolves when unique visible Start Complaint is already interactive", async () => {
+    const page = pageWithBbbProbe({
+      probe: mockBbbProbe({
+        pathname: "/file-a-complaint",
+        startComplaintFound: 1,
+        startComplaintVisibleCount: 1,
+        interactiveControlCount: 1,
         haystack: "Start Complaint",
-      })),
-    } as unknown as Partial<Page>);
+      }),
+    });
 
-    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toEqual({
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 500)).resolves.toEqual({
       ready_signal: "start_complaint",
     });
-    expect(waitForFunction).toHaveBeenCalledTimes(1);
-    expect(waitForFunction.mock.calls[0]?.[1]).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
     expect(OWNED_FILING_BBB_READY_WAIT_MS).toBe(15_000);
   });
 
+  it("clicks unique complaint goal then becomes ready when Start Complaint turns visible", async () => {
+    let revealed = false;
+    const page = pageWithBbbProbe({
+      probe: () =>
+        revealed
+          ? mockBbbProbe({
+              pathname: "/file-a-complaint",
+              startComplaintFound: 1,
+              startComplaintVisibleCount: 1,
+              complaintGoalFound: 1,
+              complaintGoalVisibleCount: 1,
+              interactiveControlCount: 2,
+              haystack: "Start Complaint",
+            })
+          : mockBbbProbe({
+              pathname: "/file-a-complaint",
+              startComplaintFound: 1,
+              startComplaintVisibleCount: 0,
+              complaintGoalFound: 1,
+              complaintGoalVisibleCount: 1,
+              interactiveControlCount: 1,
+              haystack: "I want help resolving a problem with a business",
+            }),
+      onGoalClick: () => {
+        revealed = true;
+      },
+    });
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 2_000)).resolves.toEqual({
+      ready_signal: "start_complaint",
+    });
+    expect(revealed).toBe(true);
+  });
+
   it("resolves on Playwright mock form+Continue via mock_form_controls signal", async () => {
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async (fn, mockEntryPath) => {
-      expect(mockEntryPath).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
-      const decision = evaluateOwnedFilingBbbPortalReady({
+    const page = pageWithBbbProbe({
+      urlValue: `http://127.0.0.1:3000${PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH}`,
+      probe: mockBbbProbe({
         pathname: PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH,
-        startComplaintVisibleCount: 0,
         fieldCount: 1,
         interactiveControlCount: 1,
-      });
-      expect(decision.ready_signal).toBe("mock_form_controls");
-      void fn;
-      return { jsonValue: async () => decision.ready_signal };
+      }),
     });
-    const page = mockPage({
-      waitForFunction,
-      urlValue: `http://127.0.0.1:3000${PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH}`,
-    } as unknown as Partial<Page>);
 
-    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toEqual({
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 500)).resolves.toEqual({
       ready_signal: "mock_form_controls",
     });
   });
 
   it("fails closed with ready_timeout and post-nav diagnostics when controls never appear", async () => {
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
-      async () =>
-        new Promise((_resolve, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                Object.assign(new Error("page.waitForFunction: Timeout 50ms exceeded."), {
-                  name: "TimeoutError",
-                })
-              ),
-            80
-          );
-        })
-    );
-    const page = mockPage({
-      waitForFunction,
+    const page = pageWithBbbProbe({
       urlValue: "https://www.bbb.org/complain/",
-      title: vi.fn(async () => "Just a moment..."),
-      frames: vi.fn(() => [{}, {}]),
-      evaluate: vi.fn(async () => ({
-        startComplaintFound: false,
+      title: "Just a moment...",
+      frames: 2,
+      probe: mockBbbProbe({
+        pathname: "/complain/",
         haystack: "Just a moment... Checking your browser before accessing bbb.org.",
-      })),
-    } as unknown as Partial<Page>);
+      }),
+    });
 
-    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).rejects.toSatisfy(
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 250)).rejects.toSatisfy(
       (err: unknown) => {
         expect(isOwnedFilingBbbReadyTimeoutError(err)).toBe(true);
         expect(err).toBeInstanceOf(OwnedFilingBbbReadyTimeoutError);
@@ -898,63 +971,68 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
         expect(message).toContain("ready_signal=none");
         expect(message).toContain("page_url=https://www.bbb.org/complain/");
         expect(message).toContain("start_complaint_found=false");
+        expect(message).toContain("start_complaint_visible_count=0");
+        expect(message).toContain("complaint_goal_visible_count=0");
         expect(message).toMatch(/challenge_markers=/);
         return true;
       }
     );
   });
 
-  it("fails closed on hung waitForFunction via Node wall-clock race (not only Playwright timeout)", async () => {
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
-      () => new Promise(() => undefined) // never settles
-    );
-    const page = mockPage({
-      waitForFunction,
+  it("fails closed on hung DOM probe via Node wall-clock budget", async () => {
+    const page = pageWithBbbProbe({
+      evaluateHang: true,
       urlValue: "https://www.bbb.org/complain/",
-      title: vi.fn(async () => "BBB"),
-      frames: vi.fn(() => [{}]),
-      evaluate: vi.fn(async () => ({
-        startComplaintFound: false,
-        haystack: "Please enable JavaScript",
-      })),
-    } as unknown as Partial<Page>);
+    });
 
     const started = Date.now();
     await expect(waitForBbbComplainPortalInteractiveReady(page, 40)).rejects.toBeInstanceOf(
       OwnedFilingBbbReadyTimeoutError
     );
-    expect(Date.now() - started).toBeLessThan(2_500);
+    // Probe + diagnostics each race a 2s diag timeout when evaluate never settles.
+    expect(Date.now() - started).toBeLessThan(5_500);
   });
 
   it("propagates closed-target errors without wrapping as ready_timeout", async () => {
-    const closed = new Error("Target page, context or browser has been closed");
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => {
-      throw closed;
-    });
-    const page = mockPage({ waitForFunction } as unknown as Partial<Page>);
-
-    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).rejects.toBe(closed);
+    const page = pageWithBbbProbe({ closed: true });
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).rejects.toSatisfy(
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        expect(message).toMatch(/closed/i);
+        expect(isOwnedFilingBbbReadyTimeoutError(err)).toBe(false);
+        return true;
+      }
+    );
   });
 
-  it("collectOwnedFilingBbbPostNavDiagnostics formats durable note-safe fields", async () => {
-    const page = mockPage({
-      urlValue: "https://www.bbb.org/complain/",
-      title: vi.fn(async () => "File a Complaint | Better Business Bureau"),
-      frames: vi.fn(() => [{}, {}]),
-      evaluate: vi.fn(async () => ({
-        startComplaintFound: true,
+  it("collectOwnedFilingBbbPostNavDiagnostics formats durable note-safe fields including visibility", async () => {
+    const page = pageWithBbbProbe({
+      urlValue: "https://www.bbb.org/file-a-complaint",
+      title: "File a Complaint | Better Business Bureau",
+      frames: 2,
+      probe: mockBbbProbe({
+        pathname: "/file-a-complaint",
+        startComplaintFound: 1,
+        startComplaintVisibleCount: 0,
+        complaintGoalFound: 1,
+        complaintGoalVisibleCount: 1,
         haystack: "Start Complaint",
-      })),
-    } as unknown as Partial<Page>);
+      }),
+    });
 
     const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
     expect(diagnostics).toMatchObject({
-      page_url: "https://www.bbb.org/complain/",
+      page_url: "https://www.bbb.org/file-a-complaint",
       frame_count: 2,
       start_complaint_found: true,
+      start_complaint_visible_count: 0,
+      complaint_goal_found: true,
+      complaint_goal_visible_count: 1,
       challenge_markers: "none",
     });
     expect(diagnostics.title).toContain("File a Complaint");
-    expect(formatOwnedFilingBbbPostNavDiagnostics(diagnostics)).toContain("start_complaint_found=true");
+    expect(formatOwnedFilingBbbPostNavDiagnostics(diagnostics)).toContain(
+      "start_complaint_visible_count=0"
+    );
   });
 });

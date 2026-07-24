@@ -983,6 +983,9 @@ export type OwnedFilingBbbPostNavDiagnostics = {
   title: string;
   frame_count: number | "unavailable";
   start_complaint_found: boolean | "unavailable";
+  start_complaint_visible_count: number | "unavailable";
+  complaint_goal_found: boolean | "unavailable";
+  complaint_goal_visible_count: number | "unavailable";
   challenge_markers: string;
 };
 
@@ -994,6 +997,9 @@ export function formatOwnedFilingBbbPostNavDiagnostics(
     `title=${JSON.stringify(diagnostics.title)}`,
     `frame_count=${diagnostics.frame_count}`,
     `start_complaint_found=${diagnostics.start_complaint_found}`,
+    `start_complaint_visible_count=${diagnostics.start_complaint_visible_count}`,
+    `complaint_goal_found=${diagnostics.complaint_goal_found}`,
+    `complaint_goal_visible_count=${diagnostics.complaint_goal_visible_count}`,
     `challenge_markers=${diagnostics.challenge_markers || "none"}`,
   ].join(" ");
 }
@@ -1009,6 +1015,14 @@ const BBB_CHALLENGE_MARKER_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
   { id: "captcha", pattern: /\bcaptcha\b/i },
   { id: "enable_javascript", pattern: /enable javascript/i },
 ];
+
+/** Live BBB goal-picker complaint option (reveals Start Complaint). */
+export const OWNED_FILING_BBB_COMPLAINT_GOAL_RE =
+  /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i;
+
+export const OWNED_FILING_BBB_START_COMPLAINT_RE = /\bstart\s+complaint\b/i;
+
+export const OWNED_FILING_BBB_COOKIE_ACCEPT_RE = /^\s*accept\s+all\s+cookies\s*$/i;
 
 function truncateDiagText(value: string, max = 120): string {
   const cleaned = value.replace(/\s+/g, " ").trim();
@@ -1033,6 +1047,84 @@ async function withOwnedFilingDiagTimeout<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+type OwnedFilingBbbReadyDomProbe = {
+  pathname: string;
+  startComplaintFound: number;
+  startComplaintVisibleCount: number;
+  complaintGoalFound: number;
+  complaintGoalVisibleCount: number;
+  cookieAcceptVisibleCount: number;
+  fieldCount: number;
+  interactiveControlCount: number;
+  haystack: string;
+};
+
+/** Browser-world DOM probe shared by readiness polling and post-nav diagnostics. */
+async function probeOwnedFilingBbbReadyDom(page: Page): Promise<OwnedFilingBbbReadyDomProbe | null> {
+  return withOwnedFilingDiagTimeout(async () => {
+    return page.evaluate(() => {
+      const isVisiblyInteractive = (el: Element): boolean => {
+        const html = el as HTMLElement;
+        if (html.hidden) return false;
+        const style = window.getComputedStyle(html);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.opacity === "0" ||
+          style.pointerEvents === "none"
+        ) {
+          return false;
+        }
+        const rect = html.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+
+      const labelOf = (el: Element): string =>
+        `${el.textContent || ""} ${el.getAttribute("value") || ""}`.replace(/\s+/g, " ").trim();
+
+      const controls = Array.from(
+        document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
+      );
+      const startComplaintControls = controls.filter((el) =>
+        /\bstart\s+complaint\b/i.test(labelOf(el))
+      );
+      const goalControls = controls.filter((el) =>
+        /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i.test(
+          labelOf(el)
+        )
+      );
+      // Goal may also be a clickable card/heading that is not a classic button — include
+      // elements that look like selectable options with matching text.
+      const goalTextNodes = Array.from(
+        document.querySelectorAll("button, a[href], [role='button'], [role='radio'], [role='option'], label, h2, h3, p, div, span, li")
+      ).filter((el) =>
+        /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i.test(
+          labelOf(el)
+        )
+      );
+      const goalCandidates = goalControls.length > 0 ? goalControls : goalTextNodes;
+
+      const cookieAccept = controls.filter((el) =>
+        /^\s*accept\s+all\s+cookies\s*$/i.test(labelOf(el))
+      );
+
+      const bodyText = document.body?.innerText?.slice(0, 4000) || "";
+      const titleText = document.title || "";
+      return {
+        pathname: window.location.pathname || "",
+        startComplaintFound: startComplaintControls.length,
+        startComplaintVisibleCount: startComplaintControls.filter(isVisiblyInteractive).length,
+        complaintGoalFound: goalCandidates.length,
+        complaintGoalVisibleCount: goalCandidates.filter(isVisiblyInteractive).length,
+        cookieAcceptVisibleCount: cookieAccept.filter(isVisiblyInteractive).length,
+        fieldCount: document.querySelectorAll("input, textarea, select").length,
+        interactiveControlCount: controls.filter(isVisiblyInteractive).length,
+        haystack: `${titleText}\n${bodyText}`,
+      };
+    });
+  }, null);
 }
 
 /**
@@ -1068,21 +1160,7 @@ export async function collectOwnedFilingBbbPostNavDiagnostics(
     }
   }, "unavailable" as const);
 
-  const probe = await withOwnedFilingDiagTimeout(async () => {
-    return page.evaluate(() => {
-      const bodyText = document.body?.innerText?.slice(0, 4000) || "";
-      const titleText = document.title || "";
-      const haystack = `${titleText}\n${bodyText}`;
-      const controls = Array.from(
-        document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
-      );
-      const startComplaintFound = controls.some((el) => {
-        const label = `${el.textContent || ""} ${el.getAttribute("value") || ""}`.trim();
-        return /^\s*start\s+complaint\s*$/i.test(label) || /\bstart\s+complaint\b/i.test(label);
-      });
-      return { startComplaintFound, haystack };
-    });
-  }, null);
+  const probe = await probeOwnedFilingBbbReadyDom(page);
 
   const challengeHits: string[] = [];
   if (probe?.haystack) {
@@ -1091,9 +1169,7 @@ export async function collectOwnedFilingBbbPostNavDiagnostics(
         challengeHits.push(marker.id);
       }
     }
-  }
-  // Also scan title alone when evaluate probe failed.
-  if (!probe) {
+  } else {
     for (const marker of BBB_CHALLENGE_MARKER_PATTERNS) {
       if (marker.pattern.test(title)) {
         challengeHits.push(marker.id);
@@ -1105,7 +1181,10 @@ export async function collectOwnedFilingBbbPostNavDiagnostics(
     page_url,
     title,
     frame_count,
-    start_complaint_found: probe ? probe.startComplaintFound : "unavailable",
+    start_complaint_found: probe ? probe.startComplaintFound > 0 : "unavailable",
+    start_complaint_visible_count: probe ? probe.startComplaintVisibleCount : "unavailable",
+    complaint_goal_found: probe ? probe.complaintGoalFound > 0 : "unavailable",
+    complaint_goal_visible_count: probe ? probe.complaintGoalVisibleCount : "unavailable",
     challenge_markers: challengeHits.length > 0 ? challengeHits.slice(0, 6).join(",") : "none",
   };
 }
@@ -1121,6 +1200,9 @@ export class OwnedFilingBbbReadyTimeoutError extends Error {
       title: "unavailable",
       frame_count: "unavailable",
       start_complaint_found: "unavailable",
+      start_complaint_visible_count: "unavailable",
+      complaint_goal_found: "unavailable",
+      complaint_goal_visible_count: "unavailable",
       challenge_markers: "none",
     }
   ) {
@@ -1139,22 +1221,20 @@ export function isOwnedFilingBbbReadyTimeoutError(err: unknown): boolean {
 }
 
 /**
- * True for official BBB /complain paths and the Playwright loopback mock entry
- * (/mock/real-bbb-complain). Used for path classification only — live readiness
- * still requires a unique visible Start Complaint CTA.
+ * True for official BBB complain / file-a-complaint paths and the Playwright loopback mock entry.
+ * Live readiness still requires a unique visible Start Complaint CTA (after goal reveal if needed).
  */
 export function isOwnedFilingBbbComplainPortalPath(pathname: string): boolean {
   const normalized = pathname.replace(/\/$/, "") || "/";
   if (normalized === PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH) {
     return true;
   }
-  return /\/complain/i.test(pathname);
+  return /\/complain(?:\/|$)/i.test(pathname) || /\/file-a-complaint(?:\/|$)/i.test(pathname);
 }
 
 /**
- * Pure readiness decision (unit-testable). Live /complain never becomes ready from
- * generic chrome (links + any input); only a unique visible Start Complaint CTA.
- * Mock entry path may use form + interactive controls.
+ * Pure readiness decision (unit-testable). Live never becomes ready from generic chrome;
+ * only a unique visible Start Complaint CTA. Mock entry path may use form + interactive controls.
  */
 export function evaluateOwnedFilingBbbPortalReady(input: {
   pathname: string;
@@ -1184,108 +1264,113 @@ export function evaluateOwnedFilingBbbPortalReady(input: {
   return { ready: false, ready_signal: null };
 }
 
+/** True when the complaint goal should be clicked to reveal Start Complaint. */
+export function shouldRevealBbbStartComplaintViaGoal(input: {
+  startComplaintVisibleCount: number;
+  complaintGoalVisibleCount: number;
+}): boolean {
+  return input.startComplaintVisibleCount === 0 && input.complaintGoalVisibleCount === 1;
+}
+
 export type OwnedFilingBbbReadyResult = {
   ready_signal: OwnedFilingBbbReadySignal;
 };
 
+async function clickOwnedFilingBbbUniqueText(
+  page: Page,
+  pattern: RegExp,
+  timeoutMs: number
+): Promise<void> {
+  const locator = page.getByText(pattern).first();
+  await locator.click({ timeout: Math.max(500, Math.min(2_500, timeoutMs)) });
+}
+
 /**
  * Hard-fails unless the BBB complain portal shows a real interactive control:
- * - Live: unique visible “Start Complaint” CTA only (not pathname+/any input+/any link).
+ * - Live: unique visible “Start Complaint” (after optional cookie dismiss + complaint-goal reveal).
  * - Playwright mock entry: form fields + interactive control on /mock/real-bbb-complain only.
- * Uses a Node-local wall-clock race so a wedged waitForFunction cannot burn the session.
- * Does not close the page on timeout — diagnostics are collected afterward.
+ * Uses a Node-local wall-clock budget so wedged CDP cannot burn the session.
  */
 export async function waitForBbbComplainPortalInteractiveReady(
   page: Page,
   timeoutMs: number = OWNED_FILING_BBB_READY_WAIT_MS
 ): Promise<OwnedFilingBbbReadyResult> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   let settled = false;
+  let cookieDismissed = false;
+  let goalClicked = false;
 
-  const readyPromise = page
-    .waitForFunction(
-      (mockEntryPath: string) => {
-        if (!document.body) return false as const;
-
-        const isVisiblyInteractive = (el: Element): boolean => {
-          const html = el as HTMLElement;
-          if (html.hidden) return false;
-          const style = window.getComputedStyle(html);
-          if (
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            style.opacity === "0" ||
-            style.pointerEvents === "none"
-          ) {
-            return false;
-          }
-          const rect = html.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        };
-
-        const controls = Array.from(
-          document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
-        );
-        const startComplaintVisibleCount = controls.filter((el) => {
-          const label = `${el.textContent || ""} ${el.getAttribute("value") || ""}`.trim();
-          if (!/\bstart\s+complaint\b/i.test(label)) return false;
-          return isVisiblyInteractive(el);
-        }).length;
-
-        const pathname = window.location.pathname || "";
-        const normalized = pathname.replace(/\/$/, "") || "/";
-        const fieldCount = document.querySelectorAll("input, textarea, select").length;
-        const interactiveControlCount = controls.filter(isVisiblyInteractive).length;
-
-        // Inline the same decision as evaluateOwnedFilingBbbPortalReady (page world).
-        if (startComplaintVisibleCount === 1) return "start_complaint" as const;
-        if (startComplaintVisibleCount > 1) return false as const;
-        if (normalized === mockEntryPath && fieldCount >= 1 && interactiveControlCount >= 1) {
-          return "mock_form_controls" as const;
-        }
-        return false as const;
-      },
-      PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH,
-      { timeout: timeoutMs }
-    )
-    .then(
-      (handle) => {
-        settled = true;
-        return handle;
-      },
-      (err: unknown) => {
-        if (settled) return undefined;
-        settled = true;
-        throw err;
-      }
-    );
-
-  void readyPromise.catch(() => undefined);
+  const remaining = () => Math.max(0, deadline - Date.now());
 
   try {
-    const handle = await Promise.race([
-      readyPromise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          reject(new Error(`bbb_ready_wait_wall_clock after ${timeoutMs}ms`));
-        }, timeoutMs);
-      }),
-    ]);
-    const signal = (await handle?.jsonValue()) as OwnedFilingBbbReadySignal | false | null;
-    if (signal !== "start_complaint" && signal !== "mock_form_controls") {
-      const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
-      throw new OwnedFilingBbbReadyTimeoutError(timeoutMs, diagnostics);
+    while (Date.now() < deadline) {
+      if (page.isClosed()) {
+        throw new Error("Target page, context or browser has been closed");
+      }
+
+      const probe = await probeOwnedFilingBbbReadyDom(page);
+      if (!probe) {
+        await new Promise((r) => setTimeout(r, 150));
+        continue;
+      }
+
+      const decision = evaluateOwnedFilingBbbPortalReady({
+        pathname: probe.pathname,
+        startComplaintVisibleCount: probe.startComplaintVisibleCount,
+        fieldCount: probe.fieldCount,
+        interactiveControlCount: probe.interactiveControlCount,
+      });
+      if (decision.ready && decision.ready_signal) {
+        settled = true;
+        return { ready_signal: decision.ready_signal };
+      }
+
+      // Optional cookie dismiss only when it is uniquely visible and Start Complaint is not yet ready.
+      if (
+        !cookieDismissed &&
+        probe.cookieAcceptVisibleCount === 1 &&
+        probe.startComplaintVisibleCount !== 1 &&
+        remaining() > 400
+      ) {
+        try {
+          await clickOwnedFilingBbbUniqueText(page, OWNED_FILING_BBB_COOKIE_ACCEPT_RE, remaining());
+          cookieDismissed = true;
+          continue;
+        } catch {
+          cookieDismissed = true; // do not loop forever on a wedged cookie control
+        }
+      }
+
+      // Reveal Start Complaint by selecting the unique visible complaint goal.
+      if (
+        !goalClicked &&
+        shouldRevealBbbStartComplaintViaGoal({
+          startComplaintVisibleCount: probe.startComplaintVisibleCount,
+          complaintGoalVisibleCount: probe.complaintGoalVisibleCount,
+        }) &&
+        remaining() > 400
+      ) {
+        try {
+          await clickOwnedFilingBbbUniqueText(page, OWNED_FILING_BBB_COMPLAINT_GOAL_RE, remaining());
+          goalClicked = true;
+          continue;
+        } catch {
+          goalClicked = true;
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 150));
     }
-    return { ready_signal: signal };
+
+    const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
+    throw new OwnedFilingBbbReadyTimeoutError(timeoutMs, diagnostics);
   } catch (err: unknown) {
+    if (settled) throw err;
     if (isOwnedFilingClosedTargetProviderError(err)) throw err;
     if (isOwnedFilingBbbReadyTimeoutError(err)) throw err;
     const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
     throw new OwnedFilingBbbReadyTimeoutError(timeoutMs, diagnostics);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

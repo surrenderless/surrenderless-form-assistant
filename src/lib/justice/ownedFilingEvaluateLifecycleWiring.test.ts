@@ -195,4 +195,18 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(source).not.toContain("collectOwnedFilingFtcPageDataInBrowser");
     expect(source).not.toContain("useExactTextButtonLocator");
   });
+
+  it("BBB live readiness requires visible Start Complaint after optional goal reveal", () => {
+    const source = read("src/lib/justice/ownedFilingPlaywrightSession.ts");
+    expect(source).toContain("start_complaint_visible_count");
+    expect(source).toContain("complaint_goal_visible_count");
+    expect(source).toContain("shouldRevealBbbStartComplaintViaGoal");
+    expect(source).toContain("OWNED_FILING_BBB_COMPLAINT_GOAL_RE");
+    expect(source).toContain("/file-a-complaint");
+    // Live ready must not weaken to presence-only Start Complaint or generic chrome.
+    expect(source).toMatch(
+      /startComplaintVisibleCount\s*===\s*1[\s\S]*?ready_signal:\s*["']start_complaint["']/
+    );
+    expect(source).toContain("mock_form_controls");
+  });
 });

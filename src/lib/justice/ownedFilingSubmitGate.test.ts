@@ -100,6 +100,21 @@ describe("classifyOwnedFilingClick", () => {
     );
   });
 
+  it("classifies BBB complaint goal-picker option as safe navigation (not final submit)", () => {
+    expect(
+      classifyOwnedFilingClick({
+        selectorType: "text",
+        value: "I want help resolving a problem with a business",
+      })
+    ).toBe("safe");
+    expect(
+      classifyOwnedFilingClick({
+        selectorType: "text",
+        value: "I want help resolving a problem with a business.",
+      })
+    ).toBe("safe");
+  });
+
   it("classifies submit/file/confirm as irreversible", () => {
     expect(classifyOwnedFilingClick({ selectorType: "text", value: "Submit complaint" })).toBe(
       "irreversible"
