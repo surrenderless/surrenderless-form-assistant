@@ -11,6 +11,7 @@ import {
   isOwnedFilingEvaluateTimeoutError,
   isOwnedFilingNavigationTimeoutError,
   isOwnedFilingBbbReadyTimeoutError,
+  isOwnedFilingBbbComplainPortalPath,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
   OWNED_FILING_BBB_READY_WAIT_MS,
@@ -36,6 +37,7 @@ import {
   OwnedFilingSessionTimeoutError,
   isOwnedFilingSessionTimeoutError,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
+import { PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 
 function mockPage(overrides: Partial<Page> & { urlValue?: string } = {}): Page {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
@@ -736,6 +738,22 @@ describe("waitForFtcReportFraudInteractiveReady", () => {
 });
 
 describe("waitForBbbComplainPortalInteractiveReady", () => {
+  it("treats official /complain and Playwright mock entry as complain-portal paths", () => {
+    expect(isOwnedFilingBbbComplainPortalPath("/complain")).toBe(true);
+    expect(isOwnedFilingBbbComplainPortalPath("/complain/")).toBe(true);
+    expect(isOwnedFilingBbbComplainPortalPath("/complain/business-details")).toBe(true);
+    expect(isOwnedFilingBbbComplainPortalPath(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH)).toBe(
+      true
+    );
+    expect(
+      isOwnedFilingBbbComplainPortalPath(`${PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH}/`)
+    ).toBe(true);
+    // Hyphenated mock segment must not rely solely on /\/complain/ (regression for PR #932 CI).
+    expect(/\/complain/i.test(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH)).toBe(false);
+    expect(isOwnedFilingBbbComplainPortalPath("/mock/unrelated")).toBe(false);
+    expect(isOwnedFilingBbbComplainPortalPath("/")).toBe(false);
+  });
+
   it("resolves when waitForFunction finds interactive portal controls", async () => {
     const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => undefined);
     const page = mockPage({
@@ -751,7 +769,33 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
 
     await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toBeUndefined();
     expect(waitForFunction).toHaveBeenCalledTimes(1);
+    expect(waitForFunction.mock.calls[0]?.[1]).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
     expect(OWNED_FILING_BBB_READY_WAIT_MS).toBe(15_000);
+  });
+
+  it("passes mock entry path so Playwright loopback form+Continue pages can become ready", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
+      async (fn, mockEntryPath) => {
+        expect(mockEntryPath).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
+        // Simulate the browser predicate against the E2E mock DOM shape.
+        const pathname = PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH;
+        expect(isOwnedFilingBbbComplainPortalPath(pathname)).toBe(true);
+        const fieldCount = 1;
+        const controls = 1;
+        const hasStartComplaint = false;
+        expect(hasStartComplaint || (isOwnedFilingBbbComplainPortalPath(pathname) && fieldCount >= 1 && controls >= 1)).toBe(
+          true
+        );
+        void fn;
+        return undefined;
+      }
+    );
+    const page = mockPage({
+      waitForFunction,
+      urlValue: `http://127.0.0.1:3000${PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH}`,
+    } as unknown as Partial<Page>);
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toBeUndefined();
   });
 
   it("fails closed with ready_timeout and post-nav diagnostics when controls never appear", async () => {

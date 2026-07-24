@@ -1,5 +1,6 @@
 import "server-only";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH } from "@/lib/testing/playwrightMockRealBbbBoundedSubmitLoop";
 
 export type OwnedFilingChromiumMode = "browserless" | "local";
 
@@ -1128,6 +1129,18 @@ export function isOwnedFilingBbbReadyTimeoutError(err: unknown): boolean {
 }
 
 /**
+ * True for official BBB /complain paths and the Playwright loopback mock entry
+ * (/mock/real-bbb-complain). Challenge shells without form controls still fail closed.
+ */
+export function isOwnedFilingBbbComplainPortalPath(pathname: string): boolean {
+  const normalized = pathname.replace(/\/$/, "") || "/";
+  if (normalized === PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH) {
+    return true;
+  }
+  return /\/complain/i.test(pathname);
+}
+
+/**
  * Hard-fails unless the BBB complain portal shows a real interactive control
  * (Start Complaint CTA or stable complain-path form controls). Uses a Node-local
  * wall-clock race so a wedged waitForFunction cannot burn the Browserless session.
@@ -1142,7 +1155,7 @@ export async function waitForBbbComplainPortalInteractiveReady(
 
   const readyPromise = page
     .waitForFunction(
-      () => {
+      (mockEntryPath: string) => {
         if (!document.body) return false;
         const controls = Array.from(
           document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
@@ -1152,11 +1165,14 @@ export async function waitForBbbComplainPortalInteractiveReady(
           return /\bstart\s+complaint\b/i.test(label);
         });
         if (hasStartComplaint) return true;
-        const onComplain = /\/complain/i.test(window.location.pathname || "");
+        const pathname = window.location.pathname || "";
+        const normalized = pathname.replace(/\/$/, "") || "/";
+        const onComplain =
+          /\/complain/i.test(pathname) || normalized === mockEntryPath;
         const fieldCount = document.querySelectorAll("input, textarea, select").length;
         return onComplain && fieldCount >= 1 && controls.length >= 1;
       },
-      undefined,
+      PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH,
       { timeout: timeoutMs }
     )
     .then(
