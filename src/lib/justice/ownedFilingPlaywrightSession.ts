@@ -323,6 +323,9 @@ export const OWNED_FILING_SESSION_TIMEOUT_REASON = "session_timeout";
 
 export const OWNED_FILING_BBB_READY_TIMEOUT_REASON = "ready_timeout";
 
+/** How BBB portal readiness was proven (durable dry-run / provider telemetry). */
+export type OwnedFilingBbbReadySignal = "start_complaint" | "mock_form_controls";
+
 export type OwnedFilingEvaluateRaceWinner =
   | "evaluate_timeout"
   | "evaluate_result"
@@ -476,6 +479,8 @@ export type OwnedFilingSessionBudgetControl = {
   setPhase: (phase: string) => void;
   /** Disarm after first successful evaluate so healthy multi-step runs can continue. */
   clear: () => void;
+  /** Sticky BBB portal-ready signal for durable provider-kill / session telemetry. */
+  setReadySignal: (signal: OwnedFilingBbbReadySignal) => void;
 };
 
 type PlaywrightCdpConnection = {
@@ -543,6 +548,7 @@ export async function withOwnedFilingSessionBudget<T>(
   let budgetFiredAtMs: number | null = null;
   let abortCloseMs: number | null = null;
   let phase: string | null = null;
+  let readySignal: OwnedFilingBbbReadySignal | null = null;
   const startedAt = Date.now();
 
   const diagnostics = (
@@ -565,6 +571,9 @@ export async function withOwnedFilingSessionBudget<T>(
         timer = undefined;
       }
     },
+    setReadySignal: (signal) => {
+      readySignal = signal;
+    },
   };
 
   const annotateProviderKill = (err: unknown): Error => {
@@ -576,6 +585,7 @@ export async function withOwnedFilingSessionBudget<T>(
         `session_bound_ms=${timeoutMs}`,
         `budget_fired_at_ms=null`,
         `phase=${phase ?? "null"}`,
+        `ready_signal=${readySignal ?? "null"}`,
         `elapsed_ms=${elapsed}`,
         `race_winner=provider_session_kill`,
       ].join(" ")
@@ -1115,7 +1125,7 @@ export class OwnedFilingBbbReadyTimeoutError extends Error {
     }
   ) {
     super(
-      `owned-filing playwright ready_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_BBB_READY_TIMEOUT_REASON}) ${formatOwnedFilingBbbPostNavDiagnostics(diagnostics)}`
+      `owned-filing playwright ready_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_BBB_READY_TIMEOUT_REASON}) phase=ready ready_result=timeout ready_signal=none ${formatOwnedFilingBbbPostNavDiagnostics(diagnostics)}`
     );
     this.name = "OwnedFilingBbbReadyTimeoutError";
     this.diagnostics = diagnostics;
@@ -1130,7 +1140,8 @@ export function isOwnedFilingBbbReadyTimeoutError(err: unknown): boolean {
 
 /**
  * True for official BBB /complain paths and the Playwright loopback mock entry
- * (/mock/real-bbb-complain). Challenge shells without form controls still fail closed.
+ * (/mock/real-bbb-complain). Used for path classification only — live readiness
+ * still requires a unique visible Start Complaint CTA.
  */
 export function isOwnedFilingBbbComplainPortalPath(pathname: string): boolean {
   const normalized = pathname.replace(/\/$/, "") || "/";
@@ -1141,46 +1152,109 @@ export function isOwnedFilingBbbComplainPortalPath(pathname: string): boolean {
 }
 
 /**
- * Hard-fails unless the BBB complain portal shows a real interactive control
- * (Start Complaint CTA or stable complain-path form controls). Uses a Node-local
- * wall-clock race so a wedged waitForFunction cannot burn the Browserless session.
+ * Pure readiness decision (unit-testable). Live /complain never becomes ready from
+ * generic chrome (links + any input); only a unique visible Start Complaint CTA.
+ * Mock entry path may use form + interactive controls.
+ */
+export function evaluateOwnedFilingBbbPortalReady(input: {
+  pathname: string;
+  /** Count of unique visible Start Complaint CTAs (0 / 1 / >1). */
+  startComplaintVisibleCount: number;
+  fieldCount: number;
+  interactiveControlCount: number;
+  mockEntryPath?: string;
+}): { ready: boolean; ready_signal: OwnedFilingBbbReadySignal | null } {
+  const mockEntryPath =
+    input.mockEntryPath ?? PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH;
+  if (input.startComplaintVisibleCount === 1) {
+    return { ready: true, ready_signal: "start_complaint" };
+  }
+  // Ambiguous duplicate CTAs — fail closed.
+  if (input.startComplaintVisibleCount > 1) {
+    return { ready: false, ready_signal: null };
+  }
+  const normalized = input.pathname.replace(/\/$/, "") || "/";
+  if (
+    normalized === mockEntryPath &&
+    input.fieldCount >= 1 &&
+    input.interactiveControlCount >= 1
+  ) {
+    return { ready: true, ready_signal: "mock_form_controls" };
+  }
+  return { ready: false, ready_signal: null };
+}
+
+export type OwnedFilingBbbReadyResult = {
+  ready_signal: OwnedFilingBbbReadySignal;
+};
+
+/**
+ * Hard-fails unless the BBB complain portal shows a real interactive control:
+ * - Live: unique visible “Start Complaint” CTA only (not pathname+/any input+/any link).
+ * - Playwright mock entry: form fields + interactive control on /mock/real-bbb-complain only.
+ * Uses a Node-local wall-clock race so a wedged waitForFunction cannot burn the session.
  * Does not close the page on timeout — diagnostics are collected afterward.
  */
 export async function waitForBbbComplainPortalInteractiveReady(
   page: Page,
   timeoutMs: number = OWNED_FILING_BBB_READY_WAIT_MS
-): Promise<void> {
+): Promise<OwnedFilingBbbReadyResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
 
   const readyPromise = page
     .waitForFunction(
       (mockEntryPath: string) => {
-        if (!document.body) return false;
+        if (!document.body) return false as const;
+
+        const isVisiblyInteractive = (el: Element): boolean => {
+          const html = el as HTMLElement;
+          if (html.hidden) return false;
+          const style = window.getComputedStyle(html);
+          if (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.opacity === "0" ||
+            style.pointerEvents === "none"
+          ) {
+            return false;
+          }
+          const rect = html.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
         const controls = Array.from(
           document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
         );
-        const hasStartComplaint = controls.some((el) => {
+        const startComplaintVisibleCount = controls.filter((el) => {
           const label = `${el.textContent || ""} ${el.getAttribute("value") || ""}`.trim();
-          return /\bstart\s+complaint\b/i.test(label);
-        });
-        if (hasStartComplaint) return true;
+          if (!/\bstart\s+complaint\b/i.test(label)) return false;
+          return isVisiblyInteractive(el);
+        }).length;
+
         const pathname = window.location.pathname || "";
         const normalized = pathname.replace(/\/$/, "") || "/";
-        const onComplain =
-          /\/complain/i.test(pathname) || normalized === mockEntryPath;
         const fieldCount = document.querySelectorAll("input, textarea, select").length;
-        return onComplain && fieldCount >= 1 && controls.length >= 1;
+        const interactiveControlCount = controls.filter(isVisiblyInteractive).length;
+
+        // Inline the same decision as evaluateOwnedFilingBbbPortalReady (page world).
+        if (startComplaintVisibleCount === 1) return "start_complaint" as const;
+        if (startComplaintVisibleCount > 1) return false as const;
+        if (normalized === mockEntryPath && fieldCount >= 1 && interactiveControlCount >= 1) {
+          return "mock_form_controls" as const;
+        }
+        return false as const;
       },
       PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH,
       { timeout: timeoutMs }
     )
     .then(
-      () => {
+      (handle) => {
         settled = true;
+        return handle;
       },
       (err: unknown) => {
-        if (settled) return;
+        if (settled) return undefined;
         settled = true;
         throw err;
       }
@@ -1189,7 +1263,7 @@ export async function waitForBbbComplainPortalInteractiveReady(
   void readyPromise.catch(() => undefined);
 
   try {
-    await Promise.race([
+    const handle = await Promise.race([
       readyPromise,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
@@ -1199,8 +1273,15 @@ export async function waitForBbbComplainPortalInteractiveReady(
         }, timeoutMs);
       }),
     ]);
+    const signal = (await handle?.jsonValue()) as OwnedFilingBbbReadySignal | false | null;
+    if (signal !== "start_complaint" && signal !== "mock_form_controls") {
+      const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
+      throw new OwnedFilingBbbReadyTimeoutError(timeoutMs, diagnostics);
+    }
+    return { ready_signal: signal };
   } catch (err: unknown) {
     if (isOwnedFilingClosedTargetProviderError(err)) throw err;
+    if (isOwnedFilingBbbReadyTimeoutError(err)) throw err;
     const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
     throw new OwnedFilingBbbReadyTimeoutError(timeoutMs, diagnostics);
   } finally {

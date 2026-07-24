@@ -12,6 +12,7 @@ import {
   isOwnedFilingNavigationTimeoutError,
   isOwnedFilingBbbReadyTimeoutError,
   isOwnedFilingBbbComplainPortalPath,
+  evaluateOwnedFilingBbbPortalReady,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
   OWNED_FILING_BBB_READY_WAIT_MS,
@@ -563,9 +564,17 @@ describe("withOwnedFilingSessionBudget", () => {
     await expect(
       withOwnedFilingSessionBudget(async (budget) => {
         budget.setPhase("evaluate");
+        budget.setReadySignal("start_complaint");
         throw new Error("page.evaluate: Target page, context or browser has been closed");
       }, 500)
     ).rejects.toThrow(/session_bound_ms=500/);
+    await expect(
+      withOwnedFilingSessionBudget(async (budget) => {
+        budget.setPhase("evaluate");
+        budget.setReadySignal("start_complaint");
+        throw new Error("page.evaluate: Target page, context or browser has been closed");
+      }, 500)
+    ).rejects.toThrow(/ready_signal=start_complaint/);
   });
 
   it("destroyOwnedFilingBrowserBestEffort terminates underlying ws without awaiting hung close", () => {
@@ -754,8 +763,62 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
     expect(isOwnedFilingBbbComplainPortalPath("/")).toBe(false);
   });
 
-  it("resolves when waitForFunction finds interactive portal controls", async () => {
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => undefined);
+  it("rejects challenge-like /complain chrome (links + generic input, no Start Complaint)", () => {
+    const decision = evaluateOwnedFilingBbbPortalReady({
+      pathname: "/complain/",
+      startComplaintVisibleCount: 0,
+      fieldCount: 2,
+      interactiveControlCount: 8,
+    });
+    expect(decision).toEqual({ ready: false, ready_signal: null });
+  });
+
+  it("accepts unique visible Start Complaint on live /complain", () => {
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: "/complain/",
+        startComplaintVisibleCount: 1,
+        fieldCount: 0,
+        interactiveControlCount: 1,
+      })
+    ).toEqual({ ready: true, ready_signal: "start_complaint" });
+  });
+
+  it("rejects ambiguous duplicate Start Complaint CTAs", () => {
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: "/complain/",
+        startComplaintVisibleCount: 2,
+        fieldCount: 0,
+        interactiveControlCount: 2,
+      })
+    ).toEqual({ ready: false, ready_signal: null });
+  });
+
+  it("accepts mock entry form+controls only on the Playwright mock path", () => {
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH,
+        startComplaintVisibleCount: 0,
+        fieldCount: 1,
+        interactiveControlCount: 1,
+      })
+    ).toEqual({ ready: true, ready_signal: "mock_form_controls" });
+    // Same chrome on live /complain must NOT pass (production false-accept regression).
+    expect(
+      evaluateOwnedFilingBbbPortalReady({
+        pathname: "/complain/",
+        startComplaintVisibleCount: 0,
+        fieldCount: 1,
+        interactiveControlCount: 1,
+      })
+    ).toEqual({ ready: false, ready_signal: null });
+  });
+
+  it("resolves when waitForFunction finds unique visible Start Complaint", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({
+      jsonValue: async () => "start_complaint",
+    }));
     const page = mockPage({
       waitForFunction,
       urlValue: "https://www.bbb.org/complain/",
@@ -767,35 +830,35 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
       })),
     } as unknown as Partial<Page>);
 
-    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toBeUndefined();
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toEqual({
+      ready_signal: "start_complaint",
+    });
     expect(waitForFunction).toHaveBeenCalledTimes(1);
     expect(waitForFunction.mock.calls[0]?.[1]).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
     expect(OWNED_FILING_BBB_READY_WAIT_MS).toBe(15_000);
   });
 
-  it("passes mock entry path so Playwright loopback form+Continue pages can become ready", async () => {
-    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
-      async (fn, mockEntryPath) => {
-        expect(mockEntryPath).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
-        // Simulate the browser predicate against the E2E mock DOM shape.
-        const pathname = PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH;
-        expect(isOwnedFilingBbbComplainPortalPath(pathname)).toBe(true);
-        const fieldCount = 1;
-        const controls = 1;
-        const hasStartComplaint = false;
-        expect(hasStartComplaint || (isOwnedFilingBbbComplainPortalPath(pathname) && fieldCount >= 1 && controls >= 1)).toBe(
-          true
-        );
-        void fn;
-        return undefined;
-      }
-    );
+  it("resolves on Playwright mock form+Continue via mock_form_controls signal", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async (fn, mockEntryPath) => {
+      expect(mockEntryPath).toBe(PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH);
+      const decision = evaluateOwnedFilingBbbPortalReady({
+        pathname: PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH,
+        startComplaintVisibleCount: 0,
+        fieldCount: 1,
+        interactiveControlCount: 1,
+      });
+      expect(decision.ready_signal).toBe("mock_form_controls");
+      void fn;
+      return { jsonValue: async () => decision.ready_signal };
+    });
     const page = mockPage({
       waitForFunction,
       urlValue: `http://127.0.0.1:3000${PLAYWRIGHT_MOCK_REAL_BBB_BOUNDED_SUBMIT_LOOP_ENTRY_PATH}`,
     } as unknown as Partial<Page>);
 
-    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toBeUndefined();
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toEqual({
+      ready_signal: "mock_form_controls",
+    });
   });
 
   it("fails closed with ready_timeout and post-nav diagnostics when controls never appear", async () => {
@@ -830,6 +893,9 @@ describe("waitForBbbComplainPortalInteractiveReady", () => {
         expect(err).toBeInstanceOf(OwnedFilingBbbReadyTimeoutError);
         const message = err instanceof Error ? err.message : String(err);
         expect(message).toContain("ready_timeout");
+        expect(message).toContain("phase=ready");
+        expect(message).toContain("ready_result=timeout");
+        expect(message).toContain("ready_signal=none");
         expect(message).toContain("page_url=https://www.bbb.org/complain/");
         expect(message).toContain("start_complaint_found=false");
         expect(message).toMatch(/challenge_markers=/);
