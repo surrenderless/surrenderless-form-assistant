@@ -563,6 +563,36 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
   });
 
+  it("BBB session_timeout provider failure maps to dry_run_failed with budget diagnostics", async () => {
+    vi.mocked(runRealBbbBoundedSubmit).mockRejectedValue(
+      new Error(
+        "owned-filing playwright session_timeout after 60000ms (provider/session_timeout) budget_fired_at_ms=60005 abort_close_ms=null phase=evaluate race_winner=session_timeout"
+      )
+    );
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(bbbTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "bbb"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "bbb",
+      steps_executed: 0,
+      stop_reason: "provider",
+    });
+    expect(result.detail).toContain("session_timeout");
+    expect(result.detail).toContain("race_winner=session_timeout");
+    expect(result.detail).toContain("budget_fired_at_ms=");
+    expect(result.detail).toContain("phase=evaluate");
+    expect(noteUpdates.at(-1)).toContain("session_timeout");
+    expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
+  });
+
   it("unknown click is recorded as dry_run_failed (retryable, fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,

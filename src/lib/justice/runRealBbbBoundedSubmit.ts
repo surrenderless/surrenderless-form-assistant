@@ -25,11 +25,14 @@ import {
   abortOwnedFilingPageEvaluate,
   assertOwnedFilingPageAliveBeforeEvaluate,
   closeOwnedFilingBrowserFailClosed,
+  destroyOwnedFilingBrowserBestEffort,
   gotoOwnedFilingPage,
   openOwnedFilingPlaywrightSession,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
+  withOwnedFilingSessionBudget,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
+  OWNED_FILING_SESSION_BUDGET_MS,
   type OwnedFilingPlaywrightSession,
 } from "@/lib/justice/ownedFilingPlaywrightSession";
 
@@ -296,204 +299,239 @@ export async function runRealBbbBoundedSubmit(
     !playwrightMockLoop && !!(process.env.SUPABASE_BUCKET && process.env.SUPABASE_URL);
   const stepLog: RealBbbBoundedSubmitStepLogEntry[] = [];
   let stepsExecuted = 0;
-  let browser: Browser | null = null;
-  let page: Page | null = null;
-  let playwrightSession: OwnedFilingPlaywrightSession | null = null;
+  const runtime: {
+    browser: Browser | null;
+    page: Page | null;
+    session: OwnedFilingPlaywrightSession | null;
+  } = { browser: null, page: null, session: null };
 
   try {
-    const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
-    if (chromiumConnection.mode === "unavailable") {
-      throw new Error(chromiumConnection.error);
-    }
-    if (chromiumConnection.mode === "browserless") {
-      browser = await chromium.connectOverCDP(chromiumConnection.url);
-    } else {
-      browser = await chromium.launch({ headless: true });
-    }
-
-    playwrightSession = await openOwnedFilingPlaywrightSession(browser, {
-      chromiumMode: chromiumConnection.mode,
-      contextOptions: contextOptions(),
-    });
-    page = playwrightSession.page;
-    const navigationUrl = resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl(url, base);
-    await gotoOwnedFilingPage(page, navigationUrl);
-
-    assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
-
-    while (!hasReachedStepCap(stepsExecuted)) {
-      const pageData = await collectPageData(page, playwrightSession, browser);
-      if (detectBoundedSubmitTerminalConfirmation(pageData)) {
-        stepLog.push({
-          step: stepsExecuted,
-          url: pageData.url,
-          action: "terminal_detected",
-        });
-        const capture = await captureScreenshot(page, supabase, storageConfigured);
-        if (supabase && !playwrightMockLoop && mode !== "dry_run") {
-          await persistSuccessfulSubmission(
-            supabase,
-            url,
-            pageData,
-            capture.screenshot,
-            stepLog
-          );
+    return await withOwnedFilingSessionBudget(
+      async (budget) => {
+        const chromiumConnection = resolveChromiumConnectionForRealBbbSubmit();
+        if (chromiumConnection.mode === "unavailable") {
+          throw new Error(chromiumConnection.error);
         }
-        return {
-          ok: true,
-          fillResult: {
-            status: "success",
-            screenshot: capture.screenshot,
+        budget.setPhase("connect");
+        if (chromiumConnection.mode === "browserless") {
+          runtime.browser = await chromium.connectOverCDP(chromiumConnection.url);
+        } else {
+          runtime.browser = await chromium.launch({ headless: true });
+        }
+        if (!runtime.browser) {
+          throw new Error("owned-filing: chromium connect/launch returned no browser");
+        }
+
+        budget.setPhase("open_session");
+        runtime.session = await openOwnedFilingPlaywrightSession(runtime.browser, {
+          chromiumMode: chromiumConnection.mode,
+          contextOptions: contextOptions(),
+        });
+        runtime.page = runtime.session.page;
+        const page = runtime.page;
+        const browser = runtime.browser;
+        const playwrightSession = runtime.session;
+        const navigationUrl = resolvePlaywrightMockRealBbbBoundedSubmitNavigationUrl(url, base);
+        budget.setPhase("goto");
+        await gotoOwnedFilingPage(page, navigationUrl);
+
+        assertOwnedFilingPageAliveBeforeEvaluate(playwrightSession, browser);
+
+        budget.setPhase("evaluate");
+        while (!hasReachedStepCap(stepsExecuted)) {
+          const pageData = await collectPageData(page, playwrightSession, browser);
+          // First successful evaluate — disarm outer budget so multi-step runs can continue.
+          budget.clear();
+          if (detectBoundedSubmitTerminalConfirmation(pageData)) {
+            stepLog.push({
+              step: stepsExecuted,
+              url: pageData.url,
+              action: "terminal_detected",
+            });
+            const capture = await captureScreenshot(page, supabase, storageConfigured);
+            if (supabase && !playwrightMockLoop && mode !== "dry_run") {
+              await persistSuccessfulSubmission(
+                supabase,
+                url,
+                pageData,
+                capture.screenshot,
+                stepLog
+              );
+            }
+            return {
+              ok: true as const,
+              fillResult: {
+                status: "success" as const,
+                screenshot: capture.screenshot,
+                pageData,
+                stepsExecuted,
+                stopReason: "terminal_confirmation" as const,
+                stepLog,
+                ...(capture.storageSkipped || playwrightMockLoop
+                  ? {
+                      storageSkipped: true,
+                      storageReason:
+                        capture.storageReason ??
+                        "Playwright mock real BBB bounded submit loop (local E2E only)",
+                    }
+                  : {}),
+              },
+            };
+          }
+
+          const decisionResult = await fetchFormDecision(
+            base,
+            forwardedHeaders,
             pageData,
-            stepsExecuted,
-            stopReason: "terminal_confirmation",
-            stepLog,
-            ...(capture.storageSkipped || playwrightMockLoop
-              ? {
-                  storageSkipped: true,
-                  storageReason:
-                    capture.storageReason ??
-                    "Playwright mock real BBB bounded submit loop (local E2E only)",
-                }
-              : {}),
-          },
-        };
-      }
+            userData
+          );
+          if (!decisionResult.ok) {
+            stepLog.push({
+              step: stepsExecuted,
+              url: pageData.url,
+              action:
+                decisionResult.stopReason === "invalid_decision"
+                  ? "invalid_decision"
+                  : "decide_failed",
+              detail: decisionResult.detail,
+            });
+            const capture = await captureScreenshot(page, supabase, storageConfigured).catch(
+              () => ({
+                screenshot: null,
+                storageSkipped: true,
+                storageReason: "Screenshot capture failed",
+              })
+            );
+            return buildIncompleteResult(
+              decisionResult.stopReason,
+              stepsExecuted,
+              stepLog,
+              pageData,
+              capture.screenshot,
+              capture.storageSkipped,
+              capture.storageReason
+            );
+          }
 
-      const decisionResult = await fetchFormDecision(base, forwardedHeaders, pageData, userData);
-      if (!decisionResult.ok) {
-        stepLog.push({
-          step: stepsExecuted,
-          url: pageData.url,
-          action: decisionResult.stopReason === "invalid_decision" ? "invalid_decision" : "decide_failed",
-          detail: decisionResult.detail,
-        });
+          const decision = decisionResult.decision;
+          if (isEmptyFormDecision(decision)) {
+            stepLog.push({ step: stepsExecuted, url: pageData.url, action: "empty_decision" });
+            const capture = await captureScreenshot(page, supabase, storageConfigured).catch(
+              () => ({
+                screenshot: null,
+                storageSkipped: true,
+                storageReason: "Screenshot capture failed",
+              })
+            );
+            return buildIncompleteResult(
+              "empty_decision",
+              stepsExecuted,
+              stepLog,
+              pageData,
+              capture.screenshot,
+              capture.storageSkipped,
+              capture.storageReason
+            );
+          }
+
+          stepLog.push({ step: stepsExecuted, url: pageData.url, action: "decide" });
+          const applyResult = await applyOwnedFilingFormDecision(page, decision, {
+            mode,
+            logPrefix: "real-bbb-submit",
+          });
+          if (!applyResult.ok) {
+            const stopReason =
+              applyResult.reason === "unknown_fail_closed"
+                ? "blocked_unknown_click"
+                : applyResult.reason === "unarmed_live"
+                  ? "submit_unarmed"
+                  : "blocked_irreversible_click";
+            stepLog.push({
+              step: stepsExecuted,
+              url: pageData.url,
+              action: stopReason,
+              detail: applyResult.buttonLabel,
+            });
+            const capture = await captureScreenshot(page, supabase, storageConfigured).catch(
+              () => ({
+                screenshot: null,
+                storageSkipped: true,
+                storageReason: "Screenshot capture failed",
+              })
+            );
+            return buildIncompleteResult(
+              stopReason,
+              stepsExecuted,
+              stepLog,
+              pageData,
+              capture.screenshot,
+              capture.storageSkipped,
+              capture.storageReason
+            );
+          }
+          stepsExecuted += 1;
+          stepLog.push({ step: stepsExecuted, url: page.url(), action: "apply" });
+        }
+
+        const finalPageData = await collectPageData(page, playwrightSession, browser);
+        if (detectBoundedSubmitTerminalConfirmation(finalPageData)) {
+          stepLog.push({
+            step: stepsExecuted,
+            url: finalPageData.url,
+            action: "terminal_detected",
+          });
+          const capture = await captureScreenshot(page, supabase, storageConfigured);
+          if (supabase && !playwrightMockLoop && mode !== "dry_run") {
+            await persistSuccessfulSubmission(
+              supabase,
+              url,
+              finalPageData,
+              capture.screenshot,
+              stepLog
+            );
+          }
+          return {
+            ok: true as const,
+            fillResult: {
+              status: "success" as const,
+              screenshot: capture.screenshot,
+              pageData: finalPageData,
+              stepsExecuted,
+              stopReason: "terminal_confirmation" as const,
+              stepLog,
+              ...(capture.storageSkipped || playwrightMockLoop
+                ? {
+                    storageSkipped: true,
+                    storageReason:
+                      capture.storageReason ??
+                      "Playwright mock real BBB bounded submit loop (local E2E only)",
+                  }
+                : {}),
+            },
+          };
+        }
+
         const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({
           screenshot: null,
           storageSkipped: true,
           storageReason: "Screenshot capture failed",
         }));
         return buildIncompleteResult(
-          decisionResult.stopReason,
+          "max_steps_reached",
           stepsExecuted,
           stepLog,
-          pageData,
-          capture.screenshot,
-          capture.storageSkipped,
-          capture.storageReason
-        );
-      }
-
-      const decision = decisionResult.decision;
-      if (isEmptyFormDecision(decision)) {
-        stepLog.push({ step: stepsExecuted, url: pageData.url, action: "empty_decision" });
-        const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({
-          screenshot: null,
-          storageSkipped: true,
-          storageReason: "Screenshot capture failed",
-        }));
-        return buildIncompleteResult(
-          "empty_decision",
-          stepsExecuted,
-          stepLog,
-          pageData,
-          capture.screenshot,
-          capture.storageSkipped,
-          capture.storageReason
-        );
-      }
-
-      stepLog.push({ step: stepsExecuted, url: pageData.url, action: "decide" });
-      const applyResult = await applyOwnedFilingFormDecision(page, decision, {
-        mode,
-        logPrefix: "real-bbb-submit",
-      });
-      if (!applyResult.ok) {
-        const stopReason =
-          applyResult.reason === "unknown_fail_closed"
-            ? "blocked_unknown_click"
-            : applyResult.reason === "unarmed_live"
-              ? "submit_unarmed"
-              : "blocked_irreversible_click";
-        stepLog.push({
-          step: stepsExecuted,
-          url: pageData.url,
-          action: stopReason,
-          detail: applyResult.buttonLabel,
-        });
-        const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({
-          screenshot: null,
-          storageSkipped: true,
-          storageReason: "Screenshot capture failed",
-        }));
-        return buildIncompleteResult(
-          stopReason,
-          stepsExecuted,
-          stepLog,
-          pageData,
-          capture.screenshot,
-          capture.storageSkipped,
-          capture.storageReason
-        );
-      }
-      stepsExecuted += 1;
-      stepLog.push({ step: stepsExecuted, url: page.url(), action: "apply" });
-    }
-
-    const finalPageData = await collectPageData(page, playwrightSession, browser);
-    if (detectBoundedSubmitTerminalConfirmation(finalPageData)) {
-      stepLog.push({
-        step: stepsExecuted,
-        url: finalPageData.url,
-        action: "terminal_detected",
-      });
-      const capture = await captureScreenshot(page, supabase, storageConfigured);
-      if (supabase && !playwrightMockLoop && mode !== "dry_run") {
-        await persistSuccessfulSubmission(
-          supabase,
-          url,
           finalPageData,
           capture.screenshot,
-          stepLog
+          capture.storageSkipped,
+          capture.storageReason
         );
-      }
-      return {
-        ok: true,
-        fillResult: {
-          status: "success",
-          screenshot: capture.screenshot,
-          pageData: finalPageData,
-          stepsExecuted,
-          stopReason: "terminal_confirmation",
-          stepLog,
-          ...(capture.storageSkipped || playwrightMockLoop
-            ? {
-                storageSkipped: true,
-                storageReason:
-                  capture.storageReason ??
-                  "Playwright mock real BBB bounded submit loop (local E2E only)",
-              }
-            : {}),
-        },
-      };
-    }
-
-    const capture = await captureScreenshot(page, supabase, storageConfigured).catch(() => ({
-      screenshot: null,
-      storageSkipped: true,
-      storageReason: "Screenshot capture failed",
-    }));
-    return buildIncompleteResult(
-      "max_steps_reached",
-      stepsExecuted,
-      stepLog,
-      finalPageData,
-      capture.screenshot,
-      capture.storageSkipped,
-      capture.storageReason
+      },
+      OWNED_FILING_SESSION_BUDGET_MS,
+      () => destroyOwnedFilingBrowserBestEffort(runtime.browser)
     );
   } finally {
-    playwrightSession?.disposeListeners();
-    await closeOwnedFilingBrowserFailClosed(browser, { logLabel: "real-bbb-submit" });
+    runtime.session?.disposeListeners();
+    await closeOwnedFilingBrowserFailClosed(runtime.browser, { logLabel: "real-bbb-submit" });
   }
 }
+
