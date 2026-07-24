@@ -64,6 +64,11 @@ const STRING_LIMITS: Record<keyof BuildJusticeIntakeParts, number> = {
   consumer_us_state: 8,
   company_contact_email: 320,
   card_issuer_contact_email: 320,
+  company_street_address: 500,
+  company_city: 200,
+  company_state: 64,
+  company_country: 64,
+  company_postal_code: 32,
 };
 
 export const MAX_INTAKE_CHAT_USER_MESSAGE = 8_000;
@@ -175,6 +180,19 @@ export function parseRequestBuildJusticeIntakeParts(v: unknown): BuildJusticeInt
     ),
     company_contact_email: coerceCompanyContactEmail(o, defaults.company_contact_email),
     card_issuer_contact_email: coerceCardIssuerContactEmail(o, defaults.card_issuer_contact_email),
+    company_street_address: coerceStringField(
+      o,
+      "company_street_address",
+      defaults.company_street_address ?? ""
+    ),
+    company_city: coerceStringField(o, "company_city", defaults.company_city ?? ""),
+    company_state: coerceStringField(o, "company_state", defaults.company_state ?? ""),
+    company_country: coerceStringField(o, "company_country", defaults.company_country ?? ""),
+    company_postal_code: coerceStringField(
+      o,
+      "company_postal_code",
+      defaults.company_postal_code ?? ""
+    ),
   };
 
   return parts;
@@ -222,6 +240,19 @@ export function mergeModelBuildJusticeIntakeParts(
     ),
     company_contact_email: coerceCompanyContactEmail(o, baseline.company_contact_email),
     card_issuer_contact_email: coerceCardIssuerContactEmail(o, baseline.card_issuer_contact_email),
+    company_street_address: coerceStringField(
+      o,
+      "company_street_address",
+      baseline.company_street_address ?? ""
+    ),
+    company_city: coerceStringField(o, "company_city", baseline.company_city ?? ""),
+    company_state: coerceStringField(o, "company_state", baseline.company_state ?? ""),
+    company_country: coerceStringField(o, "company_country", baseline.company_country ?? ""),
+    company_postal_code: coerceStringField(
+      o,
+      "company_postal_code",
+      baseline.company_postal_code ?? ""
+    ),
   };
 }
 

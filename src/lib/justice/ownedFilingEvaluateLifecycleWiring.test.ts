@@ -213,13 +213,28 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
 
   it("BBB search fail-closed telemetry stays sanitized and reaches dry-run notes", () => {
     const decision = read("src/lib/justice/ownedFilingBbbSearchDecision.ts");
-    // Durable detail is enum + counts only — never scraped names or model output.
-    expect(decision).toContain("`${failure} results=${resultCount} matches=${matchCount}`");
+    // Durable detail is enum + counts (+ allowlisted missing keys) — never scraped names or values.
     expect(decision).toContain("OWNED_FILING_BBB_SEARCH_DECISION_FAILURES");
+    expect(decision).toContain("OWNED_FILING_BBB_NO_RESULTS_IDENTITY_KEYS");
+    expect(decision).toContain("missing=${sanitizedMissing.join(\",\")}");
+    expect(decision).toMatch(
+      /\$\{failure\} results=\$\{resultCount\} matches=\$\{matchCount\}\$\{missingSuffix\}/
+    );
 
     const dryRun = read("src/lib/justice/ownedFilingDryRun.ts");
     expect(dryRun).toContain("parseOwnedFilingBbbSearchFailureDetail");
     expect(dryRun).toMatch(/const bbbStepLog = bounded\.fillResult\.stepLog[\s\S]*?formatOwnedFilingDryRunStepLog\(bbbStepLog\)/);
+  });
+
+  it("BBB no-results identity maps from optional intake postal fields without inventing addresses", () => {
+    const userData = read("src/lib/justice/realBbbUserData.ts");
+    expect(userData).toContain("company_street_address");
+    expect(userData).toContain("business_address");
+    expect(userData).toContain("business_email");
+    expect(userData).toContain("normalizeBbbBusinessCountry");
+    // Must not invent merchant postal identity from the consumer state field.
+    expect(userData).not.toMatch(/business_address\s*=\s*intake\.consumer_us_state/);
+    expect(userData).not.toMatch(/business_state\s*=\s*intake\.consumer_us_state/);
   });
 
   it("BBB search wizard entry is the only File a Complaint click exception", () => {

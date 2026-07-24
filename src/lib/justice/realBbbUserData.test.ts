@@ -34,22 +34,43 @@ describe("intakeToRealBbbUserData", () => {
     });
   });
 
-  it("includes optional business website and order confirmation details when present", () => {
+  it("includes optional business website, contact email, and postal identity when present", () => {
     const intake: JusticeIntake = {
       ...baseIntake,
       company_website: "https://acme.example",
+      company_contact_email: "help@acme.example",
       order_confirmation_details: "Order #12345",
+      company_street_address: "1 Example Way",
+      company_city: "Austin",
+      company_state: "TX",
+      company_country: "USA",
+      company_postal_code: "78701",
+      consumer_us_state: "CA",
     };
 
     const result = intakeToRealBbbUserData(intake);
     expect(result.business_website).toBe("https://acme.example");
+    expect(result.business_email).toBe("help@acme.example");
     expect(result.order_confirmation_details).toBe("Order #12345");
     expect(result.complaint_narrative).toContain("Order/confirmation details: Order #12345");
+    expect(result.business_address).toBe("1 Example Way");
+    expect(result.business_city).toBe("Austin");
+    expect(result.business_state).toBe("TX");
+    expect(result.business_country).toBe("United States");
+    expect(result.business_postal_code).toBe("78701");
+    // Consumer state must never become merchant postal identity.
+    expect(result).not.toHaveProperty("consumer_us_state");
   });
 
   it("omits empty optional values", () => {
     const result = intakeToRealBbbUserData(baseIntake);
     expect(result).not.toHaveProperty("business_website");
+    expect(result).not.toHaveProperty("business_email");
+    expect(result).not.toHaveProperty("business_address");
+    expect(result).not.toHaveProperty("business_city");
+    expect(result).not.toHaveProperty("business_state");
+    expect(result).not.toHaveProperty("business_country");
+    expect(result).not.toHaveProperty("business_postal_code");
     expect(result).not.toHaveProperty("order_confirmation_details");
     expect(result).not.toHaveProperty("prior_contact_method");
     expect(result).not.toHaveProperty("prior_contact_summary");
