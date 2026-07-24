@@ -1049,82 +1049,122 @@ async function withOwnedFilingDiagTimeout<T>(
   }
 }
 
-type OwnedFilingBbbReadyDomProbe = {
+export type OwnedFilingBbbReadyDomProbe = {
   pathname: string;
   startComplaintFound: number;
   startComplaintVisibleCount: number;
+  /** Semantic complaint goals after ancestor/descendant collapse — not raw node matches. */
   complaintGoalFound: number;
   complaintGoalVisibleCount: number;
+  /** CSS path of the single visible goal host; empty unless exactly one exists. */
+  complaintGoalSelector: string;
   cookieAcceptVisibleCount: number;
   fieldCount: number;
   interactiveControlCount: number;
   haystack: string;
 };
 
+/**
+ * Runs inside the BBB portal page (serialized by `page.evaluate`, so it must stay self-contained).
+ *
+ * The live goal picker renders one option as nested wrappers (e.g. `li > div > span`) whose
+ * `textContent` is each exactly the goal label, so raw node matching over-counts a single
+ * semantic option. Ancestor/descendant chains are collapsed to one candidate and reduced to the
+ * innermost actionable host, leaving genuinely distinct sibling goals as separate candidates.
+ */
+export function collectOwnedFilingBbbReadyDomInBrowser(): OwnedFilingBbbReadyDomProbe {
+  const goalPattern = /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i;
+  const startComplaintPattern = /\bstart\s+complaint\b/i;
+  const cookieAcceptPattern = /^\s*accept\s+all\s+cookies\s*$/i;
+  const controlsSelector = 'button, a[href], [role="button"], input[type="submit"]';
+  const actionableSelector =
+    'button, a[href], [role="button"], [role="radio"], [role="option"], label';
+  const goalScopeSelector = `${actionableSelector}, h1, h2, h3, h4, p, div, span, li`;
+
+  const isVisiblyInteractive = (el: Element): boolean => {
+    const html = el as HTMLElement;
+    if (html.hidden) return false;
+    const style = window.getComputedStyle(html);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.opacity === "0" ||
+      style.pointerEvents === "none"
+    ) {
+      return false;
+    }
+    const rect = html.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const labelOf = (el: Element): string =>
+    `${el.textContent || ""} ${el.getAttribute("value") || ""}`.replace(/\s+/g, " ").trim();
+
+  const wraps = (outer: Element, inner: Element): boolean =>
+    outer !== inner && typeof outer.contains === "function" && outer.contains(inner);
+
+  /** Stable path so the Node side can re-verify uniqueness before clicking. */
+  const cssPathOf = (el: Element): string => {
+    const parts: string[] = [];
+    let cursor: Element | null = el;
+    while (cursor && cursor !== document.body) {
+      const node: Element = cursor;
+      const parent = node.parentElement;
+      if (!parent) return "";
+      const tag = node.tagName.toLowerCase();
+      const sameTag = Array.from(parent.children).filter(
+        (child) => child.tagName === node.tagName
+      );
+      parts.unshift(
+        sameTag.length > 1 ? `${tag}:nth-of-type(${sameTag.indexOf(node) + 1})` : tag
+      );
+      cursor = parent;
+    }
+    if (cursor !== document.body || parts.length === 0) return "";
+    return `body > ${parts.join(" > ")}`;
+  };
+
+  const controls = Array.from(document.querySelectorAll(controlsSelector));
+  const startComplaintControls = controls.filter((el) => startComplaintPattern.test(labelOf(el)));
+  const cookieAccept = controls.filter((el) => cookieAcceptPattern.test(labelOf(el)));
+
+  const goalMatches = Array.from(document.querySelectorAll(goalScopeSelector)).filter((el) =>
+    goalPattern.test(labelOf(el))
+  );
+  const goalRoots = goalMatches.filter(
+    (el) => !goalMatches.some((other) => wraps(other, el))
+  );
+  const goalHosts = goalRoots.map((root) => {
+    const chain = goalMatches.filter((el) => el === root || wraps(root, el));
+    const actionable = chain.filter(
+      (el) => typeof el.matches === "function" && el.matches(actionableSelector)
+    );
+    return actionable.length > 0 ? actionable[actionable.length - 1] : root;
+  });
+  const visibleGoalHosts = goalHosts.filter(isVisiblyInteractive);
+
+  const bodyText = document.body?.innerText?.slice(0, 4000) || "";
+  const titleText = document.title || "";
+  return {
+    pathname: window.location.pathname || "",
+    startComplaintFound: startComplaintControls.length,
+    startComplaintVisibleCount: startComplaintControls.filter(isVisiblyInteractive).length,
+    complaintGoalFound: goalHosts.length,
+    complaintGoalVisibleCount: visibleGoalHosts.length,
+    complaintGoalSelector: visibleGoalHosts.length === 1 ? cssPathOf(visibleGoalHosts[0]) : "",
+    cookieAcceptVisibleCount: cookieAccept.filter(isVisiblyInteractive).length,
+    fieldCount: document.querySelectorAll("input, textarea, select").length,
+    interactiveControlCount: controls.filter(isVisiblyInteractive).length,
+    haystack: `${titleText}\n${bodyText}`,
+  };
+}
+
 /** Browser-world DOM probe shared by readiness polling and post-nav diagnostics. */
 async function probeOwnedFilingBbbReadyDom(page: Page): Promise<OwnedFilingBbbReadyDomProbe | null> {
-  return withOwnedFilingDiagTimeout(async () => {
-    return page.evaluate(() => {
-      const isVisiblyInteractive = (el: Element): boolean => {
-        const html = el as HTMLElement;
-        if (html.hidden) return false;
-        const style = window.getComputedStyle(html);
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          style.opacity === "0" ||
-          style.pointerEvents === "none"
-        ) {
-          return false;
-        }
-        const rect = html.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      };
-
-      const labelOf = (el: Element): string =>
-        `${el.textContent || ""} ${el.getAttribute("value") || ""}`.replace(/\s+/g, " ").trim();
-
-      const controls = Array.from(
-        document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
-      );
-      const startComplaintControls = controls.filter((el) =>
-        /\bstart\s+complaint\b/i.test(labelOf(el))
-      );
-      const goalControls = controls.filter((el) =>
-        /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i.test(
-          labelOf(el)
-        )
-      );
-      // Goal may also be a clickable card/heading that is not a classic button — include
-      // elements that look like selectable options with matching text.
-      const goalTextNodes = Array.from(
-        document.querySelectorAll("button, a[href], [role='button'], [role='radio'], [role='option'], label, h2, h3, p, div, span, li")
-      ).filter((el) =>
-        /^\s*i\s+want\s+help\s+resolving\s+a\s+problem\s+with\s+a\s+business\.?\s*$/i.test(
-          labelOf(el)
-        )
-      );
-      const goalCandidates = goalControls.length > 0 ? goalControls : goalTextNodes;
-
-      const cookieAccept = controls.filter((el) =>
-        /^\s*accept\s+all\s+cookies\s*$/i.test(labelOf(el))
-      );
-
-      const bodyText = document.body?.innerText?.slice(0, 4000) || "";
-      const titleText = document.title || "";
-      return {
-        pathname: window.location.pathname || "",
-        startComplaintFound: startComplaintControls.length,
-        startComplaintVisibleCount: startComplaintControls.filter(isVisiblyInteractive).length,
-        complaintGoalFound: goalCandidates.length,
-        complaintGoalVisibleCount: goalCandidates.filter(isVisiblyInteractive).length,
-        cookieAcceptVisibleCount: cookieAccept.filter(isVisiblyInteractive).length,
-        fieldCount: document.querySelectorAll("input, textarea, select").length,
-        interactiveControlCount: controls.filter(isVisiblyInteractive).length,
-        haystack: `${titleText}\n${bodyText}`,
-      };
-    });
-  }, null);
+  return withOwnedFilingDiagTimeout(
+    async () => page.evaluate(collectOwnedFilingBbbReadyDomInBrowser),
+    null
+  );
 }
 
 /**
@@ -1264,7 +1304,10 @@ export function evaluateOwnedFilingBbbPortalReady(input: {
   return { ready: false, ready_signal: null };
 }
 
-/** True when the complaint goal should be clicked to reveal Start Complaint. */
+/**
+ * True when the complaint goal should be clicked to reveal Start Complaint. Counts are semantic
+ * (post ancestor/descendant collapse), so two of them means genuinely distinct goals — fail closed.
+ */
 export function shouldRevealBbbStartComplaintViaGoal(input: {
   startComplaintVisibleCount: number;
   complaintGoalVisibleCount: number;
@@ -1283,6 +1326,22 @@ async function clickOwnedFilingBbbUniqueText(
 ): Promise<void> {
   const locator = page.getByText(pattern).first();
   await locator.click({ timeout: Math.max(500, Math.min(2_500, timeoutMs)) });
+}
+
+/**
+ * Clicks the one element the probe resolved. Uniqueness is re-checked at click time so a
+ * re-render that splits the goal into several nodes fails closed instead of guessing.
+ */
+export async function clickOwnedFilingBbbUniqueSelector(
+  page: Page,
+  selector: string,
+  timeoutMs: number
+): Promise<boolean> {
+  if (!selector.trim()) return false;
+  const locator = page.locator(selector);
+  if ((await locator.count()) !== 1) return false;
+  await locator.click({ timeout: Math.max(500, Math.min(2_500, timeoutMs)) });
+  return true;
 }
 
 /**
@@ -1342,17 +1401,22 @@ export async function waitForBbbComplainPortalInteractiveReady(
         }
       }
 
-      // Reveal Start Complaint by selecting the unique visible complaint goal.
+      // Reveal Start Complaint by selecting the one semantic complaint goal.
       if (
         !goalClicked &&
         shouldRevealBbbStartComplaintViaGoal({
           startComplaintVisibleCount: probe.startComplaintVisibleCount,
           complaintGoalVisibleCount: probe.complaintGoalVisibleCount,
         }) &&
+        probe.complaintGoalSelector &&
         remaining() > 400
       ) {
         try {
-          await clickOwnedFilingBbbUniqueText(page, OWNED_FILING_BBB_COMPLAINT_GOAL_RE, remaining());
+          await clickOwnedFilingBbbUniqueSelector(
+            page,
+            probe.complaintGoalSelector,
+            remaining()
+          );
           goalClicked = true;
           continue;
         } catch {
