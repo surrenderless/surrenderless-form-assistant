@@ -621,6 +621,36 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
   });
 
+  it("BBB ready_timeout provider failure maps to dry_run_failed with post-nav diagnostics", async () => {
+    vi.mocked(runRealBbbBoundedSubmit).mockRejectedValue(
+      new Error(
+        'owned-filing playwright ready_timeout after 15000ms (provider/ready_timeout) page_url=https://www.bbb.org/complain/ title="Just a moment..." frame_count=1 start_complaint_found=false challenge_markers=just_a_moment'
+      )
+    );
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(bbbTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "bbb"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "bbb",
+      steps_executed: 0,
+      stop_reason: "provider",
+    });
+    expect(result.detail).toContain("ready_timeout");
+    expect(result.detail).toContain("page_url=");
+    expect(result.detail).toContain("start_complaint_found=false");
+    expect(result.detail).toContain("challenge_markers=just_a_moment");
+    expect(noteUpdates.at(-1)).toContain("ready_timeout");
+    expect(noteUpdates.at(-1)).not.toContain("delivery_state: filed");
+  });
+
   it("unknown click is recorded as dry_run_failed (retryable, fail closed)", async () => {
     vi.mocked(runRealBbbBoundedSubmit).mockResolvedValue({
       ok: false,

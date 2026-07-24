@@ -10,16 +10,22 @@ import {
   isOwnedFilingClosedTargetProviderError,
   isOwnedFilingEvaluateTimeoutError,
   isOwnedFilingNavigationTimeoutError,
+  isOwnedFilingBbbReadyTimeoutError,
   openOwnedFilingPlaywrightSession,
   OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS,
+  OWNED_FILING_BBB_READY_WAIT_MS,
   OWNED_FILING_FTC_READY_SELECTOR,
   OWNED_FILING_FTC_READY_WAIT_MS,
   OWNED_FILING_PAGE_EVALUATE_TIMEOUT_MS,
   OWNED_FILING_PAGE_NAVIGATION_TIMEOUT_MS,
   OwnedFilingEvaluateTimeoutError,
   OwnedFilingNavigationTimeoutError,
+  OwnedFilingBbbReadyTimeoutError,
   replaceOwnedFilingPlaywrightSessionPage,
+  waitForBbbComplainPortalInteractiveReady,
   waitForFtcReportFraudInteractiveReady,
+  collectOwnedFilingBbbPostNavDiagnostics,
+  formatOwnedFilingBbbPostNavDiagnostics,
   withOwnedFilingEvaluateLifecycle,
   withOwnedFilingEvaluateTimeout,
   withOwnedFilingFirstEvaluateRetry,
@@ -726,5 +732,119 @@ describe("waitForFtcReportFraudInteractiveReady", () => {
     const page = pageWithWaitForFunction(waitForFunction);
     await waitForFtcReportFraudInteractiveReady(page);
     expect(waitForFunction.mock.calls[0]?.[2]).toEqual({ timeout: 15_000 });
+  });
+});
+
+describe("waitForBbbComplainPortalInteractiveReady", () => {
+  it("resolves when waitForFunction finds interactive portal controls", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => undefined);
+    const page = mockPage({
+      waitForFunction,
+      urlValue: "https://www.bbb.org/complain/",
+      title: vi.fn(async () => "File a Complaint | BBB"),
+      frames: vi.fn(() => [{}]),
+      evaluate: vi.fn(async () => ({
+        startComplaintFound: true,
+        haystack: "Start Complaint",
+      })),
+    } as unknown as Partial<Page>);
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).resolves.toBeUndefined();
+    expect(waitForFunction).toHaveBeenCalledTimes(1);
+    expect(OWNED_FILING_BBB_READY_WAIT_MS).toBe(15_000);
+  });
+
+  it("fails closed with ready_timeout and post-nav diagnostics when controls never appear", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
+      async () =>
+        new Promise((_resolve, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                Object.assign(new Error("page.waitForFunction: Timeout 50ms exceeded."), {
+                  name: "TimeoutError",
+                })
+              ),
+            80
+          );
+        })
+    );
+    const page = mockPage({
+      waitForFunction,
+      urlValue: "https://www.bbb.org/complain/",
+      title: vi.fn(async () => "Just a moment..."),
+      frames: vi.fn(() => [{}, {}]),
+      evaluate: vi.fn(async () => ({
+        startComplaintFound: false,
+        haystack: "Just a moment... Checking your browser before accessing bbb.org.",
+      })),
+    } as unknown as Partial<Page>);
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).rejects.toSatisfy(
+      (err: unknown) => {
+        expect(isOwnedFilingBbbReadyTimeoutError(err)).toBe(true);
+        expect(err).toBeInstanceOf(OwnedFilingBbbReadyTimeoutError);
+        const message = err instanceof Error ? err.message : String(err);
+        expect(message).toContain("ready_timeout");
+        expect(message).toContain("page_url=https://www.bbb.org/complain/");
+        expect(message).toContain("start_complaint_found=false");
+        expect(message).toMatch(/challenge_markers=/);
+        return true;
+      }
+    );
+  });
+
+  it("fails closed on hung waitForFunction via Node wall-clock race (not only Playwright timeout)", async () => {
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(
+      () => new Promise(() => undefined) // never settles
+    );
+    const page = mockPage({
+      waitForFunction,
+      urlValue: "https://www.bbb.org/complain/",
+      title: vi.fn(async () => "BBB"),
+      frames: vi.fn(() => [{}]),
+      evaluate: vi.fn(async () => ({
+        startComplaintFound: false,
+        haystack: "Please enable JavaScript",
+      })),
+    } as unknown as Partial<Page>);
+
+    const started = Date.now();
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 40)).rejects.toBeInstanceOf(
+      OwnedFilingBbbReadyTimeoutError
+    );
+    expect(Date.now() - started).toBeLessThan(2_500);
+  });
+
+  it("propagates closed-target errors without wrapping as ready_timeout", async () => {
+    const closed = new Error("Target page, context or browser has been closed");
+    const waitForFunction = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => {
+      throw closed;
+    });
+    const page = mockPage({ waitForFunction } as unknown as Partial<Page>);
+
+    await expect(waitForBbbComplainPortalInteractiveReady(page, 50)).rejects.toBe(closed);
+  });
+
+  it("collectOwnedFilingBbbPostNavDiagnostics formats durable note-safe fields", async () => {
+    const page = mockPage({
+      urlValue: "https://www.bbb.org/complain/",
+      title: vi.fn(async () => "File a Complaint | Better Business Bureau"),
+      frames: vi.fn(() => [{}, {}]),
+      evaluate: vi.fn(async () => ({
+        startComplaintFound: true,
+        haystack: "Start Complaint",
+      })),
+    } as unknown as Partial<Page>);
+
+    const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
+    expect(diagnostics).toMatchObject({
+      page_url: "https://www.bbb.org/complain/",
+      frame_count: 2,
+      start_complaint_found: true,
+      challenge_markers: "none",
+    });
+    expect(diagnostics.title).toContain("File a Complaint");
+    expect(formatOwnedFilingBbbPostNavDiagnostics(diagnostics)).toContain("start_complaint_found=true");
   });
 });

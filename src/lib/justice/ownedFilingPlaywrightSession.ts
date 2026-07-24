@@ -308,11 +308,19 @@ export const OWNED_FILING_BROWSER_CLOSE_TIMEOUT_MS = 5_000;
 /** Brief wait for ReportFraud interactive controls before the first FTC evaluate. */
 export const OWNED_FILING_FTC_READY_WAIT_MS = 15_000;
 
+/**
+ * Wall-clock bound for BBB complain-portal interactive readiness before first evaluate.
+ * Must stay well under OWNED_FILING_SESSION_BUDGET_MS.
+ */
+export const OWNED_FILING_BBB_READY_WAIT_MS = 15_000;
+
 export const OWNED_FILING_EVALUATE_TIMEOUT_REASON = "evaluate_timeout";
 
 export const OWNED_FILING_NAVIGATION_TIMEOUT_REASON = "navigation_timeout";
 
 export const OWNED_FILING_SESSION_TIMEOUT_REASON = "session_timeout";
+
+export const OWNED_FILING_BBB_READY_TIMEOUT_REASON = "ready_timeout";
 
 export type OwnedFilingEvaluateRaceWinner =
   | "evaluate_timeout"
@@ -955,6 +963,232 @@ export async function waitForFtcReportFraudInteractiveReady(
     if (isOwnedFilingClosedTargetProviderError(err)) throw err;
     if (isOwnedFilingReadyWaitTimeoutError(err)) return;
     throw err;
+  }
+}
+
+/** Durable post-nav diagnostics for BBB ready_timeout / evaluate failures (safe for dry-run notes). */
+export type OwnedFilingBbbPostNavDiagnostics = {
+  page_url: string;
+  title: string;
+  frame_count: number | "unavailable";
+  start_complaint_found: boolean | "unavailable";
+  challenge_markers: string;
+};
+
+export function formatOwnedFilingBbbPostNavDiagnostics(
+  diagnostics: OwnedFilingBbbPostNavDiagnostics
+): string {
+  return [
+    `page_url=${diagnostics.page_url}`,
+    `title=${JSON.stringify(diagnostics.title)}`,
+    `frame_count=${diagnostics.frame_count}`,
+    `start_complaint_found=${diagnostics.start_complaint_found}`,
+    `challenge_markers=${diagnostics.challenge_markers || "none"}`,
+  ].join(" ");
+}
+
+const BBB_CHALLENGE_MARKER_PATTERNS: Array<{ id: string; pattern: RegExp }> = [
+  { id: "just_a_moment", pattern: /just a moment/i },
+  { id: "checking_your_browser", pattern: /checking your browser/i },
+  { id: "cf_browser_verification", pattern: /cf-browser-verification/i },
+  { id: "attention_required", pattern: /attention required/i },
+  { id: "access_denied", pattern: /access denied/i },
+  { id: "verify_human", pattern: /verify you are human/i },
+  { id: "cloudflare", pattern: /cloudflare/i },
+  { id: "captcha", pattern: /\bcaptcha\b/i },
+  { id: "enable_javascript", pattern: /enable javascript/i },
+];
+
+function truncateDiagText(value: string, max = 120): string {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned.length <= max ? cleaned : `${cleaned.slice(0, max)}…`;
+}
+
+async function withOwnedFilingDiagTimeout<T>(
+  run: () => Promise<T>,
+  fallback: T,
+  timeoutMs = 2_000
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("diag_timeout")), timeoutMs);
+      }),
+    ]);
+  } catch {
+    return fallback;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Best-effort page-state snapshot after BBB navigation. Individual reads are short-bounded
+ * so a wedged CDP cannot hang diagnostics collection.
+ */
+export async function collectOwnedFilingBbbPostNavDiagnostics(
+  page: Page
+): Promise<OwnedFilingBbbPostNavDiagnostics> {
+  const page_url = await withOwnedFilingDiagTimeout(async () => {
+    try {
+      if (page.isClosed()) return "closed";
+      return page.url() || "unknown";
+    } catch {
+      return "unavailable";
+    }
+  }, "unavailable");
+
+  const title = await withOwnedFilingDiagTimeout(async () => {
+    try {
+      if (page.isClosed()) return "closed";
+      return truncateDiagText(await page.title());
+    } catch {
+      return "unavailable";
+    }
+  }, "unavailable");
+
+  const frame_count = await withOwnedFilingDiagTimeout(async () => {
+    try {
+      return page.frames().length;
+    } catch {
+      return "unavailable" as const;
+    }
+  }, "unavailable" as const);
+
+  const probe = await withOwnedFilingDiagTimeout(async () => {
+    return page.evaluate(() => {
+      const bodyText = document.body?.innerText?.slice(0, 4000) || "";
+      const titleText = document.title || "";
+      const haystack = `${titleText}\n${bodyText}`;
+      const controls = Array.from(
+        document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
+      );
+      const startComplaintFound = controls.some((el) => {
+        const label = `${el.textContent || ""} ${el.getAttribute("value") || ""}`.trim();
+        return /^\s*start\s+complaint\s*$/i.test(label) || /\bstart\s+complaint\b/i.test(label);
+      });
+      return { startComplaintFound, haystack };
+    });
+  }, null);
+
+  const challengeHits: string[] = [];
+  if (probe?.haystack) {
+    for (const marker of BBB_CHALLENGE_MARKER_PATTERNS) {
+      if (marker.pattern.test(probe.haystack)) {
+        challengeHits.push(marker.id);
+      }
+    }
+  }
+  // Also scan title alone when evaluate probe failed.
+  if (!probe) {
+    for (const marker of BBB_CHALLENGE_MARKER_PATTERNS) {
+      if (marker.pattern.test(title)) {
+        challengeHits.push(marker.id);
+      }
+    }
+  }
+
+  return {
+    page_url,
+    title,
+    frame_count,
+    start_complaint_found: probe ? probe.startComplaintFound : "unavailable",
+    challenge_markers: challengeHits.length > 0 ? challengeHits.slice(0, 6).join(",") : "none",
+  };
+}
+
+export class OwnedFilingBbbReadyTimeoutError extends Error {
+  readonly reason = OWNED_FILING_BBB_READY_TIMEOUT_REASON;
+  readonly diagnostics: OwnedFilingBbbPostNavDiagnostics;
+
+  constructor(
+    timeoutMs: number = OWNED_FILING_BBB_READY_WAIT_MS,
+    diagnostics: OwnedFilingBbbPostNavDiagnostics = {
+      page_url: "unavailable",
+      title: "unavailable",
+      frame_count: "unavailable",
+      start_complaint_found: "unavailable",
+      challenge_markers: "none",
+    }
+  ) {
+    super(
+      `owned-filing playwright ready_timeout after ${timeoutMs}ms (provider/${OWNED_FILING_BBB_READY_TIMEOUT_REASON}) ${formatOwnedFilingBbbPostNavDiagnostics(diagnostics)}`
+    );
+    this.name = "OwnedFilingBbbReadyTimeoutError";
+    this.diagnostics = diagnostics;
+  }
+}
+
+export function isOwnedFilingBbbReadyTimeoutError(err: unknown): boolean {
+  if (err instanceof OwnedFilingBbbReadyTimeoutError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /ready_timeout/i.test(message);
+}
+
+/**
+ * Hard-fails unless the BBB complain portal shows a real interactive control
+ * (Start Complaint CTA or stable complain-path form controls). Uses a Node-local
+ * wall-clock race so a wedged waitForFunction cannot burn the Browserless session.
+ * Does not close the page on timeout — diagnostics are collected afterward.
+ */
+export async function waitForBbbComplainPortalInteractiveReady(
+  page: Page,
+  timeoutMs: number = OWNED_FILING_BBB_READY_WAIT_MS
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+
+  const readyPromise = page
+    .waitForFunction(
+      () => {
+        if (!document.body) return false;
+        const controls = Array.from(
+          document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]')
+        );
+        const hasStartComplaint = controls.some((el) => {
+          const label = `${el.textContent || ""} ${el.getAttribute("value") || ""}`.trim();
+          return /\bstart\s+complaint\b/i.test(label);
+        });
+        if (hasStartComplaint) return true;
+        const onComplain = /\/complain/i.test(window.location.pathname || "");
+        const fieldCount = document.querySelectorAll("input, textarea, select").length;
+        return onComplain && fieldCount >= 1 && controls.length >= 1;
+      },
+      undefined,
+      { timeout: timeoutMs }
+    )
+    .then(
+      () => {
+        settled = true;
+      },
+      (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        throw err;
+      }
+    );
+
+  void readyPromise.catch(() => undefined);
+
+  try {
+    await Promise.race([
+      readyPromise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error(`bbb_ready_wait_wall_clock after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (err: unknown) {
+    if (isOwnedFilingClosedTargetProviderError(err)) throw err;
+    const diagnostics = await collectOwnedFilingBbbPostNavDiagnostics(page);
+    throw new OwnedFilingBbbReadyTimeoutError(timeoutMs, diagnostics);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
