@@ -1,4 +1,7 @@
-import type { FormButtonDecision } from "@/lib/justice/realBbbBoundedSubmitLoop";
+import type {
+  AssistedFormBbbActionControl,
+  FormButtonDecision,
+} from "@/lib/justice/realBbbBoundedSubmitLoop";
 import { isOwnedFilingBbbBusinessSearchUrl } from "@/lib/justice/ownedFilingBbbSearchDecision";
 
 /**
@@ -63,6 +66,11 @@ function buttonCorpus(button: FormButtonDecision): string {
 export type OwnedFilingClickContext = {
   /** Current page URL. Only used for URL-scoped wizard-entry exceptions. */
   pageUrl?: string;
+  /**
+   * Sanitized deduped BBB no-results continuation inventory. Lets an id/name-addressed
+   * continuation be verified against the scraped DOM instead of trusting the caller.
+   */
+  bbbContinuationControls?: AssistedFormBbbActionControl[];
 };
 
 /**
@@ -76,14 +84,30 @@ const BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS: RegExp[] = [
   /^\s*business\s+information\s+form\s*$/i,
 ];
 
+function isBbbWizardEntryLabel(value: string): boolean {
+  const normalized = value.replace(/\u00a0/g, " ");
+  return BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS.some((pattern) => pattern.test(normalized));
+}
+
 function isBbbBusinessSearchWizardEntry(
   button: FormButtonDecision,
   context: OwnedFilingClickContext | undefined
 ): boolean {
   if (!isOwnedFilingBbbBusinessSearchUrl(context?.pageUrl)) return false;
-  if (button.selectorType !== "text") return false;
-  const value = button.value.replace(/\u00a0/g, " ");
-  return BBB_BUSINESS_SEARCH_WIZARD_ENTRY_LABELS.some((pattern) => pattern.test(value));
+  if (button.selectorType === "text") return isBbbWizardEntryLabel(button.value);
+  // The continuation is often an anchor, addressable only by id/name. The key must resolve to
+  // exactly one scraped continuation host whose own label is a wizard-entry label, so this stays
+  // DOM-verified rather than caller-asserted.
+  if (button.selectorType !== "id" && button.selectorType !== "name") return false;
+  const key = button.value.trim();
+  if (!key) return false;
+  const matches = (context?.bbbContinuationControls ?? []).filter((control) => {
+    const controlKey = (button.selectorType === "id" ? control.id : control.name)?.trim();
+    return controlKey === key;
+  });
+  if (matches.length !== 1) return false;
+  const target = matches[0];
+  return target.visible && target.enabled && isBbbWizardEntryLabel(target.text ?? "");
 }
 
 /**

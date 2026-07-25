@@ -317,15 +317,45 @@ function continuationControls(pageData: AssistedFormPageData): AssistedFormBbbAc
     }));
 }
 
-/** Text addressing needs exactly one real <button> carrying that exact label. */
-function uniqueTextButton(
+/**
+ * Addresses the one deduped continuation host carrying that exact label. A real <button> is
+ * text-addressable (`buildButtonSelector` emits `button:has-text(...)`); any other host (anchor,
+ * role=button) must expose a unique id or name, mirroring how a result link is addressed.
+ * Several distinct hosts for one label stay unaddressable — never guess between them.
+ */
+function addressContinuation(
   controls: AssistedFormBbbActionControl[],
   label: string
 ): FormDecision["nextButton"] | null {
   const wanted = normalizeBbbBusinessName(label);
   const matches = controls.filter((control) => normalizeBbbBusinessName(control.text) === wanted);
-  if (matches.length !== 1 || matches[0].kind !== "button") return null;
-  return { selectorType: "text", value: label };
+  if (matches.length !== 1) return null;
+  const target = matches[0];
+  if (target.kind === "button") return { selectorType: "text", value: label };
+
+  const uniqueBy = (pick: (control: AssistedFormBbbActionControl) => string): boolean => {
+    const key = pick(target).trim();
+    if (!key) return false;
+    return controls.filter((control) => pick(control).trim() === key).length === 1;
+  };
+  if (uniqueBy((control) => control.id)) {
+    return { selectorType: "id", value: target.id.trim() };
+  }
+  if (uniqueBy((control) => control.name)) {
+    return { selectorType: "name", value: target.name.trim() };
+  }
+  return null;
+}
+
+/** Sanitized shape counts for continuation fail-closed telemetry — counts only, never labels. */
+type ContinuationCounts = { candidates: number; buttons: number; links: number };
+
+function continuationCounts(controls: AssistedFormBbbActionControl[]): ContinuationCounts {
+  return {
+    candidates: controls.length,
+    buttons: controls.filter((control) => control.kind === "button").length,
+    links: controls.filter((control) => control.kind === "link").length,
+  };
 }
 
 /** Which deterministic search-step action was produced, for reveal accounting and step logs. */
@@ -353,13 +383,17 @@ function fail(
   resultCount: number,
   matchCount: number,
   missingKeys: string[] = [],
-  unaddressableKeys: string[] = []
+  unaddressableKeys: string[] = [],
+  continuation?: ContinuationCounts
 ): OwnedFilingBbbSearchDecisionResult {
   const allowlisted = (keys: string[]): string[] =>
     keys.map((key) => key.trim()).filter((key) => NO_RESULTS_IDENTITY_KEY_SET.has(key));
   const missing = allowlisted(missingKeys);
   const unaddressable = allowlisted(unaddressableKeys);
   const suffix = [
+    continuation
+      ? ` continuation_candidates=${continuation.candidates} buttons=${continuation.buttons} links=${continuation.links}`
+      : "",
     missing.length > 0 ? ` missing=${missing.join(",")}` : "",
     unaddressable.length > 0 ? ` unaddressable=${unaddressable.join(",")}` : "",
   ].join("");
@@ -470,10 +504,17 @@ export function buildOwnedFilingBbbSearchDecision(
       return fail("search_no_results_identity_incomplete", 0, 0, [], absentKeys);
     }
     const reveal =
-      uniqueTextButton(controls, OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL) ??
-      uniqueTextButton(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
+      addressContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL) ??
+      addressContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
     if (!reveal) {
-      return fail("search_no_results_form_ambiguous", 0, 0, [], absentKeys);
+      return fail(
+        "search_no_results_form_ambiguous",
+        0,
+        0,
+        [],
+        absentKeys,
+        continuationCounts(controls)
+      );
     }
     return {
       ok: true,
@@ -488,9 +529,9 @@ export function buildOwnedFilingBbbSearchDecision(
     tryAppendIdentityFill(fieldsToFill, fields, userData, optional);
   }
 
-  const proceed = uniqueTextButton(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
+  const proceed = addressContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
   if (!proceed) {
-    return fail("search_no_results_form_ambiguous", 0, 0);
+    return fail("search_no_results_form_ambiguous", 0, 0, [], [], continuationCounts(controls));
   }
 
   return {
