@@ -134,7 +134,7 @@ export async function driveConsumerToFtcQueuedFromChat(page: Page): Promise<void
     timeout: 15_000,
   });
 
-  await expect(page.getByText("FTC filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("FTC filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_queued"))
   ).toBeVisible({ timeout: 30_000 });
