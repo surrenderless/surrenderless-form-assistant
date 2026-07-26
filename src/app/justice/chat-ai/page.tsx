@@ -7300,8 +7300,8 @@ export default function JusticeChatAiPage() {
                       </>
                     ) : (
                       <>
-                        <span className="font-medium">FTC filing queued.</span> Surrenderless has
-                        queued your FTC consumer complaint for filing using your case packet and
+                        <span className="font-medium">FTC filing in progress.</span> Surrenderless
+                        operators are filing your FTC consumer complaint using your case packet and
                         draft. Nothing has been filed yet.
                       </>
                     )}

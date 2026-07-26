@@ -405,7 +405,7 @@ export function buildChatCaseProgressNarrationMessage(
     case "cfpb_confirmed":
       return "Your CFPB filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "ftc_queued":
-      return "I've queued your FTC consumer complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filing or filed.";
+      return "I've queued your FTC consumer complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
     case "ftc_submitting":
       return "Surrenderless is filing your FTC consumer complaint now. Stay here in chat for confirmation.";
     case "ftc_submit_failed":

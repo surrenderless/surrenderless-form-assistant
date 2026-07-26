@@ -8,6 +8,7 @@ import {
   parseFtcOwnedFilingDeliveryRecord,
   upsertFtcOwnedFilingDeliveryNotes,
   attemptAutomatedFtcFiling,
+  FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
 } from "@/lib/justice/ftcOwnedFilingDelivery";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -18,13 +19,26 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 
 vi.mock("@/lib/justice/realFtcAutofillEnabled", () => ({
   isRealFtcComplaintAutofillEnabled: vi.fn(() => true),
+  isRealFtcOperatorFulfillmentPrimary: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/justice/surrenderlessOwnedStep", () => ({
   shouldSuppressChatManualActionForSurrenderlessOwnedStep: vi.fn(() => true),
 }));
 
-import { isRealFtcComplaintAutofillEnabled } from "@/lib/justice/realFtcAutofillEnabled";
+vi.mock("@/lib/justice/ftcFilingTask", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/justice/ftcFilingTask")>();
+  return {
+    ...actual,
+    ensureFtcFilingTask: vi.fn(actual.ensureFtcFilingTask),
+  };
+});
+
+import {
+  isRealFtcComplaintAutofillEnabled,
+  isRealFtcOperatorFulfillmentPrimary,
+} from "@/lib/justice/realFtcAutofillEnabled";
+import { ensureFtcFilingTask } from "@/lib/justice/ftcFilingTask";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -191,6 +205,8 @@ describe("ftcOwnedFilingDelivery helpers", () => {
 describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path)", () => {
   beforeEach(() => {
     vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(true);
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(false);
+    vi.mocked(ensureFtcFilingTask).mockReset();
     vi.stubEnv("VERCEL_ENV", "preview");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
@@ -214,19 +230,47 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
     expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(false);
   });
 
-  it("skips when real FTC autofill is disabled (no false submitted state)", async () => {
+  it("routes to operator fulfillment by default without writing autofill delivery_state", async () => {
     vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(false);
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(true);
     const noteUpdates: string[] = [];
     const result = await attemptAutomatedFtcFiling(
       makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
       USER_ID,
       CASE_ID
     );
-    expect(result.status).toBe("skipped");
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
     expect(noteUpdates.length).toBe(0);
+    expect(noteUpdates.some((n) => n.includes("delivery_state: queued"))).toBe(false);
+    expect(vi.mocked(ensureFtcFilingTask)).not.toHaveBeenCalled();
   });
 
-  it("skips without enqueue when production Browserless configuration is missing", async () => {
+  it("ensures an FTC operator task when missing in operator-primary mode", async () => {
+    vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(false);
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(true);
+    vi.mocked(ensureFtcFilingTask).mockResolvedValue({
+      task: taskWithNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`),
+      timeline: null,
+      created: true,
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
+    expect(vi.mocked(ensureFtcFilingTask)).toHaveBeenCalledOnce();
+    expect(noteUpdates.some((n) => n.includes("delivery_state:"))).toBe(false);
+  });
+
+  it("skips without enqueue when production Browserless configuration is missing (harness mode)", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("BROWSERLESS_URL", "");
     const noteUpdates: string[] = [];

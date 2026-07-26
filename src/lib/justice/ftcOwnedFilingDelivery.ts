@@ -4,6 +4,7 @@ import { evaluateOwnedBbbAutofillExecutionReadiness } from "@/lib/justice/bbbOwn
 import {
   findFtcFilingWithConfirmation,
   findOpenFtcFilingTask,
+  ensureFtcFilingTask,
   hasFtcFilingWithConfirmation,
   shouldQueueFtcFilingTask,
   taskNotesMatchFtcFilingMarker,
@@ -17,7 +18,9 @@ import {
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
-import { isRealFtcComplaintAutofillEnabled } from "@/lib/justice/realFtcAutofillEnabled";
+import {
+  isRealFtcOperatorFulfillmentPrimary,
+} from "@/lib/justice/realFtcAutofillEnabled";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -40,8 +43,15 @@ export const FTC_FILING_DESTINATION = "FTC (consumer complaint)";
 /** Generic confirmation stored when the portal confirmed submission but exposed no readable reference. */
 export const REAL_FTC_FILING_CONFIRMATION_FALLBACK = "FTC report submitted";
 
-/** Provider tag stored on the delivery record. */
+/**
+ * Provider tag stored on the autofill delivery record.
+ * Only written when the browser harness is opted in — never for operator-primary fulfillment.
+ */
 export const FTC_OWNED_FILING_PROVIDER = "real_ftc_bounded_submit";
+
+/** Skip reason when operator fulfillment is primary (no browser worker enqueue). */
+export const FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON =
+  "real FTC operator fulfillment primary — autofill harness parked";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -95,9 +105,16 @@ async function patchFtcTaskNotes(
 }
 
 /**
- * Enqueues Surrenderless-owned FTC filing for the durable background worker.
- * Never runs Playwright/Browserless on the request path — it only persists
- * `delivery_state: "queued"` and lets /api/cron/run-queued-owned-filings execute it.
+ * Routes Surrenderless-owned FTC filing.
+ *
+ * Product default (`isRealFtcOperatorFulfillmentPrimary`): do NOT enqueue the browser worker.
+ * The FTC operator task is ensured by ensureOwnedFilingTaskAfterClientStateWrite /
+ * ensureFtcFilingTask and surfaces in the operator fulfillment queue (`step: "ftc"`).
+ * Chat shows an in-progress operator-filing state — not autofill submitting.
+ *
+ * Harness override (NEXT_PUBLIC_JUSTICE_REAL_FTC_AUTOFILL_ENABLED=true): persists
+ * `delivery_state: "queued"` for /api/cron/run-queued-owned-filings. Never runs Playwright
+ * on the request path. FTC autofill is parked pending a genuine live canary.
  *
  * Idempotent: already filed/queued/submitting is not re-enqueued; a reconciled
  * `failed` state short-circuits so operator fallbacks are never auto-resubmitted.
@@ -110,13 +127,6 @@ export async function attemptAutomatedFtcFiling(
   const trimmedCaseId = caseId.trim();
   if (!trimmedCaseId) {
     return { status: "skipped", reason: "case_id is required" };
-  }
-
-  if (!isRealFtcComplaintAutofillEnabled()) {
-    return {
-      status: "skipped",
-      reason: "real FTC autofill disabled — operator/manual fallback",
-    };
   }
 
   const { data: caseRow, error: caseErr } = await supabase
@@ -194,7 +204,28 @@ export async function attemptAutomatedFtcFiling(
     };
   }
 
-  const openTask = findOpenFtcFilingTask(tasks, trimmedCaseId);
+  let openTask = findOpenFtcFilingTask(tasks, trimmedCaseId);
+
+  // Operator primary: ensure the FTC operator task exists, surface it in the fulfillment
+  // queue, and never write autofill delivery_state (avoids autofill-failed alert noise).
+  if (isRealFtcOperatorFulfillmentPrimary()) {
+    if (!openTask) {
+      const ensured = await ensureFtcFilingTask(supabase, userId, trimmedCaseId, intake);
+      openTask =
+        ensured.task && !ensured.task.completed_at?.trim() ? ensured.task : undefined;
+      if (!openTask) {
+        return { status: "skipped", reason: "could not ensure FTC operator task" };
+      }
+    }
+    if (!taskNotesMatchFtcFilingMarker(openTask.notes, trimmedCaseId)) {
+      return { status: "skipped", reason: "task marker mismatch" };
+    }
+    return {
+      status: "skipped",
+      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    };
+  }
+
   if (!openTask) {
     return { status: "skipped", reason: "no open FTC task" };
   }

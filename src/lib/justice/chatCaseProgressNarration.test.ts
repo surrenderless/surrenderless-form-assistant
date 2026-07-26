@@ -322,6 +322,9 @@ describe("chatCaseProgressNarration", () => {
       })
     ).toEqual(["ftc_queued"]);
 
+    expect(buildChatCaseProgressNarrationMessage("ftc_queued")).toMatch(/operator filing/i);
+    expect(buildChatCaseProgressNarrationMessage("ftc_queued")).not.toMatch(/autofill/i);
+
     expect(
       deriveSatisfiedChatCaseProgressMilestones({
         caseId: CASE_ID,

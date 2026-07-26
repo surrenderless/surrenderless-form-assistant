@@ -231,7 +231,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
     actionTracking.getByRole("button", { name: "Record action handled for now" })
   ).not.toBeVisible();
 
-  await expect(page.getByText("FTC filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("FTC filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_queued"))
   ).toBeVisible({ timeout: 30_000 });
