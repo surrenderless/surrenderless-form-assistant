@@ -192,12 +192,13 @@ export function collectOwnedFilingBbbPageDataInBrowser(): AssistedFormPageData {
     bbbNoResultsControls = (scopedHosts.length > 0 ? scopedHosts : contentHosts)
       .filter((host) => isVisible(host) && isEnabled(host))
       .map((el) => ({
-        // Only a real <button> is addressable by text (`button:has-text(...)`); every other host
-        // has to expose a unique id or name.
+        // Real <button> is text-addressable; an anchor may be too when it is the unique
+        // allowlisted continuation (apply resolves button|link by accessible name).
         kind: el.tagName.toLowerCase() === "button" ? ("button" as const) : ("link" as const),
         text: matchedLabel(el),
         id: (el as HTMLElement).id || "",
         name: el.getAttribute("name") || "",
+        href: el.getAttribute("href") || "",
         visible: true,
         enabled: true,
       }));
