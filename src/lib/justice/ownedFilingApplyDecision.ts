@@ -7,8 +7,10 @@ import {
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
   isOwnedFilingBbbBusinessSearchUrl,
+  isOwnedFilingBbbDisclosureRevealHost,
   isOwnedFilingBbbWizardEntryLabel,
   normalizeBbbBusinessName,
+  OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL,
 } from "@/lib/justice/ownedFilingBbbSearchDecision";
 import {
   isFtcReportChoiceFlowUrl,
@@ -869,11 +871,13 @@ async function clickNextButton(
       isOwnedFilingBbbWizardEntryLabel(decision.nextButton.value);
 
     if (isBbbWizardEntryText) {
-      // Search-step only: unique allowlisted continuation may be a bare <a>. Resolve by
-      // accessible name across button|link (FTC Report Now pattern) after inventory verify —
-      // never enable useExactTextButtonLocator for the whole BBB loop.
+      // Search-step only: re-verify the scraped structural inventory before clicking. Reveal
+      // openers must be disclosure hosts (real button or role=button with empty/hash href) —
+      // never an unscoped global label match that could hit a landing/start-over anchor.
       const label = decision.nextButton.value;
       const wanted = normalizeBbbBusinessName(label);
+      const isRevealLabel =
+        wanted === normalizeBbbBusinessName(OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL);
       const inventory = (options.bbbContinuationControls ?? []).filter(
         (control) =>
           control.visible &&
@@ -881,16 +885,73 @@ async function clickNextButton(
           normalizeBbbBusinessName(control.text) === wanted
       );
       if (inventory.length !== 1) return { clicked: false };
+      const expected = inventory[0];
+      if (isRevealLabel && !isOwnedFilingBbbDisclosureRevealHost(expected)) {
+        return { clicked: false };
+      }
+      if (
+        !isRevealLabel &&
+        expected.kind === "link" &&
+        (expected.tag ?? "a") === "a" &&
+        !isOwnedFilingBbbDisclosureRevealHost(expected) &&
+        !expected.id?.trim() &&
+        !expected.name?.trim()
+      ) {
+        // Keyless navigational File a Complaint anchors are not safe proceed targets either.
+        return { clicked: false };
+      }
 
       const locatorOptions = { name: label, exact: true } as const;
       const buttonTarget = page.getByRole("button", locatorOptions);
       const linkTarget = page.getByRole("link", locatorOptions);
+      // Disclosure hosts are buttons (native or ARIA). Prefer button role when the inventory
+      // says disclosure; otherwise allow a unique button or a unique id/name-addressed path
+      // already handled above via inventory.
+      const preferButton =
+        isOwnedFilingBbbDisclosureRevealHost(expected) ||
+        expected.tag === "button" ||
+        expected.kind === "button";
       const [buttonCount, linkCount] = await Promise.all([
         buttonTarget.count(),
         linkTarget.count(),
       ]);
-      if (buttonCount + linkCount !== 1) return { clicked: false };
-      const target = buttonCount === 1 ? buttonTarget : linkTarget;
+      let target = buttonTarget;
+      if (preferButton) {
+        if (buttonCount !== 1) return { clicked: false };
+        target = buttonTarget;
+      } else {
+        if (buttonCount + linkCount !== 1) return { clicked: false };
+        target = buttonCount === 1 ? buttonTarget : linkTarget;
+      }
+
+      // DOM-drift guard: the live host must still match the scraped structural fingerprint.
+      const live = await target.evaluate((el) => {
+        const tagName = el.tagName.toLowerCase();
+        return {
+          tag:
+            tagName === "button"
+              ? "button"
+              : tagName === "a"
+                ? "a"
+                : tagName === "input"
+                  ? "input"
+                  : "other",
+          href: el.getAttribute("href") || "",
+          role: el.getAttribute("role") || "",
+          id: (el as HTMLElement).id || "",
+          name: el.getAttribute("name") || "",
+        };
+      });
+      const expectedTag =
+        expected.tag ?? (expected.kind === "button" ? "button" : ("a" as const));
+      if (live.tag !== expectedTag) return { clicked: false };
+      if ((expected.explicitRole || "").trim().toLowerCase() !== live.role.trim().toLowerCase()) {
+        return { clicked: false };
+      }
+      if ((expected.href || "") !== live.href) return { clicked: false };
+      if ((expected.id || "").trim() && expected.id.trim() !== live.id) return { clicked: false };
+      if ((expected.name || "").trim() && expected.name.trim() !== live.name) return { clicked: false };
+
       const [visible, enabled] = await Promise.all([target.isVisible(), target.isEnabled()]);
       if (!visible || !enabled) return { clicked: false };
       click = async () => {

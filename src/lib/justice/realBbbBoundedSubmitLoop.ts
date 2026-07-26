@@ -60,9 +60,14 @@ export type AssistedFormBbbSearchResult = {
   enabled: boolean;
 };
 
+/** Sanitized tag of a BBB no-results continuation host. */
+export type AssistedFormBbbActionControlTag = "button" | "a" | "input" | "other";
+
 /**
  * BBB-only sanitized continuation control scraped on the complaint search step. Only the
  * allowlisted no-results wizard-entry labels are collected, never arbitrary page controls.
+ * Structural fields identify disclosure hosts; raw href stays transient and must never appear
+ * in durable dry-run notes (use href-class enums instead).
  */
 export type AssistedFormBbbActionControl = {
   kind: "button" | "link";
@@ -70,11 +75,17 @@ export type AssistedFormBbbActionControl = {
   text: string;
   id: string;
   name: string;
-  /**
-   * Raw href on an anchor host (empty when absent). Used only to verify same-origin complaint
-   * paths before a keyless link is text-addressed — never persisted in durable dry-run notes.
-   */
+  /** Raw href on an anchor host (empty when absent). Transient only — never durable notes. */
   href?: string;
+  tag?: AssistedFormBbbActionControlTag;
+  /** Explicit ARIA role attribute when present (e.g. "button"). */
+  explicitRole?: string;
+  /** HTML target attribute when present. */
+  target?: string;
+  ariaControls?: string;
+  ariaExpanded?: string;
+  /** True when the host sits in the scoped no-results / business-info region (not site chrome). */
+  inNoResultsRegion?: boolean;
   visible: boolean;
   enabled: boolean;
 };

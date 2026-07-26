@@ -105,6 +105,28 @@ const WIZARD_ENTRY_CONTROL = {
   id: "",
   name: "",
   href: "",
+  tag: "button" as const,
+  explicitRole: "",
+  target: "",
+  ariaControls: "",
+  ariaExpanded: "",
+  inNoResultsRegion: true,
+  visible: true,
+  enabled: true,
+};
+
+const BIF_DISCLOSURE_CONTROL = {
+  kind: "button" as const,
+  text: "Business Information Form",
+  id: "",
+  name: "",
+  href: "",
+  tag: "button" as const,
+  explicitRole: "",
+  target: "",
+  ariaControls: "",
+  ariaExpanded: "",
+  inNoResultsRegion: true,
   visible: true,
   enabled: true,
 };
@@ -279,10 +301,14 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
       decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
     });
     const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
+    const formPage = searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]);
     h.state.evaluateQueue = [
-      // Business Information form not rendered yet: only the reversible wizard-entry CTA exists.
-      searchPage([], [], [WIZARD_ENTRY_CONTROL]),
-      searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]),
+      // Business Information form not rendered yet: only the reversible disclosure CTA exists.
+      searchPage([], [], [BIF_DISCLOSURE_CONTROL]),
+      // Postcondition scrape after reveal.
+      formPage,
+      // Next loop iteration fill.
+      formPage,
       { fields: [], buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }], url: wizardUrl, pageText: "" },
     ];
     h.state.applyQueue = [
@@ -303,13 +329,11 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
 
     expect(mockedApply.mock.calls[0]?.[1]).toEqual({
       fieldsToFill: [],
-      nextButton: { selectorType: "text", value: "File a Complaint" },
-      waitForNavigation: true,
+      nextButton: { selectorType: "text", value: "Business Information Form" },
+      waitForNavigation: false,
     });
-    // The scraped continuation inventory must reach the click gate so an id/name-addressed
-    // continuation can be verified instead of trusted.
     expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
-      bbbContinuationControls: [WIZARD_ENTRY_CONTROL],
+      bbbContinuationControls: [BIF_DISCLOSURE_CONTROL],
     });
     expect(mockedApply.mock.calls[1]?.[1]).toEqual({
       fieldsToFill: [
@@ -327,7 +351,6 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     if (result.ok) throw new Error("expected incomplete result");
     expect(result.stopReason).toBe("blocked_irreversible_click");
     expect(result.stepsExecuted).toBe(2);
-    // Deterministic search steps are labelled in durable telemetry; the wizard step is the model's.
     expect(
       result.fillResult.stepLog
         .filter((entry) => entry.action === "decide")
@@ -335,23 +358,31 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     ).toEqual(["reveal_business_form", "submit_business_form", undefined]);
   });
 
-  it("reveals through an anchor continuation addressed by id, then fills and stops at Submit", async () => {
+  it("reveals through a role=button disclosure host, then fills and stops at Submit", async () => {
     stubDecideAction({
       decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
     });
-    const anchorControl = {
+    const disclosure = {
       kind: "link" as const,
       text: "Business Information Form",
       id: "biz-info-form",
       name: "",
-      href: "/file-a-complaint/search",
+      href: "",
+      tag: "a" as const,
+      explicitRole: "button",
+      target: "",
+      ariaControls: "",
+      ariaExpanded: "",
+      inNoResultsRegion: true,
       visible: true,
       enabled: true,
     };
     const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
+    const formPage = searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]);
     h.state.evaluateQueue = [
-      searchPage([], [], [anchorControl]),
-      searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]),
+      searchPage([], [], [disclosure]),
+      formPage,
+      formPage,
       { fields: [], buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }], url: wizardUrl, pageText: "" },
     ];
     h.state.applyQueue = [
@@ -373,23 +404,11 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     expect(mockedApply.mock.calls[0]?.[1]).toEqual({
       fieldsToFill: [],
       nextButton: { selectorType: "id", value: "biz-info-form" },
-      waitForNavigation: true,
+      waitForNavigation: false,
     });
     expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
       currentPageUrl: SEARCH_URL,
-      bbbContinuationControls: [anchorControl],
-    });
-    expect(mockedApply.mock.calls[1]?.[1]).toEqual({
-      fieldsToFill: [
-        { selector: "companyName", value: "Fictional Digital Services" },
-        { selector: "address", value: "1 Example Way" },
-        { selector: "city", value: "Austin" },
-        { selector: "state", value: "TX" },
-        { selector: "country", value: "United States" },
-        { selector: "postalCode", value: "78701" },
-      ],
-      nextButton: { selectorType: "text", value: "File a Complaint" },
-      waitForNavigation: true,
+      bbbContinuationControls: [disclosure],
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected incomplete result");
@@ -397,66 +416,42 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     expect(result.stepsExecuted).toBe(2);
   });
 
-  it("reveals through a keyless allowlisted link addressed by text, then fills and stops at Submit", async () => {
-    stubDecideAction({
-      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
+  it("fails closed when reveal navigates to the landing page and never calls decide-action", async () => {
+    const fetchMock = stubDecideAction({
+      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Manage Cookies" } },
     });
-    const keylessLink = {
-      kind: "link" as const,
-      text: "Business Information Form",
-      id: "",
-      name: "",
-      href: "/file-a-complaint/search",
-      visible: true,
-      enabled: true,
-    };
-    const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
     h.state.evaluateQueue = [
-      searchPage([], [], [keylessLink]),
-      searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]),
+      searchPage([], [], [BIF_DISCLOSURE_CONTROL]),
+      // Postcondition scrape after the bad navigation.
       {
         fields: [],
-        buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }],
-        url: wizardUrl,
+        buttons: [{ text: "Manage Cookies", id: "", name: "", type: "button" }],
+        url: "https://www.bbb.org/file-a-complaint",
         pageText: "",
       },
     ];
-    h.state.applyQueue = [
-      { result: { ok: true, clicked: true, risk: "safe" } },
-      { result: { ok: true, clicked: true, risk: "safe" } },
-      {
-        result: {
-          ok: false,
-          blocked: true,
-          risk: "irreversible",
-          buttonLabel: "text:Submit Complaint",
-          reason: "dry_run_stop",
-        },
-      },
-    ];
+    h.state.applyQueue = [{ result: { ok: true, clicked: true, risk: "safe" } }];
 
     const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
 
-    expect(mockedApply.mock.calls[0]?.[1]).toEqual({
-      fieldsToFill: [],
-      nextButton: { selectorType: "text", value: "Business Information Form" },
-      waitForNavigation: true,
-    });
-    expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
-      currentPageUrl: SEARCH_URL,
-      bbbContinuationControls: [keylessLink],
-    });
+    expect(mockedApply).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected incomplete result");
-    expect(result.stopReason).toBe("blocked_irreversible_click");
-    expect(result.stepsExecuted).toBe(2);
+    expect(result.stopReason).toBe("blocked_unknown_click");
+    expect(result.stepsExecuted).toBe(1);
+    expect(result.fillResult.stepLog.at(-1)?.detail).toContain(
+      "search_no_results_reveal_postcondition_failed"
+    );
+    expect(result.fillResult.stepLog.at(-1)?.detail).toContain("href_class=landing");
   });
 
   it("never clicks the continuation twice when the form stays unaddressable", async () => {
     stubDecideAction({});
     h.state.evaluateQueue = [
-      searchPage([], [], [WIZARD_ENTRY_CONTROL]),
-      searchPage([], [], [WIZARD_ENTRY_CONTROL]),
+      searchPage([], [], [BIF_DISCLOSURE_CONTROL]),
+      // Postcondition: still on search, but form fields never appear.
+      searchPage([], [], [BIF_DISCLOSURE_CONTROL]),
     ];
     h.state.applyQueue = [{ result: { ok: true, clicked: true, risk: "safe" } }];
 
@@ -467,9 +462,39 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
     if (result.ok) throw new Error("expected incomplete result");
     expect(result.stopReason).toBe("blocked_unknown_click");
     expect(result.stepsExecuted).toBe(1);
-    expect(result.fillResult.stepLog.at(-1)?.detail).toBe(
-      "search_no_results_identity_incomplete results=0 matches=0 unaddressable=business_name,business_address,business_city,business_state,business_country,business_postal_code"
+    expect(result.fillResult.stepLog.at(-1)?.detail).toContain(
+      "search_no_results_reveal_postcondition_failed"
     );
+    expect(result.fillResult.stepLog.at(-1)?.detail).toContain("unaddressable=business_name");
+  });
+
+  it("rejects a landing-href continuation before any click", async () => {
+    const fetchMock = stubDecideAction({});
+    h.state.evaluateQueue = [
+      searchPage([], [], [
+        {
+          kind: "link",
+          text: "Business Information Form",
+          id: "",
+          name: "",
+          href: "/file-a-complaint",
+          tag: "a",
+          explicitRole: "",
+          inNoResultsRegion: true,
+          visible: true,
+          enabled: true,
+        },
+      ]),
+    ];
+
+    const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
+
+    expect(mockedApply).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.fillResult.stepLog.at(-1)?.detail).toContain("search_no_results_form_ambiguous");
+    expect(result.fillResult.stepLog.at(-1)?.detail).toContain("href_class=landing");
   });
 
   it("fails closed on ambiguous results with sanitized counts and no click", async () => {
