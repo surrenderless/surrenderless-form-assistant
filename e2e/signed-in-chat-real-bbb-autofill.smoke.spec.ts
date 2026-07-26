@@ -29,7 +29,7 @@ test("signed-in chat suppresses Run BBB autofill when Surrenderless owns BBB ful
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await expect(page.locator("#chat-ai-input")).toBeVisible({ timeout: 30_000 });
 
-  await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("BBB filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
   ).toBeVisible({ timeout: 30_000 });

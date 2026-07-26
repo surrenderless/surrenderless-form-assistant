@@ -271,7 +271,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   await expect(chatTranscript.getByText(buildChatCaseProgressNarrationMessage("ftc_confirmed"))).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("BBB filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))
   ).toBeVisible({ timeout: 30_000 });
