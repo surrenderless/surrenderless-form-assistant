@@ -119,9 +119,24 @@ describe("BBB workspace owned-autofill coexistence and lane isolation", () => {
     vi.mocked(attemptAutomatedBbbFiling).mockClear();
     const workspace = buildBbbOperatorFilingWorkspace({ intake: baseIntake() });
     expect(workspace.is_submitted).toBe(false);
+    // Product default: operator fulfillment primary — harness parked unless env override.
+    expect(workspace.owned_autofill_enabled).toBe(false);
     expect(workspace.owned_autofill_enabled).toBe(isRealBbbComplaintAutofillEnabled());
     expect(completeBbbOperatorFiling).not.toHaveBeenCalled();
     expect(attemptAutomatedBbbFiling).not.toHaveBeenCalled();
+  });
+
+  it("attaches a populated bbb_workspace for operator-primary queue items", () => {
+    const intake = baseIntake();
+    const bbbItem = classifyOpenOperatorTask(
+      openTask(buildBbbFilingTaskNotes(CASE_ID, intake)),
+      intake
+    );
+    expect(bbbItem?.step).toBe("bbb");
+    expect(bbbItem?.bbb_workspace?.prepared_answers.length).toBeGreaterThan(0);
+    expect(bbbItem?.bbb_workspace?.complaint_draft.trim().length).toBeGreaterThan(0);
+    expect(bbbItem?.bbb_workspace?.owned_autofill_enabled).toBe(false);
+    expect(resolveOperatorFulfillmentPanelKind(bbbItem!)).toBe("bbb_workspace");
   });
 
   it("keeps merchant-contact on its own workspace without attaching BBB workspace", () => {

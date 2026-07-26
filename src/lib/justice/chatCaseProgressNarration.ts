@@ -413,7 +413,7 @@ export function buildChatCaseProgressNarrationMessage(
     case "ftc_confirmed":
       return "Your FTC consumer complaint filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_queued":
-      return "I've queued your Better Business Bureau complaint with Surrenderless. Stay here in chat — I'll update you when it's filing or filed.";
+      return "I've queued your Better Business Bureau complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
     case "bbb_submitting":
       return "Surrenderless is filing your Better Business Bureau complaint now. Stay here in chat for confirmation.";
     case "bbb_submit_failed":

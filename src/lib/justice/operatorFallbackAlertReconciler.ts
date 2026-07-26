@@ -163,6 +163,9 @@ export type ReconcileOperatorFallbackAlertsOptions = {
  * fallback event. Fails safe: when the provider or recipient is unconfigured nothing is marked
  * delivered; provider/database failures leave the event retryable on the next run. Never alerts
  * for successfully filed or completed tasks. Off all consumer request paths (cron only).
+ *
+ * Operator-primary BBB cases (default product mode) never write the autofill delivery block, so
+ * they do not trigger these alerts — they appear as ordinary open BBB queue items for operators.
  */
 export async function reconcileOperatorFallbackAlerts(
   supabase: SupabaseClient,

@@ -7325,9 +7325,9 @@ export default function JusticeChatAiPage() {
                       </>
                     ) : (
                       <>
-                        <span className="font-medium">BBB filing queued.</span> Surrenderless has
-                        queued your Better Business Bureau complaint for filing using your case packet
-                        and draft. Nothing has been filed yet.
+                        <span className="font-medium">BBB filing in progress.</span> Surrenderless
+                        operators are filing your Better Business Bureau complaint using your case
+                        packet and draft. Nothing has been filed yet.
                       </>
                     )}
                     <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">

@@ -69,6 +69,9 @@ describe("chatCaseProgressNarration", () => {
       })
     ).toEqual(["bbb_queued"]);
 
+    expect(buildChatCaseProgressNarrationMessage("bbb_queued")).toMatch(/operator filing/i);
+    expect(buildChatCaseProgressNarrationMessage("bbb_queued")).not.toMatch(/autofill/i);
+
     expect(
       deriveSatisfiedChatCaseProgressMilestones({
         caseId: CASE_ID,

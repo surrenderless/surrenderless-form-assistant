@@ -573,7 +573,7 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(false);
   });
 
-  it("shows real BBB complaint prep by default when all gates pass", () => {
+  it("hides real BBB complaint prep by default (operator fulfillment primary)", () => {
     expect(
       shouldShowChatInlineRealBbbComplaintPrep(
         practicePrepInput({
@@ -584,7 +584,7 @@ describe("assisted mock practice lane prep and summary", () => {
           },
         })
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("hides Mark step opened when inline real BBB autofill prep is available", () => {
@@ -633,7 +633,7 @@ describe("assisted mock practice lane prep and summary", () => {
     ).toBe(true);
   });
 
-  it("keeps real BBB complaint prep hidden when autofill is explicitly disabled and copy-only prep remains available", () => {
+  it("keeps real BBB complaint prep hidden when autofill is parked (operator fulfillment primary)", () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
     expect(
       shouldShowChatInlineRealBbbComplaintPrep(
@@ -646,17 +646,6 @@ describe("assisted mock practice lane prep and summary", () => {
         })
       )
     ).toBe(false);
-    expect(
-      getChatInlineApprovedPrepContent(ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF, baseIntake())?.kind
-    ).toBe("bbb_complaint");
-    expect(
-      shouldShowChatInlineReadOnlyApprovedPrep({
-        isActiveUuidCase: true,
-        preparedPacketApproved: true,
-        status: "approved",
-        hasPrepContent: true,
-      })
-    ).toBe(true);
   });
 
   it("keeps real BBB complaint prep hidden for other assisted lanes and failed gates", () => {

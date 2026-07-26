@@ -121,7 +121,7 @@ describe("isAssistedMockSubmissionEligible", () => {
     ).toBe(false);
   });
 
-  it("returns true for real BBB complaint lane href by default when all gates pass", () => {
+  it("returns false for real BBB complaint lane by default (operator fulfillment primary)", () => {
     expect(
       isAssistedMockSubmissionEligible(
         eligibleInput({
@@ -132,7 +132,7 @@ describe("isAssistedMockSubmissionEligible", () => {
           },
         })
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns true for real BBB complaint lane href when autofill is enabled and all gates pass", () => {
