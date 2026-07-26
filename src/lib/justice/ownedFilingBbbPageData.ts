@@ -189,19 +189,38 @@ export function collectOwnedFilingBbbPageDataInBrowser(): AssistedFormPageData {
       ? contentHosts.filter((host) => mainRegion.contains(host))
       : contentHosts;
 
-    bbbNoResultsControls = (scopedHosts.length > 0 ? scopedHosts : contentHosts)
+    const regionHosts = scopedHosts.length > 0 ? scopedHosts : contentHosts;
+    bbbNoResultsControls = regionHosts
       .filter((host) => isVisible(host) && isEnabled(host))
-      .map((el) => ({
-        // Real <button> is text-addressable; an anchor may be too when it is the unique
-        // allowlisted continuation (apply resolves button|link by accessible name).
-        kind: el.tagName.toLowerCase() === "button" ? ("button" as const) : ("link" as const),
-        text: matchedLabel(el),
-        id: (el as HTMLElement).id || "",
-        name: el.getAttribute("name") || "",
-        href: el.getAttribute("href") || "",
-        visible: true,
-        enabled: true,
-      }));
+      .map((el) => {
+        const tagName = el.tagName.toLowerCase();
+        const tag =
+          tagName === "button"
+            ? ("button" as const)
+            : tagName === "a"
+              ? ("a" as const)
+              : tagName === "input"
+                ? ("input" as const)
+                : ("other" as const);
+        return {
+          // Real <button> or role=button disclosure hosts are text-addressable after structural
+          // verification; ordinary navigational anchors are rejected by the decision layer.
+          kind: tag === "button" ? ("button" as const) : ("link" as const),
+          text: matchedLabel(el),
+          id: (el as HTMLElement).id || "",
+          name: el.getAttribute("name") || "",
+          href: el.getAttribute("href") || "",
+          tag,
+          explicitRole: el.getAttribute("role") || "",
+          target: el.getAttribute("target") || "",
+          ariaControls: el.getAttribute("aria-controls") || "",
+          ariaExpanded: el.getAttribute("aria-expanded") || "",
+          // Surviving hosts are already chrome-excluded and main-scoped when main exists.
+          inNoResultsRegion: true,
+          visible: true,
+          enabled: true,
+        };
+      });
   }
 
   return {

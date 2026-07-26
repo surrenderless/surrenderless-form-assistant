@@ -209,23 +209,27 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     );
     // Only one reversible reveal click may be spent on the no-results business form.
     expect(source).toMatch(
-      /let businessFormRevealAttempts = 0[\s\S]*?revealAttempts: businessFormRevealAttempts[\s\S]*?searchStep\.step === "reveal_business_form"[\s\S]*?businessFormRevealAttempts \+= 1/
+      /let businessFormRevealAttempts = 0[\s\S]*?revealAttempts: businessFormRevealAttempts/
+    );
+    expect(source).toContain("evaluateOwnedFilingBbbRevealPostcondition");
+    expect(source).toMatch(
+      /searchStep\.step === "reveal_business_form"[\s\S]*?evaluateOwnedFilingBbbRevealPostcondition[\s\S]*?businessFormRevealAttempts \+= 1/
     );
     // Click classification needs the page URL for the search-step wizard-entry exception.
     expect(source).toMatch(/applyOwnedFilingFormDecision\(page, decision, \{[\s\S]*?currentPageUrl: pageData\.url/);
     // Angular business-form controls are nameless, so the fill path must accept formControlName.
     expect(source).toContain("includeFormControlNameFill: true");
 
-    // The scraped continuation inventory must reach the click gate for id/name verification.
+    // The scraped continuation inventory must reach the click gate for structural verification.
     expect(source).toContain("bbbContinuationControls: pageData.bbbNoResultsControls");
 
-    // Keyless allowlisted link continuations are applied via button|link role — not global
+    // Disclosure hosts are applied via button role after structural verify — not global
     // useExactTextButtonLocator for the BBB loop.
     const apply = read("src/lib/justice/ownedFilingApplyDecision.ts");
+    expect(apply).toContain("isOwnedFilingBbbDisclosureRevealHost");
     expect(apply).toContain("isOwnedFilingBbbWizardEntryLabel");
-    expect(apply).toContain('getByRole("link"');
     expect(apply).toMatch(
-      /isOwnedFilingBbbBusinessSearchUrl\(options\.currentPageUrl\)[\s\S]*?getByRole\("button"[\s\S]*?getByRole\("link"/
+      /isOwnedFilingBbbBusinessSearchUrl\(options\.currentPageUrl\)[\s\S]*?isOwnedFilingBbbDisclosureRevealHost/
     );
     expect(source).not.toContain("useExactTextButtonLocator");
 
@@ -234,6 +238,8 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     expect(scrape).toContain("inBusinessInfoForm");
     expect(scrape).toContain("bbbNoResultsControls");
     expect(scrape).toContain('href: el.getAttribute("href") || ""');
+    expect(scrape).toContain("inNoResultsRegion: true");
+    expect(scrape).toContain("explicitRole");
     // One semantic continuation rendered as nested wrappers must collapse to its innermost host,
     // and site chrome must never compete with the no-results CTA.
     expect(scrape).toMatch(/labelMatches\.filter\(\(el\) => !labelMatches\.some\(\(other\) => wraps\(other, el\)\)\)/);
@@ -255,10 +261,14 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
       /\$\{failure\} results=\$\{resultCount\} matches=\$\{matchCount\}\$\{suffix\}/
     );
     expect(decision).toMatch(/allowlisted\(missingKeys\)[\s\S]*?allowlisted\(unaddressableKeys\)/);
-    // Continuation fail-closed carries shape counts only — no scraped labels or hrefs.
+    expect(decision).toContain("isOwnedFilingBbbDisclosureRevealHost");
+    expect(decision).toContain("evaluateOwnedFilingBbbRevealPostcondition");
+    expect(decision).toContain("search_no_results_reveal_postcondition_failed");
+    expect(decision).toContain("href_class=${continuation.hrefClass}");
+    expect(decision).toContain("classifyOwnedFilingBbbContinuationHref");
+    // Continuation fail-closed carries shape counts / href_class only — no scraped labels or hrefs.
     expect(decision).toContain("continuation_candidates=${continuation.candidates}");
     expect(decision).toMatch(/buttons=\$\{continuation\.buttons\} links=\$\{continuation\.links\}/);
-    expect(decision).toContain("isOwnedFilingBbbContinuationHrefAllowlisted");
     expect(decision).not.toMatch(/detail:[\s\S]{0,80}href=/);
 
     const dryRun = read("src/lib/justice/ownedFilingDryRun.ts");

@@ -16,7 +16,8 @@ export type OwnedFilingBbbSearchDecisionFailure =
   | "search_result_unmatched"
   | "search_result_unaddressable"
   | "search_no_results_identity_incomplete"
-  | "search_no_results_form_ambiguous";
+  | "search_no_results_form_ambiguous"
+  | "search_no_results_reveal_postcondition_failed";
 
 export const OWNED_FILING_BBB_SEARCH_DECISION_FAILURES: ReadonlySet<string> = new Set([
   "search_business_name_missing",
@@ -25,6 +26,7 @@ export const OWNED_FILING_BBB_SEARCH_DECISION_FAILURES: ReadonlySet<string> = ne
   "search_result_unaddressable",
   "search_no_results_identity_incomplete",
   "search_no_results_form_ambiguous",
+  "search_no_results_reveal_postcondition_failed",
 ]);
 
 /** Allowlisted userData keys that may appear in missing=/unaddressable= telemetry (never values). */
@@ -63,6 +65,86 @@ export function isOwnedFilingBbbBusinessSearchUrl(url: string | null | undefined
   }
   const normalized = pathname.replace(/\/$/, "").toLowerCase();
   return normalized === "/file-a-complaint/search" || normalized === "/complain/search";
+}
+
+/**
+ * Landing / start-over complaint roots. A reveal click that ends here has destroyed the
+ * search/no-results manual-business state.
+ */
+export function isOwnedFilingBbbComplaintLandingUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  let pathname: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "www.bbb.org") return false;
+    pathname = parsed.pathname;
+  } catch {
+    return false;
+  }
+  const normalized = pathname.replace(/\/$/, "").toLowerCase() || "/";
+  return normalized === "/" || normalized === "/file-a-complaint" || normalized === "/complain";
+}
+
+/** Sanitized href class for durable telemetry — never the raw href string. */
+export type OwnedFilingBbbContinuationHrefClass =
+  | "none"
+  | "hash"
+  | "landing"
+  | "search"
+  | "manual_route"
+  | "external"
+  | "other";
+
+export function classifyOwnedFilingBbbContinuationHref(
+  href: string | null | undefined
+): OwnedFilingBbbContinuationHrefClass {
+  const raw = (href ?? "").trim();
+  if (!raw) return "none";
+  if (raw === "#" || raw.startsWith("#")) return "hash";
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, "https://www.bbb.org");
+  } catch {
+    return "other";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "external";
+  if (parsed.hostname !== "www.bbb.org") return "external";
+  const path = parsed.pathname.replace(/\/$/, "").toLowerCase() || "/";
+  if (path === "/" || path === "/file-a-complaint" || path === "/complain") return "landing";
+  if (path === "/file-a-complaint/search" || path === "/complain/search") return "search";
+  if (path.startsWith("/file-a-complaint/") || path.startsWith("/complain/")) return "manual_route";
+  return "other";
+}
+
+function isEmptyOrHashHref(href: string | null | undefined): boolean {
+  const cls = classifyOwnedFilingBbbContinuationHref(href);
+  return cls === "none" || cls === "hash";
+}
+
+/**
+ * True when the host is a reversible disclosure control (real button, or role=button with
+ * empty/hash href) in the scoped no-results region — not a navigational landing/start-over link.
+ */
+export function isOwnedFilingBbbDisclosureRevealHost(
+  control: AssistedFormBbbActionControl
+): boolean {
+  if (!control.visible || !control.enabled) return false;
+  if (control.inNoResultsRegion === false) return false;
+  const tag = control.tag ?? (control.kind === "button" ? "button" : "a");
+  if (tag === "button") return true;
+  const role = (control.explicitRole ?? "").trim().toLowerCase();
+  if (role === "button" && isEmptyOrHashHref(control.href)) return true;
+  return false;
+}
+
+/**
+ * @deprecated Prefer classifyOwnedFilingBbbContinuationHref + isOwnedFilingBbbDisclosureRevealHost.
+ * Kept as empty/hash-only so callers never treat broad complaint prefixes as clickable.
+ */
+export function isOwnedFilingBbbContinuationHrefAllowlisted(
+  href: string | null | undefined
+): boolean {
+  return isEmptyOrHashHref(href);
 }
 
 /**
@@ -313,30 +395,15 @@ function continuationControls(pageData: AssistedFormPageData): AssistedFormBbbAc
       id: button.id ?? "",
       name: button.name ?? "",
       href: "",
+      tag: "button" as const,
+      explicitRole: "",
+      target: "",
+      ariaControls: "",
+      ariaExpanded: "",
+      inNoResultsRegion: true,
       visible: true,
       enabled: true,
     }));
-}
-
-/**
- * Keyless continuation anchors may only be clicked when href is empty (in-page/role host) or a
- * same-origin www.bbb.org path under the complaint wizard. External / javascript: hrefs fail closed.
- */
-export function isOwnedFilingBbbContinuationHrefAllowlisted(
-  href: string | null | undefined
-): boolean {
-  const raw = (href ?? "").trim();
-  if (!raw || raw === "#" || raw.startsWith("#")) return true;
-  let parsed: URL;
-  try {
-    parsed = new URL(raw, "https://www.bbb.org");
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-  if (parsed.hostname !== "www.bbb.org") return false;
-  const path = parsed.pathname.replace(/\/$/, "").toLowerCase() || "/";
-  return path === "/" || path.startsWith("/file-a-complaint") || path.startsWith("/complain");
 }
 
 /** Exact allowlisted no-results continuation labels (text decisions / apply role clicks). */
@@ -348,22 +415,11 @@ export function isOwnedFilingBbbWizardEntryLabel(value: string | null | undefine
   );
 }
 
-/**
- * Addresses the one deduped continuation host carrying that exact label. Prefer a real <button>
- * by text, else unique id/name. A unique keyless link may be text-addressed when its href is
- * allowlisted — apply then resolves button|link by accessible name (FTC Report Now pattern).
- * Several distinct hosts for one label stay unaddressable — never guess between them.
- */
-function addressContinuation(
+function addressByIdNameOrText(
+  target: AssistedFormBbbActionControl,
   controls: AssistedFormBbbActionControl[],
   label: string
 ): FormDecision["nextButton"] | null {
-  const wanted = normalizeBbbBusinessName(label);
-  const matches = controls.filter((control) => normalizeBbbBusinessName(control.text) === wanted);
-  if (matches.length !== 1) return null;
-  const target = matches[0];
-  if (target.kind === "button") return { selectorType: "text", value: label };
-
   const uniqueBy = (pick: (control: AssistedFormBbbActionControl) => string): boolean => {
     const key = pick(target).trim();
     if (!key) return false;
@@ -375,20 +431,80 @@ function addressContinuation(
   if (uniqueBy((control) => control.name)) {
     return { selectorType: "name", value: target.name.trim() };
   }
-  if (target.kind === "link" && isOwnedFilingBbbContinuationHrefAllowlisted(target.href)) {
+  // Text is valid only when apply will re-verify the same structural inventory.
+  return { selectorType: "text", value: label };
+}
+
+/**
+ * Reveal opener: exact label + unique disclosure host (real button, or role=button with
+ * empty/hash href). Ordinary navigational anchors — especially landing/search — are rejected.
+ */
+function addressDisclosureReveal(
+  controls: AssistedFormBbbActionControl[],
+  label: string
+): FormDecision["nextButton"] | null {
+  const wanted = normalizeBbbBusinessName(label);
+  const matches = controls.filter(
+    (control) =>
+      normalizeBbbBusinessName(control.text) === wanted &&
+      isOwnedFilingBbbDisclosureRevealHost(control)
+  );
+  if (matches.length !== 1) return null;
+  return addressByIdNameOrText(matches[0], controls, label);
+}
+
+/**
+ * Proceed CTA after the manual form is filled. Prefer a real <button> by text; else unique
+ * id/name; else a disclosure host. Landing/search/external navigational anchors stay rejected.
+ */
+function addressProceedContinuation(
+  controls: AssistedFormBbbActionControl[],
+  label: string
+): FormDecision["nextButton"] | null {
+  const wanted = normalizeBbbBusinessName(label);
+  const matches = controls.filter((control) => normalizeBbbBusinessName(control.text) === wanted);
+  if (matches.length !== 1) return null;
+  const target = matches[0];
+  const tag = target.tag ?? (target.kind === "button" ? "button" : "a");
+  if (tag === "button" || target.kind === "button") {
+    return { selectorType: "text", value: label };
+  }
+  const uniqueBy = (pick: (control: AssistedFormBbbActionControl) => string): boolean => {
+    const key = pick(target).trim();
+    if (!key) return false;
+    return controls.filter((control) => pick(control).trim() === key).length === 1;
+  };
+  if (uniqueBy((control) => control.id)) {
+    return { selectorType: "id", value: target.id.trim() };
+  }
+  if (uniqueBy((control) => control.name)) {
+    return { selectorType: "name", value: target.name.trim() };
+  }
+  if (isOwnedFilingBbbDisclosureRevealHost(target)) {
     return { selectorType: "text", value: label };
   }
   return null;
 }
 
 /** Sanitized shape counts for continuation fail-closed telemetry — counts only, never labels. */
-type ContinuationCounts = { candidates: number; buttons: number; links: number };
+type ContinuationCounts = {
+  candidates: number;
+  buttons: number;
+  links: number;
+  hrefClass?: OwnedFilingBbbContinuationHrefClass;
+};
 
-function continuationCounts(controls: AssistedFormBbbActionControl[]): ContinuationCounts {
+function continuationCounts(
+  controls: AssistedFormBbbActionControl[],
+  hrefClass?: OwnedFilingBbbContinuationHrefClass
+): ContinuationCounts {
   return {
     candidates: controls.length,
-    buttons: controls.filter((control) => control.kind === "button").length,
-    links: controls.filter((control) => control.kind === "link").length,
+    buttons: controls.filter((control) => control.kind === "button" || control.tag === "button")
+      .length,
+    links: controls.filter((control) => control.kind === "link" && control.tag !== "button")
+      .length,
+    ...(hrefClass ? { hrefClass } : {}),
   };
 }
 
@@ -428,6 +544,7 @@ function fail(
     continuation
       ? ` continuation_candidates=${continuation.candidates} buttons=${continuation.buttons} links=${continuation.links}`
       : "",
+    continuation?.hrefClass ? ` href_class=${continuation.hrefClass}` : "",
     missing.length > 0 ? ` missing=${missing.join(",")}` : "",
     unaddressable.length > 0 ? ` unaddressable=${unaddressable.join(",")}` : "",
   ].join("");
@@ -532,28 +649,38 @@ export function buildOwnedFilingBbbSearchDecision(
   const controls = continuationControls(pageData);
 
   if (absentKeys.length > 0) {
-    // The form is not rendered (or not keyed) yet. One reversible click may reveal it; if the
-    // fresh scrape still cannot address the controls, stop instead of clicking again.
+    // The form is not rendered (or not keyed) yet. One reversible disclosure click may reveal
+    // it; if the fresh scrape still cannot address the controls, stop instead of clicking again.
     if ((options.revealAttempts ?? 0) > 0) {
       return fail("search_no_results_identity_incomplete", 0, 0, [], absentKeys);
     }
+    // Prefer exact Business Information Form disclosure; only fall back to File a Complaint when
+    // that host independently satisfies the same disclosure semantics (never a landing anchor).
     const reveal =
-      addressContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL) ??
-      addressContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
+      addressDisclosureReveal(controls, OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL) ??
+      addressDisclosureReveal(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
     if (!reveal) {
+      const rejected = controls.find(
+        (control) =>
+          normalizeBbbBusinessName(control.text) ===
+            normalizeBbbBusinessName(OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL) ||
+          normalizeBbbBusinessName(control.text) ===
+            normalizeBbbBusinessName(OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL)
+      );
       return fail(
         "search_no_results_form_ambiguous",
         0,
         0,
         [],
         absentKeys,
-        continuationCounts(controls)
+        continuationCounts(controls, classifyOwnedFilingBbbContinuationHref(rejected?.href))
       );
     }
     return {
       ok: true,
       step: "reveal_business_form",
-      decision: { fieldsToFill: [], nextButton: reveal, waitForNavigation: true },
+      // Do not treat navigation as success — the loop re-scrapes and enforces the postcondition.
+      decision: { fieldsToFill: [], nextButton: reveal, waitForNavigation: false },
     };
   }
 
@@ -563,15 +690,78 @@ export function buildOwnedFilingBbbSearchDecision(
     tryAppendIdentityFill(fieldsToFill, fields, userData, optional);
   }
 
-  const proceed = addressContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
+  const proceed = addressProceedContinuation(controls, OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL);
   if (!proceed) {
-    return fail("search_no_results_form_ambiguous", 0, 0, [], [], continuationCounts(controls));
+    const rejected = controls.find(
+      (control) =>
+        normalizeBbbBusinessName(control.text) ===
+        normalizeBbbBusinessName(OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL)
+    );
+    return fail(
+      "search_no_results_form_ambiguous",
+      0,
+      0,
+      [],
+      [],
+      continuationCounts(controls, classifyOwnedFilingBbbContinuationHref(rejected?.href))
+    );
   }
 
   return {
     ok: true,
     step: "submit_business_form",
     decision: { fieldsToFill, nextButton: proceed, waitForNavigation: true },
+  };
+}
+
+/**
+ * After a reveal click: URL must remain the search/manual-business context, and all six required
+ * identity controls must be uniquely addressable. Landing/start-over destroys the intended state.
+ */
+export function evaluateOwnedFilingBbbRevealPostcondition(
+  pageData: AssistedFormPageData,
+  _userData: Record<string, unknown> = {}
+): OwnedFilingBbbSearchDecisionResult {
+  if (isOwnedFilingBbbComplaintLandingUrl(pageData.url)) {
+    return fail("search_no_results_reveal_postcondition_failed", 0, 0, [], [], {
+      candidates: 0,
+      buttons: 0,
+      links: 0,
+      hrefClass: "landing",
+    });
+  }
+  if (!isOwnedFilingBbbBusinessSearchUrl(pageData.url)) {
+    return fail("search_no_results_reveal_postcondition_failed", 0, 0, [], [], {
+      candidates: 0,
+      buttons: 0,
+      links: 0,
+      hrefClass: "other",
+    });
+  }
+
+  const fields = businessFormFields(pageData);
+  const absentKeys: string[] = [];
+  const ambiguousKeys: string[] = [];
+  for (const requirement of NO_RESULTS_REQUIRED_IDENTITY) {
+    const resolved = resolveIdentitySelector(fields, requirement.labelPattern);
+    if (resolved.status === "absent") absentKeys.push(requirement.identityKey);
+    if (resolved.status === "ambiguous") ambiguousKeys.push(requirement.identityKey);
+  }
+  if (absentKeys.length > 0 || ambiguousKeys.length > 0) {
+    return fail(
+      "search_no_results_reveal_postcondition_failed",
+      0,
+      0,
+      [],
+      [...absentKeys, ...ambiguousKeys],
+      continuationCounts(continuationControls(pageData))
+    );
+  }
+
+  return {
+    ok: true,
+    step: "reveal_business_form",
+    decision: { fieldsToFill: [], waitForNavigation: false },
   };
 }
 

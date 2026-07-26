@@ -24,6 +24,7 @@ import { applyOwnedFilingFormDecision } from "@/lib/justice/ownedFilingApplyDeci
 import { collectOwnedFilingBbbPageDataInBrowser } from "@/lib/justice/ownedFilingBbbPageData";
 import {
   buildOwnedFilingBbbSearchDecision,
+  evaluateOwnedFilingBbbRevealPostcondition,
   isOwnedFilingBbbBusinessSearchUrl,
 } from "@/lib/justice/ownedFilingBbbSearchDecision";
 import {
@@ -383,9 +384,6 @@ export async function runRealBbbBoundedSubmit(
                 revealAttempts: businessFormRevealAttempts,
               })
             : null;
-          if (searchStep?.ok && searchStep.step === "reveal_business_form") {
-            businessFormRevealAttempts += 1;
-          }
           if (searchStep && !searchStep.ok) {
             stepLog.push({
               step: stepsExecuted,
@@ -508,6 +506,39 @@ export async function runRealBbbBoundedSubmit(
           }
           stepsExecuted += 1;
           stepLog.push({ step: stepsExecuted, url: page.url(), action: "apply" });
+
+          // Reveal is only accepted when the manual-business form is uniquely addressable and
+          // the URL did not bounce to the complaint landing page. Never fall into generic
+          // decide-action on a destroyed search state.
+          if (searchStep?.ok && searchStep.step === "reveal_business_form") {
+            const afterReveal = await collectPageData(page, playwrightSession, browser);
+            const postcondition = evaluateOwnedFilingBbbRevealPostcondition(afterReveal, userData);
+            if (!postcondition.ok) {
+              stepLog.push({
+                step: stepsExecuted,
+                url: afterReveal.url,
+                action: "blocked_unknown_click",
+                detail: postcondition.detail,
+              });
+              const capture = await captureScreenshot(page, supabase, storageConfigured).catch(
+                () => ({
+                  screenshot: null,
+                  storageSkipped: true,
+                  storageReason: "Screenshot capture failed",
+                })
+              );
+              return buildIncompleteResult(
+                "blocked_unknown_click",
+                stepsExecuted,
+                stepLog,
+                afterReveal,
+                capture.screenshot,
+                capture.storageSkipped,
+                capture.storageReason
+              );
+            }
+            businessFormRevealAttempts += 1;
+          }
         }
 
         const finalPageData = await collectPageData(page, playwrightSession, browser);
