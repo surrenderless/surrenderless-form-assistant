@@ -312,15 +312,46 @@ function continuationControls(pageData: AssistedFormPageData): AssistedFormBbbAc
       text: button.text ?? "",
       id: button.id ?? "",
       name: button.name ?? "",
+      href: "",
       visible: true,
       enabled: true,
     }));
 }
 
 /**
- * Addresses the one deduped continuation host carrying that exact label. A real <button> is
- * text-addressable (`buildButtonSelector` emits `button:has-text(...)`); any other host (anchor,
- * role=button) must expose a unique id or name, mirroring how a result link is addressed.
+ * Keyless continuation anchors may only be clicked when href is empty (in-page/role host) or a
+ * same-origin www.bbb.org path under the complaint wizard. External / javascript: hrefs fail closed.
+ */
+export function isOwnedFilingBbbContinuationHrefAllowlisted(
+  href: string | null | undefined
+): boolean {
+  const raw = (href ?? "").trim();
+  if (!raw || raw === "#" || raw.startsWith("#")) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, "https://www.bbb.org");
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (parsed.hostname !== "www.bbb.org") return false;
+  const path = parsed.pathname.replace(/\/$/, "").toLowerCase() || "/";
+  return path === "/" || path.startsWith("/file-a-complaint") || path.startsWith("/complain");
+}
+
+/** Exact allowlisted no-results continuation labels (text decisions / apply role clicks). */
+export function isOwnedFilingBbbWizardEntryLabel(value: string | null | undefined): boolean {
+  const normalized = normalizeBbbBusinessName(value);
+  return (
+    normalized === normalizeBbbBusinessName(OWNED_FILING_BBB_NO_RESULTS_PROCEED_LABEL) ||
+    normalized === normalizeBbbBusinessName(OWNED_FILING_BBB_NO_RESULTS_FORM_LABEL)
+  );
+}
+
+/**
+ * Addresses the one deduped continuation host carrying that exact label. Prefer a real <button>
+ * by text, else unique id/name. A unique keyless link may be text-addressed when its href is
+ * allowlisted — apply then resolves button|link by accessible name (FTC Report Now pattern).
  * Several distinct hosts for one label stay unaddressable — never guess between them.
  */
 function addressContinuation(
@@ -343,6 +374,9 @@ function addressContinuation(
   }
   if (uniqueBy((control) => control.name)) {
     return { selectorType: "name", value: target.name.trim() };
+  }
+  if (target.kind === "link" && isOwnedFilingBbbContinuationHrefAllowlisted(target.href)) {
+    return { selectorType: "text", value: label };
   }
   return null;
 }

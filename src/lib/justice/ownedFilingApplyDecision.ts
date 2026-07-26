@@ -6,6 +6,11 @@ import {
   type FormDecision,
 } from "@/lib/justice/realBbbBoundedSubmitLoop";
 import {
+  isOwnedFilingBbbBusinessSearchUrl,
+  isOwnedFilingBbbWizardEntryLabel,
+  normalizeBbbBusinessName,
+} from "@/lib/justice/ownedFilingBbbSearchDecision";
+import {
   isFtcReportChoiceFlowUrl,
   isFtcReportEntryUrl,
 } from "@/lib/justice/realFtcBoundedSubmitLoop";
@@ -858,7 +863,45 @@ async function clickNextButton(
     });
   try {
     let click: () => Promise<boolean>;
-    if (options.useExactTextButtonLocator && decision.nextButton.selectorType === "text") {
+    const isBbbWizardEntryText =
+      decision.nextButton.selectorType === "text" &&
+      isOwnedFilingBbbBusinessSearchUrl(options.currentPageUrl) &&
+      isOwnedFilingBbbWizardEntryLabel(decision.nextButton.value);
+
+    if (isBbbWizardEntryText) {
+      // Search-step only: unique allowlisted continuation may be a bare <a>. Resolve by
+      // accessible name across button|link (FTC Report Now pattern) after inventory verify —
+      // never enable useExactTextButtonLocator for the whole BBB loop.
+      const label = decision.nextButton.value;
+      const wanted = normalizeBbbBusinessName(label);
+      const inventory = (options.bbbContinuationControls ?? []).filter(
+        (control) =>
+          control.visible &&
+          control.enabled &&
+          normalizeBbbBusinessName(control.text) === wanted
+      );
+      if (inventory.length !== 1) return { clicked: false };
+
+      const locatorOptions = { name: label, exact: true } as const;
+      const buttonTarget = page.getByRole("button", locatorOptions);
+      const linkTarget = page.getByRole("link", locatorOptions);
+      const [buttonCount, linkCount] = await Promise.all([
+        buttonTarget.count(),
+        linkTarget.count(),
+      ]);
+      if (buttonCount + linkCount !== 1) return { clicked: false };
+      const target = buttonCount === 1 ? buttonTarget : linkTarget;
+      const [visible, enabled] = await Promise.all([target.isVisible(), target.isEnabled()]);
+      if (!visible || !enabled) return { clicked: false };
+      click = async () => {
+        if (options.actionTimeoutMs === undefined) {
+          await target.click();
+        } else {
+          await target.click({ timeout: options.actionTimeoutMs });
+        }
+        return true;
+      };
+    } else if (options.useExactTextButtonLocator && decision.nextButton.selectorType === "text") {
       const locatorOptions = { name: decision.nextButton.value, exact: true } as const;
       const buttonTarget = page.getByRole("button", locatorOptions);
       let target = buttonTarget;

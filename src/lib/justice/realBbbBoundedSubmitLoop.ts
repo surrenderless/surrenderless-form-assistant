@@ -70,6 +70,11 @@ export type AssistedFormBbbActionControl = {
   text: string;
   id: string;
   name: string;
+  /**
+   * Raw href on an anchor host (empty when absent). Used only to verify same-origin complaint
+   * paths before a keyless link is text-addressed — never persisted in durable dry-run notes.
+   */
+  href?: string;
   visible: boolean;
   enabled: boolean;
 };

@@ -219,10 +219,21 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     // The scraped continuation inventory must reach the click gate for id/name verification.
     expect(source).toContain("bbbContinuationControls: pageData.bbbNoResultsControls");
 
+    // Keyless allowlisted link continuations are applied via button|link role — not global
+    // useExactTextButtonLocator for the BBB loop.
+    const apply = read("src/lib/justice/ownedFilingApplyDecision.ts");
+    expect(apply).toContain("isOwnedFilingBbbWizardEntryLabel");
+    expect(apply).toContain('getByRole("link"');
+    expect(apply).toMatch(
+      /isOwnedFilingBbbBusinessSearchUrl\(options\.currentPageUrl\)[\s\S]*?getByRole\("button"[\s\S]*?getByRole\("link"/
+    );
+    expect(source).not.toContain("useExactTextButtonLocator");
+
     const scrape = read("src/lib/justice/ownedFilingBbbPageData.ts");
     expect(scrape).toContain("formcontrolname");
     expect(scrape).toContain("inBusinessInfoForm");
     expect(scrape).toContain("bbbNoResultsControls");
+    expect(scrape).toContain('href: el.getAttribute("href") || ""');
     // One semantic continuation rendered as nested wrappers must collapse to its innermost host,
     // and site chrome must never compete with the no-results CTA.
     expect(scrape).toMatch(/labelMatches\.filter\(\(el\) => !labelMatches\.some\(\(other\) => wraps\(other, el\)\)\)/);
@@ -247,6 +258,8 @@ describe("FTC navigation avoids blind settle delay under Browserless budget", ()
     // Continuation fail-closed carries shape counts only — no scraped labels or hrefs.
     expect(decision).toContain("continuation_candidates=${continuation.candidates}");
     expect(decision).toMatch(/buttons=\$\{continuation\.buttons\} links=\$\{continuation\.links\}/);
+    expect(decision).toContain("isOwnedFilingBbbContinuationHrefAllowlisted");
+    expect(decision).not.toMatch(/detail:[\s\S]{0,80}href=/);
 
     const dryRun = read("src/lib/justice/ownedFilingDryRun.ts");
     expect(dryRun).toContain("parseOwnedFilingBbbSearchFailureDetail");

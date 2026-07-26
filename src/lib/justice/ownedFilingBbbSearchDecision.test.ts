@@ -6,6 +6,8 @@ import {
   OWNED_FILING_BBB_SEARCH_DECISION_FAILURES,
   buildOwnedFilingBbbSearchDecision,
   isOwnedFilingBbbBusinessSearchUrl,
+  isOwnedFilingBbbContinuationHrefAllowlisted,
+  isOwnedFilingBbbWizardEntryLabel,
   normalizeBbbBusinessName,
   parseOwnedFilingBbbSearchFailureDetail,
 } from "@/lib/justice/ownedFilingBbbSearchDecision";
@@ -102,6 +104,33 @@ describe("isOwnedFilingBbbBusinessSearchUrl", () => {
     );
     expect(isOwnedFilingBbbBusinessSearchUrl("")).toBe(false);
     expect(isOwnedFilingBbbBusinessSearchUrl("not a url")).toBe(false);
+  });
+});
+
+describe("isOwnedFilingBbbContinuationHrefAllowlisted", () => {
+  it("allows empty, hash, and same-origin complaint paths", () => {
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("")).toBe(true);
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("#")).toBe(true);
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("#business-info")).toBe(true);
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("/file-a-complaint/search")).toBe(true);
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("/complain/search")).toBe(true);
+    expect(
+      isOwnedFilingBbbContinuationHrefAllowlisted("https://www.bbb.org/file-a-complaint/search")
+    ).toBe(true);
+  });
+
+  it("rejects external hosts and non-http schemes", () => {
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("https://evil.example/x")).toBe(false);
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("javascript:void(0)")).toBe(false);
+    expect(isOwnedFilingBbbContinuationHrefAllowlisted("/business-information")).toBe(false);
+  });
+});
+
+describe("isOwnedFilingBbbWizardEntryLabel", () => {
+  it("matches only the two exact continuation labels", () => {
+    expect(isOwnedFilingBbbWizardEntryLabel("File a Complaint")).toBe(true);
+    expect(isOwnedFilingBbbWizardEntryLabel("Business Information Form")).toBe(true);
+    expect(isOwnedFilingBbbWizardEntryLabel("Submit Complaint")).toBe(false);
   });
 });
 
@@ -534,7 +563,16 @@ describe("buildOwnedFilingBbbSearchDecision — no-results sequencing", () => {
   function control(
     overrides: Partial<AssistedFormBbbActionControl> = {}
   ): AssistedFormBbbActionControl {
-    return { kind: "button", text: "File a Complaint", id: "", name: "", visible: true, enabled: true, ...overrides };
+    return {
+      kind: "button",
+      text: "File a Complaint",
+      id: "",
+      name: "",
+      href: "",
+      visible: true,
+      enabled: true,
+      ...overrides,
+    };
   }
 
   const ALL_IDENTITY_KEYS =
@@ -667,21 +705,85 @@ describe("buildOwnedFilingBbbSearchDecision — no-results sequencing", () => {
     });
   });
 
-  it("fails closed when the only continuation is a link with no id or name", () => {
-    // A bare anchor cannot be clicked through button:has-text(...) and has no stable key.
-    const linkOnly = buildOwnedFilingBbbSearchDecision(
+  it("addresses a unique keyless link continuation by text when href is allowlisted", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
       pageData({
         bbbSearchResults: [],
         fields: [],
-        bbbNoResultsControls: [control({ kind: "link", text: "Business Information Form" })],
+        bbbNoResultsControls: [
+          control({
+            kind: "link",
+            text: "Business Information Form",
+            href: "/file-a-complaint/search",
+          }),
+        ],
       }),
       FULL_IDENTITY
     );
-    expect(linkOnly).toEqual({
+
+    expect(decision).toMatchObject({
+      ok: true,
+      step: "reveal_business_form",
+      decision: {
+        fieldsToFill: [],
+        nextButton: { selectorType: "text", value: "Business Information Form" },
+      },
+    });
+    if (!decision.ok) throw new Error("expected a decision");
+    expect(normalizeFormDecision(decision.decision)).toEqual(decision.decision);
+    expect(
+      classifyOwnedFilingClick(decision.decision.nextButton, { pageUrl: SEARCH_URL })
+    ).toBe("safe");
+  });
+
+  it("addresses a unique keyless link with empty href by text", () => {
+    const decision = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [],
+        bbbNoResultsControls: [control({ kind: "link", text: "File a Complaint", href: "" })],
+      }),
+      FULL_IDENTITY
+    );
+    expect(decision).toMatchObject({
+      ok: true,
+      step: "reveal_business_form",
+      decision: { nextButton: { selectorType: "text", value: "File a Complaint" } },
+    });
+  });
+
+  it("fails closed when the only continuation link has an off-allowlist href", () => {
+    const external = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [],
+        bbbNoResultsControls: [
+          control({
+            kind: "link",
+            text: "Business Information Form",
+            href: "https://evil.example/phish",
+          }),
+        ],
+      }),
+      FULL_IDENTITY
+    );
+    expect(external).toEqual({
       ok: false,
       failure: "search_no_results_form_ambiguous",
       detail: `search_no_results_form_ambiguous results=0 matches=0 continuation_candidates=1 buttons=0 links=1 unaddressable=${ALL_IDENTITY_KEYS}`,
     });
+
+    const javascriptHref = buildOwnedFilingBbbSearchDecision(
+      pageData({
+        bbbSearchResults: [],
+        fields: [],
+        bbbNoResultsControls: [
+          control({ kind: "link", text: "File a Complaint", href: "javascript:void(0)" }),
+        ],
+      }),
+      FULL_IDENTITY
+    );
+    expect(javascriptHref).toMatchObject({ ok: false, failure: "search_no_results_form_ambiguous" });
   });
 
   it("requires approved values before any click, even when the form is missing", () => {
@@ -795,6 +897,7 @@ describe("classifyOwnedFilingClick — BBB search wizard entry", () => {
       text: "Business Information Form",
       id: "biz-info-form",
       name: "",
+      href: "/file-a-complaint/search",
       visible: true,
       enabled: true,
       ...overrides,
@@ -1077,7 +1180,15 @@ describe("collectOwnedFilingBbbPageDataInBrowser", () => {
       enabled: true,
     });
     expect(data.bbbNoResultsControls).toEqual([
-      { kind: "button", text: "File a Complaint", id: "", name: "", visible: true, enabled: true },
+      {
+        kind: "button",
+        text: "File a Complaint",
+        id: "",
+        name: "",
+        href: "",
+        visible: true,
+        enabled: true,
+      },
     ]);
     expect(data.buttons).toEqual([
       { text: "Search", id: "", name: "", type: "", visible: true, enabled: true },
@@ -1110,6 +1221,7 @@ describe("collectOwnedFilingBbbPageDataInBrowser", () => {
         text: "File a Complaint",
         id: "biz-cta",
         name: "",
+        href: "",
         visible: true,
         enabled: true,
       },
@@ -1140,6 +1252,7 @@ describe("collectOwnedFilingBbbPageDataInBrowser", () => {
         text: "Business Information Form",
         id: "biz-info-form",
         name: "",
+        href: "/business-information",
         visible: true,
         enabled: true,
       },
@@ -1157,6 +1270,38 @@ describe("collectOwnedFilingBbbPageDataInBrowser", () => {
         bbbContinuationControls: data.bbbNoResultsControls,
       })
     ).toBe("safe");
+  });
+
+  it("addresses a bare keyless anchor continuation by text after scrape", () => {
+    installDom(
+      el("main", {
+        children: [
+          el("a", {
+            attrs: { href: "/file-a-complaint/search#business-info" },
+            text: "Business Information Form",
+          }),
+        ],
+      }),
+      "/file-a-complaint/search"
+    );
+
+    const data = collectOwnedFilingBbbPageDataInBrowser();
+    expect(data.bbbNoResultsControls).toEqual([
+      {
+        kind: "link",
+        text: "Business Information Form",
+        id: "",
+        name: "",
+        href: "/file-a-complaint/search#business-info",
+        visible: true,
+        enabled: true,
+      },
+    ]);
+    expect(buildOwnedFilingBbbSearchDecision(data, FULL_IDENTITY)).toMatchObject({
+      ok: true,
+      step: "reveal_business_form",
+      decision: { nextButton: { selectorType: "text", value: "Business Information Form" } },
+    });
   });
 
   it("excludes site chrome so a header CTA cannot create ambiguity", () => {
@@ -1187,7 +1332,15 @@ describe("collectOwnedFilingBbbPageDataInBrowser", () => {
     );
 
     expect(collectOwnedFilingBbbPageDataInBrowser().bbbNoResultsControls).toEqual([
-      { kind: "button", text: "File a Complaint", id: "body-cta", name: "", visible: true, enabled: true },
+      {
+        kind: "button",
+        text: "File a Complaint",
+        id: "body-cta",
+        name: "",
+        href: "",
+        visible: true,
+        enabled: true,
+      },
     ]);
   });
 

@@ -100,10 +100,11 @@ function searchPage(results: unknown[], fields: unknown[] = [], controls?: unkno
 }
 
 const WIZARD_ENTRY_CONTROL = {
-  kind: "button",
+  kind: "button" as const,
   text: "File a Complaint",
   id: "",
   name: "",
+  href: "",
   visible: true,
   enabled: true,
 };
@@ -339,10 +340,11 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
       decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
     });
     const anchorControl = {
-      kind: "link",
+      kind: "link" as const,
       text: "Business Information Form",
       id: "biz-info-form",
       name: "",
+      href: "/file-a-complaint/search",
       visible: true,
       enabled: true,
     };
@@ -388,6 +390,61 @@ describe("runRealBbbBoundedSubmit business-search step", () => {
       ],
       nextButton: { selectorType: "text", value: "File a Complaint" },
       waitForNavigation: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected incomplete result");
+    expect(result.stopReason).toBe("blocked_irreversible_click");
+    expect(result.stepsExecuted).toBe(2);
+  });
+
+  it("reveals through a keyless allowlisted link addressed by text, then fills and stops at Submit", async () => {
+    stubDecideAction({
+      decision: { fieldsToFill: [], nextButton: { selectorType: "text", value: "Submit Complaint" } },
+    });
+    const keylessLink = {
+      kind: "link" as const,
+      text: "Business Information Form",
+      id: "",
+      name: "",
+      href: "/file-a-complaint/search",
+      visible: true,
+      enabled: true,
+    };
+    const wizardUrl = "https://www.bbb.org/file-a-complaint/wizard/review";
+    h.state.evaluateQueue = [
+      searchPage([], [], [keylessLink]),
+      searchPage([], angularIdentityFields(), [WIZARD_ENTRY_CONTROL]),
+      {
+        fields: [],
+        buttons: [{ text: "Submit Complaint", id: "", name: "", type: "submit" }],
+        url: wizardUrl,
+        pageText: "",
+      },
+    ];
+    h.state.applyQueue = [
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      { result: { ok: true, clicked: true, risk: "safe" } },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          risk: "irreversible",
+          buttonLabel: "text:Submit Complaint",
+          reason: "dry_run_stop",
+        },
+      },
+    ];
+
+    const result = await runRealBbbBoundedSubmit(runParams(APPROVED_POSTAL_IDENTITY));
+
+    expect(mockedApply.mock.calls[0]?.[1]).toEqual({
+      fieldsToFill: [],
+      nextButton: { selectorType: "text", value: "Business Information Form" },
+      waitForNavigation: true,
+    });
+    expect(mockedApply.mock.calls[0]?.[2]).toMatchObject({
+      currentPageUrl: SEARCH_URL,
+      bbbContinuationControls: [keylessLink],
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected incomplete result");
