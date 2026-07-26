@@ -3,6 +3,7 @@ import { REAL_BBB_ASSISTED_SUBMISSION_LANE } from "@/lib/justice/assistedSubmiss
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
 import {
   bbbFilingsForManualTracking,
+  ensureBbbFilingTask,
   findOpenBbbFilingTask,
   hasBbbFilingWithConfirmation,
   shouldQueueBbbFilingTask,
@@ -19,7 +20,9 @@ import {
 } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 import { MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
-import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
+import {
+  isRealBbbOperatorFulfillmentPrimary,
+} from "@/lib/justice/realBbbAutofillEnabled";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -36,8 +39,15 @@ export {
   type BbbOwnedFilingDeliveryState,
 } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 
-/** Provider tag stored on the delivery record. */
+/**
+ * Provider tag stored on the autofill delivery record.
+ * Only written when the browser harness is opted in — never for operator-primary fulfillment.
+ */
 export const BBB_OWNED_FILING_PROVIDER = "real_bbb_bounded_submit";
+
+/** Skip reason when operator fulfillment is primary (no browser worker enqueue). */
+export const BBB_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON =
+  "real BBB operator fulfillment primary — autofill harness parked";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -91,9 +101,15 @@ async function patchBbbTaskNotes(
 }
 
 /**
- * Enqueues Surrenderless-owned BBB filing for the durable background worker.
- * Never runs Playwright/Browserless on the request path — it only persists
- * `delivery_state: "queued"` and lets /api/cron/run-queued-owned-filings execute it.
+ * Routes Surrenderless-owned BBB filing.
+ *
+ * Product default (`isRealBbbOperatorFulfillmentPrimary`): do NOT enqueue the browser worker.
+ * The BBB operator task is ensured by ensureOwnedFilingTaskAfterClientStateWrite /
+ * ensureBbbFilingTask and surfaces in the operator fulfillment queue (`step: "bbb"`).
+ * Chat shows an in-progress operator-filing state — not autofill submitting.
+ *
+ * Harness override (`isRealBbbComplaintAutofillEnabled`): persists `delivery_state: "queued"`
+ * for /api/cron/run-queued-owned-filings. Never runs Playwright on the request path.
  *
  * Idempotent: already filed/queued/submitting is not re-enqueued; a reconciled
  * `failed` state short-circuits so operator fallbacks are never auto-resubmitted.
@@ -106,13 +122,6 @@ export async function attemptAutomatedBbbFiling(
   const trimmedCaseId = caseId.trim();
   if (!trimmedCaseId) {
     return { status: "skipped", reason: "case_id is required" };
-  }
-
-  if (!isRealBbbComplaintAutofillEnabled()) {
-    return {
-      status: "skipped",
-      reason: "real BBB autofill disabled — operator/manual fallback",
-    };
   }
 
   const { data: caseRow, error: caseErr } = await supabase
@@ -193,7 +202,28 @@ export async function attemptAutomatedBbbFiling(
     };
   }
 
-  const openTask = findOpenBbbFilingTask(tasks, trimmedCaseId);
+  let openTask = findOpenBbbFilingTask(tasks, trimmedCaseId);
+
+  // Operator primary: ensure the BBB operator task exists, surface it in the fulfillment
+  // queue, and never write autofill delivery_state (avoids autofill-failed alert noise).
+  if (isRealBbbOperatorFulfillmentPrimary()) {
+    if (!openTask) {
+      const ensured = await ensureBbbFilingTask(supabase, userId, trimmedCaseId, intake);
+      openTask =
+        ensured.task && !ensured.task.completed_at?.trim() ? ensured.task : undefined;
+      if (!openTask) {
+        return { status: "skipped", reason: "could not ensure BBB operator task" };
+      }
+    }
+    if (!taskNotesMatchBbbFilingMarker(openTask.notes, trimmedCaseId)) {
+      return { status: "skipped", reason: "task marker mismatch" };
+    }
+    return {
+      status: "skipped",
+      reason: BBB_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    };
+  }
+
   if (!openTask) {
     return { status: "skipped", reason: "no open BBB task" };
   }

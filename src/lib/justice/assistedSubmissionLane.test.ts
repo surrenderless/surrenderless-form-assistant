@@ -112,10 +112,10 @@ describe("assistedSubmissionLane", () => {
     expect(isRunnableAssistedSubmissionLane(MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE)).toBe(true);
   });
 
-  it("marks real BBB complaint lane runnable by default and only disabled when env is false", () => {
-    expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(true);
-    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "false");
+  it("marks real BBB complaint lane parked by default and runnable only when env is true", () => {
     expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
+    expect(isRunnableAssistedSubmissionLane(REAL_BBB_ASSISTED_SUBMISSION_LANE)).toBe(true);
   });
 
   it("resolves FTC review href to mock FTC lane", () => {
@@ -155,7 +155,7 @@ describe("assistedSubmissionLane", () => {
     );
   });
 
-  it("keeps real BBB prep eligible by default when gates pass", () => {
+  it("keeps real BBB prep ineligible by default (operator fulfillment primary)", () => {
     expect(
       isAssistedMockSubmissionEligible({
         isLoaded: true,
@@ -168,7 +168,7 @@ describe("assistedSubmissionLane", () => {
           status: "approved",
         },
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("keeps real BBB prep ineligible when autofill is explicitly disabled", () => {
@@ -189,7 +189,7 @@ describe("assistedSubmissionLane", () => {
     ).toBe(false);
   });
 
-  it("keeps real BBB prep eligible when autofill is enabled and gates pass", () => {
+  it("keeps real BBB prep eligible when autofill harness env override is on and gates pass", () => {
     vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED", "true");
     expect(
       isAssistedMockSubmissionEligible({

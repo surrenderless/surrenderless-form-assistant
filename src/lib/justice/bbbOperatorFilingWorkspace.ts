@@ -32,7 +32,7 @@ export type BbbWorkspaceEvidenceItem = OperatorWorkspaceEvidenceItem;
 export type BbbOperatorFilingWorkspace = {
   filing_destination: string;
   portal: BbbOfficialPortalResolution;
-  /** True when the owned autofill path is enabled in this environment (does not claim it ran). */
+  /** True only when the parked browser autofill harness is explicitly opted in (env override). */
   owned_autofill_enabled: boolean;
   complaint_draft: string;
   prepared_answers: BbbPreparedAnswerField[];

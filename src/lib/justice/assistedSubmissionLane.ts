@@ -92,7 +92,13 @@ export function resolveAssistedSubmissionFillUrl(lane: AssistedSubmissionLaneCon
   return lane.submissionUrl;
 }
 
-/** Lanes that may activate assisted submission eligibility/prep/run in chat today. */
+/**
+ * Lanes that may activate assisted submission eligibility/prep/run in chat today.
+ *
+ * Real BBB browser autofill is parked pending portal stability (PRs #938–#941 never reached
+ * Submit). Operator fulfillment is the durable primary path; the bounded harness is reachable
+ * only when NEXT_PUBLIC_JUSTICE_REAL_BBB_AUTOFILL_ENABLED=true. Mock + FTC lanes are unchanged.
+ */
 export function isRunnableAssistedSubmissionLane(lane: AssistedSubmissionLaneConfig): boolean {
   if (lane.id === MOCK_FTC_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return true;
   if (lane.id === MOCK_BBB_PRACTICE_ASSISTED_SUBMISSION_LANE.id) return true;

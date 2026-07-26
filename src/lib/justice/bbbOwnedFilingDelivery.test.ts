@@ -8,6 +8,7 @@ import {
   parseBbbOwnedFilingDeliveryRecord,
   upsertBbbOwnedFilingDeliveryNotes,
   attemptAutomatedBbbFiling,
+  BBB_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
 } from "@/lib/justice/bbbOwnedFilingDelivery";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -18,13 +19,26 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 
 vi.mock("@/lib/justice/realBbbAutofillEnabled", () => ({
   isRealBbbComplaintAutofillEnabled: vi.fn(() => true),
+  isRealBbbOperatorFulfillmentPrimary: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/justice/surrenderlessOwnedStep", () => ({
   shouldSuppressChatManualActionForSurrenderlessOwnedStep: vi.fn(() => true),
 }));
 
-import { isRealBbbComplaintAutofillEnabled } from "@/lib/justice/realBbbAutofillEnabled";
+vi.mock("@/lib/justice/bbbFilingTask", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/justice/bbbFilingTask")>();
+  return {
+    ...actual,
+    ensureBbbFilingTask: vi.fn(actual.ensureBbbFilingTask),
+  };
+});
+
+import {
+  isRealBbbComplaintAutofillEnabled,
+  isRealBbbOperatorFulfillmentPrimary,
+} from "@/lib/justice/realBbbAutofillEnabled";
+import { ensureBbbFilingTask } from "@/lib/justice/bbbFilingTask";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -183,6 +197,8 @@ describe("bbbOwnedFilingDelivery helpers", () => {
 describe("attemptAutomatedBbbFiling (enqueue only, no Playwright on request path)", () => {
   beforeEach(() => {
     vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(true);
+    vi.mocked(isRealBbbOperatorFulfillmentPrimary).mockReturnValue(false);
+    vi.mocked(ensureBbbFilingTask).mockReset();
     vi.stubEnv("VERCEL_ENV", "preview");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
@@ -206,19 +222,47 @@ describe("attemptAutomatedBbbFiling (enqueue only, no Playwright on request path
     expect(noteUpdates.some((n) => n.includes("delivery_state: submitting"))).toBe(false);
   });
 
-  it("skips when realtime BBB autofill is disabled", async () => {
+  it("routes to operator fulfillment by default without writing autofill delivery_state", async () => {
     vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(false);
+    vi.mocked(isRealBbbOperatorFulfillmentPrimary).mockReturnValue(true);
     const noteUpdates: string[] = [];
     const result = await attemptAutomatedBbbFiling(
       makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
       USER_ID,
       CASE_ID
     );
-    expect(result.status).toBe("skipped");
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: BBB_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
     expect(noteUpdates.length).toBe(0);
+    expect(noteUpdates.some((n) => n.includes("delivery_state: queued"))).toBe(false);
+    expect(vi.mocked(ensureBbbFilingTask)).not.toHaveBeenCalled();
   });
 
-  it("skips without enqueue when production execution readiness fails", async () => {
+  it("ensures a BBB operator task when missing in operator-primary mode", async () => {
+    vi.mocked(isRealBbbComplaintAutofillEnabled).mockReturnValue(false);
+    vi.mocked(isRealBbbOperatorFulfillmentPrimary).mockReturnValue(true);
+    vi.mocked(ensureBbbFilingTask).mockResolvedValue({
+      task: taskWithNotes(`bbb_filing_queue:${CASE_ID}\ndraft:\nx`),
+      timeline: null,
+      created: true,
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedBbbFiling(
+      makeSupabase({ tasks: [], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: BBB_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
+    expect(vi.mocked(ensureBbbFilingTask)).toHaveBeenCalledOnce();
+    expect(noteUpdates.some((n) => n.includes("delivery_state:"))).toBe(false);
+  });
+
+  it("skips without enqueue when production execution readiness fails (harness mode)", async () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("BROWSERLESS_URL", "");
     const noteUpdates: string[] = [];

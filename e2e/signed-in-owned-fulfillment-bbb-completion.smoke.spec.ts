@@ -56,7 +56,7 @@ test("owned BBB queue → operator completes → resolution endgame stays in cha
   await expect(tracking.getByText("Next step:")).toContainText("Better Business Bureau", {
     timeout: 15_000,
   });
-  await expect(consumerPage.getByText("BBB filing queued.")).toBeVisible({ timeout: 30_000 });
+  await expect(consumerPage.getByText("BBB filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(tracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
   await expectNoOptionalDestinationPrepOrEvidenceHubLinks(consumerPage.locator("main"));
 
