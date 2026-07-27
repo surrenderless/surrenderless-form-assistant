@@ -33,6 +33,7 @@ import {
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
@@ -45,6 +46,13 @@ import {
   resolveConsumerActiveCaseChecklistDraftReviewNavigate,
   resolveConsumerActiveCaseChecklistPacketApprovalNavigate,
 } from "@/lib/justice/chatAiLadderNavigation";
+import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
+import {
+  OWNED_STEP_HANDLING_TRACKING_COPY,
+  OWNED_STEP_HUB_CASES_STATUS_COPY,
+  resolveHubOrCasesHandlingTrackingStep,
+  shouldShowHubOrCasesConsumerManualHandlingControls,
+} from "@/lib/justice/surrenderlessOwnedChatManualUi";
 import { readTimeline, applyServerTimelineFromResponse, SUBMISSION_DRAFT_REVIEWED_TIMELINE_ID } from "@/lib/justice/timeline";
 import type { JusticeApprovedNextAction, JusticeIntake, ProblemCategory } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
@@ -149,8 +157,16 @@ function deriveHubHandlingTrackingLine(input: {
   preparedPacketApproved: boolean;
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
+  tasks: JusticeCaseTaskRow[];
+  caseId: string;
   next: JusticeApprovedNextAction;
 }): string {
+  const suppressOwned = shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+    approvedAction: input.next,
+    caseId: input.caseId,
+    tasks: input.tasks,
+    filings: input.filings,
+  });
   const readyForManualReview = hubReadyForManualReview({
     basicsReady: input.basicsReady,
     draftReviewed: input.draftReviewed,
@@ -161,16 +177,19 @@ function deriveHubHandlingTrackingLine(input: {
   const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
-  return deriveHubManualActionNextStep({
-    readyForExternalManualAction,
-    actionOpened,
-    hasFilingRecord,
-    hasConfirmationOnFile,
-    status: input.next.status,
-    outcomeNote: input.next.outcome_note,
-    handlingRequestedAt: input.next.handling_requested_at,
-    handlingAcknowledgedAt: input.next.handling_acknowledged_at,
-    followUpNeeded: input.next.follow_up_needed === true,
+  return resolveHubOrCasesHandlingTrackingStep({
+    suppressOwnedManualUi: suppressOwned,
+    manualDerivedStep: deriveHubManualActionNextStep({
+      readyForExternalManualAction,
+      actionOpened,
+      hasFilingRecord,
+      hasConfirmationOnFile,
+      status: input.next.status,
+      outcomeNote: input.next.outcome_note,
+      handlingRequestedAt: input.next.handling_requested_at,
+      handlingAcknowledgedAt: input.next.handling_acknowledged_at,
+      followUpNeeded: input.next.follow_up_needed === true,
+    }),
   });
 }
 
@@ -182,6 +201,8 @@ function HubHandlingTrackingStatusReadOnly({
   preparedPacketApproved,
   evidenceCount,
   filings,
+  tasks,
+  caseId,
   markAcknowledgedOnScreen = false,
 }: {
   readinessLoading: boolean;
@@ -191,6 +212,8 @@ function HubHandlingTrackingStatusReadOnly({
   preparedPacketApproved: boolean;
   evidenceCount: number;
   filings: JusticeCaseFilingRow[];
+  tasks: JusticeCaseTaskRow[];
+  caseId: string;
   markAcknowledgedOnScreen?: boolean;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
@@ -204,12 +227,20 @@ function HubHandlingTrackingStatusReadOnly({
       </p>
     );
   }
+  const suppressOwned = shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+    approvedAction: approvedNextAction,
+    caseId,
+    tasks,
+    filings,
+  });
   const derivedStep = deriveHubHandlingTrackingLine({
     basicsReady,
     draftReviewed,
     preparedPacketApproved,
     evidenceCount,
     filings,
+    tasks,
+    caseId,
     next: approvedNextAction,
   });
   return (
@@ -219,7 +250,9 @@ function HubHandlingTrackingStatusReadOnly({
         {derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        In-app tracking only — not filed or submitted.
+        {suppressOwned
+          ? OWNED_STEP_HANDLING_TRACKING_COPY
+          : "In-app tracking only — not filed or submitted."}
       </p>
       <ApprovedNextActionHandlingTrackingContextualLink
         derivedStep={derivedStep}
@@ -228,6 +261,7 @@ function HubHandlingTrackingStatusReadOnly({
         basicsReady={basicsReady}
         evidenceCount={evidenceCount}
         markAcknowledgedOnScreen={markAcknowledgedOnScreen}
+        suppressOwnedStepManualNavigation={suppressOwned}
       />
     </>
   );
@@ -292,6 +326,7 @@ export default function JusticeHubWorkspaceBody() {
   const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
   const [evidenceCount, setEvidenceCount] = useState<number | null>(null);
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
+  const [tasks, setTasks] = useState<JusticeCaseTaskRow[]>([]);
   const [hubReadinessLoading, setHubReadinessLoading] = useState(false);
   const [requestingHandling, setRequestingHandling] = useState(false);
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
@@ -308,6 +343,7 @@ export default function JusticeHubWorkspaceBody() {
       if (!isSignedIn || !caseId || !isUuid(caseId)) {
         setEvidenceCount(null);
         setFilings([]);
+        setTasks([]);
         setHubReadinessLoading(false);
         return;
       }
@@ -334,19 +370,23 @@ export default function JusticeHubWorkspaceBody() {
 
       setHubReadinessLoading(true);
       try {
-        const [evRes, filRes] = await Promise.all([
+        const [evRes, filRes, taskRes] = await Promise.all([
           fetch(`/api/justice/evidence?case_id=${encodeURIComponent(caseId)}`, { signal }),
           fetch(`/api/justice/filings?case_id=${encodeURIComponent(caseId)}`, { signal }),
+          fetch(`/api/justice/tasks?case_id=${encodeURIComponent(caseId)}`, { signal }),
         ]);
         if (signal?.aborted) return;
         const evJson: unknown = evRes.ok ? await evRes.json() : [];
         const filJson: unknown = filRes.ok ? await filRes.json() : [];
+        const taskJson: unknown = taskRes.ok ? await taskRes.json() : [];
         setEvidenceCount(Array.isArray(evJson) ? evJson.length : 0);
         setFilings(Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : []);
+        setTasks(Array.isArray(taskJson) ? (taskJson as JusticeCaseTaskRow[]) : []);
       } catch {
         if (!signal?.aborted) {
           setEvidenceCount(0);
           setFilings([]);
+          setTasks([]);
         }
       } finally {
         if (!signal?.aborted) setHubReadinessLoading(false);
@@ -542,6 +582,19 @@ export default function JusticeHubWorkspaceBody() {
     evidenceCount !== null &&
     evidenceCount < 1;
 
+  const hubSuppressOwnedManualUi =
+    snapshot?.approvedNextAction && snapshot.caseId
+      ? shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+          approvedAction: snapshot.approvedNextAction,
+          caseId: snapshot.caseId,
+          tasks,
+          filings,
+        })
+      : false;
+  const showHubConsumerManualHandling = shouldShowHubOrCasesConsumerManualHandlingControls(
+    hubSuppressOwnedManualUi
+  );
+
   const hubManualActionNextStep =
     snapshot?.approvedNextAction && !hubReadinessLoading
       ? deriveHubHandlingTrackingLine({
@@ -550,6 +603,8 @@ export default function JusticeHubWorkspaceBody() {
           preparedPacketApproved: snapshot.packetApproved,
           evidenceCount: evidenceCount ?? 0,
           filings,
+          tasks,
+          caseId: snapshot.caseId,
           next: snapshot.approvedNextAction,
         })
       : null;
@@ -727,8 +782,9 @@ export default function JusticeHubWorkspaceBody() {
               }) ? (
                 <>
                   <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                    Approved case packet and next in-app step — not a Surrenderless handling request.
-                    Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking.
+                    {hubSuppressOwnedManualUi
+                      ? OWNED_STEP_HUB_CASES_STATUS_COPY
+                      : "Approved case packet and next in-app step — not a Surrenderless handling request. Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking."}
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
@@ -746,11 +802,14 @@ export default function JusticeHubWorkspaceBody() {
                     preparedPacketApproved={snapshot.packetApproved}
                     evidenceCount={evidenceCount ?? 0}
                     filings={filings}
+                    tasks={tasks}
+                    caseId={snapshot.caseId}
                     markAcknowledgedOnScreen={false}
                   />
                 </>
               ) : null}
-              {snapshot.approvedNextAction.handling_requested_at?.trim() ? (
+              {showHubConsumerManualHandling &&
+              snapshot.approvedNextAction.handling_requested_at?.trim() ? (
                 snapshot.approvedNextAction.status === "completed" ? (
                   <ApprovedNextActionHandlingRequestedReadOnly
                     requestedAt={snapshot.approvedNextAction.handling_requested_at.trim()}
@@ -772,7 +831,9 @@ export default function JusticeHubWorkspaceBody() {
                     recordedClassName="mt-0.5"
                   />
                 )
-              ) : snapshot.approvedNextAction.status !== "completed" ? (
+              ) : showHubConsumerManualHandling &&
+                snapshot.approvedNextAction.status !== "completed" &&
+                !snapshot.approvedNextAction.handling_requested_at?.trim() ? (
                 <ApprovedNextActionHandlingRequestBlock
                   action={snapshot.approvedNextAction}
                   onRequest={handleRequestSurrenderlessHandling}
@@ -799,9 +860,11 @@ export default function JusticeHubWorkspaceBody() {
                     preparedPacketApproved={snapshot.packetApproved}
                     evidenceCount={evidenceCount ?? 0}
                     filings={filings}
+                    tasks={tasks}
+                    caseId={snapshot.caseId}
                     markAcknowledgedOnScreen={showHubAcknowledgment}
                   />
-                  {showHubAcknowledgment ? (
+                  {showHubConsumerManualHandling && showHubAcknowledgment ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="inlineAck" />
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
@@ -812,7 +875,7 @@ export default function JusticeHubWorkspaceBody() {
                       Continue in chat
                     </Link>
                   </p>
-                  {showHubAcknowledgment ? (
+                  {showHubConsumerManualHandling && showHubAcknowledgment ? (
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                       <button
                         type="button"
@@ -848,9 +911,11 @@ export default function JusticeHubWorkspaceBody() {
                       preparedPacketApproved={snapshot.packetApproved}
                       evidenceCount={evidenceCount ?? 0}
                       filings={filings}
+                      tasks={tasks}
+                      caseId={snapshot.caseId}
                     />
                   ) : null}
-                  {snapshot.showHandledOpenHandlingTriageNote ? (
+                  {showHubConsumerManualHandling && snapshot.showHandledOpenHandlingTriageNote ? (
                     <ApprovedNextActionHandlingHandledOpenTriageNote variant="redirect" />
                   ) : null}
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
@@ -869,8 +934,9 @@ export default function JusticeHubWorkspaceBody() {
               }) ? (
                 <>
                   <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                    Approved case packet and next in-app step — not a Surrenderless handling request.
-                    Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking.
+                    {hubSuppressOwnedManualUi
+                      ? OWNED_STEP_HUB_CASES_STATUS_COPY
+                      : "Approved case packet and next in-app step — not a Surrenderless handling request. Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking."}
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link

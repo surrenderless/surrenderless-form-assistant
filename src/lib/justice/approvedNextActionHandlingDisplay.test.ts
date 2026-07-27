@@ -75,7 +75,7 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
-  it("keeps hub/cases contextual links in chat instead of legacy detour pages", () => {
+  it("keeps hub/cases contextual links in chat instead of destination DIY or legacy detours", () => {
     expect(
       resolveHandlingTrackingContextualLink({
         derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
@@ -83,8 +83,18 @@ describe("resolveHandlingTrackingContextualLink", () => {
         surface: "cases",
       })
     ).toEqual({
-      href: "/justice/state-ag",
-      label: "Open approved step",
+      href: "/justice/chat-ai",
+      label: "Continue in chat",
+    });
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+        approvedNextAction: { href: "/justice/cfpb" },
+        surface: "hub",
+      })
+    ).toEqual({
+      href: "/justice/chat-ai",
+      label: "Continue in chat",
     });
     expect(
       resolveHandlingTrackingContextualLink({
@@ -128,6 +138,41 @@ describe("resolveHandlingTrackingContextualLink", () => {
       href: "/justice/chat-ai",
       label: "Continue in chat",
     });
+  });
+
+  it("suppresses destination open-step on hub/cases when owned navigation is flagged", () => {
+    for (const href of [
+      "/justice/ftc",
+      "/justice/bbb",
+      "/justice/merchant",
+      "/justice/fcc",
+      "/justice/dot",
+      "/justice/demand-letter",
+      "/justice/payment-dispute",
+    ] as const) {
+      expect(
+        resolveHandlingTrackingContextualLink({
+          derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+          approvedNextAction: { href },
+          surface: "hub",
+          suppressOwnedStepManualNavigation: true,
+        })
+      ).toEqual({
+        href: "/justice/chat-ai",
+        label: "Continue in chat",
+      });
+      expect(
+        resolveHandlingTrackingContextualLink({
+          derivedStep: HANDLING_TRACKING_STEP_OPEN_APPROVED,
+          approvedNextAction: { href },
+          surface: "cases",
+          suppressOwnedStepManualNavigation: true,
+        })
+      ).toEqual({
+        href: "/justice/chat-ai",
+        label: "Continue in chat",
+      });
+    }
   });
 
   it("suppresses open-step link on chat-ai when BBB prep is inline", () => {

@@ -172,7 +172,16 @@ export function resolveHandlingTrackingContextualLink(input: {
         return null;
       }
     }
-    if (input.surface === "hub" || input.surface === "cases" || input.surface === "packet") {
+    if (input.surface === "hub" || input.surface === "cases") {
+      // Owned fulfillment: never primary-navigate to destination DIY prep pages.
+      if (input.suppressOwnedStepManualNavigation) {
+        return { href: "/justice/chat-ai", label: "Continue in chat" };
+      }
+      if (isChatAiMainLadderOffChatHref(href) || isChatAiOptionalHubEscapeHref(href)) {
+        return { href: "/justice/chat-ai", label: "Continue in chat" };
+      }
+    }
+    if (input.surface === "packet") {
       if (isChatAiMainLadderOffChatHref(href)) {
         return { href: "/justice/chat-ai", label: "Continue in chat" };
       }
