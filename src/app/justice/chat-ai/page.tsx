@@ -5713,7 +5713,7 @@ export default function JusticeChatAiPage() {
   }
 
   if (!isSignedIn) {
-    return <JusticeActionResumeSignInPrompt />;
+    return <JusticeActionResumeSignInPrompt hasActiveCase={Boolean(activeUuidCaseId)} />;
   }
 
   return (
