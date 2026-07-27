@@ -522,9 +522,8 @@ export async function markFollowUpHandledViaChat(page: Page): Promise<void> {
   await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
     timeout: 30_000,
   });
-  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
-    timeout: 30_000,
-  });
+  // Consumer Archive case DIY retired — operator closure owns endgame.
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toHaveCount(0);
   await expectUrlStaysOnChatAi(page);
 }
 

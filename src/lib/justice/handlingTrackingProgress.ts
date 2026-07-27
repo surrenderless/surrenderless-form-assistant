@@ -294,34 +294,26 @@ export function chatOutcomeTrackingFormOpen(action: JusticeApprovedNextAction): 
   return action.follow_up_needed === true;
 }
 
-/** Whether chat-ai may show outcome/follow-up after escalation ladder is terminal. */
-export function chatResolutionTrackingFormOpen(input: {
+/**
+ * Whether chat-ai may show outcome/follow-up after escalation ladder is terminal.
+ * Fail-closed: consumer chat never uses DIY outcome capture as a progress path.
+ * `suppressOwnedManualUi` is ignored.
+ */
+export function chatResolutionTrackingFormOpen(_input: {
   action: JusticeApprovedNextAction;
   caseId: string;
   tasks: readonly JusticeCaseTaskRow[];
   filings?: readonly ManualActionTrackingFiling[];
-  /** When true, Surrenderless owns endgame — hide consumer DIY outcome form. */
+  /** @deprecated Ignored — chat DIY outcome form is always closed. */
   suppressOwnedManualUi?: boolean;
 }): boolean {
-  if (input.suppressOwnedManualUi === true) {
-    return false;
-  }
-  if (
-    !shouldExposeCaseResolutionFlow({
-      approvedAction: input.action,
-      caseId: input.caseId,
-      tasks: input.tasks,
-      filings: input.filings,
-    })
-  ) {
-    return false;
-  }
-  return chatOutcomeTrackingFormOpen(input.action);
+  return false;
 }
 
 /**
  * Whether the handling workbench should show the outcome/follow-up capture form.
  * Visible when filing gates are satisfied and the derived next step requires outcome recording.
+ * Independent of chat fail-closed (operator handling workbench is out of chat DIY retirement).
  */
 export function handlingWorkbenchOutcomeTrackingFormVisible(input: {
   manualActionNextStep: string | null;
@@ -334,11 +326,16 @@ export function handlingWorkbenchOutcomeTrackingFormVisible(input: {
   if (input.manualActionNextStep !== HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
     return false;
   }
-  return chatResolutionTrackingFormOpen({
-    action: input.action,
-    caseId: input.caseId,
-    tasks: input.tasks ?? [],
-  });
+  if (
+    !shouldExposeCaseResolutionFlow({
+      approvedAction: input.action,
+      caseId: input.caseId,
+      tasks: input.tasks ?? [],
+    })
+  ) {
+    return false;
+  }
+  return chatOutcomeTrackingFormOpen(input.action);
 }
 
 /** Whether the handling workbench may show handling-request acknowledgment controls. */

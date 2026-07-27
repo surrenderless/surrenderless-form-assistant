@@ -43,9 +43,9 @@ describe("surrenderlessOwnedChatManualUi", () => {
     ).toBe(false);
   });
 
-  it("hides consumer request-handling and mark-opened controls while owned", () => {
+  it("fail-closes chat DIY handling controls while hub/cases stay opt-out", () => {
     expect(shouldShowChatConsumerManualHandlingControls(true)).toBe(false);
-    expect(shouldShowChatConsumerManualHandlingControls(false)).toBe(true);
+    expect(shouldShowChatConsumerManualHandlingControls(false)).toBe(false);
     expect(shouldShowHubOrCasesConsumerManualHandlingControls(true)).toBe(false);
     expect(shouldShowHubOrCasesConsumerManualHandlingControls(false)).toBe(true);
   });
@@ -76,12 +76,12 @@ describe("surrenderlessOwnedChatManualUi", () => {
     );
   });
 
-  it("hides consumer endgame DIY controls while owned", () => {
+  it("fail-closes consumer endgame DIY controls on chat", () => {
     expect(shouldShowChatConsumerEndgameDiyControls(true)).toBe(false);
-    expect(shouldShowChatConsumerEndgameDiyControls(false)).toBe(true);
+    expect(shouldShowChatConsumerEndgameDiyControls(false)).toBe(false);
   });
 
-  it("hides consumer archive while owned or after operator terminal response-review", () => {
+  it("fail-closes consumer archive on chat", () => {
     expect(
       shouldShowChatConsumerArchiveControl({
         suppressOwnedManualUi: true,
@@ -99,10 +99,10 @@ describe("surrenderlessOwnedChatManualUi", () => {
         suppressOwnedManualUi: false,
         hasOperatorTerminalResponseReviewOutcome: false,
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("replaces DIY chat handling-tracking with owned endgame / awaiting-operator copy", () => {
+  it("always uses owned endgame / awaiting-operator copy for chat handling-tracking", () => {
     expect(
       resolveChatOwnedHandlingTrackingStep({
         suppressOwnedManualUi: true,
@@ -123,7 +123,14 @@ describe("surrenderlessOwnedChatManualUi", () => {
         resolutionFlowExposed: true,
         manualDerivedStep: "Review follow-up timing and mark follow-up handled when complete.",
       })
-    ).toBe("Review follow-up timing and mark follow-up handled when complete.");
+    ).toBe(OWNED_ENDGAME_HANDLING_TRACKING_STEP);
+    expect(
+      resolveChatOwnedHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        resolutionFlowExposed: false,
+        manualDerivedStep: "Open the approved step and prepare the manual action.",
+      })
+    ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
   });
 
   it("provides owned endgame wait copy without consumer DIY form CTA", () => {

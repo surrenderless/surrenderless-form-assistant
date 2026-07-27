@@ -135,7 +135,7 @@ describe("chatResolutionTrackingFormOpen", () => {
     follow_up_needed: true,
   };
 
-  it("opens for terminal resolution when not owned-suppressed", () => {
+  it("fail-closes consumer DIY outcome form on chat even when not owned-suppressed", () => {
     expect(
       chatResolutionTrackingFormOpen({
         action: terminalAction,
@@ -145,7 +145,7 @@ describe("chatResolutionTrackingFormOpen", () => {
           { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
         ],
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("stays closed when Surrenderless owns endgame", () => {
