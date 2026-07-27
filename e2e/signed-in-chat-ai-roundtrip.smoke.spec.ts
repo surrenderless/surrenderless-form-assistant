@@ -135,7 +135,17 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   await expect(draftPreview).toBeVisible();
   await expect(draftPreview).toContainText("Jordan Lee");
   await expect(draftPreview).toContainText("Acme Retail");
+  const showMoreDraft = page
+    .locator("#chat-ai-inline-submission-draft-review")
+    .getByRole("button", { name: "Show more" });
+  if (await showMoreDraft.isVisible().catch(() => false)) {
+    await showMoreDraft.click();
+  }
+  await expect(draftPreview).toContainText(/Surrenderless carries the next owned outreach and filings/i);
+  await expect(draftPreview).not.toContainText(/file outside Surrenderless/i);
   await expect(page.getByRole("button", { name: "Mark draft reviewed" })).toBeVisible();
+  await expect(page.locator("#chat-ai-inline-submission-draft-review a[href='/justice/preview']")).toHaveCount(0);
+  await expect(page.locator("#chat-ai-inline-submission-draft-review a[href='/justice/evidence']")).toHaveCount(0);
 
   const persisted = await page.evaluate(
     ({ intakeKey, caseIdKey }) => {
