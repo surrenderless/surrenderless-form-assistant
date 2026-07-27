@@ -6,8 +6,8 @@ import {
 } from "@/lib/justice/surrenderlessOwnedPrepHubGate";
 
 describe("surrenderlessOwnedPrepHubGate", () => {
-  it("allows DIY only for not_owned", () => {
-    expect(isDiyAllowedOnSurrenderlessOwnedPrepHub("not_owned")).toBe(true);
+  it("never allows DIY on destination hubs", () => {
+    expect(isDiyAllowedOnSurrenderlessOwnedPrepHub("not_owned")).toBe(false);
     expect(isDiyAllowedOnSurrenderlessOwnedPrepHub("loading")).toBe(false);
     expect(isDiyAllowedOnSurrenderlessOwnedPrepHub("indeterminate")).toBe(false);
     expect(isDiyAllowedOnSurrenderlessOwnedPrepHub("owned")).toBe(false);

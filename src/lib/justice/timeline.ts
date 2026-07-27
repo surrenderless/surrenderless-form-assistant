@@ -306,7 +306,7 @@ export function appendBbbPrepOpenedOnce(caseId: string): void {
   appendTimelineEvent(caseId, {
     type: "bbb_prep_opened",
     label: "BBB prep opened",
-    detail: "Reviewed complaint prep (manual filing next).",
+    detail: "Reviewed BBB prep checkpoint — Surrenderless owns filing in chat.",
   });
 }
 
@@ -317,7 +317,7 @@ export function appendStateAgPrepOpenedOnce(caseId: string): void {
   appendTimelineEvent(caseId, {
     type: "state_ag_prep_opened",
     label: "State AG prep opened",
-    detail: "Reviewed AG complaint prep (manual filing next).",
+    detail: "Reviewed State AG prep checkpoint — Surrenderless owns filing in chat.",
   });
 }
 
@@ -328,7 +328,7 @@ export function appendCfpbPrepOpenedOnce(caseId: string): void {
   appendTimelineEvent(caseId, {
     type: "cfpb_prep_opened",
     label: "CFPB prep opened",
-    detail: "Reviewed CFPB complaint prep (manual filing on official site next).",
+    detail: "Reviewed CFPB prep checkpoint — Surrenderless owns filing in chat.",
   });
 }
 
@@ -339,7 +339,7 @@ export function appendFccPrepOpenedOnce(caseId: string): void {
   appendTimelineEvent(caseId, {
     type: "fcc_prep_opened",
     label: "FCC prep opened",
-    detail: "Reviewed FCC complaint prep (manual filing on official site next).",
+    detail: "Reviewed FCC prep checkpoint — Surrenderless owns filing in chat.",
   });
 }
 
