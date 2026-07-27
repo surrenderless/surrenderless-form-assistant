@@ -19,7 +19,6 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
-  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
@@ -126,17 +125,19 @@ function deriveHubManualActionNextStep(input: {
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
 }): string {
+  // Consumer DIY next-step copy is retired; resolveHubOrCasesHandlingTrackingStep fail-closes
+  // to awaiting-operator. Keep non-DIY readiness hints only for internal derivation.
   if (!input.readyForExternalManualAction) {
-    return "Review packet and saved proof before external manual action.";
+    return "Continue in chat to finish packet review and saved proof.";
   }
   if (!input.actionOpened) {
-    return "Open the approved step and prepare the manual action.";
+    return "Continue in chat — Surrenderless carries this approved step.";
   }
   if (!input.hasFilingRecord) {
-    return "Add filing records from the case packet after external submission.";
+    return "Continue in chat — Surrenderless records filings through operator fulfillment.";
   }
   if (!input.hasConfirmationOnFile) {
-    return "Add or edit the filing confirmation from the case packet after external submission.";
+    return "Continue in chat — Surrenderless tracks confirmation through operator fulfillment.";
   }
   const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
     status: input.status,
@@ -146,7 +147,7 @@ function deriveHubManualActionNextStep(input: {
   });
   if (closureStep) return closureStep;
   if (input.followUpNeeded === true) {
-    return "Review follow-up timing and mark follow-up handled when complete.";
+    return "Continue in chat — Surrenderless tracks follow-up and closes the case when resolved.";
   }
   return HUB_HANDLING_TRACKING_COMPLETE;
 }
@@ -227,12 +228,6 @@ function HubHandlingTrackingStatusReadOnly({
       </p>
     );
   }
-  const suppressOwned = shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-    approvedAction: approvedNextAction,
-    caseId,
-    tasks,
-    filings,
-  });
   const derivedStep = deriveHubHandlingTrackingLine({
     basicsReady,
     draftReviewed,
@@ -250,9 +245,7 @@ function HubHandlingTrackingStatusReadOnly({
         {derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        {suppressOwned
-          ? OWNED_STEP_HANDLING_TRACKING_COPY
-          : "In-app tracking only — not filed or submitted."}
+        {OWNED_STEP_HANDLING_TRACKING_COPY}
       </p>
       <ApprovedNextActionHandlingTrackingContextualLink
         derivedStep={derivedStep}
@@ -261,7 +254,7 @@ function HubHandlingTrackingStatusReadOnly({
         basicsReady={basicsReady}
         evidenceCount={evidenceCount}
         markAcknowledgedOnScreen={markAcknowledgedOnScreen}
-        suppressOwnedStepManualNavigation={suppressOwned}
+        suppressOwnedStepManualNavigation
       />
     </>
   );
@@ -692,7 +685,7 @@ export default function JusticeHubWorkspaceBody() {
                   tone="neutral"
                 />
                 <span className="mt-1 block text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                  {APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
+                  {OWNED_STEP_HANDLING_TRACKING_COPY}
                 </span>
               </>
             ) : null}
@@ -782,9 +775,7 @@ export default function JusticeHubWorkspaceBody() {
               }) ? (
                 <>
                   <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                    {hubSuppressOwnedManualUi
-                      ? OWNED_STEP_HUB_CASES_STATUS_COPY
-                      : "Approved case packet and next in-app step — not a Surrenderless handling request. Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking."}
+                    {OWNED_STEP_HUB_CASES_STATUS_COPY}
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link
@@ -934,9 +925,7 @@ export default function JusticeHubWorkspaceBody() {
               }) ? (
                 <>
                   <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                    {hubSuppressOwnedManualUi
-                      ? OWNED_STEP_HUB_CASES_STATUS_COPY
-                      : "Approved case packet and next in-app step — not a Surrenderless handling request. Request Surrenderless handling from chat intake, the case packet, or here on the hub when you want internal triage tracking."}
+                    {OWNED_STEP_HUB_CASES_STATUS_COPY}
                   </p>
                   <p className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                     <Link

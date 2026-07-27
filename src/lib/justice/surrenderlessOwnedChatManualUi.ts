@@ -1,16 +1,16 @@
 /**
  * Chat / hub / cases UI gates for Surrenderless-owned steps.
  *
- * Chat consumer DIY fulfillment is fail-closed: consumers never advance a real case by
- * recording manual filing, request-handling, mark-handled, DIY outcome, or archive substitutes.
- * Hub / Saved Cases keep opt-out suppress for this PR (copy scrub is a follow-up).
+ * Consumer DIY fulfillment is fail-closed on chat, Hub, and Saved Cases: consumers never
+ * advance a real case by recording manual filing, request-handling, mark-handled, DIY
+ * outcome, or archive substitutes.
  */
 
 import { ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP } from "@/lib/justice/escalationLadderResolution";
 
 /**
  * Merchant-contact confirm is intake documentation, not DIY external filing.
- * Still hidden while owned suppress is active.
+ * Still hidden while owned suppress is active (chat only).
  */
 export function shouldShowChatMerchantContactConfirmationControls(input: {
   suppressOwnedManualUi: boolean;
@@ -35,13 +35,13 @@ export function shouldShowChatConsumerManualHandlingControls(
 }
 
 /**
- * Hub and Saved Cases: hide Request handling / Record handled DIY while Surrenderless owns
- * the approved step. Kept opt-out (separate from chat fail-closed).
+ * Hub and Saved Cases: never expose Request handling / Record handled DIY as consumer progress.
+ * `suppressOwnedManualUi` is ignored (fail-closed; matches chat).
  */
 export function shouldShowHubOrCasesConsumerManualHandlingControls(
-  suppressOwnedManualUi: boolean
+  _suppressOwnedManualUi?: boolean
 ): boolean {
-  return !suppressOwnedManualUi;
+  return false;
 }
 
 /**
@@ -65,15 +65,18 @@ export function shouldShowChatConsumerArchiveControl(_input: {
   return false;
 }
 
-/** Prefer owned awaiting-operator copy over DIY manual-action next steps on hub/cases. */
+/**
+ * Hub / Saved Cases handling-tracking: always owned/awaiting copy — never DIY
+ * "prepare the manual action" / "after external submission".
+ * `suppressOwnedManualUi` is ignored (fail-closed).
+ */
 export function resolveHubOrCasesHandlingTrackingStep(input: {
-  suppressOwnedManualUi: boolean;
+  suppressOwnedManualUi?: boolean;
   manualDerivedStep: string;
 }): string {
-  if (input.suppressOwnedManualUi) {
-    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
-  }
-  return input.manualDerivedStep;
+  void input.suppressOwnedManualUi;
+  void input.manualDerivedStep;
+  return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
 }
 
 export const OWNED_STEP_CHAT_STATUS_COPY =
@@ -82,7 +85,7 @@ export const OWNED_STEP_CHAT_STATUS_COPY =
 export const OWNED_STEP_HANDLING_TRACKING_COPY =
   "Surrenderless owns this step — queued/in-progress/completed status updates here; no consumer submit or file controls.";
 
-/** Hub / Saved Cases status when the approved step is Surrenderless-owned. */
+/** Hub / Saved Cases status when the approved step is Surrenderless-owned (or DIY retired). */
 export const OWNED_STEP_HUB_CASES_STATUS_COPY =
   "Surrenderless is carrying this approved step. Continue in chat for queued, in-progress, and completed updates.";
 
