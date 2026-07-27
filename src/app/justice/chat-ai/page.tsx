@@ -66,6 +66,7 @@ import { autoEndgameAfterManualFilingConfirmation } from "@/lib/justice/autoEndg
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
   isChatOperatorOwnedClosurePollPending,
+  isChatOwnedEndgameWaitPollPending,
   isChatPendingHumanFulfillmentEscalation,
 } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import {
@@ -164,8 +165,12 @@ import {
 import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operatorOwnedCaseArchive";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
+  OWNED_ENDGAME_WAIT_COPY,
   OWNED_STEP_CHAT_STATUS_COPY,
   OWNED_STEP_HANDLING_TRACKING_COPY,
+  resolveChatOwnedHandlingTrackingStep,
+  shouldShowChatConsumerArchiveControl,
+  shouldShowChatConsumerEndgameDiyControls,
   shouldShowChatConsumerManualHandlingControls,
   shouldShowChatMerchantContactConfirmationControls,
 } from "@/lib/justice/surrenderlessOwnedChatManualUi";
@@ -2267,7 +2272,7 @@ function ChatHandlingTrackingStatusReadOnly({
   if (!handlingRequested && !showApprovedPacketActionPath) return null;
 
   const canCaptureFilingInline = canCaptureFiling && Boolean(caseId);
-  const derivedStep = readinessLoading
+  const rawDerivedStep = readinessLoading
     ? null
     : deriveChatHandlingTrackingLine({
         basicsReady,
@@ -2287,6 +2292,11 @@ function ChatHandlingTrackingStatusReadOnly({
     tasks,
     filings,
   });
+  const derivedStep = resolveChatOwnedHandlingTrackingStep({
+    suppressOwnedManualUi: suppressOwnedStepManualNavigation,
+    resolutionFlowExposed,
+    manualDerivedStep: rawDerivedStep,
+  });
   const filingCaptureSuppressed =
     shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
       approvedAction: approvedNextAction,
@@ -2301,21 +2311,25 @@ function ChatHandlingTrackingStatusReadOnly({
   const showInlineFilingCapture =
     !readinessLoading &&
     canCaptureFilingInline &&
-    derivedStep !== null &&
-    isHandlingTrackingFilingCaptureStep(derivedStep) &&
+    rawDerivedStep !== null &&
+    isHandlingTrackingFilingCaptureStep(rawDerivedStep) &&
     !filingCaptureSuppressed;
   const inlineFilingMode =
-    derivedStep !== null && isHandlingTrackingAddFilingStep(derivedStep)
+    rawDerivedStep !== null && isHandlingTrackingAddFilingStep(rawDerivedStep)
       ? "add_filing"
       : "add_confirmation";
   const showArchiveWhenComplete =
     !readinessLoading &&
     canArchiveCase &&
     Boolean(caseId) &&
-    derivedStep === HANDLING_TRACKING_STEP_COMPLETE &&
+    rawDerivedStep === HANDLING_TRACKING_STEP_COMPLETE &&
     resolutionFlowExposed &&
     Boolean(onArchiveCase) &&
-    !hasOperatorTerminalResponseReviewOutcome(approvedNextAction);
+    shouldShowChatConsumerArchiveControl({
+      suppressOwnedManualUi: suppressOwnedStepManualNavigation,
+      hasOperatorTerminalResponseReviewOutcome:
+        hasOperatorTerminalResponseReviewOutcome(approvedNextAction),
+    });
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -2323,7 +2337,7 @@ function ChatHandlingTrackingStatusReadOnly({
         {readinessLoading ? "Loading handling tracking context..." : derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        {filingCaptureSuppressed
+        {filingCaptureSuppressed || suppressOwnedStepManualNavigation
           ? OWNED_STEP_HANDLING_TRACKING_COPY
           : "In-app tracking only — not filed or submitted."}
       </p>
@@ -2336,10 +2350,13 @@ function ChatHandlingTrackingStatusReadOnly({
           refreshing={readinessLoading}
         />
       ) : null}
-      {!readinessLoading && derivedStep !== null && !showInlineFilingCapture ? (
+      {!readinessLoading &&
+      rawDerivedStep !== null &&
+      !showInlineFilingCapture &&
+      !suppressOwnedStepManualNavigation ? (
         <>
           <ApprovedNextActionHandlingTrackingContextualLink
-            derivedStep={derivedStep}
+            derivedStep={rawDerivedStep}
             approvedNextAction={approvedNextAction}
             surface="chat-ai"
             basicsReady={basicsReady}
@@ -2353,7 +2370,7 @@ function ChatHandlingTrackingStatusReadOnly({
           <ChatAiFilingStepInChatGuidance
             action={resolveChatAiFilingStepInChatAction({
               isFilingCaptureStep:
-                derivedStep !== null && isHandlingTrackingFilingCaptureStep(derivedStep),
+                rawDerivedStep !== null && isHandlingTrackingFilingCaptureStep(rawDerivedStep),
               showInlineFilingCapture,
               filingCaptureSuppressed,
               canCaptureFilingInChat: canCaptureFiling,
@@ -4339,6 +4356,15 @@ export default function JusticeChatAiPage() {
             archivedAt: caseArchivedAtRef.current,
           });
         }
+        if (
+          caseArchivedAtRef.current?.trim() &&
+          hasOperatorTerminalResponseReviewOutcome(
+            approvedAction ?? approvedNextActionRef.current
+          )
+        ) {
+          clearLocalJusticeSession();
+          resetChatPostClosureUiState();
+        }
       };
 
       const previous = pendingChatContextRefreshRef.current;
@@ -4374,6 +4400,13 @@ export default function JusticeChatAiPage() {
       isChatOperatorOwnedClosurePollPending({
         approvedAction: approvedNextActionRef.current,
         archivedAt: caseArchivedAtRef.current,
+      }) ||
+      isChatOwnedEndgameWaitPollPending({
+        approvedAction: approvedNextActionRef.current,
+        caseId,
+        tasks: savedTasksRef.current,
+        filings: savedFilings,
+        archivedAt: caseArchivedAtRef.current,
       });
 
     const tick = async () => {
@@ -4395,6 +4428,13 @@ export default function JusticeChatAiPage() {
       }) ||
       isChatOperatorOwnedClosurePollPending({
         approvedAction: approvedNextActionRef.current,
+        archivedAt: caseArchivedAtRef.current,
+      }) ||
+      isChatOwnedEndgameWaitPollPending({
+        approvedAction: approvedNextActionRef.current,
+        caseId,
+        tasks: savedTasksRef.current,
+        filings: savedFilings,
         archivedAt: caseArchivedAtRef.current,
       });
 
@@ -5468,13 +5508,24 @@ export default function JusticeChatAiPage() {
               tasks: savedTasks,
             })
           : null;
+      const closureOwnedEndgame = Boolean(
+        closureApprovedAction &&
+          shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+            approvedAction: closureApprovedAction,
+            caseId: consentCaseId,
+            tasks: savedTasks,
+            filings: savedFilings,
+          })
+      );
       const closureContext = buildChatCaseClosureGateContext({
         caseId: consentCaseId,
         resolutionFlowExposed,
         followUpNeeded: closureApprovedAction?.follow_up_needed === true,
         handlingTrackingStep,
         readinessLoading: closureReadinessLoading,
-        operatorOwnsClosure: hasOperatorTerminalResponseReviewOutcome(closureApprovedAction),
+        operatorOwnsClosure:
+          closureOwnedEndgame ||
+          hasOperatorTerminalResponseReviewOutcome(closureApprovedAction),
       });
       const pendingClosureGate = resolvePendingChatCaseClosureGate(closureContext);
       if (pendingClosureGate) {
@@ -7476,11 +7527,16 @@ export default function JusticeChatAiPage() {
                       caseId: activeUuidCaseId ?? "",
                       tasks: savedTasks,
                       filings: savedFilings,
+                      suppressOwnedManualUi: suppressSurrenderlessOwnedManualUi,
                     }) ? (
                       <ApprovedNextActionOutcomeTrackingForm
                         action={approvedNextAction}
                         onSave={handleSaveApprovedNextActionTracking}
                       />
+                    ) : suppressSurrenderlessOwnedManualUi && chatResolutionFlowExposed ? (
+                      <p className="mt-3 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                        {OWNED_ENDGAME_WAIT_COPY}
+                      </p>
                     ) : approvedNextAction.outcome_note?.trim() ? (
                       <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
                         {approvedNextAction.outcome_note.trim()}
@@ -7607,11 +7663,18 @@ export default function JusticeChatAiPage() {
                       caseId: activeUuidCaseId ?? "",
                       tasks: savedTasks,
                       filings: savedFilings,
+                      suppressOwnedManualUi: suppressSurrenderlessOwnedManualUi,
                     }) ? (
                       <ApprovedNextActionOutcomeTrackingForm
                         action={approvedNextAction}
                         onSave={handleSaveApprovedNextActionTracking}
                       />
+                    ) : approvedNextAction.status !== "completed" &&
+                      suppressSurrenderlessOwnedManualUi &&
+                      chatResolutionFlowExposed ? (
+                      <p className="mt-3 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
+                        {OWNED_ENDGAME_WAIT_COPY}
+                      </p>
                     ) : approvedNextAction.status !== "completed" &&
                       approvedNextAction.outcome_note?.trim() ? (
                       <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-emerald-900/95 dark:text-emerald-100/95">
@@ -7669,6 +7732,7 @@ export default function JusticeChatAiPage() {
                   caseId: activeUuidCaseId ?? "",
                   tasks: savedTasks,
                   filings: savedFilings,
+                  suppressOwnedManualUi: suppressSurrenderlessOwnedManualUi,
                 }) &&
                 chatResolutionFlowExposed ? (
                   <>
@@ -7694,7 +7758,11 @@ export default function JusticeChatAiPage() {
                     ? OWNED_STEP_CHAT_STATUS_COPY
                     : APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
                 </p>
-                {approvedNextAction.follow_up_needed === true && chatResolutionFlowExposed ? (
+                {shouldShowChatConsumerEndgameDiyControls(
+                  suppressSurrenderlessOwnedManualUi
+                ) &&
+                approvedNextAction.follow_up_needed === true &&
+                chatResolutionFlowExposed ? (
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                     <button
                       type="button"

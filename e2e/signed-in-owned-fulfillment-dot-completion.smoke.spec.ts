@@ -17,11 +17,10 @@ import {
   seedActiveCaseDotFilingStep,
 } from "./helpers/chat-ai-ladder-continuity-e2e";
 import {
-  archiveCaseViaChat,
   chatAiTranscript,
+  closeOwnedFulfillmentCaseViaOperatorUi,
   expectConsumerChatCaseArchivedClosed,
   expectConsumerChatStaysArchivedAfterReload,
-  markFollowUpHandledViaChat,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 
@@ -106,14 +105,18 @@ test("owned DOT queue → operator completes → resolution endgame stays in cha
   const outcomeTrackingForm = consumerPage.getByRole("form", {
     name: "Outcome and follow-up tracking",
   });
-  await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
+  await expect(outcomeTrackingForm).toHaveCount(0, { timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
   ).toBeVisible({ timeout: 30_000 });
   await expect(tracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
+  await expect(tracking.getByRole("button", { name: "Mark follow-up handled" })).toHaveCount(0);
+  await expect(tracking.getByRole("button", { name: "Archive case" })).toHaveCount(0);
+  await expect(tracking.getByText(/Stay in chat — Surrenderless is tracking follow-up/)).toBeVisible({
+    timeout: 15_000,
+  });
 
-  await markFollowUpHandledViaChat(consumerPage);
-  await archiveCaseViaChat(consumerPage);
+  await closeOwnedFulfillmentCaseViaOperatorUi(consumerPage, operatorPage, "Acme Air");
   await expectConsumerChatCaseArchivedClosed(consumerPage);
   await expectConsumerChatStaysArchivedAfterReload(consumerPage);
 

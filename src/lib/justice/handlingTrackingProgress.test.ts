@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chatOutcomeTrackingFormOpen,
   chatOutcomeTrackingSaveAllowed,
+  chatResolutionTrackingFormOpen,
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsState,
   deriveManualActionTrackingFilingsStateForApprovedAction,
@@ -121,6 +122,44 @@ describe("chatOutcomeTrackingFormOpen", () => {
     expect(
       chatOutcomeTrackingFormOpen({ outcome_note: "Resolved.", follow_up_needed: true })
     ).toBe(true);
+  });
+});
+
+describe("chatResolutionTrackingFormOpen", () => {
+  const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+  const terminalAction = {
+    label: "Small claims / demand letter",
+    href: "/justice/demand-letter",
+    status: "completed" as const,
+    outcome_note: "Escalation complete. Awaiting responses.",
+    follow_up_needed: true,
+  };
+
+  it("opens for terminal resolution when not owned-suppressed", () => {
+    expect(
+      chatResolutionTrackingFormOpen({
+        action: terminalAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("stays closed when Surrenderless owns endgame", () => {
+    expect(
+      chatResolutionTrackingFormOpen({
+        action: terminalAction,
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
+        ],
+        suppressOwnedManualUi: true,
+      })
+    ).toBe(false);
   });
 });
 

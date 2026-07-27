@@ -10,13 +10,12 @@ import {
   OPERATOR_CLERK_STORAGE_STATE_PATH,
 } from "./helpers/clerk-e2e";
 import {
-  archiveCaseViaChat,
+  closeOwnedFulfillmentCaseViaOperatorUi,
   driveConsumerToOwnedFulfillmentResolutionInChat,
   expectConsumerChatCaseArchivedClosed,
   expectConsumerChatCaseRestoredActive,
   expectConsumerChatStaysOnSelectedAcmeAfterReload,
   listCasesViaChat,
-  markFollowUpHandledViaChat,
   selectActiveBetaCaseViaChatCompany,
   selectArchivedAcmeCaseViaChatNumber,
   selectStaleListedAcmeCaseViaChatCompanyAfterArchive,
@@ -48,8 +47,7 @@ test("consumer lists dual cases in chat, restores stale-archived via live status
   const operatorPage = await operatorContext.newPage();
 
   await driveConsumerToOwnedFulfillmentResolutionInChat(consumerPage, operatorPage);
-  await markFollowUpHandledViaChat(consumerPage);
-  await archiveCaseViaChat(consumerPage);
+  await closeOwnedFulfillmentCaseViaOperatorUi(consumerPage, operatorPage);
   await expectConsumerChatCaseArchivedClosed(consumerPage);
 
   await startSecondBetaCaseViaChatAfterArchive(consumerPage);
@@ -59,7 +57,7 @@ test("consumer lists dual cases in chat, restores stale-archived via live status
 
   // Fresh list marks Acme active; archive without re-listing leaves a stale "active" offer.
   await listCasesViaChat(consumerPage, [/Acme Retail.*active/, /Beta Corp.*active/]);
-  await selectStaleListedAcmeCaseViaChatCompanyAfterArchive(consumerPage);
+  await selectStaleListedAcmeCaseViaChatCompanyAfterArchive(consumerPage, operatorPage);
   await expectConsumerChatCaseRestoredActive(consumerPage);
   await expectConsumerChatStaysOnSelectedAcmeAfterReload(consumerPage);
 

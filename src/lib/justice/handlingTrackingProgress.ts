@@ -300,7 +300,12 @@ export function chatResolutionTrackingFormOpen(input: {
   caseId: string;
   tasks: readonly JusticeCaseTaskRow[];
   filings?: readonly ManualActionTrackingFiling[];
+  /** When true, Surrenderless owns endgame — hide consumer DIY outcome form. */
+  suppressOwnedManualUi?: boolean;
 }): boolean {
+  if (input.suppressOwnedManualUi === true) {
+    return false;
+  }
   if (
     !shouldExposeCaseResolutionFlow({
       approvedAction: input.action,

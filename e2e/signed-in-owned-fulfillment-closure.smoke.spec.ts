@@ -10,12 +10,11 @@ import {
   OPERATOR_CLERK_STORAGE_STATE_PATH,
 } from "./helpers/clerk-e2e";
 import {
-  archiveCaseViaChat,
+  closeOwnedFulfillmentCaseViaOperatorUi,
   chatAiTranscript,
   driveConsumerToOwnedFulfillmentResolutionInChat,
   expectConsumerChatCaseArchivedClosed,
   expectConsumerChatStaysArchivedAfterReload,
-  markFollowUpHandledViaChat,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 
@@ -56,8 +55,7 @@ test("consumer completes owned-fulfillment escalation, closes case in chat, relo
       .count()
   ).toBe(1);
 
-  await markFollowUpHandledViaChat(consumerPage);
-  await archiveCaseViaChat(consumerPage);
+  await closeOwnedFulfillmentCaseViaOperatorUi(consumerPage, operatorPage);
   await expectConsumerChatCaseArchivedClosed(consumerPage);
   await expectConsumerChatStaysArchivedAfterReload(consumerPage);
 

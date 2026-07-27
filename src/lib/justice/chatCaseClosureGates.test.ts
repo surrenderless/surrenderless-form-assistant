@@ -143,6 +143,15 @@ describe("chatCaseClosureGates", () => {
     ).toBe(false);
   });
 
+  it("blocks consumer follow-up clear when operator owns closure", () => {
+    expect(
+      canClearFollowUpViaChat(baseContext({ operatorOwnsClosure: true }))
+    ).toBe(false);
+    expect(
+      resolvePendingChatCaseClosureGate(baseContext({ operatorOwnsClosure: true }))
+    ).toBeNull();
+  });
+
   it("allows archive while readiness refresh is in flight once follow-up is cleared", () => {
     expect(
       canArchiveCaseViaChat(

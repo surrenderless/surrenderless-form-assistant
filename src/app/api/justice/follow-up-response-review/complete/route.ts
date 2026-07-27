@@ -7,6 +7,12 @@ import {
 } from "@/lib/justice/completeFollowUpResponseReview";
 import { resolveCaseOwnerUserIdForOperatorFulfillment } from "@/lib/justice/operatorFulfillmentQueue";
 import { requireOperatorApiAccess } from "@/server/requireOperatorApiAccess";
+import {
+  completePlaywrightMockFollowUpResponseReview,
+  isPlaywrightMockHumanFulfillmentOperatorFilingCaseId,
+  isPlaywrightMockHumanFulfillmentOperatorFilingEnabled,
+  resolvePlaywrightMockCaseOwnerUserId,
+} from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -66,6 +72,37 @@ export async function POST(req: NextRequest) {
         : undefined;
   if (notes === undefined) {
     return NextResponse.json({ error: "Invalid notes" }, { status: 400 });
+  }
+
+  if (
+    isPlaywrightMockHumanFulfillmentOperatorFilingEnabled() &&
+    isPlaywrightMockHumanFulfillmentOperatorFilingCaseId(caseId)
+  ) {
+    const ownerUserId = resolvePlaywrightMockCaseOwnerUserId(caseId);
+    if (!ownerUserId) {
+      return NextResponse.json({ error: "Case owner not found" }, { status: 404 });
+    }
+    const mockResult = completePlaywrightMockFollowUpResponseReview({
+      caseId,
+      taskId,
+      userId: ownerUserId,
+      outcome: b.outcome,
+      notes,
+    });
+    if (!mockResult.ok) {
+      return NextResponse.json({ error: mockResult.error }, { status: mockResult.status });
+    }
+    return NextResponse.json({
+      task: mockResult.task,
+      client_state: mockResult.client_state,
+      intake: mockResult.intake,
+      timeline: null,
+      outcome: mockResult.outcome,
+      advanced: mockResult.advanced,
+      ...(mockResult.advanced_href ? { advanced_href: mockResult.advanced_href } : {}),
+      idempotent: mockResult.idempotent,
+      archived: false,
+    });
   }
 
   const supabase = getSupabaseAdmin();

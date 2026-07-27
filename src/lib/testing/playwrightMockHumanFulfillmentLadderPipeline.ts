@@ -1,9 +1,27 @@
 import {
   mergeClientStateWithApprovedNextAction,
   omitClearedHandlingRequestNoteFromApprovedNextAction,
+  parseApprovedNextActionFromClientState,
   parseJusticeCaseClientState,
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
+import {
+  isFollowUpResponseReviewOutcome,
+  planFollowUpResponseReviewClientState,
+  type FollowUpResponseReviewOutcome,
+} from "@/lib/justice/completeFollowUpResponseReview";
+import {
+  buildFollowUpResponseReviewTaskNotes,
+  buildFollowUpResponseReviewTaskTitle,
+  parseFollowUpResponseReviewTaskDraft,
+  taskNotesMatchFollowUpResponseReviewMarker,
+} from "@/lib/justice/followUpResponseReviewTask";
+import {
+  detectOperatorOwnedClosableCase,
+  hasOperatorTerminalResponseReviewOutcome,
+  operatorOwnedClosableOutcomeFromAction,
+  type OperatorClosableCaseItem,
+} from "@/lib/justice/operatorOwnedCaseArchive";
 import {
   buildBbbFilingTaskNotes,
   buildBbbFilingTaskTitle,
@@ -161,6 +179,9 @@ export const PLAYWRIGHT_MOCK_FTC_TASK_ID = "00000000-0000-4000-8000-000000000753
 /** Distinct FTC task id for the second mock case (start-new-case E2E). */
 export const PLAYWRIGHT_MOCK_SECOND_CASE_FTC_TASK_ID = "00000000-0000-4000-8000-000000000755";
 export const PLAYWRIGHT_MOCK_MERCHANT_CONTACT_TASK_ID = "00000000-0000-4000-8000-000000000754";
+/** E2E-only: seed response-review immediately after terminal resolution (skips 45-day wait). */
+export const PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID =
+  "00000000-0000-4000-8000-000000000756";
 
 const PLAYWRIGHT_MOCK_HUMAN_FULFILLMENT_TASKS_GLOBAL_KEY =
   "__playwrightMockHumanFulfillmentTasksByCaseId__";
@@ -250,6 +271,29 @@ function playwrightMockFtcTaskIdForCase(caseId: string): string {
   return caseId.trim() === PLAYWRIGHT_MOCK_SECOND_CASE_ID
     ? PLAYWRIGHT_MOCK_SECOND_CASE_FTC_TASK_ID
     : PLAYWRIGHT_MOCK_FTC_TASK_ID;
+}
+
+/** E2E acceleration: queue response-review as soon as terminal resolution tracking is seeded. */
+function shouldQueuePlaywrightMockFollowUpResponseReviewTask(clientState: unknown): boolean {
+  const action = parseApprovedNextActionFromClientState(clientState);
+  if (!action) return false;
+  if (action.follow_up_needed !== true) return false;
+  if (!action.outcome_note?.trim()) return false;
+  if (hasOperatorTerminalResponseReviewOutcome(action)) return false;
+  if (
+    shouldQueueMerchantContactFilingTask(clientState) ||
+    shouldQueueStateAgFilingTask(clientState) ||
+    shouldQueueDemandLetterFilingTask(clientState) ||
+    shouldQueueCfpbFilingTask(clientState) ||
+    shouldQueuePaymentDisputeFilingTask(clientState) ||
+    shouldQueueFccFilingTask(clientState) ||
+    shouldQueueDotFilingTask(clientState) ||
+    shouldQueueFtcFilingTask(clientState) ||
+    shouldQueueBbbFilingTask(clientState)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /** Keep durable dry-run blocks across ladder resync (task stays open/queued). */
@@ -429,6 +473,23 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
         notes: buildBbbFilingTaskNotes(trimmedCaseId, justiceIntake),
       })
     );
+  }
+
+  if (shouldQueuePlaywrightMockFollowUpResponseReviewTask(clientState)) {
+    const previous = previousById.get(PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID);
+    if (previous?.completed_at?.trim()) {
+      tasks.push({ ...previous });
+    } else {
+      tasks.push(
+        buildOpenTask({
+          id: PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID,
+          userId,
+          caseId: trimmedCaseId,
+          title: buildFollowUpResponseReviewTaskTitle(justiceIntake),
+          notes: buildFollowUpResponseReviewTaskNotes(trimmedCaseId, justiceIntake),
+        })
+      );
+    }
   }
 
   getPlaywrightMockHumanFulfillmentTasksByCaseId().set(trimmedCaseId, tasks);
@@ -1698,8 +1759,250 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
           evidence: [],
         }),
       });
+      continue;
+    }
+    if (taskNotesMatchFollowUpResponseReviewMarker(task.notes, caseId)) {
+      items.push({
+        case_id: caseId,
+        case_owner_user_id: ownerId,
+        task_id: task.id,
+        step: "follow_up_response_review",
+        task_title: task.title?.trim() || "Follow-up response review",
+        company_name: intake.company_name.trim() || "Consumer case",
+        consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+        draft_excerpt: parseFollowUpResponseReviewTaskDraft(task.notes).slice(0, 400),
+        evidence: [],
+      });
     }
   }
 
   return items;
+}
+
+export function buildPlaywrightMockOperatorClosableCases(): OperatorClosableCaseItem[] {
+  const caseId = PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID;
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return [];
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const ownerId =
+    resolvePlaywrightMockCaseOwnerUserId(caseId) ??
+    tasks.find((task) => task.user_id?.trim())?.user_id?.trim() ??
+    "";
+
+  if (
+    !detectOperatorOwnedClosableCase({
+      clientState: snapshot.client_state,
+      archivedAt: snapshot.archived_at,
+      caseId,
+      tasks,
+    })
+  ) {
+    return [];
+  }
+
+  const action = parseApprovedNextActionFromClientState(snapshot.client_state);
+  const outcome = operatorOwnedClosableOutcomeFromAction(action);
+  if (!outcome) return [];
+
+  return [
+    {
+      case_id: caseId,
+      case_owner_user_id: ownerId,
+      company_name: isJusticeIntakePayload(snapshot.intake)
+        ? (snapshot.intake as JusticeIntake).company_name.trim() || "Consumer case"
+        : "Consumer case",
+      consumer_us_state: isJusticeIntakePayload(snapshot.intake)
+        ? (snapshot.intake as JusticeIntake).consumer_us_state?.trim().toUpperCase() || null
+        : null,
+      outcome,
+      outcome_note: action?.outcome_note?.trim() || "",
+    },
+  ];
+}
+
+export type PlaywrightMockFollowUpResponseReviewCompleteInput = {
+  caseId: string;
+  taskId: string;
+  userId: string;
+  outcome: FollowUpResponseReviewOutcome;
+  notes?: string | null;
+};
+
+export type PlaywrightMockFollowUpResponseReviewCompleteResult =
+  | {
+      ok: true;
+      task: PlaywrightMockJusticeTaskRow;
+      client_state: unknown;
+      intake: JusticeIntake;
+      outcome: FollowUpResponseReviewOutcome;
+      advanced: boolean;
+      advanced_href?: string;
+      idempotent: boolean;
+    }
+  | { ok: false; error: string; status: number };
+
+export function completePlaywrightMockFollowUpResponseReview(
+  input: PlaywrightMockFollowUpResponseReviewCompleteInput
+): PlaywrightMockFollowUpResponseReviewCompleteResult {
+  const caseId = input.caseId.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+  if (!isFollowUpResponseReviewOutcome(input.outcome)) {
+    return { ok: false, error: "Invalid outcome", status: 400 };
+  }
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  if (!isJusticeIntakePayload(snapshot.intake)) {
+    return { ok: false, error: "Case intake is invalid", status: 400 };
+  }
+  const intake = snapshot.intake as JusticeIntake;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const task = tasks.find((row) => row.id === input.taskId.trim());
+  if (!task || !taskNotesMatchFollowUpResponseReviewMarker(task.notes, caseId)) {
+    return { ok: false, error: "Follow-up response review task not found", status: 404 };
+  }
+
+  if (task.completed_at?.trim()) {
+    const action = parseApprovedNextActionFromClientState(snapshot.client_state);
+    return {
+      ok: true,
+      task,
+      client_state: snapshot.client_state,
+      intake,
+      outcome: input.outcome,
+      advanced: false,
+      idempotent: true,
+    };
+  }
+
+  const plan = planFollowUpResponseReviewClientState({
+    intake,
+    clientState: snapshot.client_state,
+    outcome: input.outcome,
+    operatorNotes: input.notes,
+  });
+  if (plan.kind === "error") {
+    return { ok: false, error: plan.error, status: plan.status };
+  }
+
+  const patched = buildPlaywrightMockCasePatchResponse(caseId, {
+    client_state: plan.clientState,
+    ...(plan.intake !== intake ? { intake: plan.intake } : {}),
+  });
+  const completedTask: PlaywrightMockJusticeTaskRow = {
+    ...task,
+    completed_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP,
+    updated_at: PLAYWRIGHT_MOCK_TASK_TIMESTAMP,
+  };
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(
+    caseId,
+    tasks.map((row) => (row.id === completedTask.id ? completedTask : row))
+  );
+  syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
+    caseId,
+    input.userId,
+    patched.client_state,
+    patched.intake ?? plan.intake,
+    patched.payment_dispute_draft
+  );
+
+  return {
+    ok: true,
+    task: completedTask,
+    client_state: patched.client_state,
+    intake: plan.intake,
+    outcome: input.outcome,
+    advanced: plan.advanced,
+    ...(plan.advanced && plan.nextAction.href
+      ? { advanced_href: plan.nextAction.href }
+      : {}),
+    idempotent: false,
+  };
+}
+
+export type PlaywrightMockOperatorCaseArchiveCompleteResult =
+  | {
+      ok: true;
+      caseId: string;
+      archived_at: string;
+      outcome: "resolved" | "no_resolution";
+      idempotent: boolean;
+    }
+  | { ok: false; error: string; status: number };
+
+export function completePlaywrightMockOperatorCaseArchive(input: {
+  caseId: string;
+  confirmArchive: boolean;
+}): PlaywrightMockOperatorCaseArchiveCompleteResult {
+  const caseId = input.caseId.trim();
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+  if (input.confirmArchive !== true) {
+    return {
+      ok: false,
+      error: "Explicit confirm_archive is required to close the case",
+      status: 400,
+    };
+  }
+
+  const snapshot = buildPlaywrightMockCaseGetResponse(caseId);
+  if (snapshot.archived_at?.trim()) {
+    const action = parseApprovedNextActionFromClientState(snapshot.client_state);
+    return {
+      ok: true,
+      caseId,
+      archived_at: snapshot.archived_at.trim(),
+      outcome: operatorOwnedClosableOutcomeFromAction(action) ?? "no_resolution",
+      idempotent: true,
+    };
+  }
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(caseId) ?? [];
+  const openReview = tasks.find(
+    (t) =>
+      taskNotesMatchFollowUpResponseReviewMarker(t.notes, caseId) && !t.completed_at?.trim()
+  );
+  if (openReview) {
+    return {
+      ok: false,
+      error: "Response review is still open; complete it before closing",
+      status: 409,
+    };
+  }
+
+  if (
+    !detectOperatorOwnedClosableCase({
+      clientState: snapshot.client_state,
+      archivedAt: snapshot.archived_at,
+      caseId,
+      tasks,
+    })
+  ) {
+    return {
+      ok: false,
+      error:
+        "Case is not eligible for operator close (requires recorded resolved or no-resolution outcome)",
+      status: 409,
+    };
+  }
+
+  const action = parseApprovedNextActionFromClientState(snapshot.client_state);
+  const outcome = operatorOwnedClosableOutcomeFromAction(action);
+  if (!outcome) {
+    return { ok: false, error: "Missing operator terminal outcome", status: 409 };
+  }
+
+  const archivedAt = "2026-06-24T12:00:00.000Z";
+  buildPlaywrightMockCasePatchResponse(caseId, { archived_at: archivedAt });
+  return {
+    ok: true,
+    caseId,
+    archived_at: archivedAt,
+    outcome,
+    idempotent: false,
+  };
 }
