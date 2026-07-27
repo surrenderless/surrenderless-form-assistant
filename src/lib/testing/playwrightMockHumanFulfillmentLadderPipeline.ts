@@ -273,29 +273,6 @@ function playwrightMockFtcTaskIdForCase(caseId: string): string {
     : PLAYWRIGHT_MOCK_FTC_TASK_ID;
 }
 
-/** E2E acceleration: queue response-review as soon as terminal resolution tracking is seeded. */
-function shouldQueuePlaywrightMockFollowUpResponseReviewTask(clientState: unknown): boolean {
-  const action = parseApprovedNextActionFromClientState(clientState);
-  if (!action) return false;
-  if (action.follow_up_needed !== true) return false;
-  if (!action.outcome_note?.trim()) return false;
-  if (hasOperatorTerminalResponseReviewOutcome(action)) return false;
-  if (
-    shouldQueueMerchantContactFilingTask(clientState) ||
-    shouldQueueStateAgFilingTask(clientState) ||
-    shouldQueueDemandLetterFilingTask(clientState) ||
-    shouldQueueCfpbFilingTask(clientState) ||
-    shouldQueuePaymentDisputeFilingTask(clientState) ||
-    shouldQueueFccFilingTask(clientState) ||
-    shouldQueueDotFilingTask(clientState) ||
-    shouldQueueFtcFilingTask(clientState) ||
-    shouldQueueBbbFilingTask(clientState)
-  ) {
-    return false;
-  }
-  return true;
-}
-
 /** Keep durable dry-run blocks across ladder resync (task stays open/queued). */
 function preserveOwnedFilingDryRunNotes(
   previousNotes: string | null | undefined,
@@ -305,6 +282,55 @@ function preserveOwnedFilingDryRunNotes(
   const record = parseOwnedFilingDryRunRecord(previousNotes);
   if (!record) return nextNotes;
   return upsertOwnedFilingDryRunNotes(nextNotes, record);
+}
+
+/**
+ * Explicitly seed a follow-up response-review task for operator-close E2E.
+ * Do not call from sync — that would block resolution_ready / shouldExposeCaseResolutionFlow
+ * (open response-review is treated as pending fulfillment). Production only creates this
+ * after follow-up is due.
+ */
+export function ensurePlaywrightMockFollowUpResponseReviewTaskForCase(
+  caseId: string,
+  userId?: string
+): boolean {
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return false;
+  const trimmedCaseId = caseId.trim();
+  const snapshot = buildPlaywrightMockCaseGetResponse(trimmedCaseId);
+  if (!isJusticeIntakePayload(snapshot.intake)) return false;
+  const intake = snapshot.intake as JusticeIntake;
+  const action = parseApprovedNextActionFromClientState(snapshot.client_state);
+  if (!action) return false;
+  if (action.follow_up_needed !== true) return false;
+  if (!action.outcome_note?.trim()) return false;
+  if (hasOperatorTerminalResponseReviewOutcome(action)) return false;
+
+  const tasks = getPlaywrightMockHumanFulfillmentTasksByCaseId().get(trimmedCaseId) ?? [];
+  const existing = tasks.find((row) =>
+    taskNotesMatchFollowUpResponseReviewMarker(row.notes, trimmedCaseId)
+  );
+  if (existing) return false;
+
+  const ownerId =
+    userId?.trim() ||
+    resolvePlaywrightMockCaseOwnerUserId(trimmedCaseId) ||
+    tasks.find((task) => task.user_id?.trim())?.user_id?.trim() ||
+    "playwright_e2e_user";
+
+  tasks.push(
+    buildOpenTask({
+      id: PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID,
+      userId: ownerId,
+      caseId: trimmedCaseId,
+      title: buildFollowUpResponseReviewTaskTitle(intake),
+      notes: buildFollowUpResponseReviewTaskNotes(trimmedCaseId, intake),
+    })
+  );
+  getPlaywrightMockHumanFulfillmentTasksByCaseId().set(trimmedCaseId, tasks);
+  if (ownerId && ownerId !== "playwright_e2e_user") {
+    setPlaywrightMockCaseOwnerUserId(trimmedCaseId, ownerId);
+  }
+  return true;
 }
 
 /**
@@ -475,21 +501,14 @@ export function syncPlaywrightMockHumanFulfillmentLadderFromCasePatch(
     );
   }
 
-  if (shouldQueuePlaywrightMockFollowUpResponseReviewTask(clientState)) {
-    const previous = previousById.get(PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID);
-    if (previous?.completed_at?.trim()) {
-      tasks.push({ ...previous });
-    } else {
-      tasks.push(
-        buildOpenTask({
-          id: PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID,
-          userId,
-          caseId: trimmedCaseId,
-          title: buildFollowUpResponseReviewTaskTitle(justiceIntake),
-          notes: buildFollowUpResponseReviewTaskNotes(trimmedCaseId, justiceIntake),
-        })
-      );
-    }
+  // Preserve explicitly ensured response-review tasks across sync; never auto-create here
+  // (auto-create would block resolution_ready via hasPendingHumanFulfillmentEscalation).
+  const previousReview = previousById.get(PLAYWRIGHT_MOCK_FOLLOW_UP_RESPONSE_REVIEW_TASK_ID);
+  if (
+    previousReview &&
+    taskNotesMatchFollowUpResponseReviewMarker(previousReview.notes, trimmedCaseId)
+  ) {
+    tasks.push({ ...previousReview });
   }
 
   getPlaywrightMockHumanFulfillmentTasksByCaseId().set(trimmedCaseId, tasks);
@@ -1587,6 +1606,8 @@ export function buildPlaywrightMockOperatorFulfillmentQueue(): import("@/lib/jus
       snapshot.payment_dispute_draft
     );
   }
+
+  ensurePlaywrightMockFollowUpResponseReviewTaskForCase(caseId, consumerUserId);
 
   if (!isJusticeIntakePayload(snapshot.intake)) return [];
 

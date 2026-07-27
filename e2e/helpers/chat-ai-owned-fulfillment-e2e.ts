@@ -435,6 +435,11 @@ export async function closeOwnedFulfillmentCaseViaOperatorUi(
   operatorPage: Page,
   companyName = "Acme Retail"
 ): Promise<void> {
+  // Seed response-review on the server mock only now (not at resolution time), so
+  // resolution_ready can narrate first. Operator fulfillment-queue GET runs ensure.
+  const seedQueue = await operatorPage.request.get("/api/operator/fulfillment-queue");
+  expect(seedQueue.ok()).toBeTruthy();
+
   await operatorPage.goto("/operator/fulfillment");
   await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
     timeout: 30_000,
