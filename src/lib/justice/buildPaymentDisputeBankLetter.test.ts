@@ -142,5 +142,7 @@ describe("buildDefaultPaymentDisputeDraft", () => {
     const letter = buildBankLetter(draft, intake);
     expect(letter).toContain("I am disputing this charge as: Goods or services not received.");
     expect(letter).not.toContain("Unauthorized charge");
+    expect(letter).toContain("operator filing packet");
+    expect(letter).not.toMatch(/copy into your bank/i);
   });
 });

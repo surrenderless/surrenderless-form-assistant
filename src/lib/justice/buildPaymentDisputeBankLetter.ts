@@ -221,7 +221,7 @@ export function buildDefaultPaymentDisputeDraft(caseId: string, intake: JusticeI
 export function buildBankLetter(draft: PaymentDisputeDraft, intake: JusticeIntake): string {
   const reasonLines = buildDisputeReasonLetterLines(draft);
   const lines = [
-    "DISPUTE REQUEST — copy into your bank/card issuer message or dispute form",
+    "DISPUTE REQUEST (operator filing packet — paste into bank/card issuer dispute channel)",
     "",
     `Consumer: ${intake.user_display_name.trim()}`,
     `Contact email: ${intake.reply_email.trim()}`,

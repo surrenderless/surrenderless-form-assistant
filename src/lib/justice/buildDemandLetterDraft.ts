@@ -24,8 +24,8 @@ export function buildDemandLetterDraft(intake: JusticeIntake): string {
   const ask = demandLetterDesiredResolutionPhrase(intake.problem_category);
   const toLine = intake.company_name.trim() ? intake.company_name.trim() : "[Add company or person name]";
   const lines: string[] = [
-    "DRAFT DEMAND LETTER — FOR YOUR REVIEW AND EDITING ONLY",
-    "(This app does not send or file this letter. This is not legal advice.)",
+    "DRAFT DEMAND LETTER (operator filing packet — Surrenderless sends when company email is on file)",
+    "(This is not legal advice.)",
     "",
     "Date: ________________________________  (add today’s date before sending)",
     "",

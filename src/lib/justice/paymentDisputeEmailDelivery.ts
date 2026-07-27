@@ -119,13 +119,18 @@ export function buildPaymentDisputeOutreachEmailSubject(intake: JusticeIntake): 
   return `Payment dispute request — ${company}`;
 }
 
-/** Strip DIY copy/paste framing from queued bank letter for Surrenderless-owned email send. */
+/** Strip DIY / prep framing from queued bank letter for Surrenderless-owned email send. */
 export function formatPaymentDisputeOutreachEmailBody(rawDraft: string): string {
   const trimmed = rawDraft.trim();
   if (!trimmed) return "";
-  const diyPrefix = "DISPUTE REQUEST — copy into your bank/card issuer message or dispute form";
-  if (trimmed.startsWith(diyPrefix)) {
-    return ["DISPUTE REQUEST", "", trimmed.slice(diyPrefix.length).trim()].join("\n").trim();
+  const prefixes = [
+    "DISPUTE REQUEST — copy into your bank/card issuer message or dispute form",
+    "DISPUTE REQUEST (operator filing packet — paste into bank/card issuer dispute channel)",
+  ];
+  for (const diyPrefix of prefixes) {
+    if (trimmed.startsWith(diyPrefix)) {
+      return ["DISPUTE REQUEST", "", trimmed.slice(diyPrefix.length).trim()].join("\n").trim();
+    }
   }
   return trimmed;
 }

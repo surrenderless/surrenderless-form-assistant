@@ -82,11 +82,10 @@ export function buildStateAgComplaintDraft(intake: JusticeIntake): string {
   const ask = stateAgDesiredResolutionPhrase(intake.problem_category);
   const stateLine = intake.consumer_us_state?.trim()
     ? `I am a consumer seeking help in ${stateNameFromCode(intake.consumer_us_state)} (${intake.consumer_us_state.trim().toUpperCase()}).`
-    : "STATE NOT YET SELECTED — choose your state on the full State AG prep page before filing.";
+    : "STATE NOT YET SELECTED — choose your state in chat before filing.";
 
   const lines: string[] = [
-    "DRAFT FOR STATE ATTORNEY GENERAL / STATE CONSUMER COMPLAINT",
-    "(Copy and paste into the correct official state portal — this app does not submit for you.)",
+    "DRAFT FOR STATE ATTORNEY GENERAL / STATE CONSUMER COMPLAINT (operator filing packet — paste into the correct official state portal)",
     "",
     stateLine,
     "",

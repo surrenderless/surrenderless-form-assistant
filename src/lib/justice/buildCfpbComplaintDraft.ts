@@ -33,8 +33,7 @@ export function buildCfpbComplaintDraft(intake: JusticeIntake): string {
   const ask = cfpbRel ? CFPB_PREP_RESOLUTION_TEXT : cfpbDesiredResolutionPhrase(intake.problem_category);
 
   const lines: string[] = [
-    "DRAFT FOR CFPB COMPLAINT",
-    "(Copy and paste into the official Consumer Financial Protection Bureau complaint flow — this app does not submit for you.)",
+    "DRAFT FOR CFPB COMPLAINT (operator filing packet — paste into Consumer Financial Protection Bureau complaint portal)",
     "",
     `Company or provider: ${intake.company_name}`,
     intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",
