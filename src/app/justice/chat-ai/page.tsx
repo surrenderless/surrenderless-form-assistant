@@ -18,12 +18,10 @@ import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNext
 import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
-  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
   ApprovedNextActionHandlingHandledOpenTriageNote,
   ApprovedNextActionHandlingQueueStatusReadOnly,
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
-  ApprovedNextActionHandlingTrackingContextualLink,
   formatApprovedNextActionHandlingTimestamp,
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION,
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
@@ -33,8 +31,6 @@ import {
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_RECORD_OUTCOME,
   HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
-  isHandlingTrackingAddFilingStep,
-  isHandlingTrackingFilingCaptureStep,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -52,17 +48,12 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
-  chatOutcomeTrackingSaveAllowed,
   chatResolutionTrackingFormOpen,
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
-  findApprovedActionFilingMissingConfirmation,
   isApprovedActionOpenedForHandlingTracking,
-  canonicalFilingDestinationForApprovedActionHref,
   handlingClosureAcknowledgmentVisible,
-  shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
 } from "@/lib/justice/handlingTrackingProgress";
-import { autoEndgameAfterManualFilingConfirmation } from "@/lib/justice/autoEndgameAfterManualFilingConfirmation";
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
   isChatOperatorOwnedClosurePollPending,
@@ -217,7 +208,6 @@ import {
   shouldShowChatInlineReadOnlyApprovedPrep,
   shouldShowChatInlineRealBbbComplaintPrep,
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
-  shouldShowMarkStepOpenedForApprovedAction,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
 import {
@@ -232,7 +222,6 @@ import {
   resolveAssistedSubmissionLaneForApprovedHref,
 } from "@/lib/justice/assistedSubmissionLane";
 import {
-  advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
 } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import {
@@ -311,12 +300,10 @@ import {
 } from "@/lib/justice/commitIntakeToSessionAndServer";
 import {
   CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID,
-  CHAT_AI_INLINE_FILING_CAPTURE_ELEMENT_ID,
   resolveChatAiActiveCaseWorkHref,
   resolveChatAiActiveCaseWorkLabel,
   resolveChatAiChecklistDraftReviewAction,
   resolveChatAiChecklistPacketApprovalAction,
-  resolveChatAiFilingStepInChatAction,
   scrollChatAiInlineElementWithHydrationWait,
   shouldBlockChatAiOffChatNavigation,
   shouldKeepSignedInChatAiActiveCaseInChat,
@@ -1378,7 +1365,6 @@ function ChatInlineRealBbbComplaintBlock({
   lastAssistedSubmissionAttempt,
   approvedHref,
   onRunComplaint,
-  copyDraftFallback,
   suppressOptionalPageLink = false,
 }: {
   summaryLines: string[];
@@ -1391,11 +1377,6 @@ function ChatInlineRealBbbComplaintBlock({
   lastAssistedSubmissionAttempt: LastAssistedSubmissionAttemptSnapshot | null;
   approvedHref: string | undefined;
   onRunComplaint: () => void;
-  copyDraftFallback?: {
-    messageText: string;
-    onCopy: () => void;
-    copyHint: string | null;
-  };
   suppressOptionalPageLink?: boolean;
 }) {
   return (
@@ -1443,24 +1424,6 @@ function ChatInlineRealBbbComplaintBlock({
         approvedHref
       ) ? (
         <LastAssistedSubmissionAttemptSummaryReadOnly snapshot={lastAssistedSubmissionAttempt!} />
-      ) : null}
-      {copyDraftFallback ? (
-        <div className="space-y-1 border-t border-emerald-200/80 pt-2 dark:border-emerald-900/40">
-          <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
-            Prefer manual filing? Copy the draft below and paste it into BBB.org yourself.
-          </p>
-          <button
-            type="button"
-            disabled={running}
-            onClick={copyDraftFallback.onCopy}
-            className="inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
-          >
-            Copy draft instead
-          </button>
-          {copyDraftFallback.copyHint ? (
-            <p className="text-[11px] text-emerald-800 dark:text-emerald-200">{copyDraftFallback.copyHint}</p>
-          ) : null}
-        </div>
       ) : null}
       {!suppressOptionalPageLink ? (
         <p className="text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
@@ -1838,264 +1801,6 @@ function deriveChatHandlingTrackingLine(input: {
   });
 }
 
-function ChatAiFilingStepInChatGuidance({
-  action,
-}: {
-  action: ReturnType<typeof resolveChatAiFilingStepInChatAction>;
-}) {
-  if (action.kind === "hidden") return null;
-  if (action.kind === "wait") {
-    return (
-      <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">{action.label}</p>
-    );
-  }
-  return (
-    <p className="mt-1 text-xs">
-      <button
-        type="button"
-        onClick={() => scrollChatAiInlineElementWithHydrationWait(action.targetElementId)}
-        className="font-medium text-emerald-800 underline underline-offset-2 hover:text-emerald-950 dark:text-emerald-300 dark:hover:text-emerald-100"
-      >
-        {action.label}
-      </button>
-    </p>
-  );
-}
-
-function ChatManualFilingCaptureForm({
-  mode,
-  caseId,
-  approvedNextAction,
-  filings,
-  onSaved,
-}: {
-  mode: "add_filing" | "add_confirmation";
-  caseId: string;
-  approvedNextAction: JusticeApprovedNextAction;
-  filings: JusticeCaseFilingRow[];
-  onSaved: (result: { hasConfirmation: boolean }) => void | Promise<void>;
-}) {
-  const confirmationTarget = findApprovedActionFilingMissingConfirmation(
-    filings,
-    approvedNextAction
-  );
-  const canonicalFilingDestination = canonicalFilingDestinationForApprovedActionHref(
-    approvedNextAction.href
-  );
-  const [destination, setDestination] = useState(
-    () => canonicalFilingDestination ?? approvedNextAction.label?.trim() ?? ""
-  );
-  const [filedAt, setFiledAt] = useState("");
-  const [confirmationNumber, setConfirmationNumber] = useState("");
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (mode !== "add_filing") return;
-    if (canonicalFilingDestination) {
-      setDestination(canonicalFilingDestination);
-      return;
-    }
-    const label = approvedNextAction.label?.trim();
-    if (label) setDestination(label);
-  }, [mode, approvedNextAction.label, canonicalFilingDestination]);
-
-  async function handleAddFiling(e: FormEvent) {
-    e.preventDefault();
-    const dest = (canonicalFilingDestination ?? destination).trim();
-    if (!dest) {
-      setError("Destination is required.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const body: Record<string, unknown> = {
-        case_id: caseId,
-        destination: dest,
-      };
-      const fa = filedAt.trim();
-      if (fa) body.filed_at = fa;
-      const cn = confirmationNumber.trim();
-      if (cn) body.confirmation_number = cn;
-      const n = notes.trim();
-      if (n) body.notes = n;
-
-      const res = await fetch("/api/justice/filings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload: unknown = await res.json().catch(() => null);
-      if (!res.ok) {
-        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
-          error?: string;
-        };
-        setError(err.error ?? "Could not save filing record.");
-        return;
-      }
-      applyServerTimelineFromResponse(caseId, payload);
-      setFiledAt("");
-      setConfirmationNumber("");
-      setNotes("");
-      await onSaved({ hasConfirmation: Boolean(cn) });
-    } catch {
-      setError("Could not save filing record.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleAddConfirmation(e: FormEvent) {
-    e.preventDefault();
-    if (!confirmationTarget) {
-      setError("No filing record found to update.");
-      return;
-    }
-    const cn = confirmationNumber.trim();
-    const n = notes.trim();
-    if (!cn && !n) {
-      setError("Enter a confirmation number or notes.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const body: Record<string, unknown> = {
-        destination: confirmationTarget.destination,
-        filed_at: confirmationTarget.filed_at?.trim() ? confirmationTarget.filed_at.trim() : null,
-        filing_url: confirmationTarget.filing_url?.trim() ? confirmationTarget.filing_url.trim() : null,
-        confirmation_number: cn ? cn : confirmationTarget.confirmation_number?.trim() || null,
-        notes: n ? n : confirmationTarget.notes?.trim() || null,
-      };
-      const res = await fetch(`/api/justice/filings/${encodeURIComponent(confirmationTarget.id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload: unknown = await res.json().catch(() => null);
-      if (!res.ok) {
-        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
-          error?: string;
-        };
-        setError(err.error ?? "Could not update filing record.");
-        return;
-      }
-      applyServerTimelineFromResponse(caseId, payload);
-      const confirmationOnFile = Boolean(
-        (cn || confirmationTarget.confirmation_number?.trim() || "").trim()
-      );
-      setConfirmationNumber("");
-      setNotes("");
-      await onSaved({ hasConfirmation: confirmationOnFile });
-    } catch {
-      setError("Could not update filing record.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (mode === "add_confirmation" && !confirmationTarget) {
-    return null;
-  }
-
-  return (
-    <form
-      onSubmit={(e) =>
-        void (mode === "add_filing" ? handleAddFiling(e) : handleAddConfirmation(e))
-      }
-      className="mt-2 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40"
-      aria-label="Record manual filing"
-    >
-      <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Record a manual action</p>
-      <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-        This records what was done outside Surrenderless. It does not submit or file anything for you.
-      </p>
-      {mode === "add_filing" ? (
-        <>
-          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-            Where you filed or acted (required)
-            <input
-              type="text"
-              value={destination}
-              readOnly={Boolean(canonicalFilingDestination)}
-              onChange={(e) => {
-                if (!canonicalFilingDestination) setDestination(e.target.value);
-              }}
-              required
-              placeholder="e.g. BBB complaint, bank dispute"
-              className={CHAT_FILING_INPUT_CLS}
-            />
-          </label>
-          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-            Date filed or acted (optional)
-            <input
-              type="text"
-              value={filedAt}
-              onChange={(e) => setFiledAt(e.target.value)}
-              placeholder="e.g. 2026-03-01"
-              className={CHAT_FILING_INPUT_CLS}
-            />
-          </label>
-          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-            Confirmation number (optional)
-            <input
-              type="text"
-              value={confirmationNumber}
-              onChange={(e) => setConfirmationNumber(e.target.value)}
-              className={CHAT_FILING_INPUT_CLS}
-            />
-          </label>
-          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-            Notes (optional)
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className={`${CHAT_FILING_INPUT_CLS} resize-y`}
-            />
-          </label>
-        </>
-      ) : (
-        <>
-          <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">
-            Filing: <strong>{confirmationTarget!.destination}</strong>
-          </p>
-          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-            Confirmation number
-            <input
-              type="text"
-              value={confirmationNumber}
-              onChange={(e) => setConfirmationNumber(e.target.value)}
-              className={CHAT_FILING_INPUT_CLS}
-            />
-          </label>
-          <label className="block text-[11px] font-medium text-emerald-900 dark:text-emerald-200">
-            Notes (optional)
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className={`${CHAT_FILING_INPUT_CLS} resize-y`}
-            />
-          </label>
-        </>
-      )}
-      {error ? (
-        <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={saving}
-        className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-      >
-        {saving ? "Saving…" : mode === "add_filing" ? "Save filing record" : "Save confirmation"}
-      </button>
-    </form>
-  );
-}
-
 function formatChatPersistedTaskLine(
   task: JusticeCaseTaskRow | undefined,
   label: string
@@ -2297,27 +2002,6 @@ function ChatHandlingTrackingStatusReadOnly({
     resolutionFlowExposed,
     manualDerivedStep: rawDerivedStep,
   });
-  const filingCaptureSuppressed =
-    shouldSuppressChatInlineFilingCaptureForAssistedRealBbb({
-      approvedAction: approvedNextAction,
-      filings,
-    }) ||
-    shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-      approvedAction: approvedNextAction,
-      caseId,
-      tasks,
-      filings,
-    });
-  const showInlineFilingCapture =
-    !readinessLoading &&
-    canCaptureFilingInline &&
-    rawDerivedStep !== null &&
-    isHandlingTrackingFilingCaptureStep(rawDerivedStep) &&
-    !filingCaptureSuppressed;
-  const inlineFilingMode =
-    rawDerivedStep !== null && isHandlingTrackingAddFilingStep(rawDerivedStep)
-      ? "add_filing"
-      : "add_confirmation";
   const showArchiveWhenComplete =
     !readinessLoading &&
     canArchiveCase &&
@@ -2330,6 +2014,11 @@ function ChatHandlingTrackingStatusReadOnly({
       hasOperatorTerminalResponseReviewOutcome:
         hasOperatorTerminalResponseReviewOutcome(approvedNextAction),
     });
+  // Keep DIY-related props in the signature for call-site stability; capture UI is retired.
+  void markAcknowledgedOnScreen;
+  void prepInlineInChat;
+  void suppressDestinationPrepHubEscapes;
+  void onFilingsSaved;
   return (
     <>
       <p className="mt-1 text-xs text-emerald-800/90 dark:text-emerald-200/90">
@@ -2337,9 +2026,7 @@ function ChatHandlingTrackingStatusReadOnly({
         {readinessLoading ? "Loading handling tracking context..." : derivedStep}
       </p>
       <p className="mt-0.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        {filingCaptureSuppressed || suppressOwnedStepManualNavigation
-          ? OWNED_STEP_HANDLING_TRACKING_COPY
-          : "In-app tracking only — not filed or submitted."}
+        {OWNED_STEP_HANDLING_TRACKING_COPY}
       </p>
       {caseId ? (
         <ChatHandlingPersistedStatusReadOnly
@@ -2349,46 +2036,6 @@ function ChatHandlingTrackingStatusReadOnly({
           approvedNextAction={approvedNextAction}
           refreshing={readinessLoading}
         />
-      ) : null}
-      {!readinessLoading &&
-      rawDerivedStep !== null &&
-      !showInlineFilingCapture &&
-      !suppressOwnedStepManualNavigation ? (
-        <>
-          <ApprovedNextActionHandlingTrackingContextualLink
-            derivedStep={rawDerivedStep}
-            approvedNextAction={approvedNextAction}
-            surface="chat-ai"
-            basicsReady={basicsReady}
-            evidenceCount={evidenceCount}
-            markAcknowledgedOnScreen={markAcknowledgedOnScreen}
-            prepInlineInChat={prepInlineInChat}
-            suppressOwnedStepManualNavigation={suppressOwnedStepManualNavigation}
-            suppressDestinationPrepHubEscapes={suppressDestinationPrepHubEscapes}
-            inlineFilingCaptureInChat={showInlineFilingCapture}
-          />
-          <ChatAiFilingStepInChatGuidance
-            action={resolveChatAiFilingStepInChatAction({
-              isFilingCaptureStep:
-                rawDerivedStep !== null && isHandlingTrackingFilingCaptureStep(rawDerivedStep),
-              showInlineFilingCapture,
-              filingCaptureSuppressed,
-              canCaptureFilingInChat: canCaptureFiling,
-              caseId,
-            })}
-          />
-        </>
-      ) : null}
-      {showInlineFilingCapture && onFilingsSaved ? (
-        <div id={CHAT_AI_INLINE_FILING_CAPTURE_ELEMENT_ID}>
-          <ChatManualFilingCaptureForm
-            mode={inlineFilingMode}
-            caseId={caseId}
-            approvedNextAction={approvedNextAction}
-            filings={filings}
-            onSaved={onFilingsSaved}
-          />
-        </div>
       ) : null}
       {showArchiveWhenComplete ? (
         <div className="mt-2 space-y-2 rounded-lg border border-emerald-400/50 bg-white/70 px-3 py-2.5 dark:border-emerald-600/40 dark:bg-emerald-950/40">
@@ -3592,60 +3239,9 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleRequestSurrenderlessHandling(note?: string) {
-    if (!approvedNextAction || approvedNextAction.status === "completed") return;
-    if (approvedNextAction.handling_requested_at?.trim()) return;
-
-    const next: JusticeApprovedNextAction = {
-      ...approvedNextAction,
-      handling_requested_at: new Date().toISOString(),
-      ...(note ? { handling_request_note: note } : {}),
-    };
-    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
-    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
-
-    setApprovedNextAction(local);
-
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-
-    if (caseId) {
-      writeSessionApprovedNextAction(caseId, local);
-    }
-
-    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
-
-    setRequestingHandling(true);
-    setTrackingSaveError(null);
-    try {
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-      if (!getRes.ok) {
-        console.warn("justice chat-ai: GET before handling request failed", getRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
-      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_state: merged }),
-      });
-      if (!patchRes.ok) {
-        console.warn("justice chat-ai: PATCH handling request failed", patchRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      const payload = (await patchRes.json()) as unknown;
-      applyServerTimelineFromResponse(caseId, payload);
-      requestSavedEvidencePreviewRefresh();
-      setTrackingSaveError(null);
-    } catch (e) {
-      console.warn("justice chat-ai: handling request error", e);
-      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-    } finally {
-      setRequestingHandling(false);
-    }
+  async function handleRequestSurrenderlessHandling(_note?: string) {
+    // Consumer DIY request-handling retired on chat-ai (fail-closed).
+    return;
   }
 
   async function handleUpdateHandlingRequestNote(note?: string) {
@@ -3755,203 +3351,35 @@ export default function JusticeChatAiPage() {
   }
 
   async function handleMarkApprovedNextActionHandled() {
-    if (!approvedNextAction || approvedNextAction.status !== "started") return;
-    const caseIdForOwnedCheckMarkHandled =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    if (
-      caseIdForOwnedCheckMarkHandled &&
-      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-        approvedAction: approvedNextAction,
-        caseId: caseIdForOwnedCheckMarkHandled,
-        tasks: savedTasks,
-        filings: savedFilings,
-      })
-    ) {
-      return;
-    }
-
-    const completedHref = approvedNextAction.href?.trim() ?? "";
-    const completed: JusticeApprovedNextAction = {
-      ...approvedNextAction,
-      status: "completed",
-      completed_at: new Date().toISOString(),
-    };
-    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, completed);
-
-    const intake = buildJusticeIntakeFromParts(parts);
-    const manualFtc =
-      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
-    const advanced = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
-      existing: withTracking,
-      manualFtc,
-    });
-    const nextApprovedAction =
-      advanced?.href?.trim() &&
-      advanced.href.trim() !== completedHref &&
-      advanced.status === "approved"
-        ? advanced
-        : withTracking;
-    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(nextApprovedAction);
-    setApprovedNextAction(local);
-
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-
-    if (caseId) {
-      writeSessionApprovedNextAction(caseId, local);
-    }
-
-    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
-
-    setMarkingActionHandled(true);
-    setTrackingSaveError(null);
-    try {
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-      if (!getRes.ok) {
-        console.warn("justice chat-ai: GET before mark action handled failed", getRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextApprovedAction);
-      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_state: merged }),
-      });
-      if (!patchRes.ok) {
-        console.warn("justice chat-ai: PATCH mark action handled failed", patchRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      setTrackingSaveError(null);
-    } catch (e) {
-      console.warn("justice chat-ai: mark action handled error", e);
-      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-    } finally {
-      setMarkingActionHandled(false);
-    }
+    // Consumer DIY Record action handled retired on chat-ai (fail-closed).
+    return;
   }
 
   async function handleApprovedNextActionOpen() {
+    // Consumer DIY Mark step opened retired on chat-ai (fail-closed).
     if (!approvedNextAction) return;
-    const caseIdForOwnedCheck =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    if (
-      caseIdForOwnedCheck &&
-      shouldSuppressChatManualActionForSurrenderlessOwnedStep({
-        approvedAction: approvedNextAction,
-        caseId: caseIdForOwnedCheck,
-        tasks: savedTasks,
-        filings: savedFilings,
-      })
-    ) {
-      return;
-    }
-    const targetHref = approvedNextAction.href?.trim() || "/justice/packet";
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    const shouldStayInChat =
-      isLoaded &&
-      shouldKeepSignedInChatAiActiveCaseInChat({
-        isSignedIn: Boolean(isSignedIn),
-        caseId,
-        isUpdatingExistingCase,
-      }) &&
-      Boolean(caseId) &&
-      isUuid(caseId);
-    const blockOffChatNavigation = shouldBlockChatAiOffChatNavigation({
-      isSignedIn: Boolean(isSignedIn),
-      isUpdatingExistingCase,
-      isLoaded,
-      caseId,
-      targetHref,
-    });
-
     if (approvedNextAction.status === "completed") {
+      const caseId =
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+      const shouldStayInChat =
+        isLoaded &&
+        shouldKeepSignedInChatAiActiveCaseInChat({
+          isSignedIn: Boolean(isSignedIn),
+          caseId,
+          isUpdatingExistingCase,
+        }) &&
+        Boolean(caseId) &&
+        isUuid(caseId);
+      const blockOffChatNavigation = shouldBlockChatAiOffChatNavigation({
+        isSignedIn: Boolean(isSignedIn),
+        isUpdatingExistingCase,
+        isLoaded,
+        caseId,
+        targetHref: approvedNextAction.href?.trim() || "/justice/packet",
+      });
       if (shouldStayInChat || blockOffChatNavigation) {
         scrollChatAiInlineElementWithHydrationWait(CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID);
-        return;
       }
-      router.push(targetHref);
-      return;
-    }
-    if (approvedNextAction.status !== "approved") return;
-
-    const label = approvedNextAction.label?.trim();
-    const next: JusticeApprovedNextAction = {
-      ...approvedNextAction,
-      ...(label ? { label } : {}),
-      href: approvedNextAction.href ?? targetHref,
-      status: "started",
-      started_at: approvedNextAction.started_at ?? new Date().toISOString(),
-      ...(approvedNextAction.approved_at ? { approved_at: approvedNextAction.approved_at } : {}),
-    };
-    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
-    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
-    setApprovedNextAction(local);
-
-    if (caseId) {
-      writeSessionApprovedNextAction(caseId, local);
-      try {
-        const raw = sessionStorage.getItem(STORAGE_PREPARED_PACKET_APPROVED_V1);
-        const map: Record<string, boolean> = raw
-          ? (JSON.parse(raw) as Record<string, boolean>)
-          : {};
-        map[caseId] = true;
-        sessionStorage.setItem(STORAGE_PREPARED_PACKET_APPROVED_V1, JSON.stringify(map));
-      } catch {
-        // ignore corrupt session data
-      }
-    }
-
-    const navigateHref = local.href?.trim() || targetHref;
-    const blockNavigateOffChat = shouldBlockChatAiOffChatNavigation({
-      isSignedIn: Boolean(isSignedIn),
-      isUpdatingExistingCase,
-      isLoaded,
-      caseId,
-      targetHref: navigateHref,
-    });
-
-    // Never send signed-in consumers into destination-prep or legacy DIY pages.
-    if (!shouldStayInChat && !blockNavigateOffChat) {
-      router.push(navigateHref);
-      return;
-    }
-
-    if (!shouldStayInChat && blockNavigateOffChat) {
-      scrollChatAiInlineElementWithHydrationWait(CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID);
-      return;
-    }
-
-    setMarkingActionStarted(true);
-    setTrackingSaveError(null);
-    try {
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-      if (!getRes.ok) {
-        console.warn("justice chat-ai: GET before open approved step failed", getRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
-      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_state: merged }),
-      });
-      if (!patchRes.ok) {
-        console.warn("justice chat-ai: PATCH open approved step failed", patchRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      setTrackingSaveError(null);
-    } catch (e) {
-      console.warn("justice chat-ai: open approved step error", e);
-      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-    } finally {
-      setMarkingActionStarted(false);
     }
   }
 
@@ -4019,68 +3447,13 @@ export default function JusticeChatAiPage() {
     }
   }
 
-  async function handleSaveApprovedNextActionTracking(draft: {
+  async function handleSaveApprovedNextActionTracking(_draft: {
     outcome_note: string;
     follow_up_needed: boolean;
     follow_up_at: string;
   }) {
-    if (!approvedNextAction || !chatOutcomeTrackingSaveAllowed(approvedNextAction)) return;
-    const trimmedNote = draft.outcome_note.trim();
-    const next: JusticeApprovedNextAction = { ...approvedNextAction };
-    if (trimmedNote) next.outcome_note = trimmedNote;
-    else delete next.outcome_note;
-    if (draft.follow_up_needed) {
-      next.follow_up_needed = true;
-      if (draft.follow_up_at.trim()) {
-        next.follow_up_at = new Date(`${draft.follow_up_at}T12:00:00`).toISOString();
-      } else {
-        delete next.follow_up_at;
-      }
-    } else {
-      delete next.follow_up_needed;
-      delete next.follow_up_at;
-    }
-    const withTracking = mergeApprovedNextActionTrackingFields(approvedNextAction, next);
-    const local = omitClearedHandlingRequestNoteFromApprovedNextAction(withTracking);
-    setApprovedNextAction(local);
-
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-
-    if (caseId) {
-      writeSessionApprovedNextAction(caseId, local);
-    }
-
-    if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId)) return;
-
-    setTrackingSaveError(null);
-    try {
-      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
-      if (!getRes.ok) {
-        console.warn("justice chat-ai: GET before save outcome tracking failed", getRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      const existing = (await getRes.json()) as { client_state?: unknown };
-      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, withTracking);
-      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_state: merged }),
-      });
-      if (!patchRes.ok) {
-        console.warn("justice chat-ai: PATCH save outcome tracking failed", patchRes.status);
-        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-        return;
-      }
-      const data = (await patchRes.json()) as { timeline?: unknown };
-      applyServerTimelineFromResponse(caseId, data);
-      requestSavedEvidencePreviewRefresh();
-      setTrackingSaveError(null);
-    } catch (e) {
-      console.warn("justice chat-ai: save outcome tracking error", e);
-      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-    }
+    // Consumer DIY outcome / follow-up capture retired on chat-ai (fail-closed).
+    return;
   }
 
   useEffect(() => {
@@ -4490,31 +3863,9 @@ export default function JusticeChatAiPage() {
 
   const refreshChatFilings = requestSavedEvidencePreviewRefresh;
 
-  async function handleChatManualFilingsSaved(result: { hasConfirmation: boolean }) {
-    refreshChatFilings();
-    if (!result.hasConfirmation) return;
-    const caseId =
-      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-    if (!caseId || !isUuid(caseId) || !approvedNextAction) return;
-    if (!isLoaded || !isSignedIn) return;
-
-    const intake = buildJusticeIntakeFromParts(parts);
-    const manualFtc =
-      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
-    const next = await autoEndgameAfterManualFilingConfirmation({
-      caseId,
-      intake,
-      approvedAction: approvedNextAction,
-      tasks: savedTasks,
-      filings: savedFilings,
-      confirmationNumber: "confirmed",
-      manualFtc,
-      logLabel: "justice chat-ai",
-    });
-    if (next === approvedNextAction) return;
-    setApprovedNextAction(next);
-    writeSessionApprovedNextAction(caseId, next);
-    requestSavedEvidencePreviewRefresh();
+  async function handleChatManualFilingsSaved(_result: { hasConfirmation: boolean }) {
+    // Consumer DIY manual filing capture retired on chat-ai (fail-closed).
+    return;
   }
 
   useEffect(() => {
@@ -5895,14 +5246,7 @@ export default function JusticeChatAiPage() {
       preparedPacketApproved,
       approvedNextAction,
     });
-  const showMarkStepOpenedForApprovedAction = shouldShowMarkStepOpenedForApprovedAction({
-    status: approvedNextAction?.status,
-    href: approvedNextAction?.href,
-    label: approvedNextAction?.label,
-    showInlineRealBbbComplaintPrep,
-  });
-  const showMarkStepOpenedVisible =
-    showMarkStepOpenedForApprovedAction && !suppressSurrenderlessOwnedManualUiEarly;
+  const showMarkStepOpenedVisible = false;
   const chatCapturedMerchantContactInput = useMemo(
     () => buildMerchantContactDocumentationInputFromIntakeParts(parts),
     [parts]
@@ -6932,27 +6276,6 @@ export default function JusticeChatAiPage() {
                 approvedHref={approvedNextAction?.href}
                 onRunComplaint={() => void handleRunFtcPracticeFromChat()}
                 suppressOptionalPageLink={suppressInlineOptionalHubEscapeLinks}
-                copyDraftFallback={
-                  chatInlineApprovedPrepContent?.kind === "bbb_complaint"
-                    ? {
-                        messageText: chatInlineApprovedPrepContent.messageText,
-                        copyHint: prepCopyHint,
-                        onCopy: () => {
-                          void (async () => {
-                            const text = chatInlineApprovedPrepContent.messageText;
-                            if (!text) return;
-                            try {
-                              await navigator.clipboard.writeText(text);
-                              setPrepCopyHint("Copied to clipboard.");
-                              window.setTimeout(() => setPrepCopyHint(null), 2500);
-                            } catch {
-                              setPrepCopyHint("Copy failed — select the text and copy manually.");
-                            }
-                          })();
-                        },
-                      }
-                    : undefined
-                }
               />
             ) : null}
             {ftcPracticeLastAssistedSubmissionAttempt &&
@@ -7473,7 +6796,7 @@ export default function JusticeChatAiPage() {
                     ) : null}
                   </>
                 ) : null}
-                {approvedNextAction.status === "started" && !suppressSurrenderlessOwnedManualUi ? (
+                {approvedNextAction.status === "started" ? (
                   <>
                     <p className="mt-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                       Opened for next step.
@@ -7486,16 +6809,9 @@ export default function JusticeChatAiPage() {
                         )}
                       </p>
                     ) : null}
-                    <button
-                      type="button"
-                      disabled={markingActionHandled}
-                      onClick={() => void handleMarkApprovedNextActionHandled()}
-                      className="mt-2 inline-flex rounded-lg border border-emerald-400/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-600/60 dark:bg-emerald-950/50 dark:text-emerald-100 dark:hover:bg-emerald-900/60"
-                    >
-                      {markingActionHandled ? "Saving…" : "Record action handled for now"}
-                    </button>
                     <p className="mt-1.5 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                      Tracking only — not automatic filing or submission.
+                      Stay in chat — Surrenderless carries fulfillment. Consumer DIY “record handled”
+                      is not available here.
                     </p>
                   </>
                 ) : null}
@@ -7533,7 +6849,7 @@ export default function JusticeChatAiPage() {
                         action={approvedNextAction}
                         onSave={handleSaveApprovedNextActionTracking}
                       />
-                    ) : suppressSurrenderlessOwnedManualUi && chatResolutionFlowExposed ? (
+                    ) : chatResolutionFlowExposed ? (
                       <p className="mt-3 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
                         {OWNED_ENDGAME_WAIT_COPY}
                       </p>
@@ -7557,8 +6873,9 @@ export default function JusticeChatAiPage() {
                       </p>
                     ) : (
                       <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                        Approved case packet and next in-app step — not a Surrenderless handling
-                        request. Request handling below when you want internal triage tracking.
+                        Approved case packet and next in-app step — stay in chat. Surrenderless
+                        carries preparation and fulfillment; consumer DIY handling is not available
+                        here.
                       </p>
                     )}
                     <ChatHandlingTrackingStatusReadOnly
@@ -7670,7 +6987,6 @@ export default function JusticeChatAiPage() {
                         onSave={handleSaveApprovedNextActionTracking}
                       />
                     ) : approvedNextAction.status !== "completed" &&
-                      suppressSurrenderlessOwnedManualUi &&
                       chatResolutionFlowExposed ? (
                       <p className="mt-3 text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
                         {OWNED_ENDGAME_WAIT_COPY}
@@ -7754,9 +7070,7 @@ export default function JusticeChatAiPage() {
                   <ChatHandlingWorkbenchInChatNotice />
                 ) : null}
                 <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                  {suppressSurrenderlessOwnedManualUi
-                    ? OWNED_STEP_CHAT_STATUS_COPY
-                    : APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
+                  {OWNED_STEP_CHAT_STATUS_COPY}
                 </p>
                 {shouldShowChatConsumerEndgameDiyControls(
                   suppressSurrenderlessOwnedManualUi

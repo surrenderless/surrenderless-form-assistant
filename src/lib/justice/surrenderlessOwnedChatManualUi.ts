@@ -1,10 +1,17 @@
 /**
  * Chat / hub / cases UI gates for Surrenderless-owned steps.
- * Owned flows must never expose consumer DIY submit/contact/file/confirm/request-handling.
+ *
+ * Chat consumer DIY fulfillment is fail-closed: consumers never advance a real case by
+ * recording manual filing, request-handling, mark-handled, DIY outcome, or archive substitutes.
+ * Hub / Saved Cases keep opt-out suppress for this PR (copy scrub is a follow-up).
  */
 
 import { ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP } from "@/lib/justice/escalationLadderResolution";
 
+/**
+ * Merchant-contact confirm is intake documentation, not DIY external filing.
+ * Still hidden while owned suppress is active.
+ */
 export function shouldShowChatMerchantContactConfirmationControls(input: {
   suppressOwnedManualUi: boolean;
   needsMerchantContactDocumentation: boolean;
@@ -17,44 +24,45 @@ export function shouldShowChatMerchantContactConfirmationControls(input: {
   );
 }
 
-/** Request handling / mark-opened / DIY prep stay hidden while owned suppress is active. */
+/**
+ * Chat: never expose Request handling / mark-opened / Record handled as consumer progress.
+ * `suppressOwnedManualUi` is ignored (fail-closed).
+ */
 export function shouldShowChatConsumerManualHandlingControls(
-  suppressOwnedManualUi: boolean
+  _suppressOwnedManualUi?: boolean
 ): boolean {
-  return !suppressOwnedManualUi;
+  return false;
 }
 
 /**
- * Hub and Saved Cases: same gate as chat — hide Request handling / Record handled DIY
- * while Surrenderless owns the approved step.
+ * Hub and Saved Cases: hide Request handling / Record handled DIY while Surrenderless owns
+ * the approved step. Kept opt-out (separate from chat fail-closed).
  */
 export function shouldShowHubOrCasesConsumerManualHandlingControls(
   suppressOwnedManualUi: boolean
 ): boolean {
-  return shouldShowChatConsumerManualHandlingControls(suppressOwnedManualUi);
-}
-
-/**
- * Post-filing endgame: hide consumer DIY outcome / follow-up / clear when Surrenderless owns
- * the step (or resolution was auto-started after owned terminal filing).
- */
-export function shouldShowChatConsumerEndgameDiyControls(
-  suppressOwnedManualUi: boolean
-): boolean {
   return !suppressOwnedManualUi;
 }
 
 /**
- * Consumer Archive case control — only for non-owned edges. Owned endgame closes via
- * operator response-review → operator archive.
+ * Chat post-filing endgame: never expose consumer DIY outcome / follow-up / clear.
+ * `suppressOwnedManualUi` is ignored (fail-closed).
  */
-export function shouldShowChatConsumerArchiveControl(input: {
+export function shouldShowChatConsumerEndgameDiyControls(
+  _suppressOwnedManualUi?: boolean
+): boolean {
+  return false;
+}
+
+/**
+ * Chat consumer Archive case — never a substitute for operator closure.
+ * `suppressOwnedManualUi` / operator terminal flags are ignored (fail-closed).
+ */
+export function shouldShowChatConsumerArchiveControl(_input: {
   suppressOwnedManualUi: boolean;
   hasOperatorTerminalResponseReviewOutcome: boolean;
 }): boolean {
-  if (input.suppressOwnedManualUi) return false;
-  if (input.hasOperatorTerminalResponseReviewOutcome) return false;
-  return true;
+  return false;
 }
 
 /** Prefer owned awaiting-operator copy over DIY manual-action next steps on hub/cases. */
@@ -86,14 +94,16 @@ export const OWNED_ENDGAME_WAIT_COPY =
 export const OWNED_ENDGAME_HANDLING_TRACKING_STEP =
   "Surrenderless is tracking follow-up and will close this case when resolved.";
 
-/** Prefer owned endgame / awaiting-operator copy over DIY handling-tracking steps in chat. */
+/**
+ * Chat handling-tracking: always owned/awaiting copy — never DIY "prepare the manual action".
+ * `suppressOwnedManualUi` is ignored (fail-closed).
+ */
 export function resolveChatOwnedHandlingTrackingStep(input: {
-  suppressOwnedManualUi: boolean;
+  suppressOwnedManualUi?: boolean;
   resolutionFlowExposed: boolean;
   manualDerivedStep: string | null;
 }): string | null {
   if (!input.manualDerivedStep) return null;
-  if (!input.suppressOwnedManualUi) return input.manualDerivedStep;
   if (input.resolutionFlowExposed) {
     return OWNED_ENDGAME_HANDLING_TRACKING_STEP;
   }
