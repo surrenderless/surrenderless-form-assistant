@@ -59,8 +59,14 @@ describe("chat-only consumer continuity (production merge)", () => {
 
   it("wires FTC prep with the optional-hub redirect guard", () => {
     const ftcPage = readFileSync(join(process.cwd(), "src/app/justice/ftc/page.tsx"), "utf8");
-    expect(ftcPage).toContain("useRedirectConsumerActiveCaseOffOptionalHubEscapePage");
-    expect(ftcPage).toContain('escapePageHref: "/justice/ftc"');
+    expect(ftcPage).toContain("JusticeDestinationHubChatOnlyPage");
+    expect(ftcPage).toContain('escapePageHref="/justice/ftc"');
+
+    const hubShell = readFileSync(
+      join(process.cwd(), "src/app/components/JusticeDestinationHubChatOnlyPage.tsx"),
+      "utf8"
+    );
+    expect(hubShell).toContain("useRedirectConsumerActiveCaseOffOptionalHubEscapePage");
   });
 
   it("gates Handling workbench on saved cases to operators", () => {

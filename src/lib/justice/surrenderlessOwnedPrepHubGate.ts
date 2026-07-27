@@ -1,13 +1,13 @@
 import type { SurrenderlessOwnedHumanFulfillmentPrepPageState } from "@/lib/justice/useSurrenderlessOwnedHumanFulfillmentPrepPage";
 
 /**
- * DIY prep/execute UI is allowed only after ownership resolves to not_owned.
- * Loading/indeterminate must not paint consumer submit/contact/file controls.
+ * Destination hubs never expose DIY prep/execute UI — ownership and chat own fulfillment.
+ * Kept as a named gate so pages/tests fail closed if a DIY branch is reintroduced.
  */
 export function isDiyAllowedOnSurrenderlessOwnedPrepHub(
-  status: SurrenderlessOwnedHumanFulfillmentPrepPageState["status"]
+  _status: SurrenderlessOwnedHumanFulfillmentPrepPageState["status"]
 ): boolean {
-  return status === "not_owned";
+  return false;
 }
 
 /** Ownership still unresolved — hubs must show Loading, never DIY execution. */
