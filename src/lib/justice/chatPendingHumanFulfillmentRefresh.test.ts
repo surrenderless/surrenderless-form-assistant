@@ -6,6 +6,7 @@ import {
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
   isChatOperatorOwnedClosurePollPending,
+  isChatOwnedEndgameWaitPollPending,
   isChatPendingHumanFulfillmentEscalation,
   shouldRefreshChatAfterEscalationTerminalTransition,
 } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
@@ -137,6 +138,48 @@ describe("chatPendingHumanFulfillmentRefresh", () => {
     ).toBe(false);
     expect(
       isChatOperatorOwnedClosurePollPending({ approvedAction: undefined, archivedAt: null })
+    ).toBe(false);
+  });
+});
+
+describe("isChatOwnedEndgameWaitPollPending", () => {
+  it("polls while owned resolution endgame is open and not archived", () => {
+    expect(
+      isChatOwnedEndgameWaitPollPending({
+        approvedAction: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          outcome_note: "Escalation complete. Awaiting responses.",
+          follow_up_needed: true,
+        },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
+        ],
+        archivedAt: null,
+      })
+    ).toBe(true);
+  });
+
+  it("stops once archived", () => {
+    expect(
+      isChatOwnedEndgameWaitPollPending({
+        approvedAction: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          outcome_note: "Escalation complete. Awaiting responses.",
+          follow_up_needed: true,
+        },
+        caseId: CASE_ID,
+        tasks: [],
+        filings: [
+          { destination: "Small claims / demand letter", confirmation_number: "dl-1" },
+        ],
+        archivedAt: "2026-07-17T12:00:00.000Z",
+      })
     ).toBe(false);
   });
 });

@@ -390,7 +390,7 @@ async function sendChatClosureMessage(page: Page, message: string): Promise<void
 }
 
 /**
- * Real chat path through operator UI completions to terminal resolution/outcome tracking.
+ * Real chat path through operator UI completions to owned endgame wait (no consumer DIY).
  */
 export async function driveConsumerToOwnedFulfillmentResolutionInChat(
   consumerPage: Page,
@@ -407,7 +407,7 @@ export async function driveConsumerToOwnedFulfillmentResolutionInChat(
   const handlingTrackingLine = chatAiHandlingTrackingLine(consumerPage);
 
   await expectUrlStaysOnChatAi(consumerPage);
-  await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
+  await expect(outcomeTrackingForm).toHaveCount(0, { timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_sent"))
   ).toBeVisible({ timeout: 30_000 });
@@ -415,16 +415,85 @@ export async function driveConsumerToOwnedFulfillmentResolutionInChat(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
   ).toBeVisible({ timeout: 30_000 });
   await expect(handlingTrackingLine).toContainText(
-    "Review follow-up timing and mark follow-up handled when complete.",
+    "Surrenderless is tracking follow-up and will close this case when resolved.",
     { timeout: 15_000 }
   );
   await expect(actionTracking.getByText(`Outcome: ${OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE}`)).toBeVisible({
     timeout: 15_000,
   });
   await expect(actionTracking.getByText(/Follow-up: flagged/)).toBeVisible({ timeout: 15_000 });
-  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toBeVisible({
+  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toHaveCount(0);
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toHaveCount(0);
+  await expect(actionTracking.getByText(/Stay in chat — Surrenderless is tracking follow-up/)).toBeVisible({
     timeout: 15_000,
   });
+}
+
+/** Operator response-review (if open) → operator archive (owned endgame close path). */
+export async function closeOwnedFulfillmentCaseViaOperatorUi(
+  consumerPage: Page,
+  operatorPage: Page,
+  companyName = "Acme Retail"
+): Promise<void> {
+  // Seed response-review on the server mock only now (not at resolution time), so
+  // resolution_ready can narrate first. Operator fulfillment-queue GET runs ensure.
+  const seedQueue = await operatorPage.request.get("/api/operator/fulfillment-queue");
+  expect(seedQueue.ok()).toBeTruthy();
+
+  await operatorPage.goto("/operator/fulfillment");
+  await expect(operatorPage.getByRole("heading", { name: "Operator fulfillment queue" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const reviewItem = operatorPage
+    .locator("li")
+    .filter({ hasText: "Follow-up response review" })
+    .filter({ hasText: companyName })
+    .first();
+  if ((await reviewItem.count()) > 0) {
+    await expect(reviewItem).toBeVisible({ timeout: 30_000 });
+    await reviewItem.getByLabel("No resolution").check();
+    const reviewResponsePromise = operatorPage.waitForResponse(
+      (res) =>
+        res.request().method() === "POST" &&
+        res.url().includes("/api/justice/follow-up-response-review/complete"),
+      { timeout: 30_000 }
+    );
+    await reviewItem.getByRole("button", { name: "Complete response review" }).click();
+    expect((await reviewResponsePromise).ok()).toBeTruthy();
+
+    await expect(
+      operatorPage
+        .locator("li")
+        .filter({ hasText: "Follow-up response review" })
+        .filter({ hasText: companyName })
+    ).toHaveCount(0, { timeout: 30_000 });
+  }
+
+  const closableItem = operatorPage
+    .locator("li")
+    .filter({ hasText: companyName })
+    .filter({ hasText: "Operator outcome:" })
+    .first();
+  await expect(closableItem).toBeVisible({ timeout: 30_000 });
+  await closableItem.getByRole("checkbox").check();
+  const archiveResponsePromise = operatorPage.waitForResponse(
+    (res) =>
+      res.request().method() === "POST" &&
+      res.url().includes("/api/justice/operator-case-archive/complete"),
+    { timeout: 30_000 }
+  );
+  await closableItem.getByRole("button", { name: "Close case" }).click();
+  expect((await archiveResponsePromise).ok()).toBeTruthy();
+
+  await expect
+    .poll(
+      async () =>
+        consumerPage.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID),
+      { timeout: 30_000 }
+    )
+    .toBeNull();
+  await expectUrlStaysOnChatAi(consumerPage);
 }
 
 /** Mark follow-up handled via chat closure gate (real Send, not request.post). */
@@ -555,7 +624,7 @@ export async function restoreMostRecentArchivedCaseViaChat(page: Page): Promise<
   await expectUrlStaysOnChatAi(page);
 }
 
-/** Assert the restored case is active in chat with persisted transcript and tracking UI. */
+/** Assert the restored case is active in chat with persisted transcript and owned tracking UI. */
 export async function expectConsumerChatCaseRestoredActive(page: Page): Promise<void> {
   const restoredCaseId = await page.evaluate(
     (caseIdKey) => sessionStorage.getItem(caseIdKey),
@@ -567,22 +636,14 @@ export async function expectConsumerChatCaseRestoredActive(page: Page): Promise<
   await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
     timeout: 30_000,
   });
-  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE).last()).toBeVisible({
-    timeout: 15_000,
-  });
   const actionTracking = chatAiActionTracking(page);
   await expect(actionTracking).toBeVisible({ timeout: 30_000 });
-  // Follow-up was cleared before archive; restored case must not reopen the outcome form.
   await expect(page.getByRole("form", { name: "Outcome and follow-up tracking" })).not.toBeVisible({
     timeout: 15_000,
   });
-  await expect(chatAiHandlingTrackingLine(page)).toContainText("Tracking complete for now.", {
-    timeout: 30_000,
-  });
-  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(actionTracking.getByText(`Outcome: ${OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE}`)).toBeVisible({
+  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toHaveCount(0);
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toHaveCount(0);
+  await expect(actionTracking.getByText(/Operator confirmed/)).toBeVisible({
     timeout: 15_000,
   });
   await expectUrlStaysOnChatAi(page);
@@ -737,13 +798,15 @@ async function expectCaseSelectionStaysOnChatWithoutHubNav(
 }
 
 /**
- * After listing both cases as active (offer still says Acme is active), archive Acme via chat
- * without re-listing, then open Acme by company. Live status must restore via PATCH before hydration.
+ * After listing both cases as active (offer still says Acme is active), archive Acme via
+ * operator close without re-listing, then open Acme by company. Live status must restore
+ * via PATCH before hydration.
  */
 export async function selectStaleListedAcmeCaseViaChatCompanyAfterArchive(
-  page: Page
+  page: Page,
+  operatorPage: Page
 ): Promise<void> {
-  await archiveCaseViaChat(page);
+  await closeOwnedFulfillmentCaseViaOperatorUi(page, operatorPage);
   await expectConsumerChatCaseArchivedClosed(page);
 
   await expectCaseSelectionStaysOnChatWithoutHubNav(page, async () => {

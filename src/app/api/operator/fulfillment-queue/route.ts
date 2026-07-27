@@ -6,6 +6,7 @@ import {
 } from "@/lib/justice/operatorFulfillmentQueue";
 import { listOperatorClosableCases } from "@/lib/justice/operatorOwnedCaseArchive";
 import {
+  buildPlaywrightMockOperatorClosableCases,
   buildPlaywrightMockOperatorFulfillmentQueue,
   isPlaywrightMockHumanFulfillmentOperatorFilingEnabled,
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
     const items = buildPlaywrightMockOperatorFulfillmentQueue();
     return NextResponse.json({
       items,
-      closable_cases: [],
+      closable_cases: buildPlaywrightMockOperatorClosableCases(),
       queue_metrics: summarizeOperatorFulfillmentQueue(items),
     });
   }

@@ -34,6 +34,29 @@ export function shouldShowHubOrCasesConsumerManualHandlingControls(
   return shouldShowChatConsumerManualHandlingControls(suppressOwnedManualUi);
 }
 
+/**
+ * Post-filing endgame: hide consumer DIY outcome / follow-up / clear when Surrenderless owns
+ * the step (or resolution was auto-started after owned terminal filing).
+ */
+export function shouldShowChatConsumerEndgameDiyControls(
+  suppressOwnedManualUi: boolean
+): boolean {
+  return !suppressOwnedManualUi;
+}
+
+/**
+ * Consumer Archive case control — only for non-owned edges. Owned endgame closes via
+ * operator response-review → operator archive.
+ */
+export function shouldShowChatConsumerArchiveControl(input: {
+  suppressOwnedManualUi: boolean;
+  hasOperatorTerminalResponseReviewOutcome: boolean;
+}): boolean {
+  if (input.suppressOwnedManualUi) return false;
+  if (input.hasOperatorTerminalResponseReviewOutcome) return false;
+  return true;
+}
+
 /** Prefer owned awaiting-operator copy over DIY manual-action next steps on hub/cases. */
 export function resolveHubOrCasesHandlingTrackingStep(input: {
   suppressOwnedManualUi: boolean;
@@ -54,3 +77,25 @@ export const OWNED_STEP_HANDLING_TRACKING_COPY =
 /** Hub / Saved Cases status when the approved step is Surrenderless-owned. */
 export const OWNED_STEP_HUB_CASES_STATUS_COPY =
   "Surrenderless is carrying this approved step. Continue in chat for queued, in-progress, and completed updates.";
+
+/** Chat endgame wait copy while Surrenderless tracks follow-up and closes the case. */
+export const OWNED_ENDGAME_WAIT_COPY =
+  "Stay in chat — Surrenderless is tracking follow-up and will close this case when resolved. You do not need to record outcome or mark follow-up handled.";
+
+/** Handling-tracking line during owned post-filing follow-up / closure. */
+export const OWNED_ENDGAME_HANDLING_TRACKING_STEP =
+  "Surrenderless is tracking follow-up and will close this case when resolved.";
+
+/** Prefer owned endgame / awaiting-operator copy over DIY handling-tracking steps in chat. */
+export function resolveChatOwnedHandlingTrackingStep(input: {
+  suppressOwnedManualUi: boolean;
+  resolutionFlowExposed: boolean;
+  manualDerivedStep: string | null;
+}): string | null {
+  if (!input.manualDerivedStep) return null;
+  if (!input.suppressOwnedManualUi) return input.manualDerivedStep;
+  if (input.resolutionFlowExposed) {
+    return OWNED_ENDGAME_HANDLING_TRACKING_STEP;
+  }
+  return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+}

@@ -107,6 +107,7 @@ export function buildChatCaseClosureGateContext(input: {
 
 export function canClearFollowUpViaChat(context: ChatCaseClosureContext): boolean {
   if (!context.caseId.trim() || context.readinessLoading) return false;
+  if (context.operatorOwnsClosure === true) return false;
   return context.resolutionFlowExposed && context.followUpNeeded;
 }
 

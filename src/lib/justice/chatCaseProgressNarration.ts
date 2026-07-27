@@ -435,7 +435,7 @@ export function buildChatCaseProgressNarrationMessage(
     case "demand_letter_sent":
       return "Your demand letter is sent and confirmed on file. Escalation steps are complete — I'll help you track follow-up next.";
     case "resolution_ready":
-      return "Follow-up and outcome tracking are ready below. Review the summary when you're ready, or tell me if anything changed.";
+      return "Surrenderless is tracking follow-up for this case. Stay here in chat — I'll update you when follow-up is reviewed and the case can be closed.";
     case "operator_closure_pending":
       return CHAT_OPERATOR_OWNED_ARCHIVE_RESPONSE;
     case "operator_case_closed":

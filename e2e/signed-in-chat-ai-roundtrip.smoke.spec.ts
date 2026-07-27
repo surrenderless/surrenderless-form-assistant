@@ -25,10 +25,6 @@ import {
 } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 import {
-  CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE,
-  CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE,
-} from "@/lib/justice/chatCaseClosureGates";
-import {
   CHAT_INTAKE_COMMIT_MESSAGE,
 } from "@/lib/justice/chatIntakeCommitGates";
 import {
@@ -36,6 +32,7 @@ import {
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
 } from "@/lib/justice/chatLegalConsentGates";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
+import { closeOwnedFulfillmentCaseViaOperatorUi } from "./helpers/chat-ai-owned-fulfillment-e2e";
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
@@ -394,7 +391,6 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
     }
   );
   expect(demandLetterCompleteResponse.ok()).toBeTruthy();
-  await operatorContext.close();
 
   await expect(actionTracking).toBeVisible({ timeout: 15_000 });
 
@@ -403,7 +399,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   const outcomeTrackingForm = page.getByRole("form", {
     name: "Outcome and follow-up tracking",
   });
-  await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
+  await expect(outcomeTrackingForm).toHaveCount(0, { timeout: 30_000 });
   await expect(
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("demand_letter_sent"))
   ).toBeVisible({ timeout: 30_000 });
@@ -411,7 +407,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
     chatTranscript.getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
   ).toBeVisible({ timeout: 30_000 });
   await expect(handlingTrackingLine).toContainText(
-    "Review follow-up timing and mark follow-up handled when complete.",
+    "Surrenderless is tracking follow-up and will close this case when resolved.",
     { timeout: 15_000 }
   );
   await expect(actionTracking.getByText(`Outcome: ${expectedOutcomeNote}`)).toBeVisible({
@@ -419,58 +415,20 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   });
   await expect(actionTracking.getByText(/Follow-up: flagged/)).toBeVisible({ timeout: 15_000 });
   await expect(
-    outcomeTrackingForm.getByPlaceholder("What happened, or what should Surrenderless track next?")
-  ).toHaveValue(expectedOutcomeNote);
-  await expect(outcomeTrackingForm.getByRole("checkbox", { name: "Follow-up needed" })).toBeChecked();
-  await expect(
     actionTracking.getByRole("button", { name: "Mark step opened" })
   ).not.toBeVisible();
-
-  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toBeVisible({
+  await expect(actionTracking.getByRole("button", { name: "Mark follow-up handled" })).toHaveCount(0);
+  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toHaveCount(0);
+  await expect(actionTracking.getByText(/Stay in chat — Surrenderless is tracking follow-up/)).toBeVisible({
     timeout: 15_000,
   });
 
-  const followUpClearResponse = page.waitForResponse(
-    (res) =>
-      res.request().method() === "PATCH" &&
-      res.url().includes("/api/justice/cases/") &&
-      res.request().postDataJSON()?.client_state !== undefined,
-    { timeout: 30_000 }
-  );
-  await chatInput.fill(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE);
-  await page.getByRole("button", { name: "Send" }).click();
-  const followUpPatch = await followUpClearResponse;
-  expect(followUpPatch.ok()).toBeTruthy();
-
-  await expect(
-    chatTranscript.getByText(CHAT_CASE_CLOSURE_FOLLOW_UP_HANDLED_MESSAGE)
-  ).toBeVisible({ timeout: 15_000 });
-  await expect(handlingTrackingLine).toContainText("Tracking complete for now.", {
-    timeout: 15_000,
-  });
-
-  await expect(actionTracking.getByRole("button", { name: "Archive case" })).toBeVisible({
-    timeout: 30_000,
-  });
-
-  const archiveResponse = page.waitForResponse(
-    (res) =>
-      res.request().method() === "PATCH" &&
-      res.url().includes("/api/justice/cases/") &&
-      typeof res.request().postDataJSON()?.archived_at === "string",
-    { timeout: 30_000 }
-  );
-  await chatInput.fill(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE);
-  await page.getByRole("button", { name: "Send" }).click();
-  const archivePatch = await archiveResponse;
-  expect(archivePatch.ok()).toBeTruthy();
+  await closeOwnedFulfillmentCaseViaOperatorUi(page, operatorPage);
+  await operatorContext.close();
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/, { timeout: 15_000 });
   const clearedCaseId = await page.evaluate((caseIdKey) => sessionStorage.getItem(caseIdKey), STORAGE_CASE_ID);
   expect(clearedCaseId).toBeNull();
-  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).not.toBeVisible({
-    timeout: 15_000,
-  });
 
   await page.goto("/justice/cases/archived");
   await expect(page).toHaveURL(/\/justice\/cases\/archived\/?$/);
@@ -502,12 +460,12 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   await acmeSavedCaseRow.getByRole("button", { name: "Open case" }).click();
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
   await waitForClerkBrowserApiSession(page);
-  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).toBeVisible({
-    timeout: 15_000,
-  });
   await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
     timeout: 15_000,
   });
+  await expect(
+    chatTranscript.getByText(buildChatCaseProgressNarrationMessage("resolution_ready"))
+  ).toBeVisible({ timeout: 15_000 });
 
   const secondCaseMarker = "E2E second case unique transcript marker";
   const seedSecondCase = await page.request.post("/api/justice/chat-messages", {
@@ -586,7 +544,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   );
   await page.goto("/justice/chat-ai");
   await waitForClerkBrowserApiSession(page);
-  await expect(chatTranscript.getByText(CHAT_CASE_CLOSURE_ARCHIVE_CASE_MESSAGE)).toBeVisible({
+  await expect(chatTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)).toBeVisible({
     timeout: 15_000,
   });
   await expect(chatTranscript.getByText(secondCaseMarker)).not.toBeVisible();

@@ -4,6 +4,11 @@ import { validate as isUuid } from "uuid";
 import { completeOperatorCaseArchive } from "@/lib/justice/operatorOwnedCaseArchive";
 import { resolveCaseOwnerUserIdForOperatorFulfillment } from "@/lib/justice/operatorFulfillmentQueue";
 import { requireOperatorApiAccess } from "@/server/requireOperatorApiAccess";
+import {
+  completePlaywrightMockOperatorCaseArchive,
+  isPlaywrightMockHumanFulfillmentOperatorFilingCaseId,
+  isPlaywrightMockHumanFulfillmentOperatorFilingEnabled,
+} from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -48,6 +53,26 @@ export async function POST(req: NextRequest) {
       { error: "confirm_archive must be true" },
       { status: 400 }
     );
+  }
+
+  if (
+    isPlaywrightMockHumanFulfillmentOperatorFilingEnabled() &&
+    isPlaywrightMockHumanFulfillmentOperatorFilingCaseId(caseId)
+  ) {
+    const mockResult = completePlaywrightMockOperatorCaseArchive({
+      caseId,
+      confirmArchive: true,
+    });
+    if (!mockResult.ok) {
+      return NextResponse.json({ error: mockResult.error }, { status: mockResult.status });
+    }
+    return NextResponse.json({
+      case_id: mockResult.caseId,
+      archived_at: mockResult.archived_at,
+      timeline: null,
+      outcome: mockResult.outcome,
+      idempotent: mockResult.idempotent,
+    });
   }
 
   const supabase = getSupabaseAdmin();

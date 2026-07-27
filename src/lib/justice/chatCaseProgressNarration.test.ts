@@ -437,6 +437,14 @@ describe("chatCaseProgressNarration", () => {
     ).toContain("resolution_ready");
   });
 
+  it("narrates owned follow-up wait for resolution_ready (not consumer DIY form)", () => {
+    const message = buildChatCaseProgressNarrationMessage("resolution_ready");
+    expect(message.toLowerCase()).toContain("tracking follow-up");
+    expect(message.toLowerCase()).toContain("stay here in chat");
+    expect(message.toLowerCase()).not.toContain("ready below");
+    expect(message.toLowerCase()).not.toContain("record outcome");
+  });
+
   it("narrates operator-owned closure pending for terminal response-review outcomes", () => {
     const observation = {
       caseId: CASE_ID,

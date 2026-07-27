@@ -10,12 +10,11 @@ import {
   OPERATOR_CLERK_STORAGE_STATE_PATH,
 } from "./helpers/clerk-e2e";
 import {
-  archiveCaseViaChat,
+  closeOwnedFulfillmentCaseViaOperatorUi,
   driveConsumerToOwnedFulfillmentResolutionInChat,
   expectConsumerChatCaseArchivedClosed,
   expectConsumerChatCaseRestoredActive,
   expectConsumerChatStaysRestoredAfterReload,
-  markFollowUpHandledViaChat,
   restoreMostRecentArchivedCaseViaChat,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 
@@ -43,8 +42,7 @@ test("consumer archives case in chat, restores most recent archived case in chat
   const operatorPage = await operatorContext.newPage();
 
   await driveConsumerToOwnedFulfillmentResolutionInChat(consumerPage, operatorPage);
-  await markFollowUpHandledViaChat(consumerPage);
-  await archiveCaseViaChat(consumerPage);
+  await closeOwnedFulfillmentCaseViaOperatorUi(consumerPage, operatorPage);
   await expectConsumerChatCaseArchivedClosed(consumerPage);
 
   await restoreMostRecentArchivedCaseViaChat(consumerPage);

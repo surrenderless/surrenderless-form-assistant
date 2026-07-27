@@ -49,13 +49,15 @@ test("owned demand letter auto email delivery completes in chat without DIY or o
   const outcomeTrackingForm = page.getByRole("form", {
     name: "Outcome and follow-up tracking",
   });
-  await expect(outcomeTrackingForm).toBeVisible({ timeout: 30_000 });
+  await expect(outcomeTrackingForm).toHaveCount(0, { timeout: 30_000 });
   await expect(tracking.getByText(`Outcome: ${expectedOutcomeNote}`)).toBeVisible({
     timeout: 15_000,
   });
-  await expect(
-    outcomeTrackingForm.getByPlaceholder("What happened, or what should Surrenderless track next?")
-  ).toHaveValue(expectedOutcomeNote);
+  await expect(tracking.getByRole("button", { name: "Mark follow-up handled" })).toHaveCount(0);
+  await expect(tracking.getByRole("button", { name: "Archive case" })).toHaveCount(0);
+  await expect(tracking.getByText(/Stay in chat — Surrenderless is tracking follow-up/)).toBeVisible({
+    timeout: 15_000,
+  });
 
   await expect(page.getByText("Demand letter sent.")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Demand letter queued with Surrenderless.")).toHaveCount(0);

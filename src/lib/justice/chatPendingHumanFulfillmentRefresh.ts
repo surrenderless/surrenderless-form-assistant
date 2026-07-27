@@ -1,6 +1,7 @@
-import { hasPendingHumanFulfillmentEscalation } from "@/lib/justice/escalationLadderResolution";
+import { hasPendingHumanFulfillmentEscalation, shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operatorOwnedCaseArchive";
+import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
@@ -27,6 +28,37 @@ export function isChatOperatorOwnedClosurePollPending(input: {
 }): boolean {
   if (input.archivedAt?.trim()) return false;
   return hasOperatorTerminalResponseReviewOutcome(input.approvedAction);
+}
+
+/**
+ * True while owned post-filing endgame is waiting on Surrenderless follow-up / close.
+ * Keeps chat polling so response-review and operator archive appear without a reload.
+ */
+export function isChatOwnedEndgameWaitPollPending(input: {
+  approvedAction: JusticeApprovedNextAction | undefined;
+  caseId: string;
+  tasks: readonly JusticeCaseTaskRow[];
+  filings?: readonly ManualActionTrackingFiling[];
+  archivedAt?: string | null;
+}): boolean {
+  if (input.archivedAt?.trim()) return false;
+  if (!input.approvedAction) return false;
+  if (
+    !shouldSuppressChatManualActionForSurrenderlessOwnedStep({
+      approvedAction: input.approvedAction,
+      caseId: input.caseId,
+      tasks: input.tasks,
+      filings: input.filings ?? [],
+    })
+  ) {
+    return false;
+  }
+  return shouldExposeCaseResolutionFlow({
+    approvedAction: input.approvedAction,
+    caseId: input.caseId,
+    tasks: input.tasks,
+    filings: input.filings,
+  });
 }
 
 /**
