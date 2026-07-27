@@ -37,6 +37,7 @@ function contactSummary(intake: JusticeIntake): string[] {
 
 /**
  * Deterministic plain-text draft for in-app review only (not filed, not legal advice).
+ * Framed for chat-only owned fulfillment: review → approve packet → Surrenderless files.
  */
 export function buildSubmissionDraftPreview(input: BuildSubmissionDraftPreviewInput): string {
   const { intake, destinationId, destinationLabel, evidenceLines } = input;
@@ -84,7 +85,9 @@ export function buildSubmissionDraftPreview(input: BuildSubmissionDraftPreviewIn
   lines.push("");
   lines.push("---", "SAVED EVIDENCE (titles only)", "---");
   if (evidenceLines.length === 0) {
-    lines.push("(No saved evidence records in Surrenderless yet — you can add notes on the Evidence page.)");
+    lines.push(
+      "(No saved evidence records in Surrenderless yet — you can add or upload evidence in chat before or after you approve next steps.)"
+    );
   } else {
     evidenceLines.forEach((e, i) => {
       lines.push(`${i + 1}. ${e.title.trim() || "(untitled)"}`);
@@ -95,7 +98,7 @@ export function buildSubmissionDraftPreview(input: BuildSubmissionDraftPreviewIn
     "---",
     "NEXT STEPS",
     "---",
-    "When you file outside Surrenderless, use only official sites and your own judgment. This draft is for your records and preparation only."
+    "Review this draft here in chat. When you approve your prepared packet, Surrenderless carries the next owned outreach and filings for you (automation or operators) — you stay in chat for status and confirmation. This draft is not filed and is not legal advice."
   );
 
   return lines.join("\n").trim();

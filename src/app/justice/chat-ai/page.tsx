@@ -729,8 +729,10 @@ function ChatInlineSubmissionDraftReviewBlock({
       <p className="text-xs font-medium text-blue-950 dark:text-blue-100">Review submission draft</p>
       <p className="text-[11px] leading-relaxed text-blue-900/90 dark:text-blue-100/90">
         {aiDraftText
-          ? "AI-assisted draft for your review — not filed or sent automatically."
-          : "Deterministic draft for your review — not filed or sent automatically."}
+          ? "AI-assisted draft for your review in chat — not filed or sent automatically."
+          : "Deterministic draft for your review in chat — not filed or sent automatically."}{" "}
+        After you mark it reviewed, approve your prepared packet so Surrenderless can carry owned
+        outreach and filings while you stay here for updates.
         {destinationLabel ? (
           <>
             {" "}
@@ -759,7 +761,7 @@ function ChatInlineSubmissionDraftReviewBlock({
               onClick={() => onCopyDraft()}
               className="inline-flex rounded-lg border border-blue-400/80 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
             >
-              Copy draft
+              Copy draft for your records
             </button>
             <button
               type="button"
@@ -808,17 +810,8 @@ function ChatInlineSubmissionDraftReviewBlock({
       </button>
       {!suppressHubLink ? (
         <p className="text-xs text-blue-800 dark:text-blue-200">
-          <Link
-            href="/justice/preview"
-            prefetch={false}
-            className="font-medium underline underline-offset-2 hover:text-blue-950 dark:text-blue-300 dark:hover:text-blue-100"
-          >
-            Continue draft review in chat
-          </Link>
-          <span className="text-[11px] text-blue-900/80 dark:text-blue-100/80">
-            {" "}
-            (optional — includes AI-assisted draft)
-          </span>
+          Prefer to stay in chat — draft review and packet approval continue here after you mark this
+          draft reviewed.
         </p>
       ) : null}
     </div>

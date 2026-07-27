@@ -35,11 +35,21 @@ test("after evidence upload, consumer reviews draft and approves packet without 
 
   const draftReview = page.locator("#chat-ai-inline-submission-draft-review");
   await expect(draftReview).toBeVisible({ timeout: 30_000 });
-  await expect(draftReview.locator("pre").filter({ hasText: "DRAFT FOR YOUR REVIEW" })).toBeVisible();
-  await expect(draftReview.getByRole("button", { name: "Copy draft" })).toBeVisible();
+  const draftBody = draftReview.locator("pre").filter({ hasText: "DRAFT FOR YOUR REVIEW" });
+  await expect(draftBody).toBeVisible();
+  const showMoreDraft = draftReview.getByRole("button", { name: "Show more" });
+  if (await showMoreDraft.isVisible().catch(() => false)) {
+    await showMoreDraft.click();
+  }
+  await expect(draftBody).toContainText(/Surrenderless carries the next owned outreach and filings/i);
+  await expect(draftBody).not.toContainText(/file outside Surrenderless/i);
+  await expect(draftBody).not.toContainText(/Evidence page/i);
+  await expect(draftReview.getByText(/approve your prepared packet so Surrenderless can carry owned/i)).toBeVisible();
+  await expect(draftReview.getByRole("button", { name: "Copy draft for your records" })).toBeVisible();
   await expect(draftReview.getByRole("button", { name: "Generate AI-assisted draft" })).toBeVisible();
   await expect(draftReview.getByRole("link", { name: "Open full submission preview" })).toHaveCount(0);
   await expect(draftReview.locator('a[href="/justice/preview"]')).toHaveCount(0);
+  await expect(draftReview.locator('a[href="/justice/evidence"]')).toHaveCount(0);
 
   const chatInput = page.locator("#chat-ai-input");
   const chatTranscript = chatAiTranscript(page);

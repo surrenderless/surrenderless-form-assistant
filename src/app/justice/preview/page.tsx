@@ -515,7 +515,8 @@ export default function JusticePreviewPage() {
         <div className={`mt-6 ${cardCls}`}>
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Deterministic draft (source of truth)</h2>
           <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-            Not filed. Not legal advice. For your preparation only. Built locally from your saved answers — no external AI.
+            Not filed. Not legal advice. Built locally from your saved answers for review before packet
+            approval — then Surrenderless carries owned outreach and filings. No external AI.
           </p>
           <pre className="mt-4 max-h-[min(360px,45vh)] overflow-auto whitespace-pre-wrap rounded-xl border border-neutral-100 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950/60 dark:text-neutral-100">
             {draftText}
