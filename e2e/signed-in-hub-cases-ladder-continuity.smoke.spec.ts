@@ -69,8 +69,16 @@ test.describe("signed-in hub and saved-cases ladder continuity", () => {
     await expect(currentCase.getByRole("button", { name: /Record action handled/i })).toHaveCount(
       0
     );
+    await expect(currentCase.getByRole("button", { name: /Request .*handling/i })).toHaveCount(0);
+    await expect(currentCase.getByRole("button", { name: /Mark acknowledged/i })).toHaveCount(0);
     await expect(
       currentCase.getByText(/Request Surrenderless handling from chat intake/i)
+    ).toHaveCount(0);
+    await expect(
+      currentCase.getByText(/after external submission/i)
+    ).toHaveCount(0);
+    await expect(
+      currentCase.getByText(/prepare the manual action/i)
     ).toHaveCount(0);
     await expect(currentCase.getByRole("link", { name: "Continue in chat" }).first()).toBeVisible();
   });
@@ -130,6 +138,10 @@ test.describe("signed-in hub and saved-cases ladder continuity", () => {
     await expect(caseCard.getByRole("link", { name: /Open approved step/i })).toHaveCount(0);
     await expect(caseCard.locator('a[href="/justice/ftc"]')).toHaveCount(0);
     await expect(caseCard.getByRole("button", { name: /Record action handled/i })).toHaveCount(0);
+    await expect(caseCard.getByRole("button", { name: /Request .*handling/i })).toHaveCount(0);
+    await expect(caseCard.getByRole("button", { name: /Mark acknowledged/i })).toHaveCount(0);
+    await expect(caseCard.getByText(/after external submission/i)).toHaveCount(0);
+    await expect(caseCard.getByText(/prepare the manual action/i)).toHaveCount(0);
     await expect(caseCard.getByRole("link", { name: "Continue in chat" }).first()).toBeVisible();
   });
 });

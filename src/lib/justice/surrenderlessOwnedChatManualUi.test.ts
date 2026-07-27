@@ -43,14 +43,14 @@ describe("surrenderlessOwnedChatManualUi", () => {
     ).toBe(false);
   });
 
-  it("fail-closes chat DIY handling controls while hub/cases stay opt-out", () => {
+  it("fail-closes chat and hub/cases DIY handling controls", () => {
     expect(shouldShowChatConsumerManualHandlingControls(true)).toBe(false);
     expect(shouldShowChatConsumerManualHandlingControls(false)).toBe(false);
     expect(shouldShowHubOrCasesConsumerManualHandlingControls(true)).toBe(false);
-    expect(shouldShowHubOrCasesConsumerManualHandlingControls(false)).toBe(true);
+    expect(shouldShowHubOrCasesConsumerManualHandlingControls(false)).toBe(false);
   });
 
-  it("replaces DIY hub/cases next steps with awaiting-operator copy when owned", () => {
+  it("always uses awaiting-operator copy for hub/cases handling-tracking", () => {
     expect(
       resolveHubOrCasesHandlingTrackingStep({
         suppressOwnedManualUi: true,
@@ -60,9 +60,15 @@ describe("surrenderlessOwnedChatManualUi", () => {
     expect(
       resolveHubOrCasesHandlingTrackingStep({
         suppressOwnedManualUi: false,
-        manualDerivedStep: "Open the approved step and prepare the manual action.",
+        manualDerivedStep: "Add filing records from the case packet after external submission.",
       })
-    ).toBe("Open the approved step and prepare the manual action.");
+    ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
+    expect(
+      resolveHubOrCasesHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        manualDerivedStep: "Tracking complete for now.",
+      })
+    ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
   });
 
   it("provides owned status copy that does not tell the consumer to DIY", () => {

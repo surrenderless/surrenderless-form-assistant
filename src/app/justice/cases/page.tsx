@@ -16,8 +16,6 @@ import type {
 import { ApprovedNextActionFollowUpTimingLine } from "@/lib/justice/approvedNextActionFollowUp";
 import {
   APPROVED_NEXT_ACTION_HANDLING_ACKNOWLEDGE_HELPER,
-  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER,
-  APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET,
   APPROVED_NEXT_ACTION_HANDLING_REQUESTED_LABEL,
   ApprovedNextActionHandlingAcknowledgedReadOnly,
   ApprovedNextActionHandlingHandledOpenTriageNote,
@@ -203,9 +201,7 @@ function CaseApprovedNextActionTracking({
               {trackingLine}
             </p>
             <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
-              {suppressOwned
-                ? OWNED_STEP_HANDLING_TRACKING_COPY
-                : "In-app tracking only — not filed or submitted."}
+              {OWNED_STEP_HANDLING_TRACKING_COPY}
             </p>
             <ApprovedNextActionHandlingTrackingContextualLink
               derivedStep={trackingLine}
@@ -214,7 +210,7 @@ function CaseApprovedNextActionTracking({
               basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
               evidenceCount={progress.evidenceCount}
               markAcknowledgedOnScreen={false}
-              suppressOwnedStepManualNavigation={suppressOwned}
+              suppressOwnedStepManualNavigation
               onNavigate={onHandlingTrackingNavigate}
               tone="neutral"
             />
@@ -250,9 +246,7 @@ function CaseApprovedNextActionTracking({
                 {trackingLine}
               </p>
               <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
-                {suppressOwned
-                  ? OWNED_STEP_HANDLING_TRACKING_COPY
-                  : "In-app tracking only — not filed or submitted."}
+                {OWNED_STEP_HANDLING_TRACKING_COPY}
               </p>
               <ApprovedNextActionHandlingTrackingContextualLink
                 derivedStep={trackingLine}
@@ -261,7 +255,7 @@ function CaseApprovedNextActionTracking({
                 basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
                 evidenceCount={progress.evidenceCount}
                 markAcknowledgedOnScreen={showCasesAcknowledgment && showConsumerManualHandling}
-                suppressOwnedStepManualNavigation={suppressOwned}
+                suppressOwnedStepManualNavigation
                 onNavigate={onHandlingTrackingNavigate}
                 tone="neutral"
               />
@@ -312,9 +306,7 @@ function CaseApprovedNextActionTracking({
       {showApprovedPacketActionWorkbench ? (
         <>
           <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-            {suppressOwned
-              ? OWNED_STEP_HUB_CASES_STATUS_COPY
-              : "Approved case packet and next in-app step — not a Surrenderless handling request. Request Surrenderless handling from chat intake when you want internal triage tracking."}
+            {OWNED_STEP_HUB_CASES_STATUS_COPY}
           </p>
           <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
             <Link
@@ -331,9 +323,7 @@ function CaseApprovedNextActionTracking({
       ) : null}
       <ApprovedNextActionFollowUpTimingLine followUpAt={next?.follow_up_at} className="mt-0.5" />
       <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
-        {suppressOwned
-          ? OWNED_STEP_HANDLING_TRACKING_COPY
-          : APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER_WITH_YET}
+        {OWNED_STEP_HANDLING_TRACKING_COPY}
       </p>
     </div>
   );
@@ -369,17 +359,19 @@ function deriveCasesManualActionNextStep(input: {
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
 }): string {
+  // Consumer DIY next-step copy is retired; resolveHubOrCasesHandlingTrackingStep fail-closes
+  // to awaiting-operator. Keep non-DIY readiness hints only for internal derivation.
   if (!input.readyForExternalManualAction) {
-    return "Review packet and saved proof before external manual action.";
+    return "Continue in chat to finish packet review and saved proof.";
   }
   if (!input.actionOpened) {
-    return "Open the approved step and prepare the manual action.";
+    return "Continue in chat — Surrenderless carries this approved step.";
   }
   if (!input.hasFilingRecord) {
-    return "Add filing records from the case packet after external submission.";
+    return "Continue in chat — Surrenderless records filings through operator fulfillment.";
   }
   if (!input.hasConfirmationOnFile) {
-    return "Add or edit the filing confirmation from the case packet after external submission.";
+    return "Continue in chat — Surrenderless tracks confirmation through operator fulfillment.";
   }
   const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
     status: input.status,
@@ -389,7 +381,7 @@ function deriveCasesManualActionNextStep(input: {
   });
   if (closureStep) return closureStep;
   if (input.followUpNeeded === true) {
-    return "Review follow-up timing and mark follow-up handled when complete.";
+    return "Continue in chat — Surrenderless tracks follow-up and closes the case when resolved.";
   }
   return CASES_HANDLING_TRACKING_COMPLETE;
 }
@@ -1404,9 +1396,7 @@ export default function JusticeCasesPage() {
                               {trackingLine}
                             </p>
                             <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
-                              {suppressOwned
-                                ? OWNED_STEP_HANDLING_TRACKING_COPY
-                                : "In-app tracking only — not filed or submitted."}
+                              {OWNED_STEP_HANDLING_TRACKING_COPY}
                             </p>
                             <ApprovedNextActionHandlingTrackingContextualLink
                               derivedStep={trackingLine}
@@ -1415,7 +1405,7 @@ export default function JusticeCasesPage() {
                               basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
                               evidenceCount={attentionProgress.evidenceCount}
                               markAcknowledgedOnScreen={false}
-                              suppressOwnedStepManualNavigation={suppressOwned}
+                              suppressOwnedStepManualNavigation
                               onNavigate={(href) => openHandlingTrackingContextualLink(caseRow, href)}
                               tone="neutral"
                             />
@@ -1439,14 +1429,10 @@ export default function JusticeCasesPage() {
                           </>
                         ) : null}
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                          {suppressOwned
-                            ? OWNED_STEP_HUB_CASES_STATUS_COPY
-                            : "Approved case packet and next in-app step — not a Surrenderless handling request. Request Surrenderless handling from chat intake when you want internal triage tracking."}
+                          {OWNED_STEP_HUB_CASES_STATUS_COPY}
                         </p>
                         <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                          {suppressOwned
-                            ? OWNED_STEP_HANDLING_TRACKING_COPY
-                            : APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
+                          {OWNED_STEP_HANDLING_TRACKING_COPY}
                         </p>
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                           <button
@@ -1547,9 +1533,7 @@ export default function JusticeCasesPage() {
                               {trackingLine}
                             </p>
                             <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-500">
-                              {suppressOwned
-                                ? OWNED_STEP_HANDLING_TRACKING_COPY
-                                : "In-app tracking only — not filed or submitted."}
+                              {OWNED_STEP_HANDLING_TRACKING_COPY}
                             </p>
                             <ApprovedNextActionHandlingTrackingContextualLink
                               derivedStep={trackingLine}
@@ -1558,7 +1542,7 @@ export default function JusticeCasesPage() {
                               basicsReady={isBasicCaseInfoReadyForEscalation(caseRow.intake)}
                               evidenceCount={attentionProgress.evidenceCount}
                               markAcknowledgedOnScreen={showConsumerManualHandling}
-                              suppressOwnedStepManualNavigation={suppressOwned}
+                              suppressOwnedStepManualNavigation
                               onNavigate={(href) => openHandlingTrackingContextualLink(caseRow, href)}
                               tone="neutral"
                             />
@@ -1588,9 +1572,7 @@ export default function JusticeCasesPage() {
                           </>
                         ) : null}
                         <p className="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-500">
-                          {suppressOwned
-                            ? OWNED_STEP_HANDLING_TRACKING_COPY
-                            : APPROVED_NEXT_ACTION_HANDLING_DISCLAIMER}
+                          {OWNED_STEP_HANDLING_TRACKING_COPY}
                         </p>
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                           <button
@@ -1672,7 +1654,7 @@ export default function JusticeCasesPage() {
                           </p>
                         ) : null}
                         <p className="mt-2 text-[11px] text-neutral-500 dark:text-neutral-500">
-                          In-app tracking only — not filed or submitted automatically.
+                          {OWNED_STEP_HANDLING_TRACKING_COPY}
                         </p>
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                           <button
