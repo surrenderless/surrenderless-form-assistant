@@ -30,8 +30,7 @@ export function buildFccComplaintDraft(intake: JusticeIntake): string {
   const serviceSummary = fccServiceSummarySegment(intake);
   const ask = fccDesiredResolutionPhrase(intake.problem_category);
   const lines: string[] = [
-    "DRAFT FOR FCC CONSUMER COMPLAINT",
-    "(Copy and paste into the official FCC consumer complaint flow — this app does not submit for you.)",
+    "DRAFT FOR FCC CONSUMER COMPLAINT (operator filing packet — paste into FCC consumer complaint portal)",
     "",
     `Company or provider: ${intake.company_name}`,
     intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",

@@ -221,6 +221,8 @@ describe("demandLetterEmailDelivery helpers", () => {
     const body = formatDemandLetterOutreachEmailBody(draft);
     expect(body).not.toMatch(/DRAFT DEMAND LETTER/i);
     expect(body).not.toMatch(/This app does not send/i);
+    expect(body).not.toMatch(/This is not legal advice/i);
+    expect(body).not.toMatch(/operator filing packet/i);
     expect(body).toContain("Acme Retail");
     expect(body).toContain("Dear Sir or Madam");
   });

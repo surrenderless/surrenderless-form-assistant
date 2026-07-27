@@ -121,6 +121,11 @@ describe("paymentDisputeEmailDelivery helpers", () => {
         "DISPUTE REQUEST — copy into your bank/card issuer message or dispute form\n\nPlease reverse this charge."
       )
     ).toBe("DISPUTE REQUEST\n\nPlease reverse this charge.");
+    expect(
+      formatPaymentDisputeOutreachEmailBody(
+        "DISPUTE REQUEST (operator filing packet — paste into bank/card issuer dispute channel)\n\nPlease reverse this charge."
+      )
+    ).toBe("DISPUTE REQUEST\n\nPlease reverse this charge.");
   });
 });
 

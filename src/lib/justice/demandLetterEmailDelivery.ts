@@ -134,6 +134,7 @@ export function formatDemandLetterOutreachEmailBody(draft: string): string {
     if (/^DRAFT DEMAND LETTER/i.test(t)) return false;
     if (/^This app does not send/i.test(t)) return false;
     if (/^\(This app does not send/i.test(t)) return false;
+    if (/^\(This is not legal advice\.?\)$/i.test(t)) return false;
     if (/^FOR YOUR REVIEW AND EDITING ONLY$/i.test(t)) return false;
     return true;
   });

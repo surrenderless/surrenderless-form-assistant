@@ -23,8 +23,7 @@ export function buildDotAviationComplaintDraft(intake: JusticeIntake): string {
   const issue = intake.problem_category.replace(/_/g, " ");
   const ask = dotDesiredResolutionPhrase(intake.problem_category);
   const lines: string[] = [
-    "DRAFT FOR USDOT / AVIATION CONSUMER COMPLAINT",
-    "(Copy and paste into the official DOT aviation consumer process — this app does not submit for you.)",
+    "DRAFT FOR USDOT / AVIATION CONSUMER COMPLAINT (operator filing packet — paste into DOT aviation consumer portal)",
     "",
     `Company or airline / provider: ${intake.company_name}`,
     intake.company_website.trim() ? `Website: ${intake.company_website.trim()}` : "",
