@@ -82,9 +82,8 @@ test.describe("signed-in hub and saved-cases ladder continuity", () => {
     await waitForClerkBrowserApiSession(page);
 
     const companyName = buildPlaywrightMockE2eCaseIntake().company_name;
-    await expect(page.getByText(companyName, { exact: true })).toBeVisible({
-      timeout: 30_000,
-    });
+    const draftCaseCard = page.locator("main > ul > li").filter({ hasText: companyName }).first();
+    await expect(draftCaseCard).toBeVisible({ timeout: 30_000 });
 
     const checklist = casesSavedRowChecklist(page, companyName);
     await expect(checklist.getByText("Submission draft reviewed: not yet")).toBeVisible();
@@ -98,9 +97,8 @@ test.describe("signed-in hub and saved-cases ladder continuity", () => {
     await seedActiveCasePacketNotApproved(page);
     await page.goto("/justice/cases");
     await waitForClerkBrowserApiSession(page);
-    await expect(page.getByText(companyName, { exact: true })).toBeVisible({
-      timeout: 30_000,
-    });
+    const packetCaseCard = page.locator("main > ul > li").filter({ hasText: companyName }).first();
+    await expect(packetCaseCard).toBeVisible({ timeout: 30_000 });
 
     const packetChecklist = casesSavedRowChecklist(page, companyName);
     await expect(packetChecklist.getByText("Prepared case packet reviewed: not yet")).toBeVisible({
@@ -124,11 +122,8 @@ test.describe("signed-in hub and saved-cases ladder continuity", () => {
     await waitForClerkBrowserApiSession(page);
 
     const companyName = buildPlaywrightMockE2eCaseIntake().company_name;
-    await expect(page.getByText(companyName, { exact: true })).toBeVisible({
-      timeout: 30_000,
-    });
-
     const caseCard = page.locator("main > ul > li").filter({ hasText: companyName }).first();
+    await expect(caseCard).toBeVisible({ timeout: 30_000 });
     await expect(
       caseCard.getByText(/Awaiting Surrenderless operator fulfillment/i)
     ).toBeVisible({ timeout: 30_000 });
