@@ -457,6 +457,21 @@ export function writeSessionApprovedNextAction(
   }
 }
 
+/** Removes only this case's cached entry, leaving other cases' cached entries untouched. */
+export function clearSessionApprovedNextAction(caseId: string): void {
+  if (typeof window === "undefined" || !caseId) return;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+    if (!raw) return;
+    const map = JSON.parse(raw) as Record<string, unknown>;
+    if (!(caseId in map)) return;
+    delete map[caseId];
+    sessionStorage.setItem(STORAGE_APPROVED_NEXT_ACTION_V1, JSON.stringify(map));
+  } catch {
+    // ignore corrupt session data
+  }
+}
+
 /** Plan/packet hydrate: merge session + server; never downgrade completed → started → approved. */
 export function resolveApprovedNextAction(
   caseId: string,
@@ -464,7 +479,13 @@ export function resolveApprovedNextAction(
 ): JusticeApprovedNextAction | undefined {
   const fromSession = readSessionApprovedNextAction(caseId);
   const fromServer = parseApprovedNextActionFromClientState(clientState);
-  if (!fromServer) return fromSession;
+  if (!fromServer) {
+    // The server was consulted and authoritatively has no approved_next_action for this case —
+    // a stale session cache must not resurrect it. Clear it so later session-only reads (e.g.
+    // while server data is genuinely unavailable) don't restore it either.
+    if (fromSession) clearSessionApprovedNextAction(caseId);
+    return undefined;
+  }
   if (!fromSession) return fromServer;
 
   const serverOwnsTrackingFields = isPendingHumanFulfillmentEscalationActionForDisplay(fromServer);

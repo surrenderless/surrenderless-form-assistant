@@ -113,7 +113,8 @@ export type TimelineEntryType =
   | "handling_acknowledged"
   | "case_archived"
   | "task_added"
-  | "task_completed";
+  | "task_completed"
+  | "task_cancelled";
 
 export type TimelineEntry = {
   id: string;

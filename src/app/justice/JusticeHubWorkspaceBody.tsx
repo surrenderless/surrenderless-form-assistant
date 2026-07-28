@@ -341,9 +341,6 @@ export default function JusticeHubWorkspaceBody() {
         return;
       }
 
-      const sessionFallback =
-        nextSnapshot?.approvedNextAction ?? hydrateApprovedNextActionForDisplay(caseId);
-
       if (nextSnapshot) {
         try {
           const caseRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
@@ -351,8 +348,10 @@ export default function JusticeHubWorkspaceBody() {
           });
           if (!signal?.aborted && caseRes.ok) {
             const data = (await caseRes.json()) as { client_state?: unknown };
-            const hydrated =
-              hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
+            // data.client_state was successfully loaded, so its result is authoritative here —
+            // including an absent approved_next_action — and must not fall back to the pre-fetch
+            // sessionFallback snapshot.
+            const hydrated = hydrateApprovedNextActionForDisplay(caseId, data.client_state);
             if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
             setSnapshot(buildCurrentCaseSnapshot(caseId, nextSnapshot.intake, hydrated));
           }
