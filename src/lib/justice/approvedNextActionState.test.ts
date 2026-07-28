@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
   parseApprovedNextAction,
   readSessionApprovedNextAction,
@@ -7,7 +8,10 @@ import {
   STORAGE_APPROVED_NEXT_ACTION_V1,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
-import { MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -55,6 +59,70 @@ describe("resolveApprovedNextAction follow-up merge", () => {
 
     expect(resolved?.follow_up_needed).toBe(false);
     sessionStorage.removeItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+  });
+});
+
+describe("resolveApprovedNextAction authoritative empty server state", () => {
+  const staleCachedAction = {
+    label: "Payment dispute (bank/card)",
+    href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+    status: "approved" as const,
+  };
+
+  it("returns undefined, not the stale session cache, when a loaded case has no approved_next_action", () => {
+    if (typeof sessionStorage === "undefined") return;
+
+    writeSessionApprovedNextAction(CASE_ID, staleCachedAction);
+    expect(readSessionApprovedNextAction(CASE_ID)).toBeTruthy();
+
+    const resolved = resolveApprovedNextAction(CASE_ID, { prepared_packet_approved: true });
+
+    expect(resolved).toBeUndefined();
+  });
+
+  it("clears the stale session entry as a side effect, so a later session-only read also sees nothing", () => {
+    if (typeof sessionStorage === "undefined") return;
+
+    writeSessionApprovedNextAction(CASE_ID, staleCachedAction);
+    resolveApprovedNextAction(CASE_ID, { prepared_packet_approved: true });
+
+    expect(readSessionApprovedNextAction(CASE_ID)).toBeUndefined();
+  });
+
+  it("does not touch other cases' cached entries when clearing one case's stale entry", () => {
+    if (typeof sessionStorage === "undefined") return;
+
+    const otherCaseId = "660e8400-e29b-41d4-a716-446655440111";
+    writeSessionApprovedNextAction(CASE_ID, staleCachedAction);
+    writeSessionApprovedNextAction(otherCaseId, staleCachedAction);
+
+    resolveApprovedNextAction(CASE_ID, { prepared_packet_approved: true });
+
+    expect(readSessionApprovedNextAction(CASE_ID)).toBeUndefined();
+    expect(readSessionApprovedNextAction(otherCaseId)).toBeTruthy();
+    sessionStorage.removeItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+  });
+
+  it("hydrateApprovedNextActionForDisplay still preserves the session fallback when server state is genuinely unavailable (no clientState arg)", () => {
+    if (typeof sessionStorage === "undefined") return;
+
+    writeSessionApprovedNextAction(CASE_ID, staleCachedAction);
+
+    const hydrated = hydrateApprovedNextActionForDisplay(CASE_ID);
+
+    expect(hydrated?.href).toBe(MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF);
+    sessionStorage.removeItem(STORAGE_APPROVED_NEXT_ACTION_V1);
+  });
+
+  it("hydrateApprovedNextActionForDisplay authoritatively clears when a loaded case has no approved_next_action", () => {
+    if (typeof sessionStorage === "undefined") return;
+
+    writeSessionApprovedNextAction(CASE_ID, staleCachedAction);
+
+    const hydrated = hydrateApprovedNextActionForDisplay(CASE_ID, { prepared_packet_approved: true });
+
+    expect(hydrated).toBeUndefined();
+    expect(readSessionApprovedNextAction(CASE_ID)).toBeUndefined();
   });
 });
 

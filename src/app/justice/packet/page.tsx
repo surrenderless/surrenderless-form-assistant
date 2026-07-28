@@ -516,8 +516,10 @@ export default function JusticePacketPage() {
         const parsed = parseJusticeCaseClientState(data.client_state);
         const serverApproved = parsed.prepared_packet_approved === true;
         if (serverApproved) writePreparedPacketApproved(caseId);
-        const hydrated =
-          hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionNextAction;
+        // data.client_state was successfully loaded, so its result is authoritative here —
+        // including an absent approved_next_action — and must not fall back to the pre-fetch
+        // sessionNextAction snapshot.
+        const hydrated = hydrateApprovedNextActionForDisplay(caseId, data.client_state);
         if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
         setPacketApproved(sessionApproved || serverApproved);
         setApprovedNextAction(hydrated);

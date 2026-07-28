@@ -444,14 +444,101 @@ function FollowUpResponseReviewForm({
   );
 }
 
+export type CancelTaskResult = { ok: true } | { ok: false; error: string };
+
+function CancelFulfillmentTaskControl({
+  item,
+  cancelling,
+  onCancel,
+}: {
+  item: OperatorFulfillmentQueueItem;
+  cancelling: boolean;
+  onCancel: (item: OperatorFulfillmentQueueItem, note: string) => Promise<CancelTaskResult>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="mt-3 text-xs font-medium text-red-700 hover:underline dark:text-red-300"
+      >
+        Cancel this task
+      </button>
+    );
+  }
+
+  async function handleConfirm() {
+    setError(null);
+    const result = await onCancel(item, note);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setConfirming(false);
+    setNote("");
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-red-200 bg-red-50/60 p-3 dark:border-red-800 dark:bg-red-950/30">
+      <p className="text-xs font-medium text-red-900 dark:text-red-100">
+        Cancel this task? This closes the task and clears the approved next action for this case.
+        Nothing is filed, sent, or notified.
+      </p>
+      <label className="mt-2 block text-xs font-medium text-red-900 dark:text-red-100">
+        Cancellation reason (optional, recorded on the case)
+        <textarea
+          className="mt-1 w-full rounded-md border border-red-300 bg-white px-2 py-1.5 text-xs dark:border-red-700 dark:bg-neutral-950"
+          rows={2}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          disabled={cancelling}
+        />
+      </label>
+      {error ? (
+        <p className="mt-2 text-xs text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          disabled={cancelling}
+          onClick={() => void handleConfirm()}
+          className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+        >
+          {cancelling ? "Cancelling…" : "Confirm cancel"}
+        </button>
+        <button
+          type="button"
+          disabled={cancelling}
+          onClick={() => {
+            setConfirming(false);
+            setError(null);
+          }}
+          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 dark:border-neutral-600 dark:text-neutral-200"
+        >
+          Keep task
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function OperatorFulfillmentQueuePanel({
   items,
   savingTaskId,
+  cancellingTaskId,
   onRecordComplete,
   onCompleteResponseReview,
+  onCancelTask,
 }: {
   items: OperatorFulfillmentQueueItem[];
   savingTaskId: string | null;
+  cancellingTaskId?: string | null;
   onRecordComplete: (
     item: OperatorFulfillmentQueueItem,
     input: RecordInput
@@ -460,6 +547,7 @@ export function OperatorFulfillmentQueuePanel({
     item: OperatorFulfillmentQueueItem,
     input: ResponseReviewInput
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onCancelTask?: (item: OperatorFulfillmentQueueItem, note: string) => Promise<CancelTaskResult>;
 }) {
   if (items.length === 0) {
     return (
@@ -604,6 +692,13 @@ export function OperatorFulfillmentQueuePanel({
               </>
             );
           })()}
+          {onCancelTask && item.step !== "follow_up_response_review" ? (
+            <CancelFulfillmentTaskControl
+              item={item}
+              cancelling={cancellingTaskId === item.task_id}
+              onCancel={onCancelTask}
+            />
+          ) : null}
         </li>
       ))}
     </ul>

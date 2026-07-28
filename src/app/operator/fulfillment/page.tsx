@@ -26,6 +26,7 @@ export default function OperatorFulfillmentPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const [savingCaseId, setSavingCaseId] = useState<string | null>(null);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -199,6 +200,33 @@ export default function OperatorFulfillmentPage() {
     }
   }
 
+  async function cancelTask(
+    item: OperatorFulfillmentQueueItem,
+    note: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    setCancellingTaskId(item.task_id);
+    try {
+      const res = await fetch("/api/operator/fulfillment-queue/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: item.task_id, note: note.trim() || null }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as { error?: string };
+        return { ok: false, error: err.error ?? "Could not cancel task." };
+      }
+      await loadQueue();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not cancel task." };
+    } finally {
+      setCancellingTaskId(null);
+    }
+  }
+
   if (!isLoaded || !isSignedIn || !isOperator) {
     return null;
   }
@@ -227,8 +255,10 @@ export default function OperatorFulfillmentPage() {
               <OperatorFulfillmentQueuePanel
                 items={items}
                 savingTaskId={savingTaskId}
+                cancellingTaskId={cancellingTaskId}
                 onRecordComplete={recordComplete}
                 onCompleteResponseReview={completeResponseReview}
+                onCancelTask={cancelTask}
               />
               <h2 className="mt-10 text-lg font-semibold text-neutral-900 dark:text-neutral-100">
                 Cases ready to close

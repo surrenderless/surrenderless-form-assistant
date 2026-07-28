@@ -3580,8 +3580,10 @@ export default function JusticeChatAiPage() {
             )
           );
         }
-        hydrated =
-          hydrateApprovedNextActionForDisplay(caseId, data.client_state) ?? sessionFallback;
+        // data.client_state was successfully loaded from the server, so its result is
+        // authoritative here — including an absent approved_next_action — and must not fall
+        // back to the pre-fetch sessionFallback snapshot.
+        hydrated = hydrateApprovedNextActionForDisplay(caseId, data.client_state);
         if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
         setApprovedNextAction(hydrated);
         approvedNextActionRef.current = hydrated;
