@@ -92,12 +92,16 @@ export async function ensureFollowUpCaseTask(
 ): Promise<EnsureFollowUpCaseTaskResult> {
   const marker = followUpTaskNotesMarker(caseId);
 
+  // Only an OPEN follow-up task counts as "already tracked" — a closed one (a prior escalation
+  // step's follow-up that was completed or cleared) must not block a fresh follow-up task from
+  // being created for the next step, since the marker is case-scoped, not per-step.
   const { data: existingRows, error: existingErr } = await supabase
     .from("justice_case_tasks")
     .select(TASK_SELECT)
     .eq("user_id", userId)
     .eq("case_id", caseId)
     .like("notes", `${marker}%`)
+    .is("completed_at", null)
     .limit(1);
 
   if (existingErr) {
@@ -160,12 +164,16 @@ async function findFollowUpCaseTask(
 ): Promise<JusticeCaseTaskRow | null> {
   const marker = followUpTaskNotesMarker(caseId);
 
+  // A case can accumulate more than one closed follow-up task over its lifetime (one per
+  // escalation step); target the current OPEN one specifically so this never non-deterministically
+  // picks a stale closed row instead of the one that actually needs completing.
   const { data: existingRows, error: existingErr } = await supabase
     .from("justice_case_tasks")
     .select(TASK_SELECT)
     .eq("user_id", userId)
     .eq("case_id", caseId)
     .like("notes", `${marker}%`)
+    .is("completed_at", null)
     .limit(1);
 
   if (existingErr) {

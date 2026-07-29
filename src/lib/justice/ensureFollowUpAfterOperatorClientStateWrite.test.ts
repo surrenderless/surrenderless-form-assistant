@@ -59,6 +59,19 @@ function createFollowUpTaskSupabase(state: MockState): SupabaseClient {
           eq: () => ({
             eq: () => ({
               like: (_column: string, pattern: string) => ({
+                is: () => ({
+                  limit: async () => {
+                    if (state.selectFail) {
+                      return { data: null, error: { message: "select failed" } };
+                    }
+                    const prefix = String(pattern).replace(/%$/, "");
+                    const matched = state.tasks.filter(
+                      (task) =>
+                        (task.notes ?? "").startsWith(prefix) && !task.completed_at?.trim()
+                    );
+                    return { data: matched.slice(0, 1), error: null };
+                  },
+                }),
                 limit: async () => {
                   if (state.selectFail) {
                     return { data: null, error: { message: "select failed" } };
@@ -202,6 +215,48 @@ describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
     expect(result.task?.id).toBe("existing-follow-up");
     expect(state.insertCount).toBe(0);
     expect(state.tasks).toHaveLength(1);
+  });
+
+  it("creates a fresh follow-up task when the only marker-matching task is already closed (prior escalation step's follow-up)", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const closed: JusticeCaseTaskRow = {
+      id: "closed-follow-up",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: Merchant contact",
+      due_date: "2026-06-01",
+      notes: marker,
+      completed_at: "2026-06-05T00:00:00.000Z",
+      created_at: "2026-05-01T00:00:00.000Z",
+      updated_at: "2026-06-05T00:00:00.000Z",
+    };
+    const state: MockState = {
+      tasks: [closed],
+      insertCount: 0,
+      insertFail: false,
+      selectFail: false,
+    };
+
+    const result = await ensureFollowUpAfterOperatorClientStateWrite(
+      createFollowUpTaskSupabase(state),
+      {
+        userId: USER_ID,
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: { status: "completed" } },
+        nextClientState: nextWithFollowUp,
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A closed follow-up from an earlier escalation step must not block tracking the next one —
+    // the marker is case-scoped, so a new task is required rather than reusing the closed row.
+    expect(result.created).toBe(true);
+    expect(result.task?.id).not.toBe("closed-follow-up");
+    expect(state.insertCount).toBe(1);
+    expect(state.tasks).toHaveLength(2);
+    expect(taskNotesMatchFollowUpMarker(state.tasks.at(-1)?.notes, CASE_ID)).toBe(true);
+    expect(state.tasks.at(-1)?.completed_at).toBeNull();
   });
 
   it("does nothing when follow_up_needed is not true", async () => {

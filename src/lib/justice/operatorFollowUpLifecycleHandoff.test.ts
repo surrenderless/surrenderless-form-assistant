@@ -126,6 +126,9 @@ function createCapableSupabase(state: MockState): SupabaseClient {
 
   const selectTasksChain = () => {
     const like = (column: string, pattern: string) => ({
+      is: () => ({
+        limit: async () => ({ data: rowsMatchingLike(column, pattern), error: null }),
+      }),
       limit: async () => ({ data: rowsMatchingLike(column, pattern), error: null }),
       order: () => ({ limit: listFollowUpTasks }),
     });
