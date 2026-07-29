@@ -146,6 +146,14 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
                   maybeSingle: async () => ({ data: state.task, error: null }),
                 }),
                 like: (_column: string, pattern: string) => ({
+                  is: () => ({
+                    limit: async () => ({
+                      data: tasksMatchingLike(pattern)
+                        .filter((task) => !task.completed_at?.trim())
+                        .slice(0, 1),
+                      error: null,
+                    }),
+                  }),
                   limit: async () => ({
                     data: tasksMatchingLike(pattern).slice(0, 1),
                     error: null,
@@ -155,6 +163,14 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
                 maybeSingle: async () => ({ data: state.task, error: null }),
               }),
               like: (_column: string, pattern: string) => ({
+                is: () => ({
+                  limit: async () => ({
+                    data: tasksMatchingLike(pattern)
+                      .filter((task) => !task.completed_at?.trim())
+                      .slice(0, 1),
+                    error: null,
+                  }),
+                }),
                 limit: async () => ({
                   data: tasksMatchingLike(pattern).slice(0, 1),
                   error: null,
