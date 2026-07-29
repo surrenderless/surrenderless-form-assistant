@@ -223,12 +223,15 @@ export async function ensureStateAgFilingTask(
 ): Promise<EnsureStateAgFilingTaskResult> {
   const marker = stateAgFilingTaskNotesMarker(caseId);
 
+  // Only an OPEN task counts as "already queued" — a closed (completed or operator-cancelled)
+  // task must not block a fresh one from being created when this destination is approved again.
   const { data: existingRows, error: existingErr } = await supabase
     .from("justice_case_tasks")
     .select(TASK_SELECT)
     .eq("user_id", userId)
     .eq("case_id", caseId)
     .like("notes", `${marker}%`)
+    .is("completed_at", null)
     .limit(1);
 
   if (existingErr) {

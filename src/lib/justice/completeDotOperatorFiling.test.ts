@@ -127,12 +127,18 @@ function createDotCompleteSupabase(state: MockCaseState): SupabaseClient {
                   maybeSingle: async () => ({ data: state.task, error: null }),
                 }),
                 like: () => ({
+                  is: () => ({
+                    limit: async () => ({ data: [state.task], error: null }),
+                  }),
                   limit: async () => ({ data: [state.task], error: null }),
                 }),
                 limit: async () => ({ data: [state.task], error: null }),
                 maybeSingle: async () => ({ data: state.task, error: null }),
               }),
               like: () => ({
+                is: () => ({
+                  limit: async () => ({ data: [state.task], error: null }),
+                }),
                 limit: async () => ({ data: [state.task], error: null }),
               }),
               maybeSingle: async () => ({ data: state.task, error: null }),

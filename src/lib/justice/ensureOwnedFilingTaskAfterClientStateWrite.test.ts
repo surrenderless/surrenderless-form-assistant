@@ -119,6 +119,15 @@ function createTaskSupabase(state: MockState): SupabaseClient {
           eq: () => ({
             eq: () => ({
               like: (_column: string, pattern: string) => ({
+                is: () => ({
+                  limit: async () => {
+                    const prefix = String(pattern).replace(/%$/, "");
+                    const matched = state.tasks.filter(
+                      (task) => (task.notes ?? "").startsWith(prefix) && !task.completed_at?.trim()
+                    );
+                    return { data: matched.slice(0, 1), error: null };
+                  },
+                }),
                 limit: async () => {
                   const prefix = String(pattern).replace(/%$/, "");
                   const matched = state.tasks.filter((task) =>
@@ -406,6 +415,44 @@ describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
     expect(result.created).toBe(false);
     expect(result.task?.id).toBe("existing-dl");
     expect(state.insertCount).toBe(0);
+  });
+
+  it("creates a fresh task when the only marker-matching task is already closed (operator-cancelled dead end)", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const cancelled: JusticeCaseTaskRow = {
+      id: "cancelled-dl",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Demand letter: Acme Retail",
+      due_date: null,
+      notes: `${marker}\n\n---operator_cancelled---\ncancelled_at: 2026-07-01T00:00:00.000Z`,
+      completed_at: "2026-07-01T00:00:00.000Z",
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-07-01T00:00:00.000Z",
+    };
+    const state: MockState = { tasks: [cancelled], insertCount: 0, insertFail: false };
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "approved",
+        },
+      },
+      intake: intake(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Re-approving a destination after its prior task was cancelled must create a new,
+    // separately-workable task rather than treating the closed one as still handling it.
+    expect(result.created).toBe(true);
+    expect(result.task?.id).not.toBe("cancelled-dl");
+    expect(state.insertCount).toBe(1);
+    expect(taskNotesMatchDemandLetterFilingMarker(state.tasks.at(-1)?.notes, CASE_ID)).toBe(true);
+    expect(state.tasks.at(-1)?.completed_at).toBeNull();
   });
 
   it("returns retriable failure when ensure cannot create the required task", async () => {
