@@ -77,6 +77,19 @@ function createReconcileSupabase(state: MockState): SupabaseClient {
             eq: (_col: string, userId: string) => ({
               eq: (_col2: string, caseId: string) => ({
                 like: (_column: string, pattern: string) => ({
+                  is: () => ({
+                    limit: async () => {
+                      const prefix = String(pattern).replace(/%$/, "");
+                      const matched = state.tasks.filter(
+                        (task) =>
+                          task.user_id === userId &&
+                          task.case_id === caseId &&
+                          (task.notes ?? "").startsWith(prefix) &&
+                          !task.completed_at?.trim()
+                      );
+                      return { data: matched.slice(0, 1), error: null };
+                    },
+                  }),
                   limit: async () => {
                     const prefix = String(pattern).replace(/%$/, "");
                     const matched = state.tasks.filter(
