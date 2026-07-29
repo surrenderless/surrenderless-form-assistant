@@ -116,6 +116,19 @@ function createReconcileSupabase(state: MockState): SupabaseClient {
             eq: (_col: string, userId: string) => ({
               eq: (_col2: string, caseId: string) => ({
                 like: (_column: string, pattern: string) => ({
+                  is: () => ({
+                    limit: async () => {
+                      const prefix = String(pattern).replace(/%$/, "");
+                      const matched = state.tasks.filter(
+                        (task) =>
+                          task.user_id === userId &&
+                          task.case_id === caseId &&
+                          (task.notes ?? "").startsWith(prefix) &&
+                          !task.completed_at?.trim()
+                      );
+                      return { data: matched.slice(0, 1), error: null };
+                    },
+                  }),
                   limit: async () => {
                     const prefix = String(pattern).replace(/%$/, "");
                     const matched = state.tasks.filter(
@@ -258,6 +271,49 @@ describe("reconcileMissingFollowUpResponseReviewTasks", () => {
     expect(summary.created).toBe(0);
     expect(state.insertCount).toBe(0);
     expect(state.tasks).toHaveLength(1);
+  });
+
+  it("creates a fresh response-review task when the only marker-matching task is already closed (prior escalation step's review)", async () => {
+    const marker = followUpResponseReviewTaskNotesMarker(CASE_ID);
+    const closed: JusticeCaseTaskRow = {
+      id: "closed-review",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Follow-up response review: Acme Retail",
+      due_date: null,
+      notes: marker,
+      completed_at: "2026-06-05T00:00:00.000Z",
+      created_at: "2026-05-01T00:00:00.000Z",
+      updated_at: "2026-06-05T00:00:00.000Z",
+    };
+    const state: MockState = {
+      cases: [
+        {
+          id: CASE_ID,
+          user_id: USER_ID,
+          intake: retailIntake(),
+          client_state: terminalNoResponseClientState(),
+          archived_at: null,
+          updated_at: "2026-07-17T12:00:00.000Z",
+        },
+      ],
+      tasks: [closed],
+      insertCount: 0,
+      insertFailCaseIds: new Set(),
+    };
+
+    const summary = await reconcileMissingFollowUpResponseReviewTasks(
+      createReconcileSupabase(state)
+    );
+
+    // A closed response-review task from an earlier escalation step must not suppress
+    // reconciliation of the next required one — the marker is case-scoped, not per-step.
+    expect(summary.needing_response_review).toBe(1);
+    expect(summary.already_present).toBe(0);
+    expect(summary.created).toBe(1);
+    expect(state.insertCount).toBe(1);
+    expect(state.tasks).toHaveLength(2);
+    expect(state.tasks.at(-1)?.completed_at).toBeNull();
   });
 
   it("reports failure when ensure cannot insert the missing task", async () => {

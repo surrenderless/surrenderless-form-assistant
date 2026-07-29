@@ -76,12 +76,16 @@ export async function ensureFollowUpResponseReviewTask(
 ): Promise<EnsureFollowUpResponseReviewTaskResult> {
   const marker = followUpResponseReviewTaskNotesMarker(caseId);
 
+  // Only an OPEN response-review task counts as "already tracked" — a closed one (a prior
+  // escalation step's review that was completed) must not block a fresh task from being created
+  // for the next step, since the marker is case-scoped, not per-step.
   const { data: existingRows, error: existingErr } = await supabase
     .from("justice_case_tasks")
     .select(TASK_SELECT)
     .eq("user_id", userId)
     .eq("case_id", caseId)
     .like("notes", `${marker}%`)
+    .is("completed_at", null)
     .limit(1);
 
   if (existingErr) {
