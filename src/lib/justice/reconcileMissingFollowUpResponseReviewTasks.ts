@@ -53,12 +53,15 @@ async function caseHasResponseReviewTask(
   caseId: string
 ): Promise<boolean | null> {
   const marker = followUpResponseReviewTaskNotesMarker(caseId);
+  // Only an OPEN response-review task counts as "already present" — a closed one from a prior
+  // escalation step must not suppress reconciliation of the next required task.
   const { data, error } = await supabase
     .from("justice_case_tasks")
     .select(TASK_SELECT)
     .eq("user_id", userId)
     .eq("case_id", caseId)
     .like("notes", `${marker}%`)
+    .is("completed_at", null)
     .limit(1);
 
   if (error) {
