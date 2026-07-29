@@ -221,6 +221,40 @@ export function pickNextPreparedActionAfterCompleted(params: {
   return next.detailHref ? next : null;
 }
 
+/**
+ * Fresh pick after an operator withdraws (cancels) the currently approved action. Prefers any
+ * other currently routable destination over the cancelled one; only falls back to re-selecting
+ * the cancelled href when nothing else is routable, i.e. it is genuinely still the only valid
+ * action. Reuses the same routing rules as the initial pick (`pickPreparedNextAction`) rather
+ * than duplicating them.
+ */
+export function pickNextPreparedActionAfterCancelled(params: {
+  contacted: boolean;
+  useCompanyContactLabels: boolean;
+  destinations: JusticeDestination[];
+  cancelledHref: string;
+}): PreparedNextActionPick {
+  const { contacted, useCompanyContactLabels, destinations, cancelledHref } = params;
+
+  if (!contacted) {
+    // The initial picker only ever selects merchant contact while uncontacted, so if that is
+    // what was cancelled, it is by construction still the only valid next step.
+    return {
+      detailHref: "/justice/merchant",
+      stepLabel: useCompanyContactLabels ? "Company contact" : "Merchant contact",
+    };
+  }
+
+  const excludingCancelled = pickFirstRoutablePreparedAction(destinations, cancelledHref, {
+    excludeMerchantWhenContacted: true,
+  });
+  if (excludingCancelled.detailHref) return excludingCancelled;
+
+  return pickFirstRoutablePreparedAction(destinations, undefined, {
+    excludeMerchantWhenContacted: true,
+  });
+}
+
 export function buildApprovedNextActionTarget(
   prepared: PreparedNextActionPick
 ): JusticeApprovedNextAction {

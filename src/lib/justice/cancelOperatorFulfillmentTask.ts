@@ -14,6 +14,7 @@ import {
   bbbFilingTaskNotesMarker,
   taskNotesMatchBbbFilingMarker,
 } from "@/lib/justice/bbbFilingTask";
+import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
   cfpbFilingTaskNotesMarker,
   taskNotesMatchCfpbFilingMarker,
@@ -33,6 +34,11 @@ import {
   paymentDisputeFilingTaskNotesMarker,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import {
+  buildApprovedNextActionTarget,
+  pickNextPreparedActionAfterCancelled,
+} from "@/lib/justice/preparedNextAction";
+import { cfpbLikelyRelevant, computeJusticeDestinations, dotLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
 import {
   stateAgFilingTaskNotesMarker,
   taskNotesMatchStateAgFilingMarker,
@@ -224,6 +230,17 @@ export async function cancelOperatorFulfillmentTask(
     };
   }
 
+  // The cancellation itself already committed atomically above. Proposing a fresh next action
+  // is a best-effort follow-up so chat keeps showing a clear next step; if it fails, the case is
+  // left exactly as the RPC left it (no approved_next_action) rather than the cancellation being
+  // reported as failed or retried.
+  const clientState = await recomputeApprovedNextActionAfterCancellation(supabase, {
+    caseId: task.case_id,
+    userId: data.user_id,
+    clientStateAfterCancel: data.client_state,
+    cancelledHref: expectedHref,
+  });
+
   return {
     ok: true,
     task: {
@@ -231,6 +248,96 @@ export async function cancelOperatorFulfillmentTask(
       completed_at: data.cancelled_at,
       notes: data.notes,
     },
-    clientState: data.client_state,
+    clientState,
   };
+}
+
+/**
+ * After a cancellation clears approved_next_action, picks and persists a fresh next action using
+ * the same routing rules as the initial packet-approval pick (`pickNextPreparedActionAfterCancelled`
+ * in preparedNextAction.ts), preferring any destination other than the one just cancelled. Returns
+ * the RPC's post-cancel client_state unchanged if intake can't be loaded, no destination is
+ * routable, or the write fails — this step never undoes or retries the cancellation itself.
+ */
+async function recomputeApprovedNextActionAfterCancellation(
+  supabase: SupabaseClient,
+  input: {
+    caseId: string;
+    userId: string;
+    clientStateAfterCancel: Record<string, unknown>;
+    cancelledHref: string;
+  }
+): Promise<Record<string, unknown>> {
+  const { caseId, userId, clientStateAfterCancel, cancelledHref } = input;
+
+  if (clientStateAfterCancel.approved_next_action !== undefined) {
+    // Nothing to propose — some other write already set a new action for this case.
+    return clientStateAfterCancel;
+  }
+
+  const { data: caseRow, error: caseErr } = await supabase
+    .from("justice_cases")
+    .select("intake")
+    .eq("id", caseId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (caseErr || !caseRow || !isJusticeIntakePayload(caseRow.intake)) {
+    console.warn(
+      "cancelOperatorFulfillmentTask: could not load intake to propose a next action",
+      caseErr?.message ?? "invalid or missing intake"
+    );
+    return clientStateAfterCancel;
+  }
+
+  const intake = caseRow.intake;
+  const contacted = intake.already_contacted === "yes";
+  const useCompanyContactLabels =
+    cfpbLikelyRelevant(intake) || fccLikelyRelevant(intake) || dotLikelyRelevant(intake);
+  const destinations = computeJusticeDestinations(intake, {
+    manualFtc: false,
+    useCompanyContactLabels,
+  });
+
+  const prepared = pickNextPreparedActionAfterCancelled({
+    contacted,
+    useCompanyContactLabels,
+    destinations,
+    cancelledHref,
+  });
+
+  if (!prepared.detailHref) {
+    // No destination is currently routable at all; leave the case with no approved next action
+    // rather than propose a placeholder.
+    return clientStateAfterCancel;
+  }
+
+  const nextClientState: Record<string, unknown> = {
+    ...clientStateAfterCancel,
+    approved_next_action: buildApprovedNextActionTarget(prepared),
+  };
+
+  const { data: updatedCase, error: updateErr } = await supabase
+    .from("justice_cases")
+    .update({ client_state: nextClientState })
+    .eq("id", caseId)
+    .eq("user_id", userId)
+    .is("client_state->approved_next_action", null)
+    .select("client_state")
+    .maybeSingle();
+
+  if (updateErr) {
+    console.warn(
+      "cancelOperatorFulfillmentTask: could not persist proposed next action",
+      updateErr.message
+    );
+    return clientStateAfterCancel;
+  }
+  if (!updatedCase) {
+    // Lost a race to a concurrent client_state write; leave whatever it set in place rather
+    // than guess at merging with it.
+    return clientStateAfterCancel;
+  }
+
+  return nextClientState;
 }

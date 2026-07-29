@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveApprovedNextAction } from "@/lib/justice/approvedNextActionState";
+import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import type { JusticeIntake } from "@/lib/justice/types";
 import { cancelOperatorFulfillmentTask } from "@/lib/justice/cancelOperatorFulfillmentTask";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -14,7 +17,28 @@ type MockCase = {
   user_id: string;
   client_state: Record<string, unknown>;
   timeline: unknown[];
+  intake?: JusticeIntake;
 };
+
+/** Contacted retail intake with both payment-dispute and downstream destinations eligible. */
+function multiDestinationRetailIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "online_purchase",
+    company_name: "Acme Retail",
+    purchase_or_signup: "widget order",
+    story: "Ordered a widget that never arrived and merchant refused a refund.",
+    money_amount: "$89.00",
+    pay_or_order_date: "2026-01-10",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-01-15",
+    merchant_response_type: "refused_help",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
 
 type MockState = {
   task: JusticeCaseTaskRow | null;
@@ -179,11 +203,51 @@ function createMockSupabase(state: MockState): SupabaseClient {
 
       if (table === "justice_cases") {
         return {
+          // Only reachable from recomputeApprovedNextActionAfterCancellation, after the atomic
+          // RPC has already committed — never part of the primary cancel write itself.
+          select: () => ({
+            eq: (_col: string, id: string) => ({
+              eq: (_col2: string, uid: string) => ({
+                maybeSingle: async () => ({
+                  data:
+                    state.case && state.case.id === id && state.case.user_id === uid
+                      ? { intake: state.case.intake }
+                      : null,
+                  error: null,
+                }),
+              }),
+            }),
+          }),
           update: (patch: Record<string, unknown>) => {
             state.updateCalls.push({ table, patch });
-            throw new Error(
-              "cancelOperatorFulfillmentTask must not issue a separate update() on justice_cases — it should only call the atomic RPC."
-            );
+            return {
+              eq: (_col: string, id: string) => ({
+                eq: (_col2: string, uid: string) => ({
+                  is: () => ({
+                    select: () => ({
+                      maybeSingle: async () => {
+                        const current = state.case;
+                        const matches =
+                          current &&
+                          current.id === id &&
+                          current.user_id === uid &&
+                          current.client_state.approved_next_action === undefined;
+                        if (!matches) {
+                          // The `.is(...)` guard did not match live data — simulates a lost
+                          // race against a concurrent client_state write.
+                          return { data: null, error: null };
+                        }
+                        state.case = {
+                          ...current,
+                          client_state: patch.client_state as Record<string, unknown>,
+                        };
+                        return { data: { client_state: state.case.client_state }, error: null };
+                      },
+                    }),
+                  }),
+                }),
+              }),
+            };
           },
         };
       }
@@ -373,6 +437,119 @@ describe("cancelOperatorFulfillmentTask (atomic RPC)", () => {
     if (result.ok) return;
     expect(result.status).toBe(409);
     expect(result.error).toBe("Task is already closed");
+  });
+});
+
+describe("cancellation followed by chat reload (post-cancel next-action recompute)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("proposes a different valid destination and chat reload sees it, not the cancelled one", async () => {
+    const state = freshState({
+      case: {
+        id: CASE_ID,
+        user_id: USER_ID,
+        client_state: approvedPaymentDisputeClientState(),
+        timeline: [],
+        intake: multiDestinationRetailIntake(),
+      },
+    });
+
+    const result = await cancelOperatorFulfillmentTask(createMockSupabase(state), {
+      taskId: TASK_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const newAction = result.clientState.approved_next_action as
+      | { href?: string; status?: string }
+      | undefined;
+    expect(newAction).toBeDefined();
+    expect(newAction?.status).toBe("approved");
+    expect(newAction?.href).not.toBe("/justice/payment-dispute");
+
+    // Persisted for real, not just returned in memory.
+    expect(state.case?.client_state.approved_next_action).toEqual(newAction);
+    expect(state.updateCalls).toHaveLength(1);
+    expect(state.updateCalls[0].table).toBe("justice_cases");
+
+    // Simulate a chat reload: hydrate purely from the server client_state the way
+    // hydrateChatFromJusticeCaseRow does on case load, with no session cache involved.
+    const reloaded = resolveApprovedNextAction(CASE_ID, result.clientState);
+    expect(reloaded).toBeDefined();
+    expect(reloaded?.href).toBe(newAction?.href);
+    expect(reloaded?.status).toBe("approved");
+  });
+
+  it("leaves client_state exactly as the RPC left it when intake cannot be loaded", async () => {
+    const state = freshState({
+      case: {
+        id: CASE_ID,
+        user_id: USER_ID,
+        client_state: approvedPaymentDisputeClientState(),
+        timeline: [],
+        // No intake set: recompute should no-op rather than throw or fabricate an action.
+      },
+    });
+
+    const result = await cancelOperatorFulfillmentTask(createMockSupabase(state), {
+      taskId: TASK_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.clientState.approved_next_action).toBeUndefined();
+    expect(state.updateCalls).toHaveLength(0);
+
+    // Chat reload correctly shows no action rather than resurrecting anything.
+    const reloaded = resolveApprovedNextAction(CASE_ID, result.clientState);
+    expect(reloaded).toBeUndefined();
+  });
+
+  it("does not overwrite a concurrently-set approved_next_action (lost race on the .is() guard)", async () => {
+    const state = freshState({
+      case: {
+        id: CASE_ID,
+        user_id: USER_ID,
+        client_state: approvedPaymentDisputeClientState(),
+        timeline: [],
+        intake: multiDestinationRetailIntake(),
+      },
+    });
+
+    const supabase = createMockSupabase(state);
+    const originalFrom = supabase.from.bind(supabase);
+    (supabase as unknown as { from: typeof supabase.from }).from = ((table: string) => {
+      const real = originalFrom(table);
+      if (table !== "justice_cases") return real;
+      const realUpdate = (real as { update: (patch: Record<string, unknown>) => unknown }).update;
+      return {
+        ...real,
+        update: (patch: Record<string, unknown>) => {
+          // A concurrent writer sets a different approved_next_action just before our guarded
+          // update runs, so the live .is("client_state->approved_next_action", null) check fails.
+          if (state.case) {
+            state.case.client_state = {
+              ...state.case.client_state,
+              approved_next_action: { href: "/justice/state-ag", status: "approved" },
+            };
+          }
+          return realUpdate(patch);
+        },
+      };
+    }) as typeof supabase.from;
+
+    const result = await cancelOperatorFulfillmentTask(supabase, { taskId: TASK_ID });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Returned/left in place: the concurrent writer's action, not our proposed one and not
+    // overwritten back to empty.
+    expect(
+      (state.case?.client_state.approved_next_action as { href?: string } | undefined)?.href
+    ).toBe("/justice/state-ag");
   });
 });
 

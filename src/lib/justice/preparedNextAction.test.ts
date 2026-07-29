@@ -3,6 +3,7 @@ import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/a
 import {
   buildApprovedNextActionTarget,
   isMockPracticePreparedActionDestination,
+  pickNextPreparedActionAfterCancelled,
   pickNextPreparedActionAfterCompleted,
   pickPreparedNextAction,
 } from "@/lib/justice/preparedNextAction";
@@ -658,6 +659,89 @@ describe("pickNextPreparedActionAfterCompleted", () => {
     ).toEqual({
       detailHref: "/justice/dot",
       stepLabel: "USDOT / aviation consumer",
+    });
+  });
+});
+
+describe("pickNextPreparedActionAfterCancelled", () => {
+  it("prefers a different routable destination over the one just cancelled", () => {
+    expect(
+      pickNextPreparedActionAfterCancelled({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, paymentDest, cfpbDest],
+        cancelledHref: "/justice/payment-dispute",
+      })
+    ).toEqual({
+      detailHref: "/justice/cfpb",
+      stepLabel: "CFPB complaint prep",
+    });
+  });
+
+  it("re-selects the cancelled destination when it is genuinely the only routable one", () => {
+    expect(
+      pickNextPreparedActionAfterCancelled({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [paymentDest],
+        cancelledHref: "/justice/payment-dispute",
+      })
+    ).toEqual({
+      detailHref: "/justice/payment-dispute",
+      stepLabel: "Payment dispute (bank/card)",
+    });
+  });
+
+  it("returns no action when nothing is routable even after allowing the cancelled one back", () => {
+    expect(
+      pickNextPreparedActionAfterCancelled({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [],
+        cancelledHref: "/justice/payment-dispute",
+      })
+    ).toEqual({
+      detailHref: null,
+      stepLabel: "Prepared case review",
+    });
+  });
+
+  it("re-proposes merchant contact when uncontacted, since it is the only thing that could have been cancelled", () => {
+    expect(
+      pickNextPreparedActionAfterCancelled({
+        contacted: false,
+        useCompanyContactLabels: false,
+        destinations: [paymentDest, cfpbDest],
+        cancelledHref: "/justice/merchant",
+      })
+    ).toEqual({
+      detailHref: "/justice/merchant",
+      stepLabel: "Merchant contact",
+    });
+  });
+
+  it("uses the company contact label for the uncontacted fallback", () => {
+    expect(
+      pickNextPreparedActionAfterCancelled({
+        contacted: false,
+        useCompanyContactLabels: true,
+        destinations: [],
+        cancelledHref: "/justice/merchant",
+      }).stepLabel
+    ).toBe("Company contact");
+  });
+
+  it("picks the lowest-priority remaining destination, not just any other one", () => {
+    expect(
+      pickNextPreparedActionAfterCancelled({
+        contacted: true,
+        useCompanyContactLabels: false,
+        destinations: [merchantDest, paymentDest, ftcDest, cfpbDest],
+        cancelledHref: "/justice/ftc-review",
+      })
+    ).toEqual({
+      detailHref: "/justice/payment-dispute",
+      stepLabel: "Payment dispute (bank/card)",
     });
   });
 });
