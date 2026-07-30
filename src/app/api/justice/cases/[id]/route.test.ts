@@ -94,6 +94,11 @@ vi.mock("@supabase/supabase-js", () => ({
           update: () => ({
             eq: () => ({
               eq: () => ({
+                eq: () => ({
+                  select: () => ({
+                    maybeSingle: mockCaseUpdateMaybeSingle,
+                  }),
+                }),
                 select: () => ({
                   maybeSingle: mockCaseUpdateMaybeSingle,
                 }),
@@ -246,6 +251,23 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
     );
     expect(attemptAutomatedPaymentDisputeEmailDelivery).not.toHaveBeenCalled();
     expect(attemptAutomatedDemandLetterEmailDeliveryAfterEnsure).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the case was written concurrently between the pre-patch read and this write (e.g. by an operator completing a filing)", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { client_state: {}, archived_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+      error: null,
+    });
+    // A CAS-guarded update matching zero rows is exactly what a concurrent writer having
+    // already changed updated_at looks like from PostgREST's perspective.
+    mockCaseUpdateMaybeSingle.mockResolvedValue({ data: null, error: null });
+
+    const res = await PATCH(buildPatchRequest({ client_state: merchantClientState }), routeContext());
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/updated concurrently/i);
+    expect(ensureOwnedFilingTaskAfterClientStateWrite).not.toHaveBeenCalled();
   });
 
   it("returns 500 with OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR when ensure fails", async () => {

@@ -166,23 +166,39 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
                     client_state: state.client_state,
                     timeline: timelineStore.entries,
                     payment_dispute_draft: null,
+                    updated_at: "2026-02-01T00:00:00.000Z",
                   },
                   error: null,
                 }),
               }),
             }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: () => ({
-              eq: async () => {
-                if (patch.intake) state.intake = patch.intake as JusticeIntake;
-                if (patch.client_state) {
-                  state.client_state = patch.client_state as Record<string, unknown>;
-                }
-                return { error: null };
-              },
-            }),
-          }),
+          update: (patch: Record<string, unknown>) => {
+            if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+              return {
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      select: () => ({
+                        maybeSingle: async () => {
+                          state.client_state = patch.client_state as Record<string, unknown>;
+                          return { data: { id: CASE_ID }, error: null };
+                        },
+                      }),
+                    }),
+                  }),
+                }),
+              };
+            }
+            return {
+              eq: () => ({
+                eq: async () => {
+                  if (patch.intake) state.intake = patch.intake as JusticeIntake;
+                  return { error: null };
+                },
+              }),
+            };
+          },
         };
       }
 

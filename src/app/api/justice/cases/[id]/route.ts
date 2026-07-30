@@ -41,6 +41,7 @@ import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merc
 import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
+import { CLIENT_STATE_UPDATE_CONFLICT_ERROR } from "@/lib/justice/updateClientStateIfUnchanged";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -243,6 +244,7 @@ async function patchJusticeCase(
 
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
+  let existingRowUpdatedAt: string | undefined;
   let validationTasks: JusticeCaseTaskRow[] = [];
   let validationFilings: ManualActionTrackingFiling[] = [];
 
@@ -262,7 +264,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("client_state, archived_at")
+        .select("client_state, archived_at, updated_at")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -277,6 +279,7 @@ async function patchJusticeCase(
 
       existingClientState = existingRow.client_state;
       existingArchivedAt = existingRow.archived_at as string | null;
+      existingRowUpdatedAt = existingRow.updated_at as string;
 
       if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
         const { data: taskRows, error: tasksErr } = await supabaseForValidation
@@ -348,13 +351,16 @@ async function patchJusticeCase(
     existingArchivedAt = undefined;
   }
 
-  const { data, error } = await supabase
-    .from("justice_cases")
-    .update(patch)
-    .eq("id", id)
-    .eq("user_id", userId)
-    .select(SELECT)
-    .maybeSingle();
+  // When we read the row above for escalation validation, guard the write with a
+  // compare-and-swap on updated_at (stamped on every row write by a DB trigger) so a
+  // concurrent writer — an operator completing a filing at the same time — can't have its
+  // change silently clobbered by this blind update.
+  let updateQuery = supabase.from("justice_cases").update(patch).eq("id", id).eq("user_id", userId);
+  if (existingRowUpdatedAt) {
+    updateQuery = updateQuery.eq("updated_at", existingRowUpdatedAt);
+  }
+
+  const { data, error } = await updateQuery.select(SELECT).maybeSingle();
 
   if (error) {
     console.warn("justice_cases update:", error.message);
@@ -362,6 +368,9 @@ async function patchJusticeCase(
   }
 
   if (!data) {
+    if (existingRowUpdatedAt) {
+      return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
+    }
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
