@@ -2,6 +2,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { chromium, type Browser } from "playwright";
 import { rateLimit } from "@/utils/rateLimiter";
+import { evaluateAssistedSubmissionUrlPolicy } from "@/lib/justice/assistedSubmissionExternalUrl";
 import { getUserOr401 } from "@/server/requireUser";
 
 function contextOptions() {
@@ -34,6 +35,15 @@ export async function POST(req: NextRequest) {
     const { url } = await req.json();
     if (!url || typeof url !== "string") {
       return NextResponse.json({ error: 'Missing or invalid "url"' }, { status: 400 });
+    }
+
+    // Fail closed before touching a browser: only canonically approved mock/production
+    // destinations may be navigated to server-side — otherwise this is SSRF (arbitrary
+    // internal-network or cloud-metadata navigation on behalf of any signed-in user).
+    const requestOrigin = new URL(req.url).origin;
+    const policy = evaluateAssistedSubmissionUrlPolicy(url, requestOrigin);
+    if (!policy.allowed) {
+      return NextResponse.json({ error: policy.error }, { status: 403 });
     }
 
     const browserlessUrl = process.env.BROWSERLESS_URL;
