@@ -2,11 +2,16 @@ import { randomUUID } from "crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 
 const SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
+
+/** Consumers may not directly edit or remove Surrenderless-managed operator-fulfillment tasks. */
+const MANAGED_TASK_ERROR =
+  "This task is managed by Surrenderless and cannot be edited or removed directly.";
 
 const MAX_TITLE = 500;
 const MAX_DUE = 200;
@@ -214,6 +219,10 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  if (taskNotesMatchAnyOperatorFulfillmentMarker(prev.notes, prev.case_id)) {
+    return NextResponse.json({ error: MANAGED_TASK_ERROR }, { status: 403 });
+  }
+
   const { data, error } = await supabase
     .from("justice_case_tasks")
     .update(patch)
@@ -266,6 +275,25 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
 
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
+
+  const { data: prev, error: prevErr } = await supabase
+    .from("justice_case_tasks")
+    .select("case_id, notes")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (prevErr) {
+    console.warn("justice_case_tasks read before delete:", prevErr.message);
+    return NextResponse.json({ error: prevErr.message }, { status: 500 });
+  }
+  if (!prev) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (taskNotesMatchAnyOperatorFulfillmentMarker(prev.notes, prev.case_id)) {
+    return NextResponse.json({ error: MANAGED_TASK_ERROR }, { status: 403 });
+  }
 
   const { data, error } = await supabase
     .from("justice_case_tasks")
