@@ -427,72 +427,139 @@ export async function reconcileOperatorFallbackAlerts(
   }
 
   // Phase 2: ordinary open operator-fulfillment work, no automated delivery ever attempted.
-  const { data: openTasks, error: openTasksErr } = await supabase
-    .from("justice_case_tasks")
-    .select(TASK_SELECT)
-    .is("completed_at", null)
-    .limit(limit);
+  // Paginated in stable (created_at, id) order so every open task in the system is eventually
+  // reached as volume grows — a single capped query would let old, already-processed tasks
+  // permanently occupy the page and starve newer alertable tasks from ever being scanned.
+  const pageSize = limit;
+  let pageOffset = 0;
+  for (;;) {
+    const { data: page, error: pageErr } = await supabase
+      .from("justice_case_tasks")
+      .select(TASK_SELECT)
+      .is("completed_at", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(pageOffset, pageOffset + pageSize - 1);
 
-  if (openTasksErr) {
-    console.warn("operator fallback alert (queue): list open tasks", openTasksErr.message);
-    return summary;
-  }
-
-  for (const task of (openTasks ?? []) as JusticeCaseTaskRow[]) {
-    const caseId = task.case_id?.trim() ?? "";
-    const userId = task.user_id?.trim() ?? "";
-    if (!caseId || !userId) continue;
-
-    // Any task carrying an owned-filing delivery block (queued/submitting/filed/failed) is
-    // either actively automated or already covered by phase 1 above — never double-alert it.
-    const hasOwnedDeliveryBlock =
-      (task.notes ?? "").includes(BBB_OWNED_FILING_DELIVERY_BLOCK_MARKER) ||
-      (task.notes ?? "").includes(FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER);
-    if (hasOwnedDeliveryBlock) continue;
-
-    const cfg = QUEUE_ALERT_DESTINATIONS.find((d) => d.taskMarkerMatches(task.notes, caseId));
-    if (!cfg) continue;
-
-    summary.scanned += 1;
-
-    const key = operatorFallbackAlertKey(task.id, QUEUE_ALERT_KEY_NAMESPACE, cfg.kind);
-    if (hasOperatorAlertBeenSent(task.notes, key)) {
-      summary.results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        task_id: task.id,
-        result: "skipped",
-        stop_reason: QUEUE_ALERT_REASON,
-        reason: "already_alerted",
-      });
-      summary.skipped += 1;
-      continue;
+    if (pageErr) {
+      console.warn("operator fallback alert (queue): list open tasks", pageErr.message);
+      break;
     }
 
-    summary.attempted += 1;
+    const rows = (page ?? []) as JusticeCaseTaskRow[];
 
-    const createdAtMs = task.created_at ? Date.parse(task.created_at) : NaN;
-    const ageLabel = Number.isFinite(createdAtMs) ? formatAgeMs(nowMs - createdAtMs) : "unknown";
+    for (const task of rows) {
+      const caseId = task.case_id?.trim() ?? "";
+      const userId = task.user_id?.trim() ?? "";
+      if (!caseId || !userId) continue;
 
-    try {
-      const sendResult = await providerResolved.provider.send({
-        from: providerResolved.from,
-        to: recipient,
-        subject: buildOperatorFallbackAlertSubject(cfg, caseId),
-        text: buildOperatorFallbackAlertBody({
-          destinationLabel: cfg.destinationLabel,
-          caseId,
-          taskTitle: task.title?.trim() || `${cfg.destinationLabel} filing`,
-          failureReason: QUEUE_ALERT_FAILURE_TEXT,
-          ageLabel,
-          workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
-        }),
-        // Per task + destination: retries never duplicate the email even before the marker lands.
-        idempotencyKey: `${QUEUE_ALERT_KEY_NAMESPACE}-alert:${task.id}:${cfg.kind}`,
-      });
+      // Any task carrying an owned-filing delivery block (queued/submitting/filed/failed) is
+      // either actively automated or already covered by phase 1 above — never double-alert it.
+      const hasOwnedDeliveryBlock =
+        (task.notes ?? "").includes(BBB_OWNED_FILING_DELIVERY_BLOCK_MARKER) ||
+        (task.notes ?? "").includes(FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER);
+      if (hasOwnedDeliveryBlock) continue;
 
-      if (!sendResult.ok) {
+      const cfg = QUEUE_ALERT_DESTINATIONS.find((d) => d.taskMarkerMatches(task.notes, caseId));
+      if (!cfg) continue;
+
+      summary.scanned += 1;
+
+      const key = operatorFallbackAlertKey(task.id, QUEUE_ALERT_KEY_NAMESPACE, cfg.kind);
+      if (hasOperatorAlertBeenSent(task.notes, key)) {
+        summary.results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          task_id: task.id,
+          result: "skipped",
+          stop_reason: QUEUE_ALERT_REASON,
+          reason: "already_alerted",
+        });
+        summary.skipped += 1;
+        continue;
+      }
+
+      summary.attempted += 1;
+
+      const createdAtMs = task.created_at ? Date.parse(task.created_at) : NaN;
+      const ageLabel = Number.isFinite(createdAtMs) ? formatAgeMs(nowMs - createdAtMs) : "unknown";
+
+      try {
+        const sendResult = await providerResolved.provider.send({
+          from: providerResolved.from,
+          to: recipient,
+          subject: buildOperatorFallbackAlertSubject(cfg, caseId),
+          text: buildOperatorFallbackAlertBody({
+            destinationLabel: cfg.destinationLabel,
+            caseId,
+            taskTitle: task.title?.trim() || `${cfg.destinationLabel} filing`,
+            failureReason: QUEUE_ALERT_FAILURE_TEXT,
+            ageLabel,
+            workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
+          }),
+          // Per task + destination: retries never duplicate the email even before the marker lands.
+          idempotencyKey: `${QUEUE_ALERT_KEY_NAMESPACE}-alert:${task.id}:${cfg.kind}`,
+        });
+
+        if (!sendResult.ok) {
+          summary.results.push({
+            case_id: caseId,
+            user_id: userId,
+            kind: cfg.kind,
+            task_id: task.id,
+            result: "failed",
+            stop_reason: QUEUE_ALERT_REASON,
+            reason: sendResult.error,
+          });
+          summary.failed += 1;
+          continue;
+        }
+
+        // Persist the durable exactly-once marker ONLY after an accepted send.
+        const sentAt = new Date(nowMs).toISOString();
+        const nextNotes = appendOperatorAlertSentMarker(task.notes, key, sentAt);
+        const { error: updateErr } = await supabase
+          .from("justice_case_tasks")
+          .update({ notes: clampLen(nextNotes, MAX_NOTES) })
+          .eq("id", task.id)
+          .eq("user_id", userId);
+
+        if (updateErr) {
+          // Provider idempotency key prevents a duplicate email on the retry next run.
+          console.warn("operator fallback alert (queue): mark sent", updateErr.message);
+          summary.results.push({
+            case_id: caseId,
+            user_id: userId,
+            kind: cfg.kind,
+            task_id: task.id,
+            result: "failed",
+            stop_reason: QUEUE_ALERT_REASON,
+            reason: "marker_write_failed",
+          });
+          summary.failed += 1;
+          continue;
+        }
+
+        await appendCaseTimelineEntry(supabase, userId, caseId, {
+          id: `operator_queue_alert:${task.id}:${cfg.kind}`,
+          type: "outcome_recorded",
+          label: `Operator alerted — ${cfg.destinationLabel} filing awaiting fulfillment`,
+          detail: QUEUE_ALERT_FAILURE_TEXT,
+          ts: sentAt,
+        });
+
+        summary.results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          task_id: task.id,
+          result: "sent",
+          stop_reason: QUEUE_ALERT_REASON,
+        });
+        summary.sent += 1;
+      } catch (err) {
+        console.warn("operator fallback alert (queue): process task", task.id, err);
         summary.results.push({
           case_id: caseId,
           user_id: userId,
@@ -500,67 +567,14 @@ export async function reconcileOperatorFallbackAlerts(
           task_id: task.id,
           result: "failed",
           stop_reason: QUEUE_ALERT_REASON,
-          reason: sendResult.error,
+          reason: "exception",
         });
         summary.failed += 1;
-        continue;
       }
-
-      // Persist the durable exactly-once marker ONLY after an accepted send.
-      const sentAt = new Date(nowMs).toISOString();
-      const nextNotes = appendOperatorAlertSentMarker(task.notes, key, sentAt);
-      const { error: updateErr } = await supabase
-        .from("justice_case_tasks")
-        .update({ notes: clampLen(nextNotes, MAX_NOTES) })
-        .eq("id", task.id)
-        .eq("user_id", userId);
-
-      if (updateErr) {
-        // Provider idempotency key prevents a duplicate email on the retry next run.
-        console.warn("operator fallback alert (queue): mark sent", updateErr.message);
-        summary.results.push({
-          case_id: caseId,
-          user_id: userId,
-          kind: cfg.kind,
-          task_id: task.id,
-          result: "failed",
-          stop_reason: QUEUE_ALERT_REASON,
-          reason: "marker_write_failed",
-        });
-        summary.failed += 1;
-        continue;
-      }
-
-      await appendCaseTimelineEntry(supabase, userId, caseId, {
-        id: `operator_queue_alert:${task.id}:${cfg.kind}`,
-        type: "outcome_recorded",
-        label: `Operator alerted — ${cfg.destinationLabel} filing awaiting fulfillment`,
-        detail: QUEUE_ALERT_FAILURE_TEXT,
-        ts: sentAt,
-      });
-
-      summary.results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        task_id: task.id,
-        result: "sent",
-        stop_reason: QUEUE_ALERT_REASON,
-      });
-      summary.sent += 1;
-    } catch (err) {
-      console.warn("operator fallback alert (queue): process task", task.id, err);
-      summary.results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        task_id: task.id,
-        result: "failed",
-        stop_reason: QUEUE_ALERT_REASON,
-        reason: "exception",
-      });
-      summary.failed += 1;
     }
+
+    if (rows.length < pageSize) break;
+    pageOffset += pageSize;
   }
 
   return summary;
