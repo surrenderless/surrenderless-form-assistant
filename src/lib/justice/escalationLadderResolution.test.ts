@@ -8,8 +8,10 @@ import {
   shouldExposeCaseResolutionFlow,
   stripResolutionTrackingFromApprovedAction,
 } from "@/lib/justice/escalationLadderResolution";
+import { bbbFilingTaskNotesMarker } from "@/lib/justice/bbbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
+import { ftcFilingTaskNotesMarker } from "@/lib/justice/ftcFilingTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
@@ -22,6 +24,36 @@ function openStateAgTask(): JusticeCaseTaskRow {
     user_id: "user",
     case_id: CASE_ID,
     title: "State AG filing: Acme",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openBbbTask(): JusticeCaseTaskRow {
+  const marker = bbbFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-bbb",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "BBB filing: Acme",
+    due_date: null,
+    notes: `${marker}\ncase_id: ${CASE_ID}`,
+    completed_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function openFtcTask(): JusticeCaseTaskRow {
+  const marker = ftcFilingTaskNotesMarker(CASE_ID);
+  return {
+    id: "task-ftc",
+    user_id: "user",
+    case_id: CASE_ID,
+    title: "FTC filing: Acme",
     due_date: null,
     notes: `${marker}\ncase_id: ${CASE_ID}`,
     completed_at: null,
@@ -216,6 +248,36 @@ describe("escalationLadderResolution", () => {
           {
             destination: "State Attorney General (consumer)",
             confirmation_number: "ag-123",
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it("does not treat a demand-letter confirmation as terminal while an open BBB operator task remains", () => {
+    expect(
+      isOperatorFulfillmentTerminalFromTasksAndFilings({
+        caseId: CASE_ID,
+        tasks: [openBbbTask()],
+        filings: [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: "dl-123",
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  it("does not treat a demand-letter confirmation as terminal while an open FTC operator task remains", () => {
+    expect(
+      isOperatorFulfillmentTerminalFromTasksAndFilings({
+        caseId: CASE_ID,
+        tasks: [openFtcTask()],
+        filings: [
+          {
+            destination: "Small claims / demand letter",
+            confirmation_number: "dl-123",
           },
         ],
       })

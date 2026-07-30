@@ -13,11 +13,13 @@ import {
   handlingClosureAcknowledgmentVisible,
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
+  isFilingDestinationValidForApprovedAction,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
   MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
   shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
   canonicalFilingDestinationForApprovedActionHref,
@@ -882,6 +884,61 @@ describe("canonicalFilingDestinationForApprovedActionHref", () => {
     expect(canonicalFilingDestinationForApprovedActionHref("/justice/unknown-lane")).toBeUndefined();
     expect(canonicalFilingDestinationForApprovedActionHref(undefined)).toBeUndefined();
     expect(canonicalFilingDestinationForApprovedActionHref("   ")).toBeUndefined();
+  });
+});
+
+describe("isFilingDestinationValidForApprovedAction", () => {
+  it("allows a real destination that matches the approved action's href", () => {
+    expect(
+      isFilingDestinationValidForApprovedAction("Better Business Bureau", {
+        href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+        label: "Better Business Bureau",
+      })
+    ).toBe(true);
+  });
+
+  it("rejects a destination that does not match the approved action's current href — the escalation-state-integrity gap", () => {
+    // A case on BBB must not accept a "demand letter" filing — this is exactly the mismatch
+    // that let a stale/orphaned filing silently resolve the wrong escalation step.
+    expect(
+      isFilingDestinationValidForApprovedAction("Small claims / demand letter", {
+        href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+        label: "Better Business Bureau",
+      })
+    ).toBe(false);
+    expect(
+      isFilingDestinationValidForApprovedAction("Small claims / demand letter", {
+        href: MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+        label: "FTC (consumer complaint)",
+      })
+    ).toBe(false);
+  });
+
+  it("fails closed when there is no approved action", () => {
+    expect(isFilingDestinationValidForApprovedAction("Small claims / demand letter", undefined)).toBe(
+      false
+    );
+  });
+
+  it("fails closed for an approved action whose href has no canonical mapping", () => {
+    expect(
+      isFilingDestinationValidForApprovedAction("Small claims / demand letter", {
+        href: "/justice/unknown-lane",
+        label: "Unknown",
+      })
+    ).toBe(false);
+  });
+
+  it("exempts assisted mock-practice destinations regardless of approved action href", () => {
+    expect(
+      isFilingDestinationValidForApprovedAction(BBB_PRACTICE_FILING_DESTINATION, {
+        href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+        label: "Small claims / demand letter",
+      })
+    ).toBe(true);
+    expect(isFilingDestinationValidForApprovedAction(FTC_PRACTICE_FILING_DESTINATION, undefined)).toBe(
+      true
+    );
   });
 });
 
