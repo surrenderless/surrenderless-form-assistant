@@ -54,6 +54,7 @@ import {
   isApprovedActionOpenedForHandlingTracking,
   handlingClosureAcknowledgmentVisible,
 } from "@/lib/justice/handlingTrackingProgress";
+import { buildChatConfirmedFilingSummaryLines } from "@/lib/justice/chatConfirmedFilingsSummary";
 import {
   CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS,
   isChatOperatorOwnedClosurePollPending,
@@ -1845,6 +1846,7 @@ function ChatHandlingPersistedStatusReadOnly({
   const followUpFlagged = approvedNextAction.follow_up_needed === true;
   const filingsCount = filings.length;
   const hasConfirmation = filings.some((f) => f.confirmation_number?.trim());
+  const confirmedFilingLines = buildChatConfirmedFilingSummaryLines(filings);
 
   const outcomeNote = approvedNextAction.outcome_note?.trim() ?? "";
   const handlingAcknowledgedAt = approvedNextAction.handling_acknowledged_at?.trim() ?? "";
@@ -1883,6 +1885,18 @@ function ChatHandlingPersistedStatusReadOnly({
         <p className="text-[10px] text-emerald-800/75 dark:text-emerald-200/75">Updating saved status…</p>
       ) : null}
       <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">Filing: {filingText}</p>
+      {confirmedFilingLines.length > 0 ? (
+        <ul className="ml-2 list-disc space-y-0.5">
+          {confirmedFilingLines.map((line) => (
+            <li key={line.id} className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
+              {line.destination}
+              {line.filedAtLabel ? ` · filed ${line.filedAtLabel}` : ""}
+              {" · confirmation "}
+              <span className="font-medium">{line.confirmationNumber}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {handlingLine ? (
         <p className="text-[11px] text-emerald-800/90 dark:text-emerald-200/90">
           {handlingLine.text}
