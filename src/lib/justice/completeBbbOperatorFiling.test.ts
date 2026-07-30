@@ -238,6 +238,7 @@ type MockCaseState = {
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   filingInsertCount: number;
+  clientStateConflict?: boolean;
 };
 
 function createBbbCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -254,6 +255,7 @@ function createBbbCompleteSupabase(state: MockCaseState): SupabaseClient {
                     client_state: state.client_state,
                     timeline: timelineStore.entries,
                     payment_dispute_draft: null,
+                    updated_at: "2026-02-01T00:00:00.000Z",
                   },
                   error: null,
                 }),
@@ -262,12 +264,21 @@ function createBbbCompleteSupabase(state: MockCaseState): SupabaseClient {
           }),
           update: (patch: Record<string, unknown>) => ({
             eq: () => ({
-              eq: async () => {
-                if (patch.client_state) {
-                  state.client_state = patch.client_state as Record<string, unknown>;
-                }
-                return { error: null };
-              },
+              eq: () => ({
+                eq: () => ({
+                  select: () => ({
+                    maybeSingle: async () => {
+                      if (state.clientStateConflict) {
+                        return { data: null, error: null };
+                      }
+                      if (patch.client_state) {
+                        state.client_state = patch.client_state as Record<string, unknown>;
+                      }
+                      return { data: { id: CASE_ID }, error: null };
+                    },
+                  }),
+                }),
+              }),
             }),
           }),
         };
@@ -462,5 +473,50 @@ describe("BBB workspace completion behavior", () => {
     expect(result.filing.destination).toBe("Better Business Bureau");
     expect(result.task.completed_at).toBeTruthy();
     expect(shouldQueueBbbFilingTask(state.client_state)).toBe(false);
+  });
+
+  it("fails closed with a retriable conflict when client_state was written concurrently (e.g. by a racing chat PATCH)", async () => {
+    const marker = bbbFilingTaskNotesMarker(CASE_ID);
+    const originalClientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "Better Business Bureau",
+        href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+        status: "approved",
+      },
+    };
+    const state: MockCaseState = {
+      intake: bbbIntake(),
+      client_state: originalClientState,
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "BBB filing: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      clientStateConflict: true,
+    };
+
+    const result = await completeBbbOperatorFiling(createBbbCompleteSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Better Business Bureau",
+      filedAt: "2026-06-15",
+      confirmationNumber: "BBB-998877",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(409);
+    expect(result.error).toMatch(/updated concurrently/i);
+    // The concurrent writer's client_state must not be clobbered by this losing write.
+    expect(state.client_state).toBe(originalClientState);
   });
 });

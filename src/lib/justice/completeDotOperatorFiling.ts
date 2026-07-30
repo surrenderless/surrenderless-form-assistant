@@ -21,6 +21,7 @@ import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { updateClientStateIfUnchanged } from "@/lib/justice/updateClientStateIfUnchanged";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -112,7 +113,7 @@ export async function completeDotOperatorFiling(
 
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
-    .select("intake, client_state, timeline, payment_dispute_draft")
+    .select("intake, client_state, timeline, payment_dispute_draft, updated_at")
     .eq("id", caseId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -260,18 +261,21 @@ export async function completeDotOperatorFiling(
     if (resolutionMerged) {
       clientState = resolutionMerged;
     }
-    const { error: patchErr } = await supabase
-      .from("justice_cases")
-      .update({ client_state: clientState })
-      .eq("id", caseId)
-      .eq("user_id", userId);
-
-    if (patchErr) {
-      console.warn("justice dot operator filing: patch client_state", patchErr.message);
+    const casResult = await updateClientStateIfUnchanged(supabase, {
+      caseId,
+      userId,
+      expectedUpdatedAt: caseRow.updated_at,
+      clientState,
+    });
+    if (!casResult.ok) {
+      console.warn("justice dot operator filing: patch client_state", casResult.error);
       return {
         ok: false,
-        error: "Filing recorded but could not advance the approved next action",
-        status: 500,
+        error:
+          casResult.status === 409
+            ? casResult.error
+            : "Filing recorded but could not advance the approved next action",
+        status: casResult.status,
       };
     }
 

@@ -24,6 +24,7 @@ import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recompute
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
+import { updateClientStateIfUnchanged } from "@/lib/justice/updateClientStateIfUnchanged";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -113,7 +114,7 @@ export async function completePaymentDisputeOperatorFiling(
 
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
-    .select("intake, client_state, timeline, payment_dispute_draft")
+    .select("intake, client_state, timeline, payment_dispute_draft, updated_at")
     .eq("id", caseId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -275,18 +276,21 @@ export async function completePaymentDisputeOperatorFiling(
     if (resolutionMerged) {
       clientState = resolutionMerged;
     }
-    const { error: patchErr } = await supabase
-      .from("justice_cases")
-      .update({ client_state: clientState })
-      .eq("id", caseId)
-      .eq("user_id", userId);
-
-    if (patchErr) {
-      console.warn("justice payment dispute operator filing: patch client_state", patchErr.message);
+    const casResult = await updateClientStateIfUnchanged(supabase, {
+      caseId,
+      userId,
+      expectedUpdatedAt: caseRow.updated_at,
+      clientState,
+    });
+    if (!casResult.ok) {
+      console.warn("justice payment dispute operator filing: patch client_state", casResult.error);
       return {
         ok: false,
-        error: "Filing recorded but could not advance the approved next action",
-        status: 500,
+        error:
+          casResult.status === 409
+            ? casResult.error
+            : "Filing recorded but could not advance the approved next action",
+        status: casResult.status,
       };
     }
 

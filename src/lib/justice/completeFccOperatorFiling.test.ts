@@ -98,6 +98,7 @@ function createFccCompleteSupabase(state: MockCaseState): SupabaseClient {
                     intake: state.intake,
                     client_state: state.client_state,
                     timeline: timelineStore.entries,
+                    updated_at: "2026-02-01T00:00:00.000Z",
                   },
                   error: null,
                 }),
@@ -106,12 +107,18 @@ function createFccCompleteSupabase(state: MockCaseState): SupabaseClient {
           }),
           update: (patch: Record<string, unknown>) => ({
             eq: () => ({
-              eq: async () => {
-                if (patch.client_state) {
-                  state.client_state = patch.client_state as Record<string, unknown>;
-                }
-                return { error: null };
-              },
+              eq: () => ({
+                eq: () => ({
+                  select: () => ({
+                    maybeSingle: async () => {
+                      if (patch.client_state) {
+                        state.client_state = patch.client_state as Record<string, unknown>;
+                      }
+                      return { data: { id: CASE_ID }, error: null };
+                    },
+                  }),
+                }),
+              }),
             }),
           }),
         };
