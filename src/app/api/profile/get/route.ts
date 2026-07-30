@@ -51,10 +51,13 @@ export async function POST(req: NextRequest) {
     const supabase = getSupabaseAdmin();
     if (!supabase) return supabaseUnavailableResponse();
 
+    // Scoped to the authenticated caller's own row — the client-supplied email is validated
+    // for presence only and must never be used as the lookup key, or any signed-in user could
+    // read another user's stored PII (name, address, phone) by guessing their email.
     const { data: profile, error } = await supabase
       .from("user_profiles")
       .select("*")
-      .eq("email", email)
+      .eq("id", userId)
       .maybeSingle();
 
     if (error || !profile) {

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockMaybeSingle = vi.fn();
+const mockEq = vi.fn(() => ({ maybeSingle: mockMaybeSingle }));
+const mockSelect = vi.fn(() => ({ eq: mockEq }));
 
 vi.mock("@/server/requireUser", () => ({
   getUserOr401: vi.fn(),
@@ -14,11 +16,7 @@ vi.mock("@/utils/rateLimiter", () => ({
 vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(() => ({
     from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          maybeSingle: mockMaybeSingle,
-        })),
-      })),
+      select: mockSelect,
     })),
   })),
 }));
@@ -105,5 +103,18 @@ describe("POST /api/profile/get", () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "User not found" });
     expect(mockMaybeSingle).toHaveBeenCalled();
+  });
+
+  it("scopes the profile lookup to the authenticated caller's id, never the client-supplied email", async () => {
+    // A malicious caller supplying someone else's email must get their OWN profile back
+    // (or none), never the target's — this is the fix for the cross-user PII disclosure.
+    const res = await POST(buildRequest({ email: "someone-else@example.com" }));
+
+    expect(res.status).toBe(200);
+    expect(mockEq).toHaveBeenCalledWith("id", USER_ID);
+    expect(mockEq).not.toHaveBeenCalledWith("email", expect.anything());
+    expect(await res.json()).toEqual({
+      profile: { email: EMAIL, name: "Stored User", address: "1 Main St", phone: "555-0100" },
+    });
   });
 });
