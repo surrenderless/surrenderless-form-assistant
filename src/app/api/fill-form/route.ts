@@ -10,6 +10,7 @@ import util from "util";
 
 import { rateLimit } from "@/utils/rateLimiter";
 import { getUserOr401 } from "@/server/requireUser";
+import { evaluateAssistedSubmissionUrlPolicy } from "@/lib/justice/assistedSubmissionExternalUrl";
 import { isPlaywrightMockAssistedSubmitUrl } from "@/lib/testing/playwrightMockAssistedSubmitPipeline";
 
 function getSupabaseAdmin(): SupabaseClient | null {
@@ -69,6 +70,16 @@ export async function POST(req: NextRequest) {
     }
 
     const requestOrigin = new URL(req.url).origin;
+
+    // Fail closed before touching a browser, the profile API, or storage: only canonically
+    // approved mock/production destinations may be navigated, filled, clicked, and
+    // screenshotted server-side — otherwise this is SSRF-to-state-change plus exfiltration
+    // of the target page via a public screenshot URL.
+    const policy = evaluateAssistedSubmissionUrlPolicy(url, requestOrigin);
+    if (!policy.allowed) {
+      return NextResponse.json({ error: policy.error }, { status: 403 });
+    }
+
     const playwrightMockFill = isPlaywrightMockAssistedSubmitUrl(url, requestOrigin);
     const supabase = getSupabaseAdmin();
     if (!supabase && !playwrightMockFill) {
