@@ -8,6 +8,9 @@ import { upsertFtcOwnedFilingDeliveryNotes } from "@/lib/justice/ftcOwnedFilingD
 import { hasOperatorAlertBeenSent, operatorFallbackAlertKey } from "@/lib/justice/operatorFallbackAlertState";
 import { bbbOwnedFilingIdempotencyKey } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 import { ftcOwnedFilingIdempotencyKey } from "@/lib/justice/ftcOwnedFilingDeliveryState";
+import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
+import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
+import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 
 const timelineAppend = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("@/server/justiceTimelineAppend", () => ({
@@ -136,6 +139,19 @@ function ftcFailedTask(
     case_id: caseId,
     title: overrides.title ?? "FTC filing",
     notes: overrides.notes ?? notes,
+    completed_at: overrides.completed_at ?? null,
+    created_at: overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
+  };
+}
+
+function openTask(overrides: Partial<Task> & { caseId: string; marker: string }): Task {
+  const caseId = overrides.caseId;
+  return {
+    id: overrides.id ?? `task_${caseId}`,
+    user_id: overrides.user_id ?? `user_${caseId}`,
+    case_id: caseId,
+    title: overrides.title ?? "Filing task",
+    notes: overrides.notes ?? `${overrides.marker}\ndraft text`,
     completed_at: overrides.completed_at ?? null,
     created_at: overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
   };
@@ -316,5 +332,170 @@ describe("reconcileOperatorFallbackAlerts", () => {
     expect(summary.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
     expect(store.tasks[0].notes).not.toContain("operator_alert_sent:");
+  });
+});
+
+describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts", () => {
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("alerts on ordinary open operator-fulfillment work across all 9 destinations, with no delivery block", async () => {
+    const store: Store = {
+      tasks: [
+        openTask({ caseId: "c-bbb", marker: bbbFilingTaskNotesMarker("c-bbb") }),
+        openTask({ caseId: "c-ftc", marker: ftcFilingTaskNotesMarker("c-ftc") }),
+        openTask({ caseId: "c-merchant", marker: merchantContactFilingTaskNotesMarker("c-merchant") }),
+        openTask({ caseId: "c-stateag", marker: stateAgFilingTaskNotesMarker("c-stateag") }),
+      ],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.attempted).toBe(4);
+    expect(summary.sent).toBe(4);
+    expect(summary.failed).toBe(0);
+    expect(send).toHaveBeenCalledTimes(4);
+    for (const t of store.tasks) {
+      expect(t.notes).toContain("operator_alert_sent:");
+    }
+  });
+
+  it("includes the destination, case id, and operator-workspace URL, without fabricating a failure reason", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.surrenderless.test");
+    const store: Store = {
+      tasks: [openTask({ caseId: "case-queue-1", marker: stateAgFilingTaskNotesMarker("case-queue-1") })],
+    };
+
+    await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    const body = send.mock.calls[0][0].text;
+    expect(body).toContain("case-queue-1");
+    expect(body).toContain("State Attorney General (consumer)");
+    expect(body).toContain("No automated filing was attempted");
+    expect(body).toContain("https://app.surrenderless.test/operator/fulfillment?case=case-queue-1");
+  });
+
+  it("is exactly-once: a second run does not re-alert an already-alerted open task", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: merchantContactFilingTaskNotesMarker("c1") })],
+    };
+    const supabase = makeSupabase(store);
+
+    const first = await reconcileOperatorFallbackAlerts(supabase);
+    expect(first.sent).toBe(1);
+
+    const second = await reconcileOperatorFallbackAlerts(supabase);
+    expect(second.sent).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not double-alert a BBB/FTC task that already carries an owned-filing delivery block (queued, submitting, or filed — not just failed)", async () => {
+    const queuedNotes = upsertBbbOwnedFilingDeliveryNotes(
+      `${bbbFilingTaskNotesMarker("c-queued")}\ndraft`,
+      { delivery_state: "queued", provider: "bbb" }
+    );
+    const submittingNotes = upsertFtcOwnedFilingDeliveryNotes(
+      `${ftcFilingTaskNotesMarker("c-submitting")}\ndraft`,
+      { delivery_state: "submitting", provider: "ftc" }
+    );
+    const filedNotes = upsertBbbOwnedFilingDeliveryNotes(
+      `${bbbFilingTaskNotesMarker("c-filed")}\ndraft`,
+      { delivery_state: "filed", provider: "bbb", confirmation: "BBB-1" }
+    );
+    const store: Store = {
+      tasks: [
+        { id: "t-queued", user_id: "u", case_id: "c-queued", title: "BBB", notes: queuedNotes, completed_at: null, created_at: new Date().toISOString() },
+        { id: "t-submitting", user_id: "u", case_id: "c-submitting", title: "FTC", notes: submittingNotes, completed_at: null, created_at: new Date().toISOString() },
+        { id: "t-filed", user_id: "u", case_id: "c-filed", title: "BBB", notes: filedNotes, completed_at: null, created_at: new Date().toISOString() },
+      ],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    // These are either actively automated (queued/submitting) or already filed — none are an
+    // "ordinary open, never-automated" queue item, and none carry a failed delivery either.
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not alert a BBB/FTC failed-delivery task twice via both phases", async () => {
+    const store: Store = { tasks: [bbbFailedTask({ caseId: "c1", stopReason: "invalid_decision" })] };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not alert for a follow-up response review task — that is not one of the 9 filing destinations", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: followUpResponseReviewTaskNotesMarker("c1") })],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("never alerts for a completed task", async () => {
+    const store: Store = {
+      tasks: [
+        openTask({
+          caseId: "c1",
+          marker: merchantContactFilingTaskNotesMarker("c1"),
+          completed_at: new Date().toISOString(),
+        }),
+      ],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.attempted).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("fails safe when OPERATOR_ALERT_EMAIL is not configured", async () => {
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "");
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: merchantContactFilingTaskNotesMarker("c1") })],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+    expect(summary.sent).toBe(0);
+    expect(summary.attempted).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the event retryable when the provider send fails (no marker persisted)", async () => {
+    send.mockResolvedValue({ ok: false, error: "resend 500", retryable: true });
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: stateAgFilingTaskNotesMarker("c1") })],
+    };
+    const supabase = makeSupabase(store);
+
+    const first = await reconcileOperatorFallbackAlerts(supabase);
+    expect(first.failed).toBe(1);
+    expect(first.sent).toBe(0);
+    expect(store.tasks[0].notes).not.toContain("operator_alert_sent:");
+
+    send.mockResolvedValue({ ok: true, messageId: "msg_ok" });
+    const second = await reconcileOperatorFallbackAlerts(supabase);
+    expect(second.sent).toBe(1);
+    expect(store.tasks[0].notes).toContain("operator_alert_sent:");
   });
 });

@@ -13,6 +13,13 @@ import {
   parseFtcOwnedFilingDeliveryRecord,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { taskNotesMatchFtcFilingMarker } from "@/lib/justice/ftcFilingTask";
+import { taskNotesMatchCfpbFilingMarker } from "@/lib/justice/cfpbFilingTask";
+import { taskNotesMatchDemandLetterFilingMarker } from "@/lib/justice/demandLetterFilingTask";
+import { taskNotesMatchDotFilingMarker } from "@/lib/justice/dotFilingTask";
+import { taskNotesMatchFccFilingMarker } from "@/lib/justice/fccFilingTask";
+import { taskNotesMatchMerchantContactFilingMarker } from "@/lib/justice/merchantContactFilingTask";
+import { taskNotesMatchPaymentDisputeFilingMarker } from "@/lib/justice/paymentDisputeFilingTask";
+import { taskNotesMatchStateAgFilingMarker } from "@/lib/justice/stateAgFilingTask";
 import {
   appendOperatorAlertSentMarker,
   hasOperatorAlertBeenSent,
@@ -31,6 +38,17 @@ function clampLen(s: string, max: number): string {
 }
 
 type OwnedFilingKind = "bbb" | "ftc";
+
+/** All 9 owned escalation destinations — the ordinary (non-automated-fallback) queue alert covers all of them. */
+type AllDestinationKind =
+  | OwnedFilingKind
+  | "merchant_contact"
+  | "state_ag"
+  | "demand_letter"
+  | "cfpb"
+  | "payment_dispute"
+  | "fcc"
+  | "dot";
 
 type OwnedDeliveryRecord = {
   delivery_state: "queued" | "submitting" | "failed" | "filed";
@@ -70,6 +88,73 @@ const DESTINATIONS: AlertDestination[] = [
   },
 ];
 
+type QueueAlertDestination = {
+  kind: AllDestinationKind;
+  destinationLabel: string;
+  taskMarkerMatches: (notes: string | null | undefined, caseId: string) => boolean;
+};
+
+/**
+ * All 9 owned escalation destinations, for the ordinary-queue alert. BBB/FTC markers match
+ * regardless of whether an owned-filing delivery block is present — the caller excludes tasks
+ * that have one, since those are either being (or were) handled by the automated pipeline and
+ * are covered by DESTINATIONS above instead.
+ */
+const QUEUE_ALERT_DESTINATIONS: QueueAlertDestination[] = [
+  {
+    kind: "bbb",
+    destinationLabel: "Better Business Bureau",
+    taskMarkerMatches: taskNotesMatchBbbFilingMarker,
+  },
+  {
+    kind: "ftc",
+    destinationLabel: "FTC (consumer complaint)",
+    taskMarkerMatches: taskNotesMatchFtcFilingMarker,
+  },
+  {
+    kind: "merchant_contact",
+    destinationLabel: "Merchant contact",
+    taskMarkerMatches: taskNotesMatchMerchantContactFilingMarker,
+  },
+  {
+    kind: "state_ag",
+    destinationLabel: "State Attorney General (consumer)",
+    taskMarkerMatches: taskNotesMatchStateAgFilingMarker,
+  },
+  {
+    kind: "demand_letter",
+    destinationLabel: "Small claims / demand letter",
+    taskMarkerMatches: taskNotesMatchDemandLetterFilingMarker,
+  },
+  {
+    kind: "cfpb",
+    destinationLabel: "CFPB",
+    taskMarkerMatches: taskNotesMatchCfpbFilingMarker,
+  },
+  {
+    kind: "payment_dispute",
+    destinationLabel: "Payment dispute (bank/card)",
+    taskMarkerMatches: taskNotesMatchPaymentDisputeFilingMarker,
+  },
+  {
+    kind: "fcc",
+    destinationLabel: "FCC",
+    taskMarkerMatches: taskNotesMatchFccFilingMarker,
+  },
+  {
+    kind: "dot",
+    destinationLabel: "USDOT / aviation consumer",
+    taskMarkerMatches: taskNotesMatchDotFilingMarker,
+  },
+];
+
+/** Stand-in "stop_reason"/failure-reason for the ordinary (non-automated-fallback) queue alert. */
+const QUEUE_ALERT_REASON = "awaiting_operator_fulfillment";
+const QUEUE_ALERT_FAILURE_TEXT =
+  "No automated filing was attempted — this is an ordinary operator-fulfilled destination awaiting action.";
+/** Distinguishes queue-alert idempotency keys from automated-fallback-alert keys on the same task. */
+const QUEUE_ALERT_KEY_NAMESPACE = "operator-queue";
+
 export function resolveOperatorWorkspaceUrl(caseId: string): string {
   const trimmedCase = caseId.trim();
   const query = trimmedCase ? `?case=${encodeURIComponent(trimmedCase)}` : "";
@@ -95,7 +180,7 @@ function formatAgeMs(ageMs: number): string {
 }
 
 export function buildOperatorFallbackAlertSubject(
-  cfg: AlertDestination,
+  cfg: Pick<AlertDestination, "destinationLabel">,
   caseId: string
 ): string {
   return `[Surrenderless] Manual filing needed — ${cfg.destinationLabel} (case ${caseId})`;
@@ -130,7 +215,7 @@ export type OperatorFallbackAlertResultKind = "sent" | "skipped" | "failed";
 export type OperatorFallbackAlertResult = {
   case_id: string;
   user_id: string | null;
-  kind: OwnedFilingKind;
+  kind: AllDestinationKind;
   task_id: string;
   result: OperatorFallbackAlertResultKind;
   stop_reason?: string;
@@ -156,16 +241,25 @@ export type ReconcileOperatorFallbackAlertsOptions = {
 };
 
 /**
- * Durable proactive operator alerting for owned BBB/FTC filings that fell back to manual
- * fulfillment (worker/provider failure, uncertain submission, execute-time config failure, or a
- * stale queued/submitting reclaim — all converge to `delivery_state: "failed"`). Emails a
- * configurable OPERATOR_ALERT_EMAIL through the existing Resend infrastructure exactly once per
- * fallback event. Fails safe: when the provider or recipient is unconfigured nothing is marked
- * delivered; provider/database failures leave the event retryable on the next run. Never alerts
- * for successfully filed or completed tasks. Off all consumer request paths (cron only).
+ * Durable proactive operator alerting, in two phases sharing the same recipient resolution,
+ * email provider, exactly-once marker mechanism, and case timeline audit trail:
  *
- * Operator-primary BBB/FTC cases (default product mode) never write the autofill delivery block, so
- * they do not trigger these alerts — they appear as ordinary open queue items for operators.
+ * 1. Owned BBB/FTC filings that fell back to manual fulfillment (worker/provider failure,
+ *    uncertain submission, execute-time config failure, or a stale queued/submitting reclaim —
+ *    all converge to `delivery_state: "failed"`).
+ * 2. Ordinary open operator-fulfillment work across all 9 escalation destinations that never had
+ *    an automated filing attempted at all — i.e. every case in the default product mode (owned
+ *    BBB/FTC autofill off, or any of the other 7 destinations, which have no automated path).
+ *    Without this phase, a case can sit in "awaiting Surrenderless operator fulfillment"
+ *    indefinitely with nothing ever alerting anyone, since phase 1 only fires for tasks that
+ *    carry an owned-filing delivery block.
+ *
+ * Both phases email a configurable OPERATOR_ALERT_EMAIL through the existing Resend
+ * infrastructure exactly once per alertable event (per task, per phase — a task can only ever
+ * match one phase, since phase 2 explicitly excludes any task carrying an owned-filing delivery
+ * block). Fails safe: when the provider or recipient is unconfigured nothing is marked delivered;
+ * provider/database failures leave the event retryable on the next run. Never alerts for
+ * successfully filed or completed tasks. Off all consumer request paths (cron only).
  */
 export async function reconcileOperatorFallbackAlerts(
   supabase: SupabaseClient,
@@ -329,6 +423,143 @@ export async function reconcileOperatorFallbackAlerts(
         });
         summary.failed += 1;
       }
+    }
+  }
+
+  // Phase 2: ordinary open operator-fulfillment work, no automated delivery ever attempted.
+  const { data: openTasks, error: openTasksErr } = await supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .is("completed_at", null)
+    .limit(limit);
+
+  if (openTasksErr) {
+    console.warn("operator fallback alert (queue): list open tasks", openTasksErr.message);
+    return summary;
+  }
+
+  for (const task of (openTasks ?? []) as JusticeCaseTaskRow[]) {
+    const caseId = task.case_id?.trim() ?? "";
+    const userId = task.user_id?.trim() ?? "";
+    if (!caseId || !userId) continue;
+
+    // Any task carrying an owned-filing delivery block (queued/submitting/filed/failed) is
+    // either actively automated or already covered by phase 1 above — never double-alert it.
+    const hasOwnedDeliveryBlock =
+      (task.notes ?? "").includes(BBB_OWNED_FILING_DELIVERY_BLOCK_MARKER) ||
+      (task.notes ?? "").includes(FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER);
+    if (hasOwnedDeliveryBlock) continue;
+
+    const cfg = QUEUE_ALERT_DESTINATIONS.find((d) => d.taskMarkerMatches(task.notes, caseId));
+    if (!cfg) continue;
+
+    summary.scanned += 1;
+
+    const key = operatorFallbackAlertKey(task.id, QUEUE_ALERT_KEY_NAMESPACE, cfg.kind);
+    if (hasOperatorAlertBeenSent(task.notes, key)) {
+      summary.results.push({
+        case_id: caseId,
+        user_id: userId,
+        kind: cfg.kind,
+        task_id: task.id,
+        result: "skipped",
+        stop_reason: QUEUE_ALERT_REASON,
+        reason: "already_alerted",
+      });
+      summary.skipped += 1;
+      continue;
+    }
+
+    summary.attempted += 1;
+
+    const createdAtMs = task.created_at ? Date.parse(task.created_at) : NaN;
+    const ageLabel = Number.isFinite(createdAtMs) ? formatAgeMs(nowMs - createdAtMs) : "unknown";
+
+    try {
+      const sendResult = await providerResolved.provider.send({
+        from: providerResolved.from,
+        to: recipient,
+        subject: buildOperatorFallbackAlertSubject(cfg, caseId),
+        text: buildOperatorFallbackAlertBody({
+          destinationLabel: cfg.destinationLabel,
+          caseId,
+          taskTitle: task.title?.trim() || `${cfg.destinationLabel} filing`,
+          failureReason: QUEUE_ALERT_FAILURE_TEXT,
+          ageLabel,
+          workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
+        }),
+        // Per task + destination: retries never duplicate the email even before the marker lands.
+        idempotencyKey: `${QUEUE_ALERT_KEY_NAMESPACE}-alert:${task.id}:${cfg.kind}`,
+      });
+
+      if (!sendResult.ok) {
+        summary.results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          task_id: task.id,
+          result: "failed",
+          stop_reason: QUEUE_ALERT_REASON,
+          reason: sendResult.error,
+        });
+        summary.failed += 1;
+        continue;
+      }
+
+      // Persist the durable exactly-once marker ONLY after an accepted send.
+      const sentAt = new Date(nowMs).toISOString();
+      const nextNotes = appendOperatorAlertSentMarker(task.notes, key, sentAt);
+      const { error: updateErr } = await supabase
+        .from("justice_case_tasks")
+        .update({ notes: clampLen(nextNotes, MAX_NOTES) })
+        .eq("id", task.id)
+        .eq("user_id", userId);
+
+      if (updateErr) {
+        // Provider idempotency key prevents a duplicate email on the retry next run.
+        console.warn("operator fallback alert (queue): mark sent", updateErr.message);
+        summary.results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          task_id: task.id,
+          result: "failed",
+          stop_reason: QUEUE_ALERT_REASON,
+          reason: "marker_write_failed",
+        });
+        summary.failed += 1;
+        continue;
+      }
+
+      await appendCaseTimelineEntry(supabase, userId, caseId, {
+        id: `operator_queue_alert:${task.id}:${cfg.kind}`,
+        type: "outcome_recorded",
+        label: `Operator alerted — ${cfg.destinationLabel} filing awaiting fulfillment`,
+        detail: QUEUE_ALERT_FAILURE_TEXT,
+        ts: sentAt,
+      });
+
+      summary.results.push({
+        case_id: caseId,
+        user_id: userId,
+        kind: cfg.kind,
+        task_id: task.id,
+        result: "sent",
+        stop_reason: QUEUE_ALERT_REASON,
+      });
+      summary.sent += 1;
+    } catch (err) {
+      console.warn("operator fallback alert (queue): process task", task.id, err);
+      summary.results.push({
+        case_id: caseId,
+        user_id: userId,
+        kind: cfg.kind,
+        task_id: task.id,
+        result: "failed",
+        stop_reason: QUEUE_ALERT_REASON,
+        reason: "exception",
+      });
+      summary.failed += 1;
     }
   }
 
