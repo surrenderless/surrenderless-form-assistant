@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import { parseApprovedNextActionFromClientState } from "@/lib/justice/approvedNextActionState";
 import {
   completeHandlingRequestTaskIfOpen,
   isFirstFilingConfirmationTransition,
 } from "@/lib/justice/handlingRequestTask";
+import { isFilingDestinationValidForApprovedAction } from "@/lib/justice/handlingTrackingProgress";
 import { getUserOr401 } from "@/server/requireUser";
 
 function getSupabaseAdmin(): SupabaseClient | null {
@@ -33,6 +35,13 @@ const MAX_FILED_AT = 200;
 const MAX_CONFIRM = 200;
 const MAX_URL = 2000;
 const MAX_NOTES = 8000;
+
+const FILING_DESTINATION_MISMATCH_ERROR =
+  "Filing destination does not match the case's current escalation destination.";
+
+/** Filing records are durable legal-filing evidence; consumers may not delete them directly. */
+const FILING_DELETE_BLOCKED_ERROR =
+  "Filing records are managed by Surrenderless and cannot be deleted directly.";
 
 function optionalStringOrNull(v: unknown): string | null | undefined {
   if (v === undefined) return undefined;
@@ -121,7 +130,7 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
 
   const { data: prevRow, error: prevErr } = await supabase
     .from("justice_case_filings")
-    .select("confirmation_number, case_id")
+    .select("confirmation_number, destination, case_id")
     .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
@@ -132,6 +141,29 @@ export async function PATCH(req: NextRequest, context: RouteCtx) {
   }
   if (!prevRow) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const resultingDestination =
+    typeof patch.destination === "string" ? patch.destination : prevRow.destination;
+
+  const { data: caseRow, error: caseErr } = await supabase
+    .from("justice_cases")
+    .select("client_state")
+    .eq("id", prevRow.case_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (caseErr) {
+    console.warn("justice_cases read before filing patch:", caseErr.message);
+    return NextResponse.json({ error: caseErr.message }, { status: 500 });
+  }
+  if (!caseRow) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const approvedAction = parseApprovedNextActionFromClientState(caseRow.client_state);
+  if (!isFilingDestinationValidForApprovedAction(resultingDestination, approvedAction)) {
+    return NextResponse.json({ error: FILING_DESTINATION_MISMATCH_ERROR }, { status: 409 });
   }
 
   const { data, error } = await supabase
@@ -180,24 +212,5 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  const supabase = getSupabaseAdmin();
-  if (!supabase) return supabaseUnavailableResponse();
-
-  const { data, error } = await supabase
-    .from("justice_case_filings")
-    .delete()
-    .eq("id", id)
-    .eq("user_id", userId)
-    .select("id");
-
-  if (error) {
-    console.warn("justice_case_filings delete:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  if (!data?.length) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ error: FILING_DELETE_BLOCKED_ERROR }, { status: 403 });
 }
