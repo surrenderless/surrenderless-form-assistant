@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import { parseApprovedNextActionFromClientState } from "@/lib/justice/approvedNextActionState";
 import { completeHandlingRequestTaskIfOpen } from "@/lib/justice/handlingRequestTask";
+import { isFilingDestinationValidForApprovedAction } from "@/lib/justice/handlingTrackingProgress";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
 import {
@@ -63,23 +65,23 @@ function sortByTs(entries: TimelineEntry[]): TimelineEntry[] {
   return [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
-async function userOwnsJusticeCase(
+async function loadOwnedJusticeCase(
   supabase: SupabaseClient,
   userId: string,
   caseId: string
-): Promise<boolean> {
+): Promise<{ client_state: unknown } | null> {
   const { data, error } = await supabase
     .from("justice_cases")
-    .select("id")
+    .select("client_state")
     .eq("id", caseId)
     .eq("user_id", userId)
     .maybeSingle();
 
   if (error) {
     console.warn("justice_case ownership check:", error.message);
-    return false;
+    return null;
   }
-  return !!data;
+  return data ?? null;
 }
 
 async function appendCaseTimelineEntry(
@@ -157,7 +159,7 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
-  if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
+  if (!(await loadOwnedJusticeCase(supabase, userId, caseId))) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -246,8 +248,17 @@ export async function POST(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return supabaseUnavailableResponse();
 
-  if (!(await userOwnsJusticeCase(supabase, userId, caseId))) {
+  const ownedCase = await loadOwnedJusticeCase(supabase, userId, caseId);
+  if (!ownedCase) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const approvedAction = parseApprovedNextActionFromClientState(ownedCase.client_state);
+  if (!isFilingDestinationValidForApprovedAction(destination, approvedAction)) {
+    return NextResponse.json(
+      { error: "Filing destination does not match the case's current escalation destination." },
+      { status: 409 }
+    );
   }
 
   const insertRow: Record<string, unknown> = {

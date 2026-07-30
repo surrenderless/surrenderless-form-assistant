@@ -790,8 +790,9 @@ export function isEscalationLadderTerminalForResolution(
 /**
 
  * True when operator tasks and filings prove demand-letter fulfillment is complete
-
- * (no open State AG / demand-letter operator tasks; demand letter confirmed on file).
+ * (no open operator task for any of the 9 owned escalation destinations; demand letter
+ * confirmed on file). Must cover every destination in HUMAN_FULFILLMENT_ESCALATION_HREFS —
+ * an omitted one lets this return true while that destination's operator task is still open.
 
  */
 
@@ -808,6 +809,10 @@ export function isOperatorFulfillmentTerminalFromTasksAndFilings(input: {
   const caseId = input.caseId.trim();
 
   if (!caseId) return false;
+
+  if (findOpenBbbFilingTask(input.tasks, caseId)) return false;
+
+  if (findOpenFtcFilingTask(input.tasks, caseId)) return false;
 
   if (findOpenMerchantContactFilingTask(input.tasks, caseId)) return false;
 

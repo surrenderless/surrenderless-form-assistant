@@ -184,6 +184,25 @@ export function canonicalFilingDestinationForApprovedActionHref(
   return MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF[trimmed][0];
 }
 
+/**
+ * True when a filing destination is valid to record against the case's current approved
+ * action: an assisted mock-practice destination (exempt — doesn't participate in real
+ * ladder-state tracking), or one of the real destinations mapped to the approved action's
+ * href. Fails closed (false) for unmapped hrefs or a missing approved action, since an
+ * unrecognized or absent destination-to-step relationship must not be trusted to persist a
+ * filing record against the wrong escalation step.
+ */
+export function isFilingDestinationValidForApprovedAction(
+  destination: string | null | undefined,
+  approvedAction: Pick<JusticeApprovedNextAction, "href" | "label"> | undefined
+): boolean {
+  if (isAssistedMockPracticeFilingDestination(destination)) return true;
+  if (!approvedAction) return false;
+  const allowedDestinations = allowedFilingDestinationsForApprovedAction(approvedAction);
+  if (allowedDestinations === undefined) return false;
+  return filingDestinationMatchesAllowedSet(destination, allowedDestinations);
+}
+
 /** Practice-filtered filings scoped to the active approved manual-action step. */
 export function filingsForApprovedActionManualTracking<T extends ManualActionTrackingFiling>(
   filings: readonly T[],
