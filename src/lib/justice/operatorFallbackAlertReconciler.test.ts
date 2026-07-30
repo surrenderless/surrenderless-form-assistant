@@ -53,9 +53,10 @@ function makeSupabase(store: Store): SupabaseClient {
       filters: Record<string, string>;
       like: string | null;
       update: Record<string, unknown> | null;
-    } = { table, op: "select", filters: {}, like: null, update: null };
+      orderBy: { col: string; ascending: boolean }[];
+    } = { table, op: "select", filters: {}, like: null, update: null, orderBy: [] };
 
-    const resolve = () => {
+    const resolve = (range?: [number, number]) => {
       if (state.op === "update" && state.table === "justice_case_tasks") {
         if (store.failUpdate) return { data: null, error: { message: "update down" } };
         const task = store.tasks.find(
@@ -67,9 +68,23 @@ function makeSupabase(store: Store): SupabaseClient {
       if (state.op === "select" && state.table === "justice_case_tasks") {
         if (store.failSelect) return { data: null, error: { message: "select down" } };
         const needle = state.like ? state.like.replace(/%/g, "") : "";
-        const rows = store.tasks.filter(
+        let rows = store.tasks.filter(
           (t) => !t.completed_at && (!needle || (t.notes ?? "").includes(needle))
         );
+        // Stable multi-key sort: apply keys in reverse priority order (each Array#sort is
+        // stable), mirroring Postgres ORDER BY col1, col2 semantics.
+        for (const { col, ascending } of [...state.orderBy].reverse()) {
+          rows = [...rows].sort((a, b) => {
+            const av = String((a as unknown as Record<string, unknown>)[col] ?? "");
+            const bv = String((b as unknown as Record<string, unknown>)[col] ?? "");
+            const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+            return ascending ? cmp : -cmp;
+          });
+        }
+        if (range) {
+          const [start, end] = range;
+          rows = rows.slice(start, end + 1);
+        }
         return { data: rows, error: null };
       }
       return { data: [], error: null };
@@ -86,12 +101,17 @@ function makeSupabase(store: Store): SupabaseClient {
         state.like = pattern;
         return api;
       },
+      order: (col: string, opts?: { ascending?: boolean }) => {
+        state.orderBy.push({ col, ascending: opts?.ascending !== false });
+        return api;
+      },
       update: (payload: Record<string, unknown>) => {
         state.op = "update";
         state.update = payload;
         return api;
       },
       limit: () => Promise.resolve(resolve()),
+      range: (start: number, end: number) => Promise.resolve(resolve([start, end])),
       then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
         Promise.resolve(resolve()).then(onF, onR),
     };
@@ -497,5 +517,79 @@ describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts
     const second = await reconcileOperatorFallbackAlerts(supabase);
     expect(second.sent).toBe(1);
     expect(store.tasks[0].notes).toContain("operator_alert_sent:");
+  });
+
+  it("reaches an alertable task beyond the first 100 open tasks — the regression this pagination fix targets", async () => {
+    // 149 older, non-matching open tasks (plain reminders — no destination marker) sort ahead
+    // of the target in created_at order, so a single capped, unpaged query would never reach it.
+    const baseMs = Date.now() - 10_000_000;
+    const noiseTasks: Task[] = Array.from({ length: 149 }, (_, i) => ({
+      id: `noise-${String(i).padStart(4, "0")}`,
+      user_id: "user-noise",
+      case_id: `case-noise-${i}`,
+      title: "Personal reminder",
+      notes: "Call back merchant next week",
+      completed_at: null,
+      created_at: new Date(baseMs + i * 1000).toISOString(),
+    }));
+    const targetCaseId = "case-target";
+    const targetTask: Task = openTask({
+      caseId: targetCaseId,
+      marker: stateAgFilingTaskNotesMarker(targetCaseId),
+      id: "target-task",
+      // Created after all 149 noise tasks, so it sorts last (beyond the first 100-row page).
+      created_at: new Date(baseMs + 149 * 1000).toISOString(),
+    });
+    const store: Store = { tasks: [...noiseTasks, targetTask] };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.sent).toBe(1);
+    expect(summary.results.some((r) => r.task_id === "target-task" && r.result === "sent")).toBe(
+      true
+    );
+    expect(store.tasks.find((t) => t.id === "target-task")?.notes).toContain(
+      "operator_alert_sent:"
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spam-alert once open-task volume exceeds one page: still exactly-once per task across multiple runs", async () => {
+    const baseMs = Date.now() - 10_000_000;
+    const noiseTasks: Task[] = Array.from({ length: 120 }, (_, i) => ({
+      id: `noise-${String(i).padStart(4, "0")}`,
+      user_id: "user-noise",
+      case_id: `case-noise-${i}`,
+      title: "Personal reminder",
+      notes: "Follow up personally",
+      completed_at: null,
+      created_at: new Date(baseMs + i * 1000).toISOString(),
+    }));
+    const store: Store = {
+      tasks: [
+        ...noiseTasks,
+        openTask({
+          caseId: "case-a",
+          marker: merchantContactFilingTaskNotesMarker("case-a"),
+          id: "task-a",
+          created_at: new Date(baseMs + 200 * 1000).toISOString(),
+        }),
+        openTask({
+          caseId: "case-b",
+          marker: stateAgFilingTaskNotesMarker("case-b"),
+          id: "task-b",
+          created_at: new Date(baseMs + 201 * 1000).toISOString(),
+        }),
+      ],
+    };
+    const supabase = makeSupabase(store);
+
+    const first = await reconcileOperatorFallbackAlerts(supabase);
+    expect(first.sent).toBe(2);
+
+    const second = await reconcileOperatorFallbackAlerts(supabase);
+    expect(second.sent).toBe(0);
+    expect(second.skipped).toBe(2);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
