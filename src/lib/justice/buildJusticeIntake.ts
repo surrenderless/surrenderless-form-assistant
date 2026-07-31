@@ -125,7 +125,7 @@ export function defaultBuildJusticeIntakeParts(): BuildJusticeIntakeParts {
   };
 }
 
-function splitMoneyInvolved(money_involved: string): Pick<BuildJusticeIntakeParts, "money_amount" | "desired_resolution"> {
+export function splitMoneyInvolved(money_involved: string): Pick<BuildJusticeIntakeParts, "money_amount" | "desired_resolution"> {
   const raw = money_involved.trim();
   if (!raw || raw === "—") {
     return { money_amount: "", desired_resolution: "" };

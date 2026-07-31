@@ -145,4 +145,33 @@ describe("buildDefaultPaymentDisputeDraft", () => {
     expect(letter).toContain("operator filing packet");
     expect(letter).not.toMatch(/copy into your bank/i);
   });
+
+  it("sets charge_amount to just the dollar amount, not the combined money_involved string", () => {
+    // intake.money_involved is "$899.00 — Desired outcome: full refund" when both money_amount
+    // and desired_resolution are set. The automated send path uses charge_amount unreviewed
+    // (see ensureOwnedFilingTaskAfterClientStateWrite -> attemptAutomatedPaymentDisputeEmailDelivery),
+    // so a corrupted value here reaches the card issuer directly.
+    const intake = intakeWithStory("I bought a laptop online and it never arrived.", {
+      desired_resolution: "full refund",
+    });
+    const draft = buildDefaultPaymentDisputeDraft(CASE_ID, intake);
+    expect(draft.charge_amount).toBe("$899.00");
+    expect(draft.charge_amount).not.toContain("Desired outcome");
+  });
+
+  it("writes only the dollar amount into the formal bank letter's Amount disputed line", () => {
+    const intake = intakeWithStory("I bought a laptop online and it never arrived.", {
+      desired_resolution: "full refund",
+    });
+    const draft = buildDefaultPaymentDisputeDraft(CASE_ID, intake);
+    const letter = buildBankLetter(draft, intake);
+    expect(letter).toContain("Amount disputed: $899.00");
+    expect(letter).not.toContain("Amount disputed: $899.00 — Desired outcome: full refund");
+  });
+
+  it("still sets charge_amount correctly when there is no desired_resolution to split", () => {
+    const intake = intakeWithStory("I bought a laptop online and it never arrived.");
+    const draft = buildDefaultPaymentDisputeDraft(CASE_ID, intake);
+    expect(draft.charge_amount).toBe("$899.00");
+  });
 });
