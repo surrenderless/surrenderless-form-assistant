@@ -14,6 +14,7 @@ import {
   MANUAL_ACTION_TRACKING_REAL_FCC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { fccLikelyRelevant } from "@/lib/justice/rules";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
 import {
   mapOperatorWorkspaceEvidence,
@@ -81,7 +82,7 @@ export function buildFccPreparedAnswers(intake: JusticeIntake): FccPreparedAnswe
       fccRel ? fccServiceSummarySegment(intake) : intake.purchase_or_signup || "(not provided)"
     ),
     answer("what_happened", "What happened", intake.story),
-    answer("amount", "Approximate amount", intake.money_involved || "(not provided)"),
+    answer("amount", "Approximate amount", resolveIntakeMoneyAmount(intake) || "(not provided)"),
     answer(
       "problem_or_start_date",
       "Problem / start date",

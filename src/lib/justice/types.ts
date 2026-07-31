@@ -25,7 +25,16 @@ export type JusticeIntake = {
   company_website: string;
   purchase_or_signup: string;
   story: string;
+  /**
+   * Legacy combined display string (e.g. "$899.00 — Desired outcome: full refund"). Kept for
+   * backward compatibility with existing persisted cases and narrative/summary text. Structured
+   * consumers must use `money_amount` / `resolveIntakeMoneyAmount` instead of parsing this.
+   */
   money_involved: string;
+  /** Dollar amount only, no narrative text. Authoritative when present; absent on cases saved before this field existed — use `resolveIntakeMoneyAmount`. */
+  money_amount?: string;
+  /** Desired outcome only, no dollar amount. Authoritative when present; absent on cases saved before this field existed — use `resolveIntakeDesiredResolution`. */
+  desired_resolution?: string;
   pay_or_order_date: string;
   order_confirmation_details: string;
   user_display_name: string;

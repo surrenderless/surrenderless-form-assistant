@@ -1,5 +1,5 @@
 import { bbbDesiredResolutionPhrase } from "@/lib/justice/buildBbbComplaintDraft";
-import { splitMoneyInvolved } from "@/lib/justice/buildJusticeIntake";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 /** Maps intake to BBB-oriented semantic fields for real BBB.org assisted autofill. */
@@ -11,7 +11,7 @@ export function intakeToRealBbbUserData(intake: JusticeIntake): Record<string, s
     what_happened: intake.story.trim(),
     complaint_narrative: buildRealBbbComplaintNarrative(intake),
     desired_resolution: bbbDesiredResolutionPhrase(intake.problem_category),
-    amount_involved: splitMoneyInvolved(intake.money_involved).money_amount,
+    amount_involved: resolveIntakeMoneyAmount(intake),
     order_or_payment_date: normalizeDate(intake.pay_or_order_date),
     contact_full_name: intake.user_display_name.trim(),
     contact_email: intake.reply_email.trim(),

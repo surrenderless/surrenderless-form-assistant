@@ -55,6 +55,9 @@ export function isJusticeIntakePayload(v: unknown): v is JusticeIntake {
   }
   if (o.already_contacted !== "yes" && o.already_contacted !== "no") return false;
 
+  if (o.money_amount !== undefined && typeof o.money_amount !== "string") return false;
+  if (o.desired_resolution !== undefined && typeof o.desired_resolution !== "string") return false;
+
   if (o.contact_method !== undefined && !CONTACT_METHODS.has(o.contact_method as string)) {
     return false;
   }

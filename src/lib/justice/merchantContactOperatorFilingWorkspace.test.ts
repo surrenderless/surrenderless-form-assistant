@@ -118,4 +118,18 @@ describe("buildMerchantContactOperatorFilingWorkspace", () => {
     expect(workspace.delivery.operator_guidance).toMatch(/unavailable/i);
     expect(workspace.is_submitted).toBe(false);
   });
+
+  it("prepared 'amount' answer uses only the structured amount, not the combined money_involved string", () => {
+    // This field is copyable straight into the real merchant outreach message by the operator,
+    // so a combined "$X — Desired outcome: Y" string here would corrupt the real message.
+    const intake = {
+      ...baseIntake({ money_amount: "$250.00" }),
+      money_involved: "$899.00 — Desired outcome: full refund",
+    };
+    const answers = buildMerchantContactPreparedAnswers(intake);
+    const amount = answers.find((a) => a.id === "amount")?.value;
+    expect(amount).toBe("$250.00");
+    expect(amount).not.toContain("Desired outcome");
+    expect(amount).not.toContain("899");
+  });
 });

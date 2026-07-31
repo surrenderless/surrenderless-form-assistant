@@ -1,4 +1,4 @@
-import { splitMoneyInvolved } from "@/lib/justice/buildJusticeIntake";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 /** Maps intake to FTC ReportFraud-oriented semantic fields for real assisted autofill. */
@@ -10,7 +10,7 @@ export function intakeToRealFtcUserData(intake: JusticeIntake): Record<string, s
     product_or_service: intake.purchase_or_signup.trim(),
     what_happened: intake.story.trim(),
     complaint_description: buildRealFtcComplaintNarrative(intake),
-    amount_involved: splitMoneyInvolved(intake.money_involved).money_amount,
+    amount_involved: resolveIntakeMoneyAmount(intake),
     incident_date: normalizeDate(intake.pay_or_order_date),
     order_or_payment_date: normalizeDate(intake.pay_or_order_date),
     contact_full_name: intake.user_display_name.trim(),

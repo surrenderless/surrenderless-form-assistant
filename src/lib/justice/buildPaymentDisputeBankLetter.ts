@@ -1,4 +1,4 @@
-import { splitMoneyInvolved } from "@/lib/justice/buildJusticeIntake";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 export type PaymentMethodOption =
@@ -210,7 +210,7 @@ export function buildDefaultPaymentDisputeDraft(caseId: string, intake: JusticeI
     case_id: caseId,
     payment_method: "credit_card",
     charge_date: intake.pay_or_order_date.trim(),
-    charge_amount: splitMoneyInvolved(intake.money_involved).money_amount,
+    charge_amount: resolveIntakeMoneyAmount(intake),
     merchant_name: intake.company_name.trim(),
     dispute_reason: inferPaymentDisputeReasonFromIntake(intake),
     prior_company_contact: intake.already_contacted === "yes" ? "yes" : "no",
