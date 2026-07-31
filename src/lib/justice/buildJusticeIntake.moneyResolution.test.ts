@@ -103,13 +103,16 @@ describe("resolveIntakeMoneyAmount / resolveIntakeDesiredResolution", () => {
     expect(resolveIntakeDesiredResolution(legacyIntake)).toBe("");
   });
 
-  it("treats a blank structured field as absent and falls back", () => {
+  it("treats a present-but-whitespace structured field as deliberately blank, not absent", () => {
+    // Presence, not truthiness: the field exists (this is a new-shape intake), so a
+    // whitespace-only value must trim to "" rather than falling back to a stale/mismatched
+    // money_involved — falling back here would reproduce the resolution-only corruption bug.
     const intake: JusticeIntake = {
       ...buildJusticeIntakeFromParts(REQUIRED_PARTS),
       money_amount: "   ",
       money_involved: "$899.00 — Desired outcome: full refund",
     };
-    expect(resolveIntakeMoneyAmount(intake)).toBe("$899.00");
+    expect(resolveIntakeMoneyAmount(intake)).toBe("");
   });
 
   it("matches splitMoneyInvolved output on legacy data (no behavior change for old cases)", () => {
@@ -123,6 +126,45 @@ describe("resolveIntakeMoneyAmount / resolveIntakeDesiredResolution", () => {
     const split = splitMoneyInvolved(legacy);
     expect(resolveIntakeMoneyAmount(intake)).toBe(split.money_amount);
     expect(resolveIntakeDesiredResolution(intake)).toBe(split.desired_resolution);
+  });
+
+  it("resolution-only new-shape intake: money_amount stays blank, not the resolution text", () => {
+    // buildJusticeIntakeFromParts falls money_involved back to resPart alone when moneyPart is
+    // empty ("a refund", no separator to split on). Before the presence-check fix, the blank
+    // money_amount="" failed the old truthiness check and fell through to
+    // splitMoneyInvolved("a refund"), whose no-separator branch dumps the whole resolution
+    // sentence into money_amount — corrupting every structured/operator-copyable amount field.
+    const intake = buildJusticeIntakeFromParts({
+      ...REQUIRED_PARTS,
+      money_amount: "",
+      desired_resolution: "I just want a refund",
+    });
+    expect(intake.money_involved).toBe("I just want a refund");
+    expect(resolveIntakeMoneyAmount(intake)).toBe("");
+    expect(resolveIntakeDesiredResolution(intake)).toBe("I just want a refund");
+  });
+
+  it("amount-only new-shape intake: desired_resolution stays blank", () => {
+    const intake = buildJusticeIntakeFromParts({
+      ...REQUIRED_PARTS,
+      money_amount: "$50",
+      desired_resolution: "",
+    });
+    expect(resolveIntakeMoneyAmount(intake)).toBe("$50");
+    expect(resolveIntakeDesiredResolution(intake)).toBe("");
+  });
+
+  it("legacy intake missing both structured fields still falls back to splitting money_involved", () => {
+    const legacyIntake: JusticeIntake = {
+      ...buildJusticeIntakeFromParts(REQUIRED_PARTS),
+      money_amount: undefined,
+      desired_resolution: undefined,
+      money_involved: "I just want a refund",
+    };
+    // No separator present, so the legacy splitter's only option is to treat the whole string
+    // as the amount — this is the pre-existing, accepted legacy-data limitation this fix does
+    // NOT change (it only protects new-shape intakes, which always carry real money_amount).
+    expect(resolveIntakeMoneyAmount(legacyIntake)).toBe("I just want a refund");
   });
 });
 

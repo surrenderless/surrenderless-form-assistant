@@ -56,7 +56,7 @@ function retailIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
     company_name: "Acme Retail",
     purchase_or_signup: "widget order",
     story: "Ordered a widget that never arrived and merchant refused a refund.",
-    money_involved: "$89.00",
+    money_amount: "$89.00",
     pay_or_order_date: "2026-01-10",
     already_contacted: "no",
     user_display_name: "Jordan Lee",
@@ -121,7 +121,7 @@ describe("merchant contact completion ladder advance", () => {
 
   it("refused_help without money advances to FTC when eligible", () => {
     const prior = retailIntake({
-      money_involved: "not sure",
+      money_amount: "not sure",
       pay_or_order_date: "",
     });
     const updated = buildUpdatedIntakeAfterMerchantContact(prior, {
