@@ -117,4 +117,23 @@ describe("intakeToRealBbbUserData", () => {
     expect(subscription.desired_resolution).toBe(bbbDesiredResolutionPhrase("subscription"));
     expect(subscription.issue_type).toBe("subscription");
   });
+
+  it("sets amount_involved to just the dollar amount, not the combined money_involved string", () => {
+    // money_involved is "$899.00 — Desired outcome: full refund" when built from separate
+    // money_amount/desired_resolution parts. amount_involved feeds the automated BBB.org
+    // form-fill (realBbbUserData -> bbbOwnedFilingExecute) with no operator review, so a
+    // corrupted value here reaches the real BBB portal directly.
+    const intake: JusticeIntake = {
+      ...baseIntake,
+      money_involved: "$899.00 — Desired outcome: full refund",
+    };
+    const result = intakeToRealBbbUserData(intake);
+    expect(result.amount_involved).toBe("$899.00");
+    expect(result.amount_involved).not.toContain("Desired outcome");
+  });
+
+  it("still sets amount_involved correctly when there is no desired_resolution to split", () => {
+    const result = intakeToRealBbbUserData(baseIntake);
+    expect(result.amount_involved).toBe("$50");
+  });
 });
