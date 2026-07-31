@@ -76,7 +76,11 @@ import {
   collectNewChatCaseProgressNarrationMessages,
   type ChatCaseProgressObservation,
 } from "@/lib/justice/chatCaseProgressNarration";
-import type { JusticeCaseChatMessageSource } from "@/lib/justice/justiceCaseChatMessages";
+import {
+  MAX_JUSTICE_CASE_CHAT_APPEND_BATCH,
+  type JusticeCaseChatMessageSource,
+} from "@/lib/justice/justiceCaseChatMessages";
+import { chunkArray } from "@/lib/chunkArray";
 import {
   appendCaseChatTranscriptTurns,
   fetchCaseChatTranscript,
@@ -2494,13 +2498,20 @@ export default function JusticeChatAiPage() {
           !isEphemeralChatGreeting(turn.text) && !persistedTurnIdsRef.current.has(turn.id)
       );
       if (toPersist.length === 0) return;
-      const payload = uiMessagesToPersistTurns(toPersist, "intake_chat");
-      if (payload.length === 0) return;
-      try {
-        await appendCaseChatTranscriptTurns(caseId, payload);
-        toPersist.forEach((turn) => persistedTurnIdsRef.current.add(turn.id));
-      } catch (error) {
-        console.warn("justice chat-ai: transcript backfill persist failed", error);
+      // The server hard-rejects any single request over MAX_JUSTICE_CASE_CHAT_APPEND_BATCH
+      // messages with no partial save — chunk here so a long pre-commit intake conversation
+      // (routinely 20+ turns) doesn't get silently and entirely dropped in one oversized call.
+      const chunks = chunkArray(toPersist, MAX_JUSTICE_CASE_CHAT_APPEND_BATCH);
+      for (const chunk of chunks) {
+        const payload = uiMessagesToPersistTurns(chunk, "intake_chat");
+        if (payload.length === 0) continue;
+        try {
+          await appendCaseChatTranscriptTurns(caseId, payload);
+          chunk.forEach((turn) => persistedTurnIdsRef.current.add(turn.id));
+        } catch (error) {
+          console.warn("justice chat-ai: transcript backfill persist failed", error);
+          break;
+        }
       }
     },
     [isLoaded, isSignedIn]

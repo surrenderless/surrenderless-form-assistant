@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_JUSTICE_CASE_CHAT_APPEND_BATCH,
   MAX_JUSTICE_CASE_CHAT_MESSAGE_CONTENT,
   parseJusticeCaseChatMessageAppendBatch,
   parseJusticeCaseChatMessageAppendInput,
 } from "@/lib/justice/justiceCaseChatMessages";
+
+function messageBatch(length: number) {
+  return Array.from({ length }, (_, index) => ({
+    client_turn_id: `turn-${index}`,
+    role: "user" as const,
+    content: `message ${index}`,
+  }));
+}
 
 describe("justiceCaseChatMessages", () => {
   it("parses a valid append input", () => {
@@ -38,12 +47,21 @@ describe("justiceCaseChatMessages", () => {
   });
 
   it("parses append batches with a max size", () => {
-    const batch = Array.from({ length: 3 }, (_, index) => ({
-      client_turn_id: `turn-${index}`,
-      role: "user" as const,
-      content: `message ${index}`,
-    }));
+    const batch = messageBatch(3);
     expect(parseJusticeCaseChatMessageAppendBatch(batch)?.length).toBe(3);
     expect(parseJusticeCaseChatMessageAppendBatch([])).toBeNull();
+  });
+
+  it("accepts exactly MAX_JUSTICE_CASE_CHAT_APPEND_BATCH messages but rejects one more", () => {
+    // The chat-ai backfill flow chunks a long pre-commit conversation into batches of exactly
+    // this size (see backfillChatTranscriptForCase in chat-ai/page.tsx) so a single oversized
+    // request never gets silently rejected in full — this pins the boundary that fix relies on.
+    const atLimit = messageBatch(MAX_JUSTICE_CASE_CHAT_APPEND_BATCH);
+    expect(parseJusticeCaseChatMessageAppendBatch(atLimit)?.length).toBe(
+      MAX_JUSTICE_CASE_CHAT_APPEND_BATCH
+    );
+
+    const overLimit = messageBatch(MAX_JUSTICE_CASE_CHAT_APPEND_BATCH + 1);
+    expect(parseJusticeCaseChatMessageAppendBatch(overLimit)).toBeNull();
   });
 });
