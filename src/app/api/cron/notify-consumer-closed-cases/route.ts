@@ -28,10 +28,17 @@ async function handleCron(req: NextRequest): Promise<NextResponse> {
   }
 
   const summary = await reconcileClosedCaseConsumerNotifications(supabase);
-  return NextResponse.json({
-    ok: true,
-    ...summary,
-  });
+  // Surface partial failures to cron/uptime monitoring instead of always reporting success —
+  // a case whose reply_email can never be resolved was previously silently re-failed forever
+  // with no way for anyone watching this endpoint to notice.
+  const ok = summary.failed === 0;
+  return NextResponse.json(
+    {
+      ok,
+      ...summary,
+    },
+    { status: ok ? 200 : 500 }
+  );
 }
 
 /** Vercel Cron invokes GET. */

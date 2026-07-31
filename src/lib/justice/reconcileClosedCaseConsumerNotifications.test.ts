@@ -10,6 +10,7 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 const mockSend = vi.fn<(req: EmailSendRequest) => Promise<EmailSendResult>>();
+const mockAppendCaseTimelineEntry = vi.fn(async () => null);
 
 vi.mock("@/lib/email/resolveMerchantOutreachEmailProvider", () => ({
   resolveMerchantOutreachEmailProvider: () => ({
@@ -17,6 +18,11 @@ vi.mock("@/lib/email/resolveMerchantOutreachEmailProvider", () => ({
     provider: { name: "mock", send: (req: EmailSendRequest) => mockSend(req) },
     from: "closures@surrenderless.test",
   }),
+}));
+
+vi.mock("@/server/justiceTimelineAppend", () => ({
+  appendCaseTimelineEntry: (...args: unknown[]) =>
+    (mockAppendCaseTimelineEntry as unknown as (...a: unknown[]) => unknown)(...args),
 }));
 
 import {
@@ -186,6 +192,7 @@ function closedCase(
 beforeEach(() => {
   mockSend.mockReset();
   mockSend.mockResolvedValue({ ok: true, messageId: "msg-1" });
+  mockAppendCaseTimelineEntry.mockClear();
 });
 
 describe("reconcileClosedCaseConsumerNotifications", () => {
@@ -306,6 +313,66 @@ describe("reconcileClosedCaseConsumerNotifications", () => {
     expect(markers[0].case_id).toBe("case-ok");
     // The failed-send case must not have a marker.
     expect(store.tasks.some((t) => t.case_id === "case-sendfail")).toBe(false);
+  });
+
+  it("writes a durable manual-follow-up marker when the recipient email is unresolvable", async () => {
+    const store: Store = {
+      cases: [
+        closedCase("case-badrecipient", OPERATOR_RESOLVED_OUTCOME_MARKER, {
+          reply_email: "not-an-email",
+        }),
+      ],
+      tasks: [],
+      insertCount: 0,
+    };
+
+    const summary = await reconcileClosedCaseConsumerNotifications(makeSupabase(store));
+
+    expect(summary).toMatchObject({ attempted: 1, sent: 0, skipped: 0, failed: 1 });
+    expect(mockSend).not.toHaveBeenCalled();
+    // A durable marker is written even though no email was sent, so the case is not
+    // silently re-fetched and re-failed on every future run.
+    const marker = store.tasks.find((t) => t.case_id === "case-badrecipient");
+    expect(marker).toBeDefined();
+    expect(marker?.notes).toContain("consumer_closed_notified:case-badrecipient");
+    expect(marker?.notes).toContain("delivery_state: unresolvable");
+    expect(marker?.notes).toContain("manual_fallback_required: true");
+    expect(marker?.completed_at).toBeTruthy();
+    expect(mockAppendCaseTimelineEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      "owner-case-badrecipient",
+      "case-badrecipient",
+      expect.objectContaining({
+        label: expect.stringContaining("undeliverable"),
+      })
+    );
+  });
+
+  it("does not re-fetch or re-fail a case once flagged unresolvable — no daily-forever retry", async () => {
+    const store: Store = {
+      cases: [
+        closedCase("case-badrecipient", OPERATOR_RESOLVED_OUTCOME_MARKER, {
+          reply_email: "not-an-email",
+        }),
+      ],
+      tasks: [],
+      insertCount: 0,
+    };
+    const supabase = makeSupabase(store);
+
+    const first = await reconcileClosedCaseConsumerNotifications(supabase);
+    expect(first).toMatchObject({ attempted: 1, failed: 1, skipped: 0 });
+
+    const second = await reconcileClosedCaseConsumerNotifications(supabase);
+    // Second run recognizes the existing marker and skips — it is no longer reprocessed
+    // and re-counted as a failure on every subsequent run.
+    expect(second).toMatchObject({ attempted: 1, failed: 0, skipped: 1, sent: 0 });
+    expect(second.results.find((r) => r.case_id === "case-badrecipient")).toMatchObject({
+      kind: "skipped",
+      reason: "already_notified",
+    });
+    // Exactly one marker written across both runs, not one per run.
+    expect(store.tasks.filter((t) => t.case_id === "case-badrecipient")).toHaveLength(1);
   });
 
   it("ignores non-terminal or non-archived cases without attempting them", async () => {
