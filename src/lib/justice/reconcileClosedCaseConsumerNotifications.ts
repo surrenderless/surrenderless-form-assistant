@@ -15,6 +15,7 @@ import {
 } from "@/lib/justice/reconcilerKeysetPagination";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
+import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
 const CASE_SELECT = "id, user_id, intake, client_state, archived_at, updated_at" as const;
 const TASK_SELECT =
@@ -179,6 +180,66 @@ async function writeConsumerClosedNotificationMarker(
   return true;
 }
 
+/**
+ * Writes the same durable exactly-once marker when reply_email can never be resolved to a
+ * valid address, so the case stops being silently re-fetched and re-failed on every future
+ * run. Uses the identical marker line as an accepted send so caseHasConsumerClosedNotificationMarker
+ * recognizes it (already_notified) — this is a one-time "flagged for manual follow-up" state,
+ * not a sent email. Mirrors the bounced/complained manual-fallback pattern in
+ * consumerClosedNotificationDelivery.ts, applied to the pre-send failure instead of a post-send one.
+ */
+async function writeConsumerClosedNotificationUnresolvableMarker(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  outcome: OperatorOwnedClosableOutcome
+): Promise<boolean> {
+  const marker = consumerClosedNotificationTaskNotesMarker(caseId);
+  const flaggedAt = new Date().toISOString();
+  const notes = clampLen(
+    [
+      marker,
+      `case_id: ${caseId}`,
+      `outcome: ${outcome}`,
+      `delivery_state: unresolvable`,
+      `manual_fallback_required: true`,
+      `reason: recipient_unresolved`,
+      `flagged_at: ${flaggedAt}`,
+    ].join("\n"),
+    MAX_NOTES
+  );
+
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .insert({
+      user_id: userId,
+      case_id: caseId,
+      title: "Consumer closed-case notification could not be sent",
+      notes,
+      completed_at: flaggedAt,
+    })
+    .select(TASK_SELECT)
+    .single();
+
+  if (error || !data) {
+    console.warn(
+      "consumer closed notification: write unresolvable marker",
+      error?.message ?? "no row"
+    );
+    return false;
+  }
+
+  await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: `consumer_closed_notification_unresolvable:${caseId}`,
+    type: "outcome_recorded",
+    label: "Closed-case notification undeliverable — manual follow-up required",
+    detail: "No valid reply email on file; operator should reach the consumer another way.",
+    ts: flaggedAt,
+  });
+
+  return true;
+}
+
 type CaseRow = {
   id: string;
   user_id: string;
@@ -268,6 +329,9 @@ export async function reconcileClosedCaseConsumerNotifications(
         const intake = row.intake as JusticeIntake;
         const recipient = resolveConsumerRecipientEmail(intake);
         if (!recipient) {
+          // Flag once for manual follow-up (best-effort) so this case is not silently
+          // re-fetched and re-failed forever — see writeConsumerClosedNotificationUnresolvableMarker.
+          await writeConsumerClosedNotificationUnresolvableMarker(supabase, userId, caseId, outcome);
           summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "recipient_unresolved" });
           summary.failed += 1;
           continue;
