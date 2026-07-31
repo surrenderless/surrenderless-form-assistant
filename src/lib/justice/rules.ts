@@ -1,4 +1,5 @@
 import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "./assistedSubmissionLane";
+import { resolveIntakeMoneyAmount } from "./buildJusticeIntake";
 import type {
   DestinationStatus,
   JusticeDestination,
@@ -12,8 +13,13 @@ const FTC_UNLOCK_RESPONSES = new Set([
   "promised_but_did_not_fix",
 ]);
 
+/**
+ * Payment dispute needs an actual dollar figure, not just a desired outcome — gate on the
+ * resolved structured amount (never the combined `money_involved` display string, which can
+ * hold resolution-only text like "a refund" with no amount at all).
+ */
 export function paymentDisputeAvailable(intake: JusticeIntake): boolean {
-  const money = intake.money_involved?.trim();
+  const money = resolveIntakeMoneyAmount(intake).trim();
   const date = intake.pay_or_order_date?.trim();
   if (!money || !date) return false;
   const lower = money.toLowerCase();

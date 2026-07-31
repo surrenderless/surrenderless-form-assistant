@@ -143,25 +143,27 @@ export function splitMoneyInvolved(money_involved: string): Pick<BuildJusticeInt
 }
 
 /**
- * Dollar amount only, no narrative text. Prefers the structured `money_amount` field; falls
- * back to splitting the legacy combined `money_involved` string for cases saved before
- * `money_amount` existed. Structured single-value fields (form autofill, generated letters,
- * operator-copyable summary fields) must use this — never read `money_involved` directly.
+ * Dollar amount only, no narrative text. Prefers the structured `money_amount` field —
+ * presence, not truthiness: a deliberately blank `""` on a fully-built new-shape intake
+ * (consumer gave a resolution but no dollar figure) must stay blank, not fall through to
+ * mis-splitting `money_involved` (which would dump the resolution text into the amount).
+ * Falls back to splitting the legacy combined `money_involved` string only when
+ * `money_amount` is genuinely absent (cases saved before this field existed). Structured
+ * single-value fields (form autofill, generated letters, operator-copyable summary fields)
+ * must use this — never read `money_involved` directly.
  */
 export function resolveIntakeMoneyAmount(intake: JusticeIntake): string {
-  const direct = intake.money_amount?.trim();
-  if (direct) return direct;
+  if (intake.money_amount !== undefined) return intake.money_amount.trim();
   return splitMoneyInvolved(intake.money_involved ?? "").money_amount;
 }
 
 /**
- * Desired outcome only, no dollar amount. Prefers the structured `desired_resolution` field;
- * falls back to splitting the legacy combined `money_involved` string for cases saved before
- * `desired_resolution` existed.
+ * Desired outcome only, no dollar amount. Prefers the structured `desired_resolution` field
+ * by presence (see {@link resolveIntakeMoneyAmount}); falls back to splitting the legacy
+ * combined `money_involved` string only when `desired_resolution` is genuinely absent.
  */
 export function resolveIntakeDesiredResolution(intake: JusticeIntake): string {
-  const direct = intake.desired_resolution?.trim();
-  if (direct) return direct;
+  if (intake.desired_resolution !== undefined) return intake.desired_resolution.trim();
   return splitMoneyInvolved(intake.money_involved ?? "").desired_resolution;
 }
 
