@@ -3,6 +3,7 @@ import {
   dotDesiredResolutionPhrase,
 } from "@/lib/justice/buildDotAviationComplaintDraft";
 import { stateNameFromCode } from "@/lib/justice/buildStateAgComplaintDraft";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import { parseDotFilingTaskDraft } from "@/lib/justice/dotFilingTask";
 import {
   resolveDotOfficialPortal,
@@ -74,7 +75,7 @@ export function buildDotPreparedAnswers(intake: JusticeIntake): DotPreparedAnswe
       intake.purchase_or_signup || "(not provided)"
     ),
     answer("what_happened", "What happened", intake.story),
-    answer("amount", "Approximate amount", intake.money_involved || "(not provided)"),
+    answer("amount", "Approximate amount", resolveIntakeMoneyAmount(intake) || "(not provided)"),
     answer(
       "travel_or_payment_date",
       "Travel / order / payment date",

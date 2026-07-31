@@ -81,4 +81,19 @@ describe("intakeToRealFtcUserData", () => {
     const result = intakeToRealFtcUserData(baseIntake);
     expect(result.amount_involved).toBe("$50");
   });
+
+  it("prefers the structured money_amount field over a stale/mismatched money_involved string", () => {
+    // Proves priority, not just fallback splitting: even if money_involved was never kept in
+    // sync (or holds combined text), the structured field wins and no parsing of the legacy
+    // string occurs.
+    const intake: JusticeIntake = {
+      ...baseIntake,
+      money_amount: "$250.00",
+      money_involved: "$899.00 — Desired outcome: full refund",
+    };
+    const result = intakeToRealFtcUserData(intake);
+    expect(result.amount_involved).toBe("$250.00");
+    expect(result.amount_involved).not.toContain("Desired outcome");
+    expect(result.amount_involved).not.toContain("899");
+  });
 });

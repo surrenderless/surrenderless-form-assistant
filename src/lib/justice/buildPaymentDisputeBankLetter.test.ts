@@ -6,6 +6,7 @@ import {
   inferPaymentDisputeReasonFromIntake,
   type DisputeReasonOption,
 } from "@/lib/justice/buildPaymentDisputeBankLetter";
+import type { JusticeIntake } from "@/lib/justice/types";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440001";
 
@@ -173,5 +174,21 @@ describe("buildDefaultPaymentDisputeDraft", () => {
     const intake = intakeWithStory("I bought a laptop online and it never arrived.");
     const draft = buildDefaultPaymentDisputeDraft(CASE_ID, intake);
     expect(draft.charge_amount).toBe("$899.00");
+  });
+
+  it("prefers the structured money_amount field over a stale/mismatched money_involved string", () => {
+    // Proves priority, not just fallback splitting: even if money_involved was never kept in
+    // sync (or holds combined text), the structured field wins and no parsing of the legacy
+    // string occurs.
+    const intake: JusticeIntake = {
+      ...intakeWithStory("I bought a laptop online and it never arrived.", {
+        money_amount: "$250.00",
+      }),
+      money_involved: "$899.00 — Desired outcome: full refund",
+    };
+    const draft = buildDefaultPaymentDisputeDraft(CASE_ID, intake);
+    expect(draft.charge_amount).toBe("$250.00");
+    expect(draft.charge_amount).not.toContain("Desired outcome");
+    expect(draft.charge_amount).not.toContain("899");
   });
 });

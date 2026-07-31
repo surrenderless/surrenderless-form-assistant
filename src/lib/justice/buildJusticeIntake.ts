@@ -143,11 +143,35 @@ export function splitMoneyInvolved(money_involved: string): Pick<BuildJusticeInt
 }
 
 /**
+ * Dollar amount only, no narrative text. Prefers the structured `money_amount` field; falls
+ * back to splitting the legacy combined `money_involved` string for cases saved before
+ * `money_amount` existed. Structured single-value fields (form autofill, generated letters,
+ * operator-copyable summary fields) must use this — never read `money_involved` directly.
+ */
+export function resolveIntakeMoneyAmount(intake: JusticeIntake): string {
+  const direct = intake.money_amount?.trim();
+  if (direct) return direct;
+  return splitMoneyInvolved(intake.money_involved ?? "").money_amount;
+}
+
+/**
+ * Desired outcome only, no dollar amount. Prefers the structured `desired_resolution` field;
+ * falls back to splitting the legacy combined `money_involved` string for cases saved before
+ * `desired_resolution` existed.
+ */
+export function resolveIntakeDesiredResolution(intake: JusticeIntake): string {
+  const direct = intake.desired_resolution?.trim();
+  if (direct) return direct;
+  return splitMoneyInvolved(intake.money_involved ?? "").desired_resolution;
+}
+
+/**
  * Reverse-map saved `JusticeIntake` into chat `BuildJusticeIntakeParts` (e.g. hydrate `/justice/chat-ai`).
  */
 export function justiceIntakeToBuildJusticeIntakeParts(intake: JusticeIntake): BuildJusticeIntakeParts {
   const defaults = defaultBuildJusticeIntakeParts();
-  const { money_amount, desired_resolution } = splitMoneyInvolved(intake.money_involved);
+  const money_amount = resolveIntakeMoneyAmount(intake);
+  const desired_resolution = resolveIntakeDesiredResolution(intake);
   const already_contacted = intake.already_contacted === "yes" ? "yes" : "no";
 
   const parts: BuildJusticeIntakeParts = {
@@ -225,6 +249,8 @@ export function buildJusticeIntakeFromParts(parts: BuildJusticeIntakeParts): Jus
     purchase_or_signup: parts.purchase_or_signup.trim(),
     story: parts.story.trim(),
     money_involved,
+    money_amount: moneyPart,
+    desired_resolution: resPart,
     pay_or_order_date: parts.pay_or_order_date.trim(),
     order_confirmation_details: parts.order_confirmation_details.trim(),
     user_display_name: parts.user_display_name.trim(),

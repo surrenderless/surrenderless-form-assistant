@@ -110,4 +110,18 @@ describe("buildFccOperatorFilingWorkspace", () => {
     expect(workspace.portal.portal_supported).toBe(true);
     expect(workspace.portal.portal_url).toBe(FCC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL);
   });
+
+  it("prepared 'amount' answer uses only the structured amount, not the combined money_involved string", () => {
+    // This field is copyable straight into the real FCC complaint form by the operator, so a
+    // combined "$X — Desired outcome: Y" string here would corrupt the real filing.
+    const intake = {
+      ...baseIntake({ money_amount: "$250.00" }),
+      money_involved: "$899.00 — Desired outcome: full refund",
+    };
+    const answers = buildFccPreparedAnswers(intake);
+    const amount = answers.find((a) => a.id === "amount")?.value;
+    expect(amount).toBe("$250.00");
+    expect(amount).not.toContain("Desired outcome");
+    expect(amount).not.toContain("899");
+  });
 });

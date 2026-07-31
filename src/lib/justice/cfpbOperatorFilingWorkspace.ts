@@ -15,6 +15,7 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { cfpbLikelyRelevant } from "@/lib/justice/rules";
 import { stateNameFromCode } from "@/lib/justice/buildStateAgComplaintDraft";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
 import {
   mapOperatorWorkspaceEvidence,
@@ -89,7 +90,7 @@ export function buildCfpbPreparedAnswers(intake: JusticeIntake): CfpbPreparedAns
         : intake.purchase_or_signup || "(not provided)"
     ),
     answer("what_happened", "What happened", intake.story),
-    answer("amount", "Approximate amount", intake.money_involved || "(not provided)"),
+    answer("amount", "Approximate amount", resolveIntakeMoneyAmount(intake) || "(not provided)"),
     answer(
       "problem_or_transaction_date",
       cfpbRel ? "Problem / start date" : "Order / transaction date",

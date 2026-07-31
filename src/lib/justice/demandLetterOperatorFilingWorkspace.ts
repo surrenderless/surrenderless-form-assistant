@@ -9,6 +9,7 @@ import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
 import {
   mapOperatorWorkspaceEvidence,
@@ -112,7 +113,7 @@ export function buildDemandLetterPreparedAnswers(
     answer("issue_type", "Issue type", intake.problem_category.replace(/_/g, " ")),
     answer("product_or_service", "Product / service", intake.purchase_or_signup || "(not provided)"),
     answer("what_happened", "What happened", intake.story),
-    answer("amount", "Approximate amount", intake.money_involved || "(not provided)"),
+    answer("amount", "Approximate amount", resolveIntakeMoneyAmount(intake) || "(not provided)"),
     answer(
       "order_or_payment_date",
       "Order / payment date",
