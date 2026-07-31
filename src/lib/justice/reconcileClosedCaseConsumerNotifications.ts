@@ -8,10 +8,15 @@ import {
   operatorOwnedClosableOutcomeFromAction,
   type OperatorOwnedClosableOutcome,
 } from "@/lib/justice/operatorOwnedCaseArchive";
+import {
+  applyKeysetCursor,
+  nextKeysetCursor,
+  type KeysetCursor,
+} from "@/lib/justice/reconcilerKeysetPagination";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
-const CASE_SELECT = "id, user_id, intake, client_state, archived_at" as const;
+const CASE_SELECT = "id, user_id, intake, client_state, archived_at, updated_at" as const;
 const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
 const MAX_NOTES = 8000;
@@ -174,6 +179,15 @@ async function writeConsumerClosedNotificationMarker(
   return true;
 }
 
+type CaseRow = {
+  id: string;
+  user_id: string;
+  intake: unknown;
+  client_state: unknown;
+  archived_at: string | null;
+  updated_at: string;
+};
+
 /**
  * Durable consumer notification for operator-owned terminal cases that have been
  * archived. Emails the case owner once (resolved or no_resolution), directing them
@@ -185,31 +199,7 @@ export async function reconcileClosedCaseConsumerNotifications(
   options: { limit?: number } = {}
 ): Promise<ReconcileClosedCaseConsumerNotificationsSummary> {
   const summary = emptySummary();
-  const limit = options.limit ?? 100;
-
-  let rows: Array<{
-    id: string;
-    user_id: string;
-    intake: unknown;
-    client_state: unknown;
-    archived_at: string | null;
-  }>;
-  try {
-    const { data, error } = await supabase
-      .from("justice_cases")
-      .select(CASE_SELECT)
-      .not("archived_at", "is", null)
-      .order("updated_at", { ascending: false })
-      .limit(limit);
-    if (error) {
-      console.warn("consumer closed notification: list cases", error.message);
-      return summary;
-    }
-    rows = (data ?? []) as typeof rows;
-  } catch (error) {
-    console.warn("consumer closed notification: list cases", error);
-    return summary;
-  }
+  const pageSize = options.limit ?? 100;
 
   const providerResolved = resolveMerchantOutreachEmailProvider();
   if (!providerResolved.ok) {
@@ -218,96 +208,121 @@ export async function reconcileClosedCaseConsumerNotifications(
     return summary;
   }
 
-  for (const row of rows) {
-    const caseId = row.id?.trim() ?? "";
-    const userId = row.user_id?.trim() ?? "";
-    if (!row.archived_at?.trim()) continue;
+  let cursor: KeysetCursor = null;
 
-    const action = parseApprovedNextActionFromClientState(row.client_state);
-    if (!hasOperatorTerminalResponseReviewOutcome(action)) continue;
-    const outcome = operatorOwnedClosableOutcomeFromAction(action);
-    if (!outcome) continue;
-
-    summary.attempted += 1;
-
-    if (!caseId || !userId) {
-      summary.results.push({ case_id: caseId, user_id: userId || null, kind: "failed", reason: "invalid_case" });
-      summary.failed += 1;
-      continue;
-    }
-
+  for (;;) {
+    let fetchedRows: CaseRow[];
     try {
-      const alreadyNotified = await caseHasConsumerClosedNotificationMarker(supabase, userId, caseId);
-      if (alreadyNotified === null) {
-        summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "marker_lookup_failed" });
-        summary.failed += 1;
-        continue;
+      const { data, error } = await applyKeysetCursor(
+        supabase.from("justice_cases").select(CASE_SELECT).not("archived_at", "is", null),
+        cursor
+      ).limit(pageSize);
+      if (error) {
+        console.warn("consumer closed notification: list cases", error.message);
+        return summary;
       }
-      if (alreadyNotified) {
-        summary.results.push({ case_id: caseId, user_id: userId, kind: "skipped", outcome, reason: "already_notified" });
-        summary.skipped += 1;
-        continue;
-      }
-
-      if (!isJusticeIntakePayload(row.intake)) {
-        summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "invalid_intake" });
-        summary.failed += 1;
-        continue;
-      }
-      const intake = row.intake as JusticeIntake;
-      const recipient = resolveConsumerRecipientEmail(intake);
-      if (!recipient) {
-        summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "recipient_unresolved" });
-        summary.failed += 1;
-        continue;
-      }
-
-      const sendResult = await providerResolved.provider.send({
-        from: providerResolved.from,
-        to: recipient,
-        subject: buildConsumerCaseClosedEmailSubject(intake),
-        text: buildConsumerCaseClosedEmailBody(intake, outcome),
-        idempotencyKey: consumerClosedNotificationEmailIdempotencyKey(caseId),
-      });
-
-      if (!sendResult.ok) {
-        summary.results.push({
-          case_id: caseId,
-          user_id: userId,
-          kind: "failed",
-          recipient,
-          reason: sendResult.error,
-        });
-        summary.failed += 1;
-        continue;
-      }
-
-      // Mark notified ONLY after an accepted send. If this write races/fails, the
-      // provider idempotency key still prevents a duplicate email on the next run.
-      const marked = await writeConsumerClosedNotificationMarker(supabase, userId, caseId, {
-        recipient,
-        messageId: sendResult.messageId,
-        outcome,
-      });
-      if (!marked) {
-        summary.results.push({
-          case_id: caseId,
-          user_id: userId,
-          kind: "failed",
-          recipient,
-          reason: "marker_write_failed",
-        });
-        summary.failed += 1;
-        continue;
-      }
-
-      summary.results.push({ case_id: caseId, user_id: userId, kind: "sent", outcome, recipient });
-      summary.sent += 1;
+      fetchedRows = (data ?? []) as CaseRow[];
     } catch (error) {
-      console.warn("consumer closed notification: process case", caseId, error);
-      summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "exception" });
-      summary.failed += 1;
+      console.warn("consumer closed notification: list cases", error);
+      return summary;
     }
+
+    const rows = fetchedRows;
+
+    for (const row of rows) {
+      const caseId = row.id?.trim() ?? "";
+      const userId = row.user_id?.trim() ?? "";
+      if (!row.archived_at?.trim()) continue;
+
+      const action = parseApprovedNextActionFromClientState(row.client_state);
+      if (!hasOperatorTerminalResponseReviewOutcome(action)) continue;
+      const outcome = operatorOwnedClosableOutcomeFromAction(action);
+      if (!outcome) continue;
+
+      summary.attempted += 1;
+
+      if (!caseId || !userId) {
+        summary.results.push({ case_id: caseId, user_id: userId || null, kind: "failed", reason: "invalid_case" });
+        summary.failed += 1;
+        continue;
+      }
+
+      try {
+        const alreadyNotified = await caseHasConsumerClosedNotificationMarker(supabase, userId, caseId);
+        if (alreadyNotified === null) {
+          summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "marker_lookup_failed" });
+          summary.failed += 1;
+          continue;
+        }
+        if (alreadyNotified) {
+          summary.results.push({ case_id: caseId, user_id: userId, kind: "skipped", outcome, reason: "already_notified" });
+          summary.skipped += 1;
+          continue;
+        }
+
+        if (!isJusticeIntakePayload(row.intake)) {
+          summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "invalid_intake" });
+          summary.failed += 1;
+          continue;
+        }
+        const intake = row.intake as JusticeIntake;
+        const recipient = resolveConsumerRecipientEmail(intake);
+        if (!recipient) {
+          summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "recipient_unresolved" });
+          summary.failed += 1;
+          continue;
+        }
+
+        const sendResult = await providerResolved.provider.send({
+          from: providerResolved.from,
+          to: recipient,
+          subject: buildConsumerCaseClosedEmailSubject(intake),
+          text: buildConsumerCaseClosedEmailBody(intake, outcome),
+          idempotencyKey: consumerClosedNotificationEmailIdempotencyKey(caseId),
+        });
+
+        if (!sendResult.ok) {
+          summary.results.push({
+            case_id: caseId,
+            user_id: userId,
+            kind: "failed",
+            recipient,
+            reason: sendResult.error,
+          });
+          summary.failed += 1;
+          continue;
+        }
+
+        // Mark notified ONLY after an accepted send. If this write races/fails, the
+        // provider idempotency key still prevents a duplicate email on the next run.
+        const marked = await writeConsumerClosedNotificationMarker(supabase, userId, caseId, {
+          recipient,
+          messageId: sendResult.messageId,
+          outcome,
+        });
+        if (!marked) {
+          summary.results.push({
+            case_id: caseId,
+            user_id: userId,
+            kind: "failed",
+            recipient,
+            reason: "marker_write_failed",
+          });
+          summary.failed += 1;
+          continue;
+        }
+
+        summary.results.push({ case_id: caseId, user_id: userId, kind: "sent", outcome, recipient });
+        summary.sent += 1;
+      } catch (error) {
+        console.warn("consumer closed notification: process case", caseId, error);
+        summary.results.push({ case_id: caseId, user_id: userId, kind: "failed", reason: "exception" });
+        summary.failed += 1;
+      }
+    }
+
+    if (fetchedRows.length < pageSize) break;
+    cursor = nextKeysetCursor(fetchedRows);
   }
 
   return summary;

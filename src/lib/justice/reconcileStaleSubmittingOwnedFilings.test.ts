@@ -29,6 +29,10 @@ import {
   upsertFtcOwnedFilingDeliveryNotes,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import {
+  parseKeysetOrFilter,
+  sortByUpdatedAtThenId,
+} from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
+import {
   OWNED_FILING_STALE_QUEUED_DEFAULT_TIMEOUT_MS,
   OWNED_FILING_STALE_QUEUED_TIMEOUT_ENV,
   OWNED_FILING_STALE_SUBMITTING_DEFAULT_TIMEOUT_MS,
@@ -156,6 +160,8 @@ function makeSupabase(store: Store): SupabaseClient {
             const b: Record<string, unknown> = {};
             let completedNull = false;
             let likePattern = "";
+            let cursor: { updatedAt: string; id: string } | null = null;
+            let limitN: number | null = null;
             b.is = (col: string, val: unknown) => {
               if (col === "completed_at" && val === null) completedNull = true;
               return b;
@@ -164,7 +170,15 @@ function makeSupabase(store: Store): SupabaseClient {
               likePattern = pat;
               return b;
             };
-            b.limit = () => b;
+            b.or = (filter: string) => {
+              cursor = parseKeysetOrFilter(filter);
+              return b;
+            };
+            b.order = () => b;
+            b.limit = (n: number) => {
+              limitN = n;
+              return b;
+            };
             b.then = (resolve: (v: unknown) => unknown) => {
               if (store.tasksError) {
                 return Promise.resolve({ data: null, error: { message: "tasks down" } }).then(
@@ -172,11 +186,16 @@ function makeSupabase(store: Store): SupabaseClient {
                 );
               }
               const marker = likePattern.replace(/%/g, "");
-              const rows = store.tasks.filter(
+              const matched = store.tasks.filter(
                 (t) =>
                   (!completedNull || !t.completed_at?.trim()) &&
-                  (t.notes ?? "").includes(marker)
+                  (t.notes ?? "").includes(marker) &&
+                  (!cursor ||
+                    t.updated_at > cursor.updatedAt ||
+                    (t.updated_at === cursor.updatedAt && t.id > cursor.id))
               );
+              const sorted = sortByUpdatedAtThenId(matched);
+              const rows = limitN == null ? sorted : sorted.slice(0, limitN);
               return Promise.resolve({
                 data: rows.map((r) => ({ ...r })),
                 error: null,
@@ -400,6 +419,57 @@ describe.each<[Kind]>([["bbb"], ["ftc"]])(
       // still submitting so a later run can retry
       expect(cfg.parseRecord(store.tasks[0].notes)?.delivery_state).toBe("submitting");
       expect(cfg.complete).not.toHaveBeenCalled();
+    });
+
+    it("reaches and processes an eligible stale task beyond the first page", async () => {
+      const tasks: TaskRow[] = [
+        ...Array.from({ length: 4 }, (_, i) => ({
+          ...makeTask(kind, `case-page-${i}`, { delivery_state: "filed" }),
+          updated_at: `2026-07-0${i + 1}T12:00:00.000Z`,
+        })),
+        {
+          ...makeTask(kind, "case-page-4", {
+            delivery_state: "submitting",
+            started_at: START_ISO,
+          }),
+          updated_at: "2026-07-05T12:00:00.000Z",
+        },
+      ];
+      // The only stale reclaimable task sorts last (updated_at ASC), so with pageSize 2 it
+      // only surfaces on page 3 — proving the scan doesn't stop after the first capped page.
+      const store: Store = { tasks, filings: [makeConfirmedFiling(kind, "case-page-4")] };
+      const summary = await reconcileStaleSubmittingOwnedFilings(makeSupabase(store), {
+        nowMs: STALE_NOW_MS,
+        timeoutMs: TIMEOUT_MS,
+        limit: 2,
+      });
+      const result = summary.results.find((r) => r.case_id === "case-page-4" && r.kind === kind);
+      expect(result?.outcome).toBe("finalized_filed");
+      expect(summary.scanned).toBe(5);
+    });
+
+    it("deterministically paginates through tasks sharing the same updated_at via id tie-breaker", async () => {
+      const tiedUpdatedAt = "2026-07-17T12:00:00.000Z";
+      const tasks: TaskRow[] = Array.from({ length: 5 }, (_, i) => ({
+        ...makeTask(kind, `case-tie-${i}`, { delivery_state: "filed" }),
+        updated_at: tiedUpdatedAt,
+      }));
+      tasks[2] = {
+        ...makeTask(kind, "case-tie-2", { delivery_state: "submitting", started_at: START_ISO }),
+        updated_at: tiedUpdatedAt,
+      };
+      // The eligible task sits in the middle of the tied group by id, so it's only reachable
+      // if the composite (updated_at, id) cursor correctly advances past ties instead of
+      // re-fetching the same page or looping forever.
+      const store: Store = { tasks, filings: [makeConfirmedFiling(kind, "case-tie-2")] };
+      const summary = await reconcileStaleSubmittingOwnedFilings(makeSupabase(store), {
+        nowMs: STALE_NOW_MS,
+        timeoutMs: TIMEOUT_MS,
+        limit: 2,
+      });
+      const result = summary.results.find((r) => r.case_id === "case-tie-2" && r.kind === kind);
+      expect(result?.outcome).toBe("finalized_filed");
+      expect(summary.scanned).toBe(5);
     });
   }
 );

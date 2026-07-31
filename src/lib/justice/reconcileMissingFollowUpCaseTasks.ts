@@ -5,9 +5,14 @@ import {
   followUpTaskNotesMarker,
   taskNotesMatchFollowUpMarker,
 } from "@/lib/justice/followUpCaseTask";
+import {
+  applyKeysetCursor,
+  nextKeysetCursor,
+  type KeysetCursor,
+} from "@/lib/justice/reconcilerKeysetPagination";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
-const CASE_SELECT = "id, user_id, client_state, archived_at" as const;
+const CASE_SELECT = "id, user_id, client_state, archived_at, updated_at" as const;
 const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
 
@@ -56,6 +61,14 @@ async function caseHasFollowUpTask(
   return taskNotesMatchFollowUpMarker(row.notes, caseId);
 }
 
+type CaseRow = {
+  id: string;
+  user_id: string;
+  client_state: unknown;
+  archived_at: string | null;
+  updated_at: string;
+};
+
 /**
  * Finds non-archived cases with follow_up_needed === true that lack a follow_up:<caseId>
  * task (open or completed) and creates the missing task via idempotent ensureFollowUpCaseTask.
@@ -64,137 +77,131 @@ export async function reconcileMissingFollowUpCaseTasks(
   supabase: SupabaseClient,
   options: { limit?: number } = {}
 ): Promise<ReconcileMissingFollowUpCaseTasksSummary> {
-  const limit = options.limit ?? 100;
+  const pageSize = options.limit ?? 100;
   const results: ReconcileMissingFollowUpCaseResult[] = [];
 
-  const { data: caseRows, error: casesErr } = await supabase
-    .from("justice_cases")
-    .select(CASE_SELECT)
-    .is("archived_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(limit);
-
-  if (casesErr) {
-    console.warn("reconcile follow-up tasks: list cases", casesErr.message);
-    return {
-      scanned: 0,
-      needing_follow_up: 0,
-      created: 0,
-      already_present: 0,
-      failed: 0,
-      skipped: 0,
-      results: [],
-    };
-  }
-
-  const rows = (caseRows ?? []) as Array<{
-    id: string;
-    user_id: string;
-    client_state: unknown;
-    archived_at: string | null;
-  }>;
-
+  let scanned = 0;
   let needingFollowUp = 0;
   let created = 0;
   let alreadyPresent = 0;
   let failed = 0;
   let skipped = 0;
+  let cursor: KeysetCursor = null;
 
-  for (const row of rows) {
-    const caseId = row.id?.trim() ?? "";
-    const userId = row.user_id?.trim() ?? "";
-    if (!caseId || !userId) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "skipped",
-        reason: "invalid",
-      });
-      skipped += 1;
-      continue;
+  for (;;) {
+    const { data: caseRows, error: casesErr } = await applyKeysetCursor(
+      supabase.from("justice_cases").select(CASE_SELECT).is("archived_at", null),
+      cursor
+    ).limit(pageSize);
+
+    if (casesErr) {
+      console.warn("reconcile follow-up tasks: list cases", casesErr.message);
+      break;
     }
 
-    if (row.archived_at?.trim()) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "skipped",
-        reason: "archived",
-      });
-      skipped += 1;
-      continue;
+    const fetchedRows = (caseRows ?? []) as CaseRow[];
+    const rows = fetchedRows;
+    scanned += rows.length;
+
+    for (const row of rows) {
+      const caseId = row.id?.trim() ?? "";
+      const userId = row.user_id?.trim() ?? "";
+      if (!caseId || !userId) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "skipped",
+          reason: "invalid",
+        });
+        skipped += 1;
+        continue;
+      }
+
+      if (row.archived_at?.trim()) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "skipped",
+          reason: "archived",
+        });
+        skipped += 1;
+        continue;
+      }
+
+      if (!caseNeedsFollowUpTask(row.client_state)) {
+        continue;
+      }
+
+      needingFollowUp += 1;
+
+      const hasTask = await caseHasFollowUpTask(supabase, userId, caseId);
+      if (hasTask === null) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "failed",
+          reason: "ensure_failed",
+        });
+        failed += 1;
+        continue;
+      }
+      if (hasTask) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "already_present",
+        });
+        alreadyPresent += 1;
+        continue;
+      }
+
+      const approvedNext = parseApprovedNextActionFromClientState(row.client_state);
+      if (!approvedNext || approvedNext.follow_up_needed !== true) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "skipped",
+          reason: "follow_up_not_needed",
+        });
+        skipped += 1;
+        continue;
+      }
+
+      const ensured = await ensureFollowUpCaseTask(supabase, userId, caseId, approvedNext);
+      if (!ensured.task) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "failed",
+          reason: "ensure_failed",
+        });
+        failed += 1;
+        continue;
+      }
+
+      if (ensured.created) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "created",
+        });
+        created += 1;
+      } else {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: "already_present",
+        });
+        alreadyPresent += 1;
+      }
     }
 
-    if (!caseNeedsFollowUpTask(row.client_state)) {
-      continue;
-    }
-
-    needingFollowUp += 1;
-
-    const hasTask = await caseHasFollowUpTask(supabase, userId, caseId);
-    if (hasTask === null) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "failed",
-        reason: "ensure_failed",
-      });
-      failed += 1;
-      continue;
-    }
-    if (hasTask) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "already_present",
-      });
-      alreadyPresent += 1;
-      continue;
-    }
-
-    const approvedNext = parseApprovedNextActionFromClientState(row.client_state);
-    if (!approvedNext || approvedNext.follow_up_needed !== true) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "skipped",
-        reason: "follow_up_not_needed",
-      });
-      skipped += 1;
-      continue;
-    }
-
-    const ensured = await ensureFollowUpCaseTask(supabase, userId, caseId, approvedNext);
-    if (!ensured.task) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "failed",
-        reason: "ensure_failed",
-      });
-      failed += 1;
-      continue;
-    }
-
-    if (ensured.created) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "created",
-      });
-      created += 1;
-    } else {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: "already_present",
-      });
-      alreadyPresent += 1;
-    }
+    if (fetchedRows.length < pageSize) break;
+    cursor = nextKeysetCursor(fetchedRows);
   }
 
   return {
-    scanned: rows.length,
+    scanned,
     needing_follow_up: needingFollowUp,
     created,
     already_present: alreadyPresent,

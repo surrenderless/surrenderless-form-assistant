@@ -5,6 +5,7 @@ import {
   OPERATOR_RESOLVED_OUTCOME_MARKER,
 } from "@/lib/justice/completeFollowUpResponseReview";
 import type { EmailSendRequest, EmailSendResult } from "@/lib/email/emailProvider";
+import { parseKeysetOrFilter } from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -29,6 +30,7 @@ type CaseRow = {
   intake: unknown;
   client_state: unknown;
   archived_at: string | null;
+  updated_at: string;
 };
 
 type Store = {
@@ -43,12 +45,35 @@ type Store = {
 function makeSupabase(store: Store): SupabaseClient {
   const from = (table: string) => {
     const builder: Record<string, unknown> = {};
-    const state = { table, op: "select", insert: null as Record<string, unknown> | null, filters: {} as Record<string, string>, like: null as string | null };
+    const state = {
+      table,
+      op: "select",
+      insert: null as Record<string, unknown> | null,
+      filters: {} as Record<string, string>,
+      like: null as string | null,
+      cursor: null as { updatedAt: string; id: string } | null,
+    };
 
-    const resolveSelect = () => {
+    const resolveSelect = (opts: { limit?: number } = {}) => {
       if (state.table === "justice_cases") {
         if (store.failCasesList) return { data: null, error: { message: "list down" } };
-        return { data: store.cases, error: null };
+        let rows = [...store.cases];
+        // The composite keyset predicate PostgREST evaluates server-side via `.or()`: only
+        // rows strictly after the cursor's (updated_at, id) are visible on this page.
+        if (state.cursor) {
+          const cursor = state.cursor;
+          rows = rows.filter(
+            (c) =>
+              c.updated_at > cursor.updatedAt ||
+              (c.updated_at === cursor.updatedAt && c.id > cursor.id)
+          );
+        }
+        rows.sort((a, b) => {
+          if (a.updated_at !== b.updated_at) return a.updated_at < b.updated_at ? -1 : 1;
+          return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
+        if (opts.limit != null) rows = rows.slice(0, opts.limit);
+        return { data: rows, error: null };
       }
       if (store.failMarkerSelect) return { data: null, error: { message: "marker select down" } };
       const marker = (state.like ?? "").replace(/%$/, "");
@@ -98,8 +123,12 @@ function makeSupabase(store: Store): SupabaseClient {
         return builder;
       },
       not: () => builder,
+      or: (filter: string) => {
+        state.cursor = parseKeysetOrFilter(filter);
+        return builder;
+      },
       order: () => builder,
-      limit: async () => resolveSelect(),
+      limit: async (n: number) => resolveSelect({ limit: n }),
       single: async () => resolveTerminal(),
       maybeSingle: async () => resolveTerminal(),
     });
@@ -150,6 +179,7 @@ function closedCase(
     intake: intake(intakeOverrides),
     client_state: terminalClientState(marker),
     archived_at: "2026-07-17T15:00:00.000Z",
+    updated_at: "2026-07-17T15:00:00.000Z",
   };
 }
 
@@ -295,6 +325,7 @@ describe("reconcileClosedCaseConsumerNotifications", () => {
             },
           },
           archived_at: "2026-07-17T15:00:00.000Z",
+          updated_at: "2026-07-17T15:00:00.000Z",
         },
         // Terminal outcome but not archived → ignored.
         {
@@ -310,5 +341,77 @@ describe("reconcileClosedCaseConsumerNotifications", () => {
 
     expect(summary).toMatchObject({ attempted: 0, sent: 0, skipped: 0, failed: 0 });
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  function alreadyNotifiedMarkerTask(c: CaseRow): JusticeCaseTaskRow {
+    return {
+      id: `existing-marker-${c.id}`,
+      user_id: c.user_id,
+      case_id: c.id,
+      title: "Consumer closed-case notification sent",
+      due_date: null,
+      notes: `${consumerClosedNotificationTaskNotesMarker(c.id)}\nrecipient: consumer@example.com`,
+      completed_at: "2026-07-17T15:30:00.000Z",
+      created_at: "2026-07-17T15:30:00.000Z",
+      updated_at: "2026-07-17T15:30:00.000Z",
+    };
+  }
+
+  it("reaches and processes an eligible case beyond the first page", async () => {
+    const baseMs = Date.parse("2026-07-01T12:00:00.000Z");
+    const alreadyNotifiedCases: CaseRow[] = Array.from({ length: 4 }, (_, i) => ({
+      ...closedCase(`case-page-${i}`, OPERATOR_RESOLVED_OUTCOME_MARKER),
+      updated_at: new Date(baseMs + i * 1000).toISOString(),
+    }));
+    const target: CaseRow = {
+      ...closedCase("case-page-4", OPERATOR_RESOLVED_OUTCOME_MARKER),
+      updated_at: new Date(baseMs + 4 * 1000).toISOString(),
+    };
+    // The only unnotified case sorts last (updated_at ASC), so with pageSize 2 it only
+    // surfaces on page 3 — proving the scan doesn't stop after the first capped page.
+    const store: Store = {
+      cases: [...alreadyNotifiedCases, target],
+      tasks: alreadyNotifiedCases.map(alreadyNotifiedMarkerTask),
+      insertCount: 0,
+    };
+
+    const summary = await reconcileClosedCaseConsumerNotifications(makeSupabase(store), {
+      limit: 2,
+    });
+
+    expect(summary.attempted).toBe(5);
+    expect(summary.skipped).toBe(4);
+    expect(summary.sent).toBe(1);
+    expect(summary.results.find((r) => r.case_id === "case-page-4")?.kind).toBe("sent");
+  });
+
+  it("deterministically paginates through cases sharing the same updated_at via id tie-breaker", async () => {
+    const tiedUpdatedAt = "2026-07-17T12:00:00.000Z";
+    const alreadyNotifiedCases: CaseRow[] = Array.from({ length: 4 }, (_, i) => ({
+      ...closedCase(`case-tie-${i}`, OPERATOR_RESOLVED_OUTCOME_MARKER),
+      updated_at: tiedUpdatedAt,
+    }));
+    // case ids sort: case-tie-0 < case-tie-1 < case-tie-2 < case-tie-2b < case-tie-3 — the
+    // target sits in the middle of the tied group by id, so it's only reachable if the
+    // composite (updated_at, id) cursor correctly advances past ties instead of re-fetching
+    // the same page or looping forever.
+    const target: CaseRow = {
+      ...closedCase("case-tie-2b", OPERATOR_RESOLVED_OUTCOME_MARKER),
+      updated_at: tiedUpdatedAt,
+    };
+    const store: Store = {
+      cases: [...alreadyNotifiedCases, target],
+      tasks: alreadyNotifiedCases.map(alreadyNotifiedMarkerTask),
+      insertCount: 0,
+    };
+
+    const summary = await reconcileClosedCaseConsumerNotifications(makeSupabase(store), {
+      limit: 2,
+    });
+
+    expect(summary.attempted).toBe(5);
+    expect(summary.skipped).toBe(4);
+    expect(summary.sent).toBe(1);
+    expect(summary.results.find((r) => r.case_id === "case-tie-2b")?.kind).toBe("sent");
   });
 });

@@ -10,6 +10,7 @@ import {
   caseNeedsFollowUpResponseReviewTask,
   reconcileMissingFollowUpResponseReviewTasks,
 } from "@/lib/justice/reconcileMissingFollowUpResponseReviewTasks";
+import { keysetPaginatedTerminal } from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
@@ -99,14 +100,10 @@ function createReconcileSupabase(state: MockState): SupabaseClient {
       if (table === "justice_cases") {
         return {
           select: () => ({
-            is: () => ({
-              order: () => ({
-                limit: async () => ({
-                  data: state.cases.filter((c) => !c.archived_at?.trim()),
-                  error: null,
-                }),
-              }),
-            }),
+            is: () =>
+              keysetPaginatedTerminal(() =>
+                state.cases.filter((c) => !c.archived_at?.trim())
+              ),
           }),
         };
       }
@@ -344,5 +341,71 @@ describe("reconcileMissingFollowUpResponseReviewTasks", () => {
       kind: "failed",
       reason: "ensure_failed",
     });
+  });
+
+  it("reaches and processes an eligible case beyond the first page", async () => {
+    const cases: CaseRow[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `case-page-${i}`,
+      user_id: USER_ID,
+      intake: retailIntake(),
+      client_state: { approved_next_action: { status: "approved", href: "/justice/merchant" } },
+      archived_at: null,
+      updated_at: `2026-07-0${i + 1}T12:00:00.000Z`,
+    }));
+    // The only eligible case sorts last (updated_at ASC), so with pageSize 2 it only
+    // surfaces on page 3 — proving the scan doesn't stop after the first capped page.
+    cases[4].client_state = terminalNoResponseClientState();
+    const state: MockState = {
+      cases,
+      tasks: [],
+      insertCount: 0,
+      insertFailCaseIds: new Set(),
+    };
+
+    const summary = await reconcileMissingFollowUpResponseReviewTasks(
+      createReconcileSupabase(state),
+      { limit: 2 }
+    );
+
+    expect(summary.scanned).toBe(5);
+    expect(summary.needing_response_review).toBe(1);
+    expect(summary.created).toBe(1);
+    expect(
+      summary.results.some((r) => r.case_id === "case-page-4" && r.kind === "created")
+    ).toBe(true);
+  });
+
+  it("deterministically paginates through cases sharing the same updated_at via id tie-breaker", async () => {
+    const tiedUpdatedAt = "2026-07-17T12:00:00.000Z";
+    const cases: CaseRow[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `case-tie-${i}`,
+      user_id: USER_ID,
+      intake: retailIntake(),
+      client_state: { approved_next_action: { status: "approved", href: "/justice/merchant" } },
+      archived_at: null,
+      updated_at: tiedUpdatedAt,
+    }));
+    // The eligible case sits in the middle of the tied group by id, so it's only reachable
+    // if the composite (updated_at, id) cursor correctly advances past ties instead of
+    // re-fetching the same page or looping forever.
+    cases[2].client_state = terminalNoResponseClientState();
+    const state: MockState = {
+      cases,
+      tasks: [],
+      insertCount: 0,
+      insertFailCaseIds: new Set(),
+    };
+
+    const summary = await reconcileMissingFollowUpResponseReviewTasks(
+      createReconcileSupabase(state),
+      { limit: 2 }
+    );
+
+    expect(summary.scanned).toBe(5);
+    expect(summary.needing_response_review).toBe(1);
+    expect(summary.created).toBe(1);
+    expect(
+      summary.results.some((r) => r.case_id === "case-tie-2" && r.kind === "created")
+    ).toBe(true);
   });
 });

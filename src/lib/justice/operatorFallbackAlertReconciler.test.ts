@@ -11,6 +11,7 @@ import { ftcOwnedFilingIdempotencyKey } from "@/lib/justice/ftcOwnedFilingDelive
 import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
+import { parseKeysetOrFilter } from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
 
 const timelineAppend = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("@/server/justiceTimelineAppend", () => ({
@@ -41,6 +42,7 @@ type Task = {
   notes: string | null;
   completed_at: string | null;
   created_at: string | null;
+  updated_at: string;
 };
 
 type Store = { tasks: Task[]; failSelect?: boolean; failUpdate?: boolean };
@@ -54,9 +56,45 @@ function makeSupabase(store: Store): SupabaseClient {
       like: string | null;
       update: Record<string, unknown> | null;
       orderBy: { col: string; ascending: boolean }[];
-    } = { table, op: "select", filters: {}, like: null, update: null, orderBy: [] };
+      cursor: { updatedAt: string; id: string } | null;
+    } = { table, op: "select", filters: {}, like: null, update: null, orderBy: [], cursor: null };
 
-    const resolve = (range?: [number, number]) => {
+    const resolveSelect = (opts: { range?: [number, number]; limit?: number }) => {
+      if (store.failSelect) return { data: null, error: { message: "select down" } };
+      const needle = state.like ? state.like.replace(/%/g, "") : "";
+      let rows = store.tasks.filter(
+        (t) => !t.completed_at && (!needle || (t.notes ?? "").includes(needle))
+      );
+      // The composite keyset predicate PostgREST evaluates server-side via `.or()`: only rows
+      // strictly after the cursor's (updated_at, id) are visible on this page.
+      if (state.cursor) {
+        const cursor = state.cursor;
+        rows = rows.filter(
+          (t) =>
+            t.updated_at > cursor.updatedAt ||
+            (t.updated_at === cursor.updatedAt && t.id > cursor.id)
+        );
+      }
+      // Stable multi-key sort: apply keys in reverse priority order (each Array#sort is
+      // stable), mirroring Postgres ORDER BY col1, col2 semantics.
+      for (const { col, ascending } of [...state.orderBy].reverse()) {
+        rows = [...rows].sort((a, b) => {
+          const av = String((a as unknown as Record<string, unknown>)[col] ?? "");
+          const bv = String((b as unknown as Record<string, unknown>)[col] ?? "");
+          const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+          return ascending ? cmp : -cmp;
+        });
+      }
+      if (opts.range) {
+        const [start, end] = opts.range;
+        rows = rows.slice(start, end + 1);
+      } else if (opts.limit != null) {
+        rows = rows.slice(0, opts.limit);
+      }
+      return { data: rows, error: null };
+    };
+
+    const resolve = (range?: [number, number], limit?: number) => {
       if (state.op === "update" && state.table === "justice_case_tasks") {
         if (store.failUpdate) return { data: null, error: { message: "update down" } };
         const task = store.tasks.find(
@@ -66,26 +104,7 @@ function makeSupabase(store: Store): SupabaseClient {
         return { data: null, error: null };
       }
       if (state.op === "select" && state.table === "justice_case_tasks") {
-        if (store.failSelect) return { data: null, error: { message: "select down" } };
-        const needle = state.like ? state.like.replace(/%/g, "") : "";
-        let rows = store.tasks.filter(
-          (t) => !t.completed_at && (!needle || (t.notes ?? "").includes(needle))
-        );
-        // Stable multi-key sort: apply keys in reverse priority order (each Array#sort is
-        // stable), mirroring Postgres ORDER BY col1, col2 semantics.
-        for (const { col, ascending } of [...state.orderBy].reverse()) {
-          rows = [...rows].sort((a, b) => {
-            const av = String((a as unknown as Record<string, unknown>)[col] ?? "");
-            const bv = String((b as unknown as Record<string, unknown>)[col] ?? "");
-            const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-            return ascending ? cmp : -cmp;
-          });
-        }
-        if (range) {
-          const [start, end] = range;
-          rows = rows.slice(start, end + 1);
-        }
-        return { data: rows, error: null };
+        return resolveSelect({ range, limit });
       }
       return { data: [], error: null };
     };
@@ -101,6 +120,10 @@ function makeSupabase(store: Store): SupabaseClient {
         state.like = pattern;
         return api;
       },
+      or: (filter: string) => {
+        state.cursor = parseKeysetOrFilter(filter);
+        return api;
+      },
       order: (col: string, opts?: { ascending?: boolean }) => {
         state.orderBy.push({ col, ascending: opts?.ascending !== false });
         return api;
@@ -110,7 +133,7 @@ function makeSupabase(store: Store): SupabaseClient {
         state.update = payload;
         return api;
       },
-      limit: () => Promise.resolve(resolve()),
+      limit: (n: number) => Promise.resolve(resolve(undefined, n)),
       range: (start: number, end: number) => Promise.resolve(resolve([start, end])),
       then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
         Promise.resolve(resolve()).then(onF, onR),
@@ -139,6 +162,7 @@ function bbbFailedTask(
     notes: overrides.notes ?? notes,
     completed_at: overrides.completed_at ?? null,
     created_at: overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
+    updated_at: overrides.updated_at ?? overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
   };
 }
 
@@ -161,6 +185,7 @@ function ftcFailedTask(
     notes: overrides.notes ?? notes,
     completed_at: overrides.completed_at ?? null,
     created_at: overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
+    updated_at: overrides.updated_at ?? overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
   };
 }
 
@@ -174,6 +199,7 @@ function openTask(overrides: Partial<Task> & { caseId: string; marker: string })
     notes: overrides.notes ?? `${overrides.marker}\ndraft text`,
     completed_at: overrides.completed_at ?? null,
     created_at: overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
+    updated_at: overrides.updated_at ?? overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
   };
 }
 
@@ -303,6 +329,7 @@ describe("reconcileOperatorFallbackAlerts", () => {
           notes: filedNotes,
           completed_at: null,
           created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         },
         // failed but already completed task — excluded by the open-task filter.
         bbbFailedTask({ caseId: "c-done", stopReason: "invalid_decision", completed_at: new Date().toISOString() }),
@@ -352,6 +379,78 @@ describe("reconcileOperatorFallbackAlerts", () => {
     expect(summary.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
     expect(store.tasks[0].notes).not.toContain("operator_alert_sent:");
+  });
+
+  it("reaches and processes an eligible task beyond the first page (phase 1 keyset pagination)", async () => {
+    const baseMs = Date.parse("2026-07-01T12:00:00.000Z");
+    // Already-filed tasks still carry the BBB delivery-block marker (so they match the query's
+    // .like() filter and are scanned), but delivery_state !== "failed" so they're skipped.
+    const staleTasks: Task[] = Array.from({ length: 4 }, (_, i) => {
+      const t = bbbFailedTask({ caseId: `case-page-${i}`, stopReason: "invalid_decision" });
+      return {
+        ...t,
+        notes: upsertBbbOwnedFilingDeliveryNotes(t.notes ?? "", {
+          delivery_state: "filed",
+          provider: "bbb",
+          confirmation: "BBB-DONE",
+        }),
+        updated_at: new Date(baseMs + i * 1000).toISOString(),
+      };
+    });
+    const target: Task = {
+      ...bbbFailedTask({ caseId: "case-page-4", stopReason: "invalid_decision", id: "target-task" }),
+      updated_at: new Date(baseMs + 4 * 1000).toISOString(),
+    };
+    // The only eligible task sorts last (updated_at ASC), so with pageSize 2 it only surfaces
+    // on page 3 — proving the scan doesn't stop after the first capped page.
+    const store: Store = { tasks: [...staleTasks, target] };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { limit: 2 });
+
+    expect(summary.scanned).toBe(5);
+    expect(summary.attempted).toBe(1);
+    expect(summary.sent).toBe(1);
+    expect(
+      summary.results.some((r) => r.task_id === "target-task" && r.result === "sent")
+    ).toBe(true);
+  });
+
+  it("deterministically paginates through tasks sharing the same updated_at via id tie-breaker", async () => {
+    const tiedUpdatedAt = "2026-07-17T12:00:00.000Z";
+    const staleTasks: Task[] = Array.from({ length: 4 }, (_, i) => {
+      const t = bbbFailedTask({ caseId: `case-tie-${i}`, stopReason: "invalid_decision" });
+      return {
+        ...t,
+        notes: upsertBbbOwnedFilingDeliveryNotes(t.notes ?? "", {
+          delivery_state: "filed",
+          provider: "bbb",
+          confirmation: "BBB-DONE",
+        }),
+        updated_at: tiedUpdatedAt,
+      };
+    });
+    // task ids sort: task_case-tie-0 < task_case-tie-1 < task_case-tie-2 < task_case-tie-2b <
+    // task_case-tie-3 — the target sits in the middle of the tied group by id, so it's only
+    // reachable if the composite (updated_at, id) cursor correctly advances past ties instead
+    // of re-fetching the same page or looping forever.
+    const target: Task = {
+      ...bbbFailedTask({
+        caseId: "case-tie-mid",
+        stopReason: "invalid_decision",
+        id: "task_case-tie-2b",
+      }),
+      updated_at: tiedUpdatedAt,
+    };
+    const store: Store = { tasks: [...staleTasks, target] };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { limit: 2 });
+
+    expect(summary.scanned).toBe(5);
+    expect(summary.attempted).toBe(1);
+    expect(summary.sent).toBe(1);
+    expect(
+      summary.results.some((r) => r.task_id === "task_case-tie-2b" && r.result === "sent")
+    ).toBe(true);
   });
 });
 
@@ -434,11 +533,12 @@ describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts
       `${bbbFilingTaskNotesMarker("c-filed")}\ndraft`,
       { delivery_state: "filed", provider: "bbb", confirmation: "BBB-1" }
     );
+    const now = new Date().toISOString();
     const store: Store = {
       tasks: [
-        { id: "t-queued", user_id: "u", case_id: "c-queued", title: "BBB", notes: queuedNotes, completed_at: null, created_at: new Date().toISOString() },
-        { id: "t-submitting", user_id: "u", case_id: "c-submitting", title: "FTC", notes: submittingNotes, completed_at: null, created_at: new Date().toISOString() },
-        { id: "t-filed", user_id: "u", case_id: "c-filed", title: "BBB", notes: filedNotes, completed_at: null, created_at: new Date().toISOString() },
+        { id: "t-queued", user_id: "u", case_id: "c-queued", title: "BBB", notes: queuedNotes, completed_at: null, created_at: now, updated_at: now },
+        { id: "t-submitting", user_id: "u", case_id: "c-submitting", title: "FTC", notes: submittingNotes, completed_at: null, created_at: now, updated_at: now },
+        { id: "t-filed", user_id: "u", case_id: "c-filed", title: "BBB", notes: filedNotes, completed_at: null, created_at: now, updated_at: now },
       ],
     };
 
@@ -531,6 +631,7 @@ describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts
       notes: "Call back merchant next week",
       completed_at: null,
       created_at: new Date(baseMs + i * 1000).toISOString(),
+      updated_at: new Date(baseMs + i * 1000).toISOString(),
     }));
     const targetCaseId = "case-target";
     const targetTask: Task = openTask({
@@ -564,6 +665,7 @@ describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts
       notes: "Follow up personally",
       completed_at: null,
       created_at: new Date(baseMs + i * 1000).toISOString(),
+      updated_at: new Date(baseMs + i * 1000).toISOString(),
     }));
     const store: Store = {
       tasks: [

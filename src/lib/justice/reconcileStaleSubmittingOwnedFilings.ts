@@ -27,6 +27,11 @@ import {
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  applyKeysetCursor,
+  nextKeysetCursor,
+  type KeysetCursor,
+} from "@/lib/justice/reconcilerKeysetPagination";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -246,204 +251,213 @@ async function processDestination(
   nowMs: number,
   timeoutMs: number,
   queuedTimeoutMs: number,
-  limit: number,
+  pageSize: number,
   results: StaleSubmittingReconcileResult[],
   counters: Counters
 ): Promise<void> {
-  const { data: taskRows, error } = await supabase
-    .from("justice_case_tasks")
-    .select(TASK_SELECT)
-    .is("completed_at", null)
-    .like("notes", `%${cfg.deliveryMarker}%`)
-    .limit(limit);
+  let cursor: KeysetCursor = null;
 
-  if (error) {
-    console.warn(`reconcile stale submitting (${cfg.kind}): list tasks`, error.message);
-    return;
-  }
+  for (;;) {
+    const { data: taskRows, error } = await applyKeysetCursor(
+      supabase
+        .from("justice_case_tasks")
+        .select(TASK_SELECT)
+        .is("completed_at", null)
+        .like("notes", `%${cfg.deliveryMarker}%`),
+      cursor
+    ).limit(pageSize);
 
-  const tasks = (taskRows ?? []) as JusticeCaseTaskRow[];
-
-  for (const task of tasks) {
-    counters.scanned += 1;
-    const caseId = task.case_id?.trim() ?? "";
-    const userId = task.user_id?.trim() ?? "";
-    const record = cfg.parseRecord(task.notes);
-
-    if (!caseId || !userId || !record || !cfg.taskMarkerMatches(task.notes, caseId)) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        outcome: "skipped",
-        detail: "invalid task or delivery record",
-      });
-      counters.skipped += 1;
-      continue;
+    if (error) {
+      console.warn(`reconcile stale submitting (${cfg.kind}): list tasks`, error.message);
+      return;
     }
 
-    if (!isReclaimableState(record.delivery_state)) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        outcome: "skipped",
-        detail: `delivery_state ${record.delivery_state}`,
-      });
-      counters.skipped += 1;
-      continue;
-    }
+    const tasks = (taskRows ?? []) as JusticeCaseTaskRow[];
 
-    if (!isStaleReclaimable(record, nowMs, timeoutMs, queuedTimeoutMs)) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        outcome: "ignored_not_stale",
-      });
-      counters.ignored += 1;
-      continue;
-    }
+    for (const task of tasks) {
+      counters.scanned += 1;
+      const caseId = task.case_id?.trim() ?? "";
+      const userId = task.user_id?.trim() ?? "";
+      const record = cfg.parseRecord(task.notes);
 
-    counters.stale += 1;
+      if (!caseId || !userId || !record || !cfg.taskMarkerMatches(task.notes, caseId)) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          outcome: "skipped",
+          detail: "invalid task or delivery record",
+        });
+        counters.skipped += 1;
+        continue;
+      }
 
-    const { data: filingRows, error: filingsErr } = await supabase
-      .from("justice_case_filings")
-      .select(FILING_SELECT)
-      .eq("case_id", caseId)
-      .eq("user_id", userId);
+      if (!isReclaimableState(record.delivery_state)) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          outcome: "skipped",
+          detail: `delivery_state ${record.delivery_state}`,
+        });
+        counters.skipped += 1;
+        continue;
+      }
 
-    if (filingsErr) {
-      // Cannot determine whether the submission actually landed — leave it submitting for a later run.
-      console.warn(
-        `reconcile stale submitting (${cfg.kind}): list filings`,
-        filingsErr.message
-      );
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        outcome: "error",
-        detail: "could not list filings",
-      });
-      counters.errors += 1;
-      continue;
-    }
+      if (!isStaleReclaimable(record, nowMs, timeoutMs, queuedTimeoutMs)) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          outcome: "ignored_not_stale",
+        });
+        counters.ignored += 1;
+        continue;
+      }
 
-    const filings = (filingRows ?? []) as JusticeCaseFilingRow[];
-    const confirmed = cfg.findFilingWithConfirmation(filings);
+      counters.stale += 1;
 
-    if (confirmed) {
-      const confirmationNumber = confirmed.confirmation_number?.trim() || "";
-      const destination =
-        canonicalFilingDestinationForApprovedActionHref(cfg.approvedActionHref) ??
-        confirmed.destination?.trim() ??
-        cfg.destinationFallback;
-      const filedAt =
-        confirmed.filed_at?.trim() || new Date(nowMs).toISOString().slice(0, 10);
+      const { data: filingRows, error: filingsErr } = await supabase
+        .from("justice_case_filings")
+        .select(FILING_SELECT)
+        .eq("case_id", caseId)
+        .eq("user_id", userId);
 
-      const complete = await cfg.completeOperatorFiling(supabase, userId, {
-        caseId,
-        taskId: task.id,
-        destination,
-        filedAt,
-        confirmationNumber,
-        notes: [
-          `provider: ${record.provider}`,
-          "delivery_state: filed",
-          `confirmation: ${confirmationNumber}`,
-          "reclaimed_by: stale_submitting_reconciler",
-          `completed_at: ${new Date(nowMs).toISOString()}`,
-        ].join("\n"),
-      });
-
-      if (!complete.ok) {
-        // Leave submitting so a later run can retry rather than lose the confirmed filing.
+      if (filingsErr) {
+        // Cannot determine whether the submission actually landed — leave it submitting for a later run.
+        console.warn(
+          `reconcile stale submitting (${cfg.kind}): list filings`,
+          filingsErr.message
+        );
         results.push({
           case_id: caseId,
           user_id: userId,
           kind: cfg.kind,
           outcome: "error",
-          detail: complete.error,
+          detail: "could not list filings",
         });
         counters.errors += 1;
         continue;
       }
 
-      const filedRecord: OwnedDeliveryRecord = {
-        delivery_state: "filed",
+      const filings = (filingRows ?? []) as JusticeCaseFilingRow[];
+      const confirmed = cfg.findFilingWithConfirmation(filings);
+
+      if (confirmed) {
+        const confirmationNumber = confirmed.confirmation_number?.trim() || "";
+        const destination =
+          canonicalFilingDestinationForApprovedActionHref(cfg.approvedActionHref) ??
+          confirmed.destination?.trim() ??
+          cfg.destinationFallback;
+        const filedAt =
+          confirmed.filed_at?.trim() || new Date(nowMs).toISOString().slice(0, 10);
+
+        const complete = await cfg.completeOperatorFiling(supabase, userId, {
+          caseId,
+          taskId: task.id,
+          destination,
+          filedAt,
+          confirmationNumber,
+          notes: [
+            `provider: ${record.provider}`,
+            "delivery_state: filed",
+            `confirmation: ${confirmationNumber}`,
+            "reclaimed_by: stale_submitting_reconciler",
+            `completed_at: ${new Date(nowMs).toISOString()}`,
+          ].join("\n"),
+        });
+
+        if (!complete.ok) {
+          // Leave submitting so a later run can retry rather than lose the confirmed filing.
+          results.push({
+            case_id: caseId,
+            user_id: userId,
+            kind: cfg.kind,
+            outcome: "error",
+            detail: complete.error,
+          });
+          counters.errors += 1;
+          continue;
+        }
+
+        const filedRecord: OwnedDeliveryRecord = {
+          delivery_state: "filed",
+          provider: record.provider,
+          confirmation: confirmationNumber || record.confirmation,
+          ...(record.started_at ? { started_at: record.started_at } : {}),
+          completed_at: new Date(nowMs).toISOString(),
+        };
+        await patchTaskNotes(supabase, userId, task.id, cfg.upsertNotes(task.notes, filedRecord));
+        await appendCaseTimelineEntry(supabase, userId, caseId, {
+          id: cfg.timelineId(caseId, "filed"),
+          type: "filing_recorded",
+          label: cfg.filedLabel,
+          detail: `reclaimed stale submitting → filed\nconfirmation: ${confirmationNumber}`,
+          ts: new Date(nowMs).toISOString(),
+        });
+
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          outcome: "finalized_filed",
+          detail: confirmationNumber || undefined,
+        });
+        counters.finalized_filed += 1;
+        continue;
+      }
+
+      const wasQueued = record.delivery_state === "queued";
+      const failedAt = new Date(nowMs).toISOString();
+      const failedRecord: OwnedDeliveryRecord = {
+        delivery_state: "failed",
         provider: record.provider,
-        confirmation: confirmationNumber || record.confirmation,
         ...(record.started_at ? { started_at: record.started_at } : {}),
-        completed_at: new Date(nowMs).toISOString(),
+        completed_at: failedAt,
+        failure_detail: (wasQueued
+          ? "Queued automated filing was never claimed by the worker within the stale-queued window; reclaimed by reconciler — operator/manual fallback"
+          : "Automated submission did not confirm within the stale-submitting window; reclaimed by reconciler — operator/manual fallback"
+        ).slice(0, 500),
+        stop_reason: wasQueued ? "stale_queued_reclaimed" : "stale_submitting_reclaimed",
       };
-      await patchTaskNotes(supabase, userId, task.id, cfg.upsertNotes(task.notes, filedRecord));
+
+      const patched = await patchTaskNotes(
+        supabase,
+        userId,
+        task.id,
+        cfg.upsertNotes(task.notes, failedRecord)
+      );
+      if (!patched) {
+        results.push({
+          case_id: caseId,
+          user_id: userId,
+          kind: cfg.kind,
+          outcome: "error",
+          detail: "could not patch task notes",
+        });
+        counters.errors += 1;
+        continue;
+      }
+
       await appendCaseTimelineEntry(supabase, userId, caseId, {
-        id: cfg.timelineId(caseId, "filed"),
+        id: cfg.timelineId(caseId, "failed"),
         type: "filing_recorded",
-        label: cfg.filedLabel,
-        detail: `reclaimed stale submitting → filed\nconfirmation: ${confirmationNumber}`,
-        ts: new Date(nowMs).toISOString(),
+        label: cfg.failedLabel,
+        detail: failedRecord.failure_detail,
+        ts: failedAt,
       });
 
       results.push({
         case_id: caseId,
         user_id: userId,
         kind: cfg.kind,
-        outcome: "finalized_filed",
-        detail: confirmationNumber || undefined,
+        outcome: "sent_to_operator",
       });
-      counters.finalized_filed += 1;
-      continue;
+      counters.sent_to_operator += 1;
     }
 
-    const wasQueued = record.delivery_state === "queued";
-    const failedAt = new Date(nowMs).toISOString();
-    const failedRecord: OwnedDeliveryRecord = {
-      delivery_state: "failed",
-      provider: record.provider,
-      ...(record.started_at ? { started_at: record.started_at } : {}),
-      completed_at: failedAt,
-      failure_detail: (wasQueued
-        ? "Queued automated filing was never claimed by the worker within the stale-queued window; reclaimed by reconciler — operator/manual fallback"
-        : "Automated submission did not confirm within the stale-submitting window; reclaimed by reconciler — operator/manual fallback"
-      ).slice(0, 500),
-      stop_reason: wasQueued ? "stale_queued_reclaimed" : "stale_submitting_reclaimed",
-    };
-
-    const patched = await patchTaskNotes(
-      supabase,
-      userId,
-      task.id,
-      cfg.upsertNotes(task.notes, failedRecord)
-    );
-    if (!patched) {
-      results.push({
-        case_id: caseId,
-        user_id: userId,
-        kind: cfg.kind,
-        outcome: "error",
-        detail: "could not patch task notes",
-      });
-      counters.errors += 1;
-      continue;
-    }
-
-    await appendCaseTimelineEntry(supabase, userId, caseId, {
-      id: cfg.timelineId(caseId, "failed"),
-      type: "filing_recorded",
-      label: cfg.failedLabel,
-      detail: failedRecord.failure_detail,
-      ts: failedAt,
-    });
-
-    results.push({
-      case_id: caseId,
-      user_id: userId,
-      kind: cfg.kind,
-      outcome: "sent_to_operator",
-    });
-    counters.sent_to_operator += 1;
+    if (tasks.length < pageSize) break;
+    cursor = nextKeysetCursor(tasks);
   }
 }
 

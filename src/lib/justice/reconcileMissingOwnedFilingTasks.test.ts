@@ -7,6 +7,7 @@ import {
 } from "@/lib/justice/demandLetterFilingTask";
 import { MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import { reconcileMissingOwnedFilingTasks } from "@/lib/justice/reconcileMissingOwnedFilingTasks";
+import { keysetPaginatedTerminal } from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 
@@ -93,14 +94,10 @@ function createReconcileSupabase(state: MockState): SupabaseClient {
       if (table === "justice_cases") {
         return {
           select: () => ({
-            is: () => ({
-              order: () => ({
-                limit: async () => ({
-                  data: state.cases.filter((c) => !c.archived_at?.trim()),
-                  error: null,
-                }),
-              }),
-            }),
+            is: () =>
+              keysetPaginatedTerminal(() =>
+                state.cases.filter((c) => !c.archived_at?.trim())
+              ),
           }),
         };
       }
@@ -296,5 +293,87 @@ describe("reconcileMissingOwnedFilingTasks", () => {
     expect(second.created).toBe(0);
     expect(second.already_present).toBe(1);
     expect(state.insertCount).toBe(1);
+  });
+
+  it("reaches and processes an eligible case beyond the first page", async () => {
+    const ineligible = { approved_next_action: { status: "completed" } };
+    const eligible = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+        status: "approved",
+      },
+    };
+    const cases: CaseRow[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `case-page-${i}`,
+      user_id: USER_ID,
+      intake: retailIntake(),
+      client_state: ineligible,
+      archived_at: null,
+      updated_at: `2026-07-0${i + 1}T12:00:00.000Z`,
+    }));
+    // The only eligible case sorts last (updated_at ASC), so with pageSize 2 it only
+    // surfaces on page 3 — proving the scan doesn't stop after the first capped page.
+    cases[4].client_state = eligible;
+    const state: MockState = {
+      cases,
+      tasks: [],
+      insertCount: 0,
+      insertFailCaseIds: new Set(),
+    };
+
+    const summary = await reconcileMissingOwnedFilingTasks(createReconcileSupabase(state), {
+      limit: 2,
+    });
+
+    expect(summary.scanned).toBe(5);
+    expect(summary.needing_owned_filing).toBe(1);
+    expect(summary.created).toBe(1);
+    expect(state.insertCount).toBe(1);
+    expect(taskNotesMatchDemandLetterFilingMarker(state.tasks[0].notes, "case-page-4")).toBe(
+      true
+    );
+  });
+
+  it("deterministically paginates through cases sharing the same updated_at via id tie-breaker", async () => {
+    const ineligible = { approved_next_action: { status: "completed" } };
+    const eligible = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+        status: "approved",
+      },
+    };
+    const tiedUpdatedAt = "2026-07-17T12:00:00.000Z";
+    const cases: CaseRow[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `case-tie-${i}`,
+      user_id: USER_ID,
+      intake: retailIntake(),
+      client_state: ineligible,
+      archived_at: null,
+      updated_at: tiedUpdatedAt,
+    }));
+    // The eligible case sits in the middle of the tied group by id, so it's only reachable
+    // if the composite (updated_at, id) cursor correctly advances past ties instead of
+    // re-fetching the same page or looping forever.
+    cases[2].client_state = eligible;
+    const state: MockState = {
+      cases,
+      tasks: [],
+      insertCount: 0,
+      insertFailCaseIds: new Set(),
+    };
+
+    const summary = await reconcileMissingOwnedFilingTasks(createReconcileSupabase(state), {
+      limit: 2,
+    });
+
+    expect(summary.scanned).toBe(5);
+    expect(summary.needing_owned_filing).toBe(1);
+    expect(summary.created).toBe(1);
+    expect(state.insertCount).toBe(1);
+    expect(taskNotesMatchDemandLetterFilingMarker(state.tasks[0].notes, "case-tie-2")).toBe(
+      true
+    );
   });
 });
