@@ -242,6 +242,7 @@ import {
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
+import { taskNotesMatchFollowUpResponseReviewMarker } from "@/lib/justice/followUpResponseReviewTask";
 import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
@@ -1945,6 +1946,62 @@ function ChatHandlingPersistedStatusReadOnly({
   );
 }
 
+/**
+ * The only chat-reachable way for a consumer to report that a follow-up destination actually
+ * responded/resolved their issue — otherwise every due follow-up is unconditionally recorded as
+ * "no response" by the cron reconciler and the case keeps escalating regardless of the truth.
+ * Shown whenever the case has an open follow-up-response-review task (created once a follow-up
+ * comes due with no operator-recorded outcome yet).
+ */
+function ChatFollowUpResponseReviewPrompt({
+  caseId,
+  tasks,
+  saving,
+  error,
+  onOutcome,
+}: {
+  caseId: string;
+  tasks: JusticeCaseTaskRow[];
+  saving: boolean;
+  error: string | null;
+  onOutcome: (taskId: string, outcome: "resolved" | "no_resolution") => void;
+}) {
+  if (!caseId) return null;
+  const reviewTask = tasks.find(
+    (t) => !t.completed_at?.trim() && taskNotesMatchFollowUpResponseReviewMarker(t.notes, caseId)
+  );
+  if (!reviewTask) return null;
+
+  return (
+    <div className="mt-2 space-y-1.5 rounded-md border border-amber-400/40 bg-amber-50/60 px-2 py-1.5 dark:border-amber-600/40 dark:bg-amber-950/30">
+      <p className="text-[11px] font-medium text-amber-950 dark:text-amber-100">
+        Was your issue resolved?
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onOutcome(reviewTask.id, "resolved")}
+          className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-700 dark:bg-neutral-900 dark:text-emerald-200 dark:hover:bg-emerald-950"
+        >
+          {saving ? "Saving…" : "Yes, resolved"}
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onOutcome(reviewTask.id, "no_resolution")}
+          className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          {saving ? "Saving…" : "No, still unresolved"}
+        </button>
+      </div>
+      {error ? (
+        <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ChatHandlingTrackingStatusReadOnly({
   readinessLoading,
   approvedNextAction,
@@ -1965,6 +2022,9 @@ function ChatHandlingTrackingStatusReadOnly({
   onArchiveCase,
   archiving = false,
   archiveError = null,
+  savingFollowUpResponseReviewOutcome = false,
+  followUpResponseReviewError = null,
+  onFollowUpResponseReviewOutcome,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -1985,6 +2045,12 @@ function ChatHandlingTrackingStatusReadOnly({
   onArchiveCase?: (caseId: string) => void;
   archiving?: boolean;
   archiveError?: string | null;
+  savingFollowUpResponseReviewOutcome?: boolean;
+  followUpResponseReviewError?: string | null;
+  onFollowUpResponseReviewOutcome?: (
+    taskId: string,
+    outcome: "resolved" | "no_resolution"
+  ) => void;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
   const showApprovedPacketActionPath = preparedPacketApproved && !handlingRequested;
@@ -2049,6 +2115,15 @@ function ChatHandlingTrackingStatusReadOnly({
           tasks={tasks}
           approvedNextAction={approvedNextAction}
           refreshing={readinessLoading}
+        />
+      ) : null}
+      {caseId && onFollowUpResponseReviewOutcome ? (
+        <ChatFollowUpResponseReviewPrompt
+          caseId={caseId}
+          tasks={tasks}
+          saving={savingFollowUpResponseReviewOutcome}
+          error={followUpResponseReviewError}
+          onOutcome={onFollowUpResponseReviewOutcome}
         />
       ) : null}
       {showArchiveWhenComplete ? (
@@ -2272,6 +2347,11 @@ export default function JusticeChatAiPage() {
   const [requestingHandling, setRequestingHandling] = useState(false);
   const [updatingHandlingNote, setUpdatingHandlingNote] = useState(false);
   const [acknowledgingHandling, setAcknowledgingHandling] = useState(false);
+  const [savingFollowUpResponseReviewOutcome, setSavingFollowUpResponseReviewOutcome] =
+    useState(false);
+  const [followUpResponseReviewError, setFollowUpResponseReviewError] = useState<string | null>(
+    null
+  );
   const [markingActionHandled, setMarkingActionHandled] = useState(false);
   const [markingActionStarted, setMarkingActionStarted] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
@@ -3774,6 +3854,37 @@ export default function JusticeChatAiPage() {
     },
     [refreshChatCaseFromServer, loadSavedEvidencePreview, appendChatCaseProgressNarration]
   );
+
+  async function handleFollowUpResponseReviewOutcome(
+    taskId: string,
+    outcome: "resolved" | "no_resolution"
+  ) {
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId) || !taskId) return;
+
+    setSavingFollowUpResponseReviewOutcome(true);
+    setFollowUpResponseReviewError(null);
+    try {
+      const res = await fetch("/api/justice/follow-up-response-review/consumer-complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: caseId, task_id: taskId, outcome }),
+      });
+      if (!res.ok) {
+        console.warn("justice chat-ai: follow-up response review outcome failed", res.status);
+        setFollowUpResponseReviewError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
+      }
+      await refreshFullChatCaseContextFromServer(caseId);
+      setFollowUpResponseReviewError(null);
+    } catch (e) {
+      console.warn("justice chat-ai: follow-up response review outcome error", e);
+      setFollowUpResponseReviewError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+    } finally {
+      setSavingFollowUpResponseReviewOutcome(false);
+    }
+  }
 
   useEffect(() => {
     if (!isUpdatingExistingCase || !isLoaded || !isSignedIn) return;
@@ -6914,6 +7025,11 @@ export default function JusticeChatAiPage() {
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
                       archiveError={archiveCaseError}
+                      savingFollowUpResponseReviewOutcome={savingFollowUpResponseReviewOutcome}
+                      followUpResponseReviewError={followUpResponseReviewError}
+                      onFollowUpResponseReviewOutcome={(taskId, outcome) =>
+                        void handleFollowUpResponseReviewOutcome(taskId, outcome)
+                      }
                     />
                   </>
                 ) : null}
@@ -6989,6 +7105,11 @@ export default function JusticeChatAiPage() {
                       onArchiveCase={(id) => void handleArchiveActiveCase(id)}
                       archiving={archivingCase}
                       archiveError={archiveCaseError}
+                      savingFollowUpResponseReviewOutcome={savingFollowUpResponseReviewOutcome}
+                      followUpResponseReviewError={followUpResponseReviewError}
+                      onFollowUpResponseReviewOutcome={(taskId, outcome) =>
+                        void handleFollowUpResponseReviewOutcome(taskId, outcome)
+                      }
                     />
                     {approvedNextAction.status !== "completed" &&
                     chatResolutionTrackingFormOpen({
