@@ -57,6 +57,8 @@ export function buildIntakeChatAiMessages(
     "",
     "If reply_email is empty, ask the user for their OWN email address so replies reach them. Never use the company's email for reply_email.",
     "",
+    "If consumer_us_state is empty, ask the user which US state they personally live in (two-letter code) — not the merchant's state — this is needed if the case later escalates to a State Attorney General complaint.",
+    "",
     "When already_contacted is \"no\", leave contact_* fields as empty strings except enums may keep defaults.",
     "When contact_proof_type is \"none\" or \"ticket\", contact_proof_text should eventually be filled before the case is complete.",
     "",
