@@ -11,6 +11,11 @@ import { ftcOwnedFilingIdempotencyKey } from "@/lib/justice/ftcOwnedFilingDelive
 import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
+import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
+import {
+  fccOwnedFilingIdempotencyKey,
+  upsertFccOwnedFilingDeliveryNotes,
+} from "@/lib/justice/fccOwnedFilingDeliveryState";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 import { parseKeysetOrFilter } from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
 
@@ -844,5 +849,156 @@ describe("reconcileOperatorFallbackAlerts — 24h/72h staleness escalation", () 
     expect(summary.attempted).toBe(0);
     expect(summary.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("reconcileOperatorFallbackAlerts — FCC parity scaffold wiring", () => {
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function fccFailedTask(
+    overrides: Partial<Task> & { caseId: string; stopReason?: string; failureDetail?: string }
+  ): Task {
+    const caseId = overrides.caseId;
+    const base = `${fccFilingTaskNotesMarker(caseId)}\nFCC complaint draft`;
+    const notes = upsertFccOwnedFilingDeliveryNotes(base, {
+      delivery_state: "failed",
+      provider: "fcc",
+      ...(overrides.stopReason ? { stop_reason: overrides.stopReason } : {}),
+      ...(overrides.failureDetail ? { failure_detail: overrides.failureDetail } : {}),
+    });
+    return {
+      id: overrides.id ?? `task_${caseId}`,
+      user_id: overrides.user_id ?? `user_${caseId}`,
+      case_id: caseId,
+      title: overrides.title ?? "FCC filing",
+      notes: overrides.notes ?? notes,
+      completed_at: overrides.completed_at ?? null,
+      created_at: overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
+      updated_at:
+        overrides.updated_at ?? overrides.created_at ?? new Date(Date.now() - 3_600_000).toISOString(),
+    };
+  }
+
+  it("phase 1: alerts once for an owned FCC filing that fell back to manual fulfillment (failed delivery)", async () => {
+    const store: Store = {
+      tasks: [fccFailedTask({ caseId: "c-fcc-1", stopReason: "no_verified_harness" })],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.attempted).toBe(1);
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].subject).toContain("Manual filing needed");
+    expect(send.mock.calls[0][0].subject).toContain("FCC");
+    expect(send.mock.calls[0][0].text).toContain("no_verified_harness");
+
+    const key = operatorFallbackAlertKey("task_c-fcc-1", fccOwnedFilingIdempotencyKey("c-fcc-1"), "no_verified_harness");
+    expect(hasOperatorAlertBeenSent(store.tasks[0].notes, key)).toBe(true);
+  });
+
+  it("phase 1: is exactly-once for FCC — a second run does not re-alert", async () => {
+    const store: Store = {
+      tasks: [fccFailedTask({ caseId: "c-fcc-2", stopReason: "config" })],
+    };
+    const supabase = makeSupabase(store);
+
+    const first = await reconcileOperatorFallbackAlerts(supabase);
+    expect(first.sent).toBe(1);
+
+    const second = await reconcileOperatorFallbackAlerts(supabase);
+    expect(second.sent).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("never alerts for a filed FCC task", async () => {
+    const filedNotes = upsertFccOwnedFilingDeliveryNotes(`${fccFilingTaskNotesMarker("c-fcc-filed")}\ndraft`, {
+      delivery_state: "filed",
+      provider: "fcc",
+      confirmation: "FCC-123",
+    });
+    const store: Store = {
+      tasks: [
+        {
+          id: "t-fcc-filed",
+          user_id: "u",
+          case_id: "c-fcc-filed",
+          title: "FCC filing",
+          notes: filedNotes,
+          completed_at: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("phase 2 (ordinary queue alert) still covers a plain FCC task with no owned-filing delivery block", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c-fcc-plain", marker: fccFilingTaskNotesMarker("c-fcc-plain") })],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.sent).toBe(1);
+    expect(send.mock.calls[0][0].text).toContain("FCC");
+    expect(send.mock.calls[0][0].text).toContain("No automated filing was attempted");
+  });
+
+  it("never double-alerts an FCC task that carries an owned-filing delivery block (queued/submitting/filed) via phase 2", async () => {
+    const queuedNotes = upsertFccOwnedFilingDeliveryNotes(
+      `${fccFilingTaskNotesMarker("c-fcc-queued")}\ndraft`,
+      { delivery_state: "queued", provider: "fcc" }
+    );
+    const now = new Date().toISOString();
+    const store: Store = {
+      tasks: [
+        {
+          id: "t-fcc-queued",
+          user_id: "u",
+          case_id: "c-fcc-queued",
+          title: "FCC",
+          notes: queuedNotes,
+          completed_at: null,
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    // Actively "automated" per its delivery block (even though FCC has no real execution path
+    // yet) — phase 2 must still treat it as covered by phase 1's territory and never double-alert.
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not alert an FCC failed-delivery task twice via both phases", async () => {
+    const store: Store = { tasks: [fccFailedTask({ caseId: "c-fcc-3", stopReason: "config" })] };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
+
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

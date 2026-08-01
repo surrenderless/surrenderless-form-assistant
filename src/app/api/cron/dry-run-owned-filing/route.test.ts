@@ -99,4 +99,33 @@ describe("POST /api/cron/dry-run-owned-filing", () => {
     expect(res.status).toBe(400);
     expect(runOwnedFilingDryRun).not.toHaveBeenCalled();
   });
+
+  it("routes the fcc destination through to runOwnedFilingDryRun (scaffold, no real harness)", async () => {
+    runOwnedFilingDryRun.mockResolvedValueOnce({
+      ok: false,
+      status: "dry_run_failed",
+      destination: "fcc",
+      case_id: CASE_ID,
+      task_id: "t1",
+      steps_executed: 0,
+      stop_reason: "config",
+      detail: "Real FCC browser autofill is not enabled.",
+    });
+
+    const res = await POST(
+      buildRequest(
+        { case_id: CASE_ID, destination: "fcc", user_id: "user_1" },
+        { authorization: `Bearer ${CRON_SECRET}` }
+      )
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ ok: false, destination: "fcc" });
+    expect(runOwnedFilingDryRun).toHaveBeenCalledWith(
+      expect.anything(),
+      "user_1",
+      CASE_ID,
+      "fcc"
+    );
+  });
 });
