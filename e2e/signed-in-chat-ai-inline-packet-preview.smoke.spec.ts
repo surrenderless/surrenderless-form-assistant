@@ -29,6 +29,56 @@ test("after evidence upload, consumer reviews draft and approves packet without 
 }) => {
   test.setTimeout(240_000);
 
+  // TEMPORARY diagnostic: capture the JS call stack of any fetch() that PATCHes
+  // /api/justice/cases/ with a body claiming prepared_packet_approved:true, and relay it to
+  // Node test output. Playwright's trace console capture has not surfaced any call to the
+  // known production producer despite the PATCH provably occurring, so this bypasses trace
+  // capture entirely via an exposed binding. Logs only the request URL, a timestamp, and the
+  // stack — never the request body or any user/chat content. Must be wired before any
+  // navigation so the init script attaches to the very first document.
+  await page.exposeBinding(
+    "__e2ePatchStackRelay",
+    (_source, payload: { url: string; time: number; stack: string }) => {
+      console.log(
+        `[e2e-fetch-diag] PATCH prepared_packet_approved:true url=${payload.url} time=${payload.time}\n${payload.stack}`
+      );
+    }
+  );
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      try {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof Request
+              ? input.url
+              : String(input);
+        const method = (
+          init?.method ?? (input instanceof Request ? input.method : "GET")
+        ).toUpperCase();
+        const body = init?.body;
+        if (
+          method === "PATCH" &&
+          url.includes("/api/justice/cases/") &&
+          typeof body === "string" &&
+          body.includes('"prepared_packet_approved":true')
+        ) {
+          const stack = new Error().stack ?? "";
+          const time = Date.now();
+          void (
+            window as unknown as {
+              __e2ePatchStackRelay: (p: { url: string; time: number; stack: string }) => void;
+            }
+          ).__e2ePatchStackRelay({ url, time, stack });
+        }
+      } catch {
+        // Diagnostics must never break the real fetch call.
+      }
+      return originalFetch(input, init);
+    };
+  });
+
   await driveConsumerToSavedCaseForEvidenceUpload(page);
   await uploadEvidenceFileViaChat(page);
   await expectUrlStaysOnChatAi(page);
