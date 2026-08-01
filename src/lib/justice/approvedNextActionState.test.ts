@@ -3,12 +3,14 @@ import {
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
   parseApprovedNextAction,
+  parseJusticeCaseClientState,
   readSessionApprovedNextAction,
   resolveApprovedNextAction,
   STORAGE_APPROVED_NEXT_ACTION_V1,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -45,6 +47,48 @@ describe("parseApprovedNextAction follow-up round-trip", () => {
   it("omits follow_up_needed when absent", () => {
     const { follow_up_needed: _cleared, ...withoutFollowUp } = clearedFollowUpAction;
     expect(parseApprovedNextAction(withoutFollowUp)?.follow_up_needed).toBeUndefined();
+  });
+});
+
+describe("parseApprovedNextAction proof_required round-trip", () => {
+  // This is the regression that would have caught the silent-strip bug: proof_required is
+  // reconstructed via an explicit allowlist, not a permissive spread, so a naive addition to
+  // the type alone would compile but vanish on every read (GET, PATCH merge, task-creation
+  // checks) without this test failing.
+  it("preserves proof_required: true through the allowlist reconstruction", () => {
+    const action = {
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      status: "approved",
+      proof_required: true,
+    };
+    expect(parseApprovedNextAction(action)?.proof_required).toBe(true);
+  });
+
+  it("omits proof_required when absent or false", () => {
+    const withoutFlag = {
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      status: "approved",
+    };
+    expect(parseApprovedNextAction(withoutFlag)?.proof_required).toBeUndefined();
+
+    const explicitFalse = { ...withoutFlag, proof_required: false };
+    expect(parseApprovedNextAction(explicitFalse)?.proof_required).toBeUndefined();
+  });
+
+  it("survives the full parseJusticeCaseClientState round trip used by shouldQueueCfpbFilingTask", () => {
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "CFPB",
+        href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+        status: "approved",
+        proof_required: true,
+      },
+    };
+    const parsed = parseJusticeCaseClientState(clientState);
+    expect(parsed.approved_next_action?.proof_required).toBe(true);
   });
 });
 

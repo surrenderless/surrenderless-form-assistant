@@ -286,6 +286,7 @@ import {
   type BuildJusticeIntakeParts,
   validateContactProofForIntake,
 } from "@/lib/justice/buildJusticeIntake";
+import { enrichContactProofPartsAfterChatTurn } from "@/lib/justice/enrichContactProofFromChat";
 import {
   getPreviewBasicsMissing,
   stillNeededBeforePreviewMessage,
@@ -429,50 +430,6 @@ const RECAP_STORY_MAX_LEN = 120;
 const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
 const activeCaseChecklistLinkCls =
   "inline-flex text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400";
-
-/** When the model sets contacted=yes but omits proof text, reuse the user's answer for Continue validation. */
-function synthesizeContactProofTextFromChat(
-  parts: BuildJusticeIntakeParts,
-  latestUserMessage: string
-): string {
-  const userText = latestUserMessage.trim();
-  if (userText) return userText;
-
-  const segments: string[] = [];
-  if (parts.contact_date.trim()) {
-    segments.push(`Contact date: ${parts.contact_date.trim()}`);
-  }
-  if (parts.contact_method) {
-    segments.push(`Contact method: ${parts.contact_method.replace(/_/g, " ")}`);
-  }
-  if (parts.merchant_response_type) {
-    segments.push(`Merchant response: ${parts.merchant_response_type.replace(/_/g, " ")}`);
-  }
-  return segments.join(". ");
-}
-
-function enrichContactProofPartsAfterChatTurn(
-  parts: BuildJusticeIntakeParts,
-  latestUserMessage: string
-): BuildJusticeIntakeParts {
-  if (parts.already_contacted !== "yes" || parts.contact_proof_text.trim()) {
-    return parts;
-  }
-
-  const synthesized = synthesizeContactProofTextFromChat(parts, latestUserMessage).trim();
-  if (!synthesized) return parts;
-
-  const candidate: BuildJusticeIntakeParts = {
-    ...parts,
-    contact_proof_text: synthesized,
-  };
-  const proofCheck = validateContactProofForIntake({
-    already_contacted: candidate.already_contacted,
-    contact_proof_type: candidate.contact_proof_type,
-    contact_proof_text: candidate.contact_proof_text,
-  });
-  return proofCheck.ok ? candidate : parts;
-}
 
 const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
 
@@ -670,11 +627,18 @@ function isChatPreviewSelectableDestination(d: JusticeDestination): boolean {
   return d.status === "recommended" || d.status === "available";
 }
 
-function resolveChatPreviewDestination(intake: JusticeIntake): JusticeDestination | null {
+function resolveChatPreviewDestination(
+  intake: JusticeIntake,
+  hasUploadedEvidenceFile: boolean
+): JusticeDestination | null {
   const manualFtc =
     typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
   const useCompanyContactLabels = cfpbLikelyRelevant(intake) || fccLikelyRelevant(intake);
-  const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+  const destinations = computeJusticeDestinations(intake, {
+    manualFtc,
+    useCompanyContactLabels,
+    hasUploadedEvidenceFile,
+  });
   const selectable = destinations.filter(isChatPreviewSelectableDestination);
   const options = selectable.length > 0 ? selectable : destinations;
   return options[0] ?? null;
@@ -2319,6 +2283,10 @@ export default function JusticeChatAiPage() {
   const sendInFlightRef = useRef(false);
   const sessionBaselinePartsRef = useRef<BuildJusticeIntakeParts | null>(null);
   const sessionBaselineEvidenceCountRef = useRef<number | null>(null);
+  /** Last-observed hasUploadedEvidenceFile, scoped to its case — a caseId mismatch (including
+   *  switching cases) is treated the same as "not yet observed", so a stale value from a
+   *  different case can never suppress or falsely trigger a recompute. */
+  const hasUploadedEvidenceFileRef = useRef<{ caseId: string; value: boolean } | null>(null);
   const transcriptCaseIdRef = useRef("");
   const persistedTurnIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<UiMessage[]>([]);
@@ -2573,7 +2541,10 @@ export default function JusticeChatAiPage() {
     setSubmissionDraftReviewError(null);
     try {
       const intake = buildJusticeIntakeFromParts(parts);
-      const destination = resolveChatPreviewDestination(intake);
+      const destination = resolveChatPreviewDestination(
+        intake,
+        savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile)
+      );
       const destinationLabel = destination?.label;
 
       if (isSignedIn && isUuid(caseId)) {
@@ -2979,7 +2950,11 @@ export default function JusticeChatAiPage() {
     const fccRel = fccLikelyRelevant(intake);
     const dotRel = dotLikelyRelevant(intake);
     const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
-    const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+    const destinations = computeJusticeDestinations(intake, {
+      manualFtc,
+      useCompanyContactLabels,
+      hasUploadedEvidenceFile: savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile),
+    });
     const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
     const nextActionTarget = buildApprovedNextActionTarget(prepared);
     const withTracking = mergeApprovedNextActionTrackingFields(
@@ -3039,6 +3014,7 @@ export default function JusticeChatAiPage() {
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     const intake = buildJusticeIntakeFromParts(parts);
+    const hasUploadedEvidenceFileNow = savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile);
     const result = await documentMerchantContact({
       intake,
       input,
@@ -3046,6 +3022,7 @@ export default function JusticeChatAiPage() {
       isLoaded,
       isSignedIn: Boolean(isSignedIn),
       logLabel: "justice chat-ai",
+      hasUploadedEvidenceFile: hasUploadedEvidenceFileNow,
     });
     if (!result.ok) {
       return result;
@@ -3060,6 +3037,7 @@ export default function JusticeChatAiPage() {
     const nextAction = recomputeApprovedNextActionAfterIntake(result.updatedIntake, {
       existing: approvedNextAction,
       manualFtc,
+      hasUploadedEvidenceFile: hasUploadedEvidenceFileNow,
     });
     setApprovedNextAction(nextAction);
     if (caseId) {
@@ -3281,6 +3259,7 @@ export default function JusticeChatAiPage() {
         isSignedIn: Boolean(isSignedIn),
         preparedPacketApproved,
         approvedNextAction,
+        hasUploadedEvidenceFile,
         logLabel: "justice chat-ai",
         onApprovedNextActionPromoted: (local: JusticeApprovedNextAction) => {
           setApprovedNextAction(local);
@@ -4063,9 +4042,13 @@ export default function JusticeChatAiPage() {
   }, [isUpdatingExistingCase, parts, showSavedEvidenceCount, savedEvidenceCount]);
 
   const chatPreviewIntake = useMemo(() => buildJusticeIntakeFromParts(parts), [parts]);
+  const hasUploadedEvidenceFile = useMemo(
+    () => savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile),
+    [savedEvidenceRows]
+  );
   const chatPreviewDestination = useMemo(
-    () => resolveChatPreviewDestination(chatPreviewIntake),
-    [chatPreviewIntake]
+    () => resolveChatPreviewDestination(chatPreviewIntake, hasUploadedEvidenceFile),
+    [chatPreviewIntake, hasUploadedEvidenceFile]
   );
   const chatSubmissionDraftText = useMemo(() => {
     if (!chatPreviewDestination) return "";
@@ -4143,6 +4126,68 @@ export default function JusticeChatAiPage() {
       cancelled = true;
     };
   }, [isLoaded, isSignedIn, isUpdatingExistingCase, activeUuidCaseId, resetActiveChatTranscriptState]);
+
+  // Re-evaluate the CFPB proof_required flag whenever the evidence-has-file signal changes —
+  // covers upload, delete, and edit uniformly, since all three funnel through savedEvidenceRows.
+  // Skips the initial mount (nothing "changed" yet, just hydrated) and only writes when the
+  // recomputed action actually differs, so this never PATCHes on every unrelated render.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !isUpdatingExistingCase) return;
+    const caseId = activeUuidCaseId;
+    if (!caseId) return;
+    const previous = hasUploadedEvidenceFileRef.current;
+    const isFirstObservationForCase = !previous || previous.caseId !== caseId;
+    const changed = !isFirstObservationForCase && previous.value !== hasUploadedEvidenceFile;
+    hasUploadedEvidenceFileRef.current = { caseId, value: hasUploadedEvidenceFile };
+    if (!changed) return;
+
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const intake = buildJusticeIntakeFromParts(parts);
+    const nextAction = recomputeApprovedNextActionAfterIntake(intake, {
+      existing: approvedNextAction,
+      manualFtc,
+      hasUploadedEvidenceFile,
+    });
+    if (
+      nextAction.href === approvedNextAction?.href &&
+      nextAction.proof_required === approvedNextAction?.proof_required
+    ) {
+      return;
+    }
+
+    setApprovedNextAction(nextAction);
+    writeSessionApprovedNextAction(caseId, nextAction);
+    void (async () => {
+      try {
+        const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+        if (!getRes.ok) {
+          console.warn("justice chat-ai: GET before evidence-triggered next action failed", getRes.status);
+          return;
+        }
+        const existing = (await getRes.json()) as { client_state?: unknown };
+        const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextAction);
+        const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_state: merged }),
+        });
+        if (!patchRes.ok) {
+          console.warn("justice chat-ai: PATCH evidence-triggered next action failed", patchRes.status);
+        }
+      } catch (err) {
+        console.warn("justice chat-ai: evidence-triggered next action error", err);
+      }
+    })();
+  }, [
+    hasUploadedEvidenceFile,
+    isLoaded,
+    isSignedIn,
+    isUpdatingExistingCase,
+    activeUuidCaseId,
+    parts,
+    approvedNextAction,
+  ]);
 
   const chatPacketPlainText = useMemo(() => {
     if (!activeUuidCaseId) return "";
@@ -5160,7 +5205,7 @@ export default function JusticeChatAiPage() {
         ],
         { source: "intake_chat" }
       );
-      setParts(enrichContactProofPartsAfterChatTurn(data.parts, trimmed));
+      setParts(enrichContactProofPartsAfterChatTurn(data.parts, trimmed, parts.already_contacted));
       setInputValue("");
       tryShowProofKeywordNudge(trimmed);
     } catch {

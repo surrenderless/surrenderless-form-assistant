@@ -20,6 +20,20 @@ const TASK_ID = "550e8400-e29b-41d4-a716-446655440088";
 
 const timelineStore: { entries: TimelineEntry[] } = { entries: [] };
 
+// Wraps the real implementation (still calls through, so ladder-logic behavior for every
+// existing test is unchanged) purely so its call arguments can be inspected — the correct,
+// ladder-independent boundary for proving this file threads real per-case evidence through,
+// rather than a hardcoded or stale value.
+vi.mock("@/lib/justice/recomputeApprovedNextActionAfterIntake", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/justice/recomputeApprovedNextActionAfterIntake")
+  >();
+  return {
+    ...actual,
+    advanceApprovedNextActionAfterCompleted: vi.fn(actual.advanceApprovedNextActionAfterCompleted),
+  };
+});
+
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(
     async (
@@ -46,6 +60,7 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 }));
 
 import { completeDemandLetterOperatorFiling } from "@/lib/justice/completeDemandLetterOperatorFiling";
+import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
 
@@ -69,6 +84,29 @@ function demandLetterIntake(): JusticeIntake {
   });
 }
 
+/** CFPB-relevant variant proving the hasUploadedEvidenceFile wiring doesn't wrongly
+ * pick CFPB after the demand letter completes — CFPB's priority (28) is below the
+ * demand letter's (90), so it's excluded from the downstream ladder regardless of evidence. */
+function cfpbRelevantDemandLetterIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "financial_account_issue",
+    company_name: "North Bank",
+    company_contact_email: "support@northbank.example",
+    purchase_or_signup: "checking account",
+    story: "Unauthorized charge on my checking account, bank won't reverse it.",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-05-05",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "upload",
+    contact_proof_text: "",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
+
 type MockCaseState = {
   intake: JusticeIntake;
   client_state: Record<string, unknown>;
@@ -77,6 +115,7 @@ type MockCaseState = {
   followUpTasks: JusticeCaseTaskRow[];
   filingInsertCount: number;
   followUpInsertFail: boolean;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -241,6 +280,20 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
                 state.filings = [...state.filings, filing];
                 return { data: filing, error: null };
               },
+            }),
+          }),
+        };
+      }
+
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
             }),
           }),
         };
@@ -458,5 +511,69 @@ describe("demand-letter workspace completion behavior", () => {
       (state.client_state.approved_next_action as { follow_up_needed?: boolean } | undefined)
         ?.follow_up_needed
     ).toBe(true);
+  });
+
+  it("threads a hasUploadedEvidenceFile value derived from real evidence rows into the advance-after-completed call (shared boundary — independent of whether CFPB is reachable from this ladder position)", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const buildState = (evidence: MockCaseState["evidence"]): MockCaseState => ({
+      intake: cfpbRelevantDemandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Demand letter: North Bank",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      followUpInsertFail: false,
+      evidence,
+    });
+    const spy = vi.mocked(advanceApprovedNextActionAfterCompleted);
+
+    spy.mockClear();
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    await completeDemandLetterOperatorFiling(createDemandLetterCompleteSupabase(withFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Small claims / demand letter",
+      filedAt: "2026-06-15",
+      confirmationNumber: "DL-SEND-998877",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: true })
+    );
+
+    spy.mockClear();
+    const withoutFile = buildState([]);
+    await completeDemandLetterOperatorFiling(createDemandLetterCompleteSupabase(withoutFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Small claims / demand letter",
+      filedAt: "2026-06-15",
+      confirmationNumber: "DL-SEND-998877",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: false })
+    );
   });
 });

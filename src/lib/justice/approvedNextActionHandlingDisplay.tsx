@@ -119,6 +119,7 @@ export function resolveHandlingTrackingContextualLink(input: {
   approvedNextAction?: Pick<JusticeApprovedNextAction, "href">;
   surface?: HandlingTrackingSurface;
   basicsReady?: boolean;
+  /** Any saved evidence row (text note or uploaded file) — presence-based, not CFPB-verified. */
   evidenceCount?: number;
   markAcknowledgedOnScreen?: boolean;
   /** When approved prep is embedded in chat-ai, suppress redundant open-step link. */

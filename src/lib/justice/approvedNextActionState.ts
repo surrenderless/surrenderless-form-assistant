@@ -85,6 +85,10 @@ export function parseApprovedNextAction(raw: unknown): JusticeApprovedNextAction
     ...(typeof o.handling_operator_note === "string" && o.handling_operator_note.trim()
       ? { handling_operator_note: o.handling_operator_note.trim() }
       : {}),
+    // Must be preserved through this allowlist reconstruction — it's the server-visible signal
+    // that blocks CFPB task creation while proof is missing. Dropping it here would silently
+    // re-open the destination on every subsequent read (GET, PATCH merge, task-creation checks).
+    ...(o.proof_required === true ? { proof_required: true as const } : {}),
   };
 }
 

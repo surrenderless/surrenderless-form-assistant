@@ -12,6 +12,7 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
@@ -239,8 +240,10 @@ export async function completeStateAgOperatorFiling(
   ) {
     const completedHref = approvedNext.href.trim();
     const { withTracking: completedWithTracking } = buildCompletedApprovedNextAction(approvedNext);
+    const hasUploadedEvidenceFile = await resolveHasUploadedEvidenceFile(supabase, caseId, userId);
     const advancedAction = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
       existing: completedWithTracking,
+      hasUploadedEvidenceFile,
     });
     if (
       advancedAction?.href?.trim() &&

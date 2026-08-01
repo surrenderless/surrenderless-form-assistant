@@ -1,4 +1,5 @@
 import { mergeApprovedNextActionTrackingFields } from "@/lib/justice/approvedNextActionState";
+import { MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import {
   buildApprovedNextActionTarget,
   pickNextPreparedActionAfterCompleted,
@@ -6,6 +7,7 @@ import {
 } from "@/lib/justice/preparedNextAction";
 import {
   cfpbLikelyRelevant,
+  cfpbPrepUnlockedFromIntake,
   computeJusticeDestinations,
   dotLikelyRelevant,
   fccLikelyRelevant,
@@ -15,6 +17,8 @@ import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/typ
 export type RecomputeApprovedNextActionAfterIntakeOptions = {
   existing?: JusticeApprovedNextAction;
   manualFtc?: boolean;
+  /** True when the case has a real uploaded evidence record (see justiceEvidenceRowHasUploadedFile). */
+  hasUploadedEvidenceFile?: boolean;
 };
 
 /** Recompute post-packet approved next action from saved intake (e.g. after contact documented). */
@@ -23,12 +27,36 @@ export function recomputeApprovedNextActionAfterIntake(
   options: RecomputeApprovedNextActionAfterIntakeOptions = {}
 ): JusticeApprovedNextAction {
   const manualFtc = options.manualFtc ?? false;
+  const hasUploadedEvidenceFile = options.hasUploadedEvidenceFile ?? false;
   const contacted = intake.already_contacted === "yes";
   const cfpbRel = cfpbLikelyRelevant(intake);
   const fccRel = fccLikelyRelevant(intake);
   const dotRel = dotLikelyRelevant(intake);
   const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
-  const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+
+  // An already-approved, not-yet-completed CFPB action stays selected regardless of proof
+  // state — it must never be silently reassigned to a different destination. Only its
+  // proof_required flag is re-evaluated fresh on every call, from current intake + evidence.
+  const existingIsActiveCfpb =
+    options.existing?.href === MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF &&
+    options.existing?.status !== "completed";
+  if (existingIsActiveCfpb) {
+    const cfpbProofReady =
+      cfpbRel && cfpbPrepUnlockedFromIntake(intake, manualFtc, hasUploadedEvidenceFile);
+    const preserved: JusticeApprovedNextAction = {
+      ...options.existing,
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      proof_required: !cfpbProofReady,
+    };
+    return mergeApprovedNextActionTrackingFields(options.existing, preserved);
+  }
+
+  const destinations = computeJusticeDestinations(intake, {
+    manualFtc,
+    useCompanyContactLabels,
+    hasUploadedEvidenceFile,
+  });
   const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
   const nextActionTarget = buildApprovedNextActionTarget(prepared);
   return mergeApprovedNextActionTrackingFields(options.existing, nextActionTarget);
@@ -41,12 +69,17 @@ export function advanceApprovedNextActionAfterCompleted(
   options: RecomputeApprovedNextActionAfterIntakeOptions = {}
 ): JusticeApprovedNextAction | null {
   const manualFtc = options.manualFtc ?? false;
+  const hasUploadedEvidenceFile = options.hasUploadedEvidenceFile ?? false;
   const contacted = intake.already_contacted === "yes";
   const cfpbRel = cfpbLikelyRelevant(intake);
   const fccRel = fccLikelyRelevant(intake);
   const dotRel = dotLikelyRelevant(intake);
   const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
-  const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+  const destinations = computeJusticeDestinations(intake, {
+    manualFtc,
+    useCompanyContactLabels,
+    hasUploadedEvidenceFile,
+  });
   const prepared = pickNextPreparedActionAfterCompleted({
     contacted,
     useCompanyContactLabels,

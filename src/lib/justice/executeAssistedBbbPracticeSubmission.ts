@@ -34,6 +34,8 @@ export type ExecuteAssistedBbbPracticeSubmissionParams = {
   isSignedIn: boolean;
   preparedPacketApproved: boolean;
   approvedNextAction: JusticeApprovedNextAction | null | undefined;
+  /** Whether the case has a real uploaded evidence record — see justiceEvidenceRowHasUploadedFile. */
+  hasUploadedEvidenceFile?: boolean;
   logLabel?: string;
   onApprovedNextActionPromoted?: (promoted: JusticeApprovedNextAction) => void;
   onApprovedNextActionCompleted?: (completed: JusticeApprovedNextAction) => void;
@@ -303,6 +305,7 @@ async function completeApprovedNextActionAfterAssistedRecording(
 
   const advanced = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
     existing: completedWithTracking,
+    hasUploadedEvidenceFile: params.hasUploadedEvidenceFile,
   });
   if (
     advanced?.href?.trim() &&

@@ -15,6 +15,7 @@ import {
   taskNotesMatchBbbFilingMarker,
 } from "@/lib/justice/bbbFilingTask";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
+import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import {
   cfpbFilingTaskNotesMarker,
   taskNotesMatchCfpbFilingMarker,
@@ -294,9 +295,20 @@ async function recomputeApprovedNextActionAfterCancellation(
   const contacted = intake.already_contacted === "yes";
   const useCompanyContactLabels =
     cfpbLikelyRelevant(intake) || fccLikelyRelevant(intake) || dotLikelyRelevant(intake);
+
+  const { data: evidenceRows } = await supabase
+    .from("justice_case_evidence")
+    .select("file_name, mime_type, file_size_bytes")
+    .eq("case_id", caseId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(200);
+  const hasUploadedEvidenceFile = (evidenceRows ?? []).some(justiceEvidenceRowHasUploadedFile);
+
   const destinations = computeJusticeDestinations(intake, {
     manualFtc: false,
     useCompanyContactLabels,
+    hasUploadedEvidenceFile,
   });
 
   const prepared = pickNextPreparedActionAfterCancelled({

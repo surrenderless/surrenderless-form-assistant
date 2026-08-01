@@ -102,6 +102,42 @@ describe("planFollowUpResponseReviewClientState", () => {
     expect(plan.intake.merchant_response_type).not.toBe("resolved");
   });
 
+  it("advances to CFPB after payment dispute only when a real uploaded evidence file exists (CFPB priority 28 is downstream of payment dispute priority 20)", () => {
+    const cfpbRelevantIntake = intake({
+      problem_category: "financial_account_issue",
+      contact_proof_type: "upload",
+      contact_proof_text: "",
+    });
+    const paymentDisputeAction: JusticeApprovedNextAction = {
+      label: "Payment dispute (bank/card)",
+      href: "/justice/payment-dispute",
+      status: "completed",
+      completed_at: "2026-05-01T00:00:00.000Z",
+      follow_up_needed: false,
+      outcome_note: "No response recorded by follow-up date.",
+    };
+
+    const withFile = planFollowUpResponseReviewClientState({
+      intake: cfpbRelevantIntake,
+      clientState: { prepared_packet_approved: true, approved_next_action: paymentDisputeAction },
+      outcome: "further_escalation",
+      hasUploadedEvidenceFile: true,
+    });
+    expect(withFile.kind).toBe("ok");
+    if (withFile.kind !== "ok") return;
+    expect(withFile.nextAction.href).toBe("/justice/cfpb");
+
+    const withoutFile = planFollowUpResponseReviewClientState({
+      intake: cfpbRelevantIntake,
+      clientState: { prepared_packet_approved: true, approved_next_action: paymentDisputeAction },
+      outcome: "further_escalation",
+      hasUploadedEvidenceFile: false,
+    });
+    expect(withoutFile.kind).toBe("ok");
+    if (withoutFile.kind !== "ok") return;
+    expect(withoutFile.nextAction.href).not.toBe("/justice/cfpb");
+  });
+
   it("errors when further escalation is requested at a terminal ladder step", () => {
     const plan = planFollowUpResponseReviewClientState({
       intake: intake(),

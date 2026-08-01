@@ -160,4 +160,32 @@ describe("cfpbFilingTask", () => {
       })
     ).toBe(false);
   });
+
+  it("does not queue a CFPB task while proof_required is true, even with a valid href/status", () => {
+    expect(
+      shouldQueueCfpbFilingTask({
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "CFPB",
+          href: "/justice/cfpb",
+          status: "approved",
+          proof_required: true,
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("queues a CFPB task when proof_required is false or absent", () => {
+    expect(
+      shouldQueueCfpbFilingTask({
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "CFPB",
+          href: "/justice/cfpb",
+          status: "approved",
+          proof_required: false,
+        },
+      })
+    ).toBe(true);
+  });
 });

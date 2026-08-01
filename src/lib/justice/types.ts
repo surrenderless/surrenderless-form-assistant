@@ -91,6 +91,13 @@ export type JusticeDestinationsContext = {
   manualFtc: boolean;
   /** When true, FTC destination copy uses "company" instead of "merchant" where applicable. */
   useCompanyContactLabels?: boolean;
+  /**
+   * True when the case has at least one justice_case_evidence row with a real uploaded file
+   * attached (see justiceEvidenceRowHasUploadedFile). Verifies "upload"/"screenshot" contact-proof
+   * claims against real evidence rather than trusting the claim alone. Omitted/false is the safe
+   * default — never grants more access by omission.
+   */
+  hasUploadedEvidenceFile?: boolean;
 };
 
 export type TimelineEntryType =
@@ -153,6 +160,13 @@ export type JusticeApprovedNextAction = {
   handling_acknowledged_at?: string;
   /** Internal operator triage note (workbench only; not sent to consumer; not a filing record). */
   handling_operator_note?: string;
+  /**
+   * True when this action's destination is selected but cannot proceed yet — currently CFPB only,
+   * set when the case's documented-contact proof (text or a real uploaded evidence record,
+   * depending on contact_proof_type) is missing. The selection is preserved; only forward
+   * progress (task creation, operator completion) is blocked while this is true.
+   */
+  proof_required?: boolean;
 };
 
 /** Optional JSON on `justice_cases.client_state` (merged on PATCH; not validated server-side). */

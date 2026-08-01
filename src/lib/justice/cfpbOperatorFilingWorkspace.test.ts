@@ -111,6 +111,37 @@ describe("buildCfpbOperatorFilingWorkspace", () => {
     expect(workspace.portal.portal_url).toBe(CFPB_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL);
   });
 
+  it("proof_documented is true for a well-documented text-based proof claim (existing fixture)", () => {
+    const workspace = buildCfpbOperatorFilingWorkspace({ intake: baseIntake(), evidence: [] });
+    expect(workspace.proof_documented).toBe(true);
+  });
+
+  it("proof_documented is false for an 'upload' claim with no real evidence, regardless of client-supplied evidence display rows", () => {
+    const intake = baseIntake({ contact_proof_type: "upload", contact_proof_text: "" });
+    const workspace = buildCfpbOperatorFilingWorkspace({
+      intake,
+      evidence: [],
+      hasUploadedEvidenceFile: false,
+    });
+    expect(workspace.proof_documented).toBe(false);
+  });
+
+  it("proof_documented is true for an 'upload' claim once hasUploadedEvidenceFile is confirmed", () => {
+    const intake = baseIntake({ contact_proof_type: "upload", contact_proof_text: "" });
+    const workspace = buildCfpbOperatorFilingWorkspace({
+      intake,
+      evidence: [],
+      hasUploadedEvidenceFile: true,
+    });
+    expect(workspace.proof_documented).toBe(true);
+  });
+
+  it("defaults proof_documented to false when hasUploadedEvidenceFile is omitted for an upload claim", () => {
+    const intake = baseIntake({ contact_proof_type: "upload", contact_proof_text: "" });
+    const workspace = buildCfpbOperatorFilingWorkspace({ intake, evidence: [] });
+    expect(workspace.proof_documented).toBe(false);
+  });
+
   it("prepared 'amount' answer uses only the structured amount, not the combined money_involved string", () => {
     // This field is copyable straight into the real CFPB complaint form by the operator, so a
     // combined "$X — Desired outcome: Y" string here would corrupt the real filing.

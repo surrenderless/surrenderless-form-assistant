@@ -72,7 +72,11 @@ export function parseCfpbFilingTaskDraft(notes: string | null | undefined): stri
   return trimmed.slice(draftIndex + "\ndraft:\n".length).trim();
 }
 
-/** True when client_state calls for an open CFPB operator filing queue entry. */
+/**
+ * True when client_state calls for an open CFPB operator filing queue entry. This is a UX
+ * signal only, not the trust boundary — ensureOwnedFilingTaskAfterClientStateWrite independently
+ * re-verifies proof readiness server-side before actually creating a task.
+ */
 export function shouldQueueCfpbFilingTask(clientState: unknown): boolean {
   const parsed = parseJusticeCaseClientState(clientState);
   if (!parsed.prepared_packet_approved) return false;
@@ -80,6 +84,7 @@ export function shouldQueueCfpbFilingTask(clientState: unknown): boolean {
   if (!next) return false;
   if (next.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF) return false;
   if (next.status === "completed") return false;
+  if (next.proof_required === true) return false;
   return true;
 }
 

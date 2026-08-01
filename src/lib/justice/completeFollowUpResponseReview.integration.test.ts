@@ -78,6 +78,7 @@ type MockState = {
   archived_at: string | null;
   casePatched: number;
   lastPatch: Record<string, unknown> | null;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createSupabase(state: MockState): SupabaseClient {
@@ -146,6 +147,19 @@ function createSupabase(state: MockState): SupabaseClient {
                     }
                     return { data: state.task, error: null };
                   },
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
                 }),
               }),
             }),

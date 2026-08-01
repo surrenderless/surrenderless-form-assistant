@@ -22,6 +22,7 @@ import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import { updateClientStateIfUnchanged } from "@/lib/justice/updateClientStateIfUnchanged";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -238,8 +239,10 @@ export async function completeBbbOperatorFiling(
   ) {
     const completedHref = approvedNext.href.trim();
     const { withTracking: completedWithTracking } = buildCompletedApprovedNextAction(approvedNext);
+    const hasUploadedEvidenceFile = await resolveHasUploadedEvidenceFile(supabase, caseId, userId);
     const advancedAction = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
       existing: completedWithTracking,
+      hasUploadedEvidenceFile,
     });
     if (
       advancedAction?.href?.trim() &&

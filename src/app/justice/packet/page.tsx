@@ -397,6 +397,10 @@ export default function JusticePacketPage() {
   const [evidence, setEvidence] = useState<JusticeCaseEvidenceRow[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState(false);
+  const hasUploadedEvidenceFile = useMemo(
+    () => evidence.some(justiceEvidenceRowHasUploadedFile),
+    [evidence]
+  );
   const [filings, setFilings] = useState<JusticeCaseFilingRow[]>([]);
   const [filingsLoading, setFilingsLoading] = useState(false);
   const [copyHint, setCopyHint] = useState<string | null>(null);
@@ -686,7 +690,11 @@ export default function JusticePacketPage() {
     const fccRel = fccLikelyRelevant(intake);
     const dotRel = dotLikelyRelevant(intake);
     const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
-    const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+    const destinations = computeJusticeDestinations(intake, {
+      manualFtc,
+      useCompanyContactLabels,
+      hasUploadedEvidenceFile,
+    });
     preparedNextAction = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
     basicsReady = isBasicCaseInfoReadyForEscalation(intake);
     evidenceReady = evidence.length >= 1;
@@ -878,7 +886,11 @@ export default function JusticePacketPage() {
     const fccRel = fccLikelyRelevant(intake);
     const dotRel = dotLikelyRelevant(intake);
     const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
-    const destinations = computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
+    const destinations = computeJusticeDestinations(intake, {
+      manualFtc,
+      useCompanyContactLabels,
+      hasUploadedEvidenceFile,
+    });
     const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
     const nextActionTarget = buildApprovedNextActionTarget(prepared);
     const withTracking = mergeApprovedNextActionTrackingFields(

@@ -63,6 +63,35 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
+  it("fails closed to update-in-chat on review-packet when no evidence is saved at all", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        surface: "packet",
+        basicsReady: true,
+      })
+    ).toEqual({ href: "/justice/chat-ai", label: "Update case in chat" });
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        surface: "packet",
+        basicsReady: true,
+        evidenceCount: 0,
+      })
+    ).toEqual({ href: "/justice/chat-ai", label: "Update case in chat" });
+  });
+
+  it("clears review-packet on packet surface with any saved evidence row, including text-only proof with no uploaded file", () => {
+    expect(
+      resolveHandlingTrackingContextualLink({
+        derivedStep: HANDLING_TRACKING_STEP_REVIEW_PACKET,
+        surface: "packet",
+        basicsReady: true,
+        evidenceCount: 1,
+      })
+    ).toBeNull();
+  });
+
   it("suppresses review-packet link on chat-ai so consumers stay in chat", () => {
     expect(
       resolveHandlingTrackingContextualLink({

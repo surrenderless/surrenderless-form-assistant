@@ -13,7 +13,7 @@ import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
-import { cfpbLikelyRelevant } from "@/lib/justice/rules";
+import { cfpbLikelyRelevant, cfpbPrepDocumentedFromIntake } from "@/lib/justice/rules";
 import { stateNameFromCode } from "@/lib/justice/buildStateAgComplaintDraft";
 import { resolveIntakeMoneyAmount } from "@/lib/justice/buildJusticeIntake";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -38,6 +38,12 @@ export type CfpbOperatorFilingWorkspace = {
   complaint_draft: string;
   prepared_answers: CfpbPreparedAnswerField[];
   evidence: CfpbWorkspaceEvidenceItem[];
+  /**
+   * True when the case's documented-contact proof is currently verified (text for none/ticket/
+   * paste, a real uploaded evidence record for upload/screenshot) — computed fresh from intake
+   * and evidence on every build, never trusting client_state. Operators must not file when false.
+   */
+  proof_documented: boolean;
   /** Workspace never claims completion; only the complete API may. */
   is_submitted: false;
   confirmation_capture: {
@@ -148,6 +154,8 @@ export function buildCfpbOperatorFilingWorkspace(input: {
   intake: JusticeIntake;
   taskNotes?: string | null;
   evidence?: readonly CfpbWorkspaceEvidenceInput[];
+  /** Whether the case has a real uploaded evidence record — see justiceEvidenceRowHasUploadedFile. */
+  hasUploadedEvidenceFile?: boolean;
 }): CfpbOperatorFilingWorkspace {
   const filingDestination =
     canonicalFilingDestinationForApprovedActionHref(MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF) ??
@@ -159,6 +167,7 @@ export function buildCfpbOperatorFilingWorkspace(input: {
     complaint_draft: resolveCfpbComplaintDraftForWorkspace(input.intake, input.taskNotes),
     prepared_answers: buildCfpbPreparedAnswers(input.intake),
     evidence: mapCfpbWorkspaceEvidence(input.evidence ?? []),
+    proof_documented: cfpbPrepDocumentedFromIntake(input.intake, input.hasUploadedEvidenceFile ?? false),
     is_submitted: false,
     confirmation_capture: {
       requires_filed_at: true,

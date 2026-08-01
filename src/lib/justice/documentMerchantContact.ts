@@ -22,8 +22,14 @@ export type MerchantContactDocumentationValidationResult =
   | { ok: true }
   | { ok: false; contactDateError?: string; contactProofError?: string };
 
+/**
+ * hasUploadedEvidenceFile: whether the case already has a real uploaded evidence record —
+ * required before "upload"/"screenshot" proof can be saved, mirroring the text requirement for
+ * "none"/"ticket"/"paste" so the form never accepts an unsubstantiated proof claim.
+ */
 export function validateMerchantContactDocumentation(
-  input: MerchantContactDocumentationInput
+  input: MerchantContactDocumentationInput,
+  hasUploadedEvidenceFile = false
 ): MerchantContactDocumentationValidationResult {
   const dateTrimmed = input.contactDate.trim();
   if (!dateTrimmed || !isValidDocumentedContactDate(dateTrimmed)) {
@@ -34,6 +40,19 @@ export function validateMerchantContactDocumentation(
   }
   if (input.contactProofType === "ticket" && !input.contactProofText.trim()) {
     return { ok: false, contactProofError: "Enter the ticket or case number before saving." };
+  }
+  if (input.contactProofType === "paste" && !input.contactProofText.trim()) {
+    return { ok: false, contactProofError: "Paste the text you have as proof before saving." };
+  }
+  if (
+    (input.contactProofType === "upload" || input.contactProofType === "screenshot") &&
+    !hasUploadedEvidenceFile
+  ) {
+    return {
+      ok: false,
+      contactProofError:
+        "Upload a file as evidence before saving this proof type, or choose a different proof type.",
+    };
   }
   return { ok: true };
 }
@@ -91,6 +110,8 @@ export type DocumentMerchantContactParams = {
   isLoaded: boolean;
   isSignedIn: boolean;
   logLabel?: string;
+  /** Whether the case already has a real uploaded evidence record (see validateMerchantContactDocumentation). */
+  hasUploadedEvidenceFile?: boolean;
 };
 
 export type DocumentMerchantContactResult =
@@ -105,8 +126,9 @@ export async function documentMerchantContact({
   isLoaded,
   isSignedIn,
   logLabel = "justice merchant",
+  hasUploadedEvidenceFile = false,
 }: DocumentMerchantContactParams): Promise<DocumentMerchantContactResult> {
-  const validation = validateMerchantContactDocumentation(input);
+  const validation = validateMerchantContactDocumentation(input, hasUploadedEvidenceFile);
   if (!validation.ok) {
     return {
       ok: false,

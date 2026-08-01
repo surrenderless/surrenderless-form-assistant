@@ -11,6 +11,7 @@ import { buildSubmissionDraftPreview } from "@/lib/justice/buildSubmissionDraftP
 import {
   JUSTICE_EVIDENCE_TYPE_LABELS,
   isJusticeEvidenceType,
+  justiceEvidenceRowHasUploadedFile,
   type JusticeCaseEvidenceRow,
 } from "@/lib/justice/evidence";
 import {
@@ -131,8 +132,12 @@ export default function JusticePreviewPage() {
 
   const destinations = useMemo((): JusticeDestination[] => {
     if (!intake) return [];
-    return computeJusticeDestinations(intake, { manualFtc, useCompanyContactLabels });
-  }, [intake, manualFtc, useCompanyContactLabels]);
+    return computeJusticeDestinations(intake, {
+      manualFtc,
+      useCompanyContactLabels,
+      hasUploadedEvidenceFile: evidence.some(justiceEvidenceRowHasUploadedFile),
+    });
+  }, [intake, manualFtc, useCompanyContactLabels, evidence]);
 
   const selectableDestinations = useMemo(
     () => destinations.filter(isPreviewSelectableDestination),

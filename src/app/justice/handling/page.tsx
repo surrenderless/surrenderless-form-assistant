@@ -42,6 +42,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import { justiceEvidenceRowHasUploadedFile, type JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
 import {
   ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
@@ -174,6 +175,7 @@ function HandlingAssistedMockSubmissionTrigger({
   isSignedIn,
   onCaseClientStateUpdate,
   onRefreshAfterAssistedSubmission,
+  hasUploadedEvidenceFile,
 }: {
   caseRow: CaseRow;
   approvedNextAction: JusticeApprovedNextAction;
@@ -181,6 +183,7 @@ function HandlingAssistedMockSubmissionTrigger({
   isSignedIn: boolean;
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
   onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
+  hasUploadedEvidenceFile?: boolean;
 }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -209,6 +212,7 @@ function HandlingAssistedMockSubmissionTrigger({
         isSignedIn,
         preparedPacketApproved,
         approvedNextAction,
+        hasUploadedEvidenceFile,
         logLabel: "justice handling",
         onApprovedNextActionPromoted: (promoted) => {
           clientStateForMerge = mergeClientStateWithApprovedNextAction(
@@ -976,6 +980,7 @@ function HandlingWorkbenchCaseCard({
   savedTasks,
   filingsReady,
   evidenceCount,
+  hasUploadedEvidenceFile,
   onRefreshAfterAssistedSubmission,
 }: {
   item: HandlingWorkbenchItem;
@@ -996,7 +1001,10 @@ function HandlingWorkbenchCaseCard({
   savedFilings?: JusticeCaseFilingRow[];
   savedTasks?: JusticeCaseTaskRow[];
   filingsReady?: boolean;
+  /** Display-only count of saved evidence/proof notes. Not a readiness signal — see hasUploadedEvidenceFile. */
   evidenceCount?: number;
+  /** Verified against actual justice_case_evidence rows — see justiceEvidenceRowHasUploadedFile. */
+  hasUploadedEvidenceFile?: boolean;
   onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
@@ -1023,11 +1031,12 @@ function HandlingWorkbenchCaseCard({
     return computeJusticeDestinations(caseRow.intake, {
       manualFtc: ftcUnlockedFromIntake(caseRow.intake),
       useCompanyContactLabels: true,
+      hasUploadedEvidenceFile: hasUploadedEvidenceFile === true,
     })
       .filter((d) => d.status === "recommended")
       .slice(0, 3)
       .map((d) => d.label);
-  }, [caseRow.intake]);
+  }, [caseRow.intake, hasUploadedEvidenceFile]);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(savedFilings ?? [], next);
   const showPostExternalFilingNudge =
@@ -1351,6 +1360,7 @@ function HandlingWorkbenchCaseCard({
         isSignedIn={Boolean(isSignedIn)}
         onCaseClientStateUpdate={onCaseClientStateUpdate}
         onRefreshAfterAssistedSubmission={onRefreshAfterAssistedSubmission}
+        hasUploadedEvidenceFile={hasUploadedEvidenceFile === true}
       />
       <div className="mt-2 rounded-lg border border-neutral-200/90 bg-neutral-50/90 px-2.5 py-2 dark:border-neutral-600 dark:bg-neutral-800/40">
         <details>
@@ -1668,6 +1678,7 @@ function ApprovedPacketActionCaseCard({
   onRecordActionHandled,
   onCaseClientStateUpdate,
   onRefreshAfterAssistedSubmission,
+  hasUploadedEvidenceFile,
 }: {
   item: HandlingWorkbenchItem;
   isActiveSessionCase: boolean;
@@ -1680,6 +1691,7 @@ function ApprovedPacketActionCaseCard({
   onRecordActionHandled?: () => void;
   onCaseClientStateUpdate: (caseId: string, mergedClientState: JusticeCaseClientState) => void;
   onRefreshAfterAssistedSubmission?: (caseId: string) => Promise<void>;
+  hasUploadedEvidenceFile?: boolean;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
   const { caseRow, next } = item;
@@ -1732,6 +1744,7 @@ function ApprovedPacketActionCaseCard({
         isSignedIn={Boolean(isSignedIn)}
         onCaseClientStateUpdate={onCaseClientStateUpdate}
         onRefreshAfterAssistedSubmission={onRefreshAfterAssistedSubmission}
+        hasUploadedEvidenceFile={hasUploadedEvidenceFile === true}
       />
       {showRecordHandled ? (
         <>
@@ -1803,6 +1816,9 @@ export default function JusticeHandlingWorkbenchPage() {
   const [evidenceCountByCaseId, setEvidenceCountByCaseId] = useState<Record<string, number>>(
     {}
   );
+  const [hasUploadedEvidenceFileByCaseId, setHasUploadedEvidenceFileByCaseId] = useState<
+    Record<string, boolean>
+  >({});
   const [filingsLoading, setFilingsLoading] = useState(false);
   const [tasksByCaseId, setTasksByCaseId] = useState<Record<string, JusticeCaseTaskRow[]>>({});
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -1929,12 +1945,14 @@ export default function JusticeHandlingWorkbenchPage() {
     if (!isLoaded || !isSignedIn || cases === null) {
       setFilingsByCaseId({});
       setEvidenceCountByCaseId({});
+      setHasUploadedEvidenceFileByCaseId({});
       setFilingsLoading(false);
       return;
     }
     if (!handlingCaseIdsKey) {
       setFilingsByCaseId({});
       setEvidenceCountByCaseId({});
+      setHasUploadedEvidenceFileByCaseId({});
       setFilingsLoading(false);
       return;
     }
@@ -1959,30 +1977,35 @@ export default function JusticeHandlingWorkbenchPage() {
                 }),
               ]);
               if (ac.signal.aborted) {
-                return [id, [] as JusticeCaseFilingRow[], 0] as const;
+                return [id, [] as JusticeCaseFilingRow[], 0, false] as const;
               }
               const filJson: unknown = filRes.ok ? await filRes.json() : [];
               const evJson: unknown = evRes.ok ? await evRes.json() : [];
               const rows = Array.isArray(filJson) ? (filJson as JusticeCaseFilingRow[]) : [];
-              const evidenceCount = Array.isArray(evJson) ? evJson.length : 0;
-              return [id, rows, evidenceCount] as const;
+              const evidenceRows = Array.isArray(evJson) ? (evJson as JusticeCaseEvidenceRow[]) : [];
+              const evidenceCount = evidenceRows.length;
+              const hasUploadedEvidenceFile = evidenceRows.some(justiceEvidenceRowHasUploadedFile);
+              return [id, rows, evidenceCount, hasUploadedEvidenceFile] as const;
             } catch {
               if (ac.signal.aborted) {
-                return [id, [] as JusticeCaseFilingRow[], 0] as const;
+                return [id, [] as JusticeCaseFilingRow[], 0, false] as const;
               }
-              return [id, [] as JusticeCaseFilingRow[], 0] as const;
+              return [id, [] as JusticeCaseFilingRow[], 0, false] as const;
             }
           })
         );
         if (ac.signal.aborted) return;
         const nextFilings: Record<string, JusticeCaseFilingRow[]> = {};
         const nextEvidenceCounts: Record<string, number> = {};
-        for (const [id, rows, evidenceCount] of entries) {
+        const nextHasUploadedEvidenceFile: Record<string, boolean> = {};
+        for (const [id, rows, evidenceCount, hasUploadedEvidenceFile] of entries) {
           nextFilings[id] = rows;
           nextEvidenceCounts[id] = evidenceCount;
+          nextHasUploadedEvidenceFile[id] = hasUploadedEvidenceFile;
         }
         setFilingsByCaseId(nextFilings);
         setEvidenceCountByCaseId(nextEvidenceCounts);
+        setHasUploadedEvidenceFileByCaseId(nextHasUploadedEvidenceFile);
       } finally {
         if (!ac.signal.aborted) setFilingsLoading(false);
       }
@@ -2583,6 +2606,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedTasks={tasksByCaseId[item.caseRow.id]}
         filingsReady={filingsReady}
         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+        hasUploadedEvidenceFile={hasUploadedEvidenceFileByCaseId[item.caseRow.id]}
         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
       />
     );
@@ -2718,6 +2742,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedTasks={tasksByCaseId[item.caseRow.id]}
         filingsReady={filingsReady}
         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+        hasUploadedEvidenceFile={hasUploadedEvidenceFileByCaseId[item.caseRow.id]}
         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
       />
     );
@@ -3022,6 +3047,7 @@ export default function JusticeHandlingWorkbenchPage() {
                         }
                         onCaseClientStateUpdate={applyApprovedNextActionToCaseRow}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
+                        hasUploadedEvidenceFile={hasUploadedEvidenceFileByCaseId[item.caseRow.id]}
                       />
                     );
                   })}
@@ -3178,6 +3204,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedTasks={tasksByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                        hasUploadedEvidenceFile={hasUploadedEvidenceFileByCaseId[item.caseRow.id]}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     ))}
@@ -3236,6 +3263,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedTasks={tasksByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                        hasUploadedEvidenceFile={hasUploadedEvidenceFileByCaseId[item.caseRow.id]}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     );
@@ -3416,6 +3444,7 @@ export default function JusticeHandlingWorkbenchPage() {
         savedTasks={tasksByCaseId[item.caseRow.id]}
                         filingsReady={filingsReady}
                         evidenceCount={evidenceCountByCaseId[item.caseRow.id]}
+                        hasUploadedEvidenceFile={hasUploadedEvidenceFileByCaseId[item.caseRow.id]}
                         onRefreshAfterAssistedSubmission={refreshCaseFilingsAndClientState}
                       />
                     );
