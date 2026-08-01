@@ -449,10 +449,27 @@ function logPlaywrightApprovePacketDiagnostic(
   details: Record<string, unknown>
 ): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
+  const stack = new Error().stack ?? "";
   console.error(`[e2e-diag:approve-packet] ${event}`, {
     ...details,
-    stack: new Error().stack,
+    stack,
   });
+  // Relay to the Node test process via the same exposeBinding the fetch-stack diagnostic
+  // uses, when the E2E spec has wired it up. Only kind/event/time/stack cross the bridge —
+  // never `details`, which may include booleans derived from case state.
+  const relay = (
+    window as unknown as {
+      __e2ePatchStackRelay?: (payload: {
+        kind: "approval";
+        event: string;
+        time: number;
+        stack: string;
+      }) => void;
+    }
+  ).__e2ePatchStackRelay;
+  if (typeof relay === "function") {
+    relay({ kind: "approval", event, time: Date.now(), stack });
+  }
 }
 
 function readSessionPreparedPacketApproved(caseId: string): boolean {

@@ -31,17 +31,28 @@ test("after evidence upload, consumer reviews draft and approves packet without 
 
   // TEMPORARY diagnostic: capture the JS call stack of any fetch() that PATCHes
   // /api/justice/cases/ with a body claiming prepared_packet_approved:true, and relay it to
-  // Node test output. Playwright's trace console capture has not surfaced any call to the
-  // known production producer despite the PATCH provably occurring, so this bypasses trace
-  // capture entirely via an exposed binding. Logs only the request URL, a timestamp, and the
-  // stack — never the request body or any user/chat content. Must be wired before any
-  // navigation so the init script attaches to the very first document.
+  // Node test output. Also reused by logPlaywrightApprovePacketDiagnostic (chat-ai/page.tsx)
+  // to relay its own approval-handler events through the same bridge — Playwright's trace
+  // console capture has not surfaced any call to the known production producer despite the
+  // PATCH provably occurring, so this bypasses trace capture entirely via an exposed binding.
+  // Relays only kind, url/event name, a timestamp, and the stack — never the request body,
+  // `details`, or any user/chat content. Must be wired before any navigation so the init
+  // script attaches to the very first document.
+  type E2eDiagRelayPayload =
+    | { kind: "fetch"; url: string; time: number; stack: string }
+    | { kind: "approval"; event: string; time: number; stack: string };
   await page.exposeBinding(
     "__e2ePatchStackRelay",
-    (_source, payload: { url: string; time: number; stack: string }) => {
-      console.log(
-        `[e2e-fetch-diag] PATCH prepared_packet_approved:true url=${payload.url} time=${payload.time}\n${payload.stack}`
-      );
+    (_source, payload: E2eDiagRelayPayload) => {
+      if (payload.kind === "fetch") {
+        console.log(
+          `[e2e-fetch-diag] PATCH prepared_packet_approved:true url=${payload.url} time=${payload.time}\n${payload.stack}`
+        );
+      } else {
+        console.log(
+          `[e2e-approval-diag] ${payload.event} time=${payload.time}\n${payload.stack}`
+        );
+      }
     }
   );
   await page.addInitScript(() => {
@@ -68,9 +79,14 @@ test("after evidence upload, consumer reviews draft and approves packet without 
           const time = Date.now();
           void (
             window as unknown as {
-              __e2ePatchStackRelay: (p: { url: string; time: number; stack: string }) => void;
+              __e2ePatchStackRelay: (p: {
+                kind: "fetch";
+                url: string;
+                time: number;
+                stack: string;
+              }) => void;
             }
-          ).__e2ePatchStackRelay({ url, time, stack });
+          ).__e2ePatchStackRelay({ kind: "fetch", url, time, stack });
         }
       } catch {
         // Diagnostics must never break the real fetch call.
