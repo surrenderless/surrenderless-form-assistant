@@ -32,15 +32,17 @@ test("after evidence upload, consumer reviews draft and approves packet without 
   // TEMPORARY diagnostic: capture the JS call stack of any fetch() that PATCHes
   // /api/justice/cases/ with a body claiming prepared_packet_approved:true, and relay it to
   // Node test output. Also reused by logPlaywrightApprovePacketDiagnostic (chat-ai/page.tsx)
-  // to relay its own approval-handler events through the same bridge — Playwright's trace
-  // console capture has not surfaced any call to the known production producer despite the
-  // PATCH provably occurring, so this bypasses trace capture entirely via an exposed binding.
-  // Relays only kind, url/event name, a timestamp, and the stack — never the request body,
-  // `details`, or any user/chat content. Must be wired before any navigation so the init
-  // script attaches to the very first document.
+  // and logPlaywrightPersistDiagnostic (persistPreparedPacketApprovalToCase.ts) to relay
+  // their own events through the same bridge — Playwright's trace console capture has not
+  // surfaced any call to the known production producer despite the PATCH provably occurring,
+  // so this bypasses trace capture entirely via an exposed binding. Relays only kind,
+  // url/event name, invocationId (persist kind only), a timestamp, and the stack — never the
+  // request body, `details`, case state, actions, or any user/chat content. Must be wired
+  // before any navigation so the init script attaches to the very first document.
   type E2eDiagRelayPayload =
     | { kind: "fetch"; url: string; time: number; stack: string }
-    | { kind: "approval"; event: string; time: number; stack: string };
+    | { kind: "approval"; event: string; time: number; stack: string }
+    | { kind: "persist"; event: string; invocationId: number; time: number; stack: string };
   await page.exposeBinding(
     "__e2ePatchStackRelay",
     (_source, payload: E2eDiagRelayPayload) => {
@@ -48,9 +50,13 @@ test("after evidence upload, consumer reviews draft and approves packet without 
         console.log(
           `[e2e-fetch-diag] PATCH prepared_packet_approved:true url=${payload.url} time=${payload.time}\n${payload.stack}`
         );
-      } else {
+      } else if (payload.kind === "approval") {
         console.log(
           `[e2e-approval-diag] ${payload.event} time=${payload.time}\n${payload.stack}`
+        );
+      } else {
+        console.log(
+          `[e2e-persist-diag] ${payload.event} invocationId=${payload.invocationId} time=${payload.time}\n${payload.stack}`
         );
       }
     }
