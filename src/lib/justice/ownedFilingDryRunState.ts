@@ -12,7 +12,7 @@ export type OwnedFilingDryRunStatus =
 
 export type OwnedFilingDryRunRecord = {
   status: OwnedFilingDryRunStatus;
-  destination: "bbb" | "ftc";
+  destination: "bbb" | "ftc" | "fcc";
   case_id: string;
   task_id: string;
   ran_at: string;
@@ -53,7 +53,7 @@ export function formatOwnedFilingDryRunStepLog(
 
 export function ownedFilingDryRunIdempotencyKey(
   caseId: string,
-  destination: "bbb" | "ftc"
+  destination: "bbb" | "ftc" | "fcc"
 ): string {
   return `owned-filing-dry-run:${destination}:${caseId.trim()}`;
 }
@@ -81,7 +81,7 @@ export function parseOwnedFilingDryRunRecord(
     return null;
   }
   const destination = map.get("destination");
-  if (destination !== "bbb" && destination !== "ftc") return null;
+  if (destination !== "bbb" && destination !== "ftc" && destination !== "fcc") return null;
   const case_id = map.get("case_id")?.trim() ?? "";
   const task_id = map.get("task_id")?.trim() ?? "";
   const ran_at = map.get("ran_at")?.trim() ?? "";
@@ -143,7 +143,7 @@ export function upsertOwnedFilingDryRunNotes(
  */
 export function hasMatchingOwnedFilingDryRunResult(
   notes: string | null | undefined,
-  destination: "bbb" | "ftc",
+  destination: "bbb" | "ftc" | "fcc",
   status: OwnedFilingDryRunStatus
 ): boolean {
   const existing = parseOwnedFilingDryRunRecord(notes);
@@ -160,7 +160,7 @@ export function hasMatchingOwnedFilingDryRunResult(
  */
 export function shouldSkipOwnedFilingDryRunAsDuplicate(
   notes: string | null | undefined,
-  destination: "bbb" | "ftc"
+  destination: "bbb" | "ftc" | "fcc"
 ): OwnedFilingDryRunStatus | null {
   const existing = parseOwnedFilingDryRunRecord(notes);
   if (!existing || existing.destination !== destination) return null;

@@ -23,21 +23,25 @@ function getSupabaseAdmin(): SupabaseClient | null {
 }
 
 function parseDestination(raw: unknown): OwnedFilingDryRunDestination | null {
-  if (raw === "bbb" || raw === "ftc") return raw;
+  if (raw === "bbb" || raw === "ftc" || raw === "fcc") return raw;
   if (typeof raw === "string") {
     const lower = raw.trim().toLowerCase();
-    if (lower === "bbb" || lower === "ftc") return lower;
+    if (lower === "bbb" || lower === "ftc" || lower === "fcc") return lower;
   }
   return null;
 }
 
 /**
- * Operator-only dry-run for a selected owned BBB/FTC filing.
+ * Operator-only dry-run for a selected owned BBB/FTC/FCC filing.
  * Uses real case data, Browserless, live portal, decide-action, and field fills.
  * Stops before irreversible/unknown clicks. Never marks filed, never completes the task,
  * never advances the ladder. Not registered in vercel.json minute cron.
  *
- * Body: { case_id: string, destination: "bbb"|"ftc", user_id?: string }
+ * FCC has no field-selector harness yet — its dry-run always fails closed (see
+ * runOwnedFilingDryRun), so this endpoint is reachable for FCC but never actually drives a
+ * browser for it.
+ *
+ * Body: { case_id: string, destination: "bbb"|"ftc"|"fcc", user_id?: string }
  * When user_id is omitted, resolved from justice_cases.
  */
 async function handleDryRun(req: NextRequest): Promise<NextResponse> {
@@ -62,7 +66,7 @@ async function handleDryRun(req: NextRequest): Promise<NextResponse> {
 
   if (!caseId || !destination) {
     return NextResponse.json(
-      { error: 'case_id and destination ("bbb"|"ftc") are required' },
+      { error: 'case_id and destination ("bbb"|"ftc"|"fcc") are required' },
       { status: 400 }
     );
   }

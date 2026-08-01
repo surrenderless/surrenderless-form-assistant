@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import { upsertBbbOwnedFilingDeliveryNotes } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 import { upsertFtcOwnedFilingDeliveryNotes } from "@/lib/justice/ftcOwnedFilingDeliveryState";
+import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
+import { REAL_FCC_AUTOFILL_ENABLED_ENV_VALUE } from "@/lib/justice/realFccAutofillEnabled";
 import {
   OWNED_FILING_DRY_RUN_BLOCK_MARKER,
   upsertOwnedFilingDryRunNotes,
@@ -63,6 +65,23 @@ function ftcTask(notesExtra = ""): JusticeCaseTaskRow {
     user_id: USER_ID,
     case_id: CASE_ID,
     title: "FTC filing: Acme",
+    due_date: null,
+    notes: notesExtra ? `${base}\n\n${notesExtra}` : base,
+    completed_at: null,
+    created_at: "2026-07-14T00:00:00.000Z",
+    updated_at: "2026-07-14T00:00:00.000Z",
+  };
+}
+
+function fccTask(notesExtra = ""): JusticeCaseTaskRow {
+  // No owned-filing delivery block — FCC has never had a live execution path, so a real FCC
+  // task in operator fulfillment carries only the plain filing-queue marker.
+  const base = `${fccFilingTaskNotesMarker(CASE_ID)}\ndraft:\nx`;
+  return {
+    id: TASK_ID,
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    title: "FCC filing: Acme",
     due_date: null,
     notes: notesExtra ? `${base}\n\n${notesExtra}` : base,
     completed_at: null,
@@ -969,5 +988,72 @@ describe("runOwnedFilingDryRun", () => {
     expect(noteUpdates.at(-1)).toContain(
       "step_log: decide|text:Continue|https://reportfraud.ftc.gov/assistant;apply|text:Continue|https://reportfraud.ftc.gov/assistant"
     );
+  });
+});
+
+describe("runOwnedFilingDryRun — fcc (parity scaffold, no real harness)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("fails closed by default (flag unset) and never touches Browserless readiness", async () => {
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(fccTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "fcc"
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("dry_run_failed");
+    expect(result.destination).toBe("fcc");
+    expect(result.stop_reason).toBe("config");
+    expect(result.detail).toMatch(/not enabled/i);
+    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+    expect(noteUpdates.at(-1)).toContain("destination: fcc");
+    expect(noteUpdates.at(-1)).toContain("status: dry_run_failed");
+  });
+
+  it("still fails closed even when the flag is explicitly enabled, since no field-selector harness exists", async () => {
+    vi.stubEnv("NEXT_PUBLIC_JUSTICE_REAL_FCC_AUTOFILL_ENABLED", REAL_FCC_AUTOFILL_ENABLED_ENV_VALUE);
+
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase(fccTask(), noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "fcc"
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("dry_run_failed");
+    expect(result.stop_reason).toBe("no_verified_harness");
+    expect(result.detail).toMatch(/no verified fcc portal.*harness/i);
+    expect(runRealBbbBoundedSubmit).not.toHaveBeenCalled();
+    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+  });
+
+  it("never marks the task filed or completed", async () => {
+    const noteUpdates: string[] = [];
+    await runOwnedFilingDryRun(makeSupabase(fccTask(), noteUpdates), USER_ID, CASE_ID, "fcc");
+
+    for (const notes of noteUpdates) {
+      expect(notes).not.toContain("delivery_state: filed");
+      expect(notes).not.toMatch(/completed_at:/);
+    }
+  });
+
+  it("returns a no-open-task error when there is no FCC filing task", async () => {
+    const noteUpdates: string[] = [];
+    const result = await runOwnedFilingDryRun(
+      makeSupabase({ ...fccTask(), notes: "unrelated note" }, noteUpdates),
+      USER_ID,
+      CASE_ID,
+      "fcc"
+    );
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/no open fcc filing task/i);
   });
 });

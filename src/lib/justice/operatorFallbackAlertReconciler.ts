@@ -13,6 +13,11 @@ import {
   parseFtcOwnedFilingDeliveryRecord,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { taskNotesMatchFtcFilingMarker } from "@/lib/justice/ftcFilingTask";
+import {
+  FCC_OWNED_FILING_DELIVERY_BLOCK_MARKER,
+  fccOwnedFilingIdempotencyKey,
+  parseFccOwnedFilingDeliveryRecord,
+} from "@/lib/justice/fccOwnedFilingDeliveryState";
 import { taskNotesMatchCfpbFilingMarker } from "@/lib/justice/cfpbFilingTask";
 import { taskNotesMatchDemandLetterFilingMarker } from "@/lib/justice/demandLetterFilingTask";
 import { taskNotesMatchDotFilingMarker } from "@/lib/justice/dotFilingTask";
@@ -42,7 +47,7 @@ function clampLen(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
 }
 
-type OwnedFilingKind = "bbb" | "ftc";
+type OwnedFilingKind = "bbb" | "ftc" | "fcc";
 
 /** All 9 owned escalation destinations — the ordinary (non-automated-fallback) queue alert covers all of them. */
 type AllDestinationKind =
@@ -90,6 +95,14 @@ const DESTINATIONS: AlertDestination[] = [
     parseRecord: parseFtcOwnedFilingDeliveryRecord,
     idempotencyKey: ftcOwnedFilingIdempotencyKey,
     taskMarkerMatches: taskNotesMatchFtcFilingMarker,
+  },
+  {
+    kind: "fcc",
+    deliveryMarker: FCC_OWNED_FILING_DELIVERY_BLOCK_MARKER,
+    destinationLabel: "FCC",
+    parseRecord: parseFccOwnedFilingDeliveryRecord,
+    idempotencyKey: fccOwnedFilingIdempotencyKey,
+    taskMarkerMatches: taskNotesMatchFccFilingMarker,
   },
 ];
 
@@ -318,12 +331,14 @@ export type ReconcileOperatorFallbackAlertsOptions = {
  * Durable proactive operator alerting, in two phases sharing the same recipient resolution,
  * email provider, exactly-once marker mechanism, and case timeline audit trail:
  *
- * 1. Owned BBB/FTC filings that fell back to manual fulfillment (worker/provider failure,
+ * 1. Owned BBB/FTC/FCC filings that fell back to manual fulfillment (worker/provider failure,
  *    uncertain submission, execute-time config failure, or a stale queued/submitting reclaim —
- *    all converge to `delivery_state: "failed"`).
+ *    all converge to `delivery_state: "failed"`). FCC has no live execution path yet (dry-run
+ *    only), so this phase currently never actually fires for FCC in production — it exists so
+ *    the wiring is ready once a real harness lands.
  * 2. Ordinary open operator-fulfillment work across all 9 escalation destinations that never had
  *    an automated filing attempted at all — i.e. every case in the default product mode (owned
- *    BBB/FTC autofill off, or any of the other 7 destinations, which have no automated path).
+ *    BBB/FTC/FCC autofill off, or any of the other 6 destinations, which have no automated path).
  *    Without this phase, a case can sit in "awaiting Surrenderless operator fulfillment"
  *    indefinitely with nothing ever alerting anyone, since phase 1 only fires for tasks that
  *    carry an owned-filing delivery block.
@@ -540,7 +555,8 @@ export async function reconcileOperatorFallbackAlerts(
       // either actively automated or already covered by phase 1 above — never double-alert it.
       const hasOwnedDeliveryBlock =
         (task.notes ?? "").includes(BBB_OWNED_FILING_DELIVERY_BLOCK_MARKER) ||
-        (task.notes ?? "").includes(FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER);
+        (task.notes ?? "").includes(FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER) ||
+        (task.notes ?? "").includes(FCC_OWNED_FILING_DELIVERY_BLOCK_MARKER);
       if (hasOwnedDeliveryBlock) continue;
 
       const cfg = QUEUE_ALERT_DESTINATIONS.find((d) => d.taskMarkerMatches(task.notes, caseId));

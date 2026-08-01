@@ -8,6 +8,9 @@ import { parseBbbOwnedFilingDeliveryRecord } from "@/lib/justice/bbbOwnedFilingD
 import { findOpenFtcFilingTask } from "@/lib/justice/ftcFilingTask";
 import { parseFtcOwnedFilingDeliveryRecord } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { FTC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL } from "@/lib/justice/ftcOfficialPortal";
+import { findOpenFccFilingTask } from "@/lib/justice/fccFilingTask";
+import { parseFccOwnedFilingDeliveryRecord } from "@/lib/justice/fccOwnedFilingDeliveryState";
+import { isRealFccComplaintAutofillEnabled, REAL_FCC_AUTOFILL_DISABLED_ERROR } from "@/lib/justice/realFccAutofillEnabled";
 import {
   formatOwnedFilingDryRunStepLog,
   shouldSkipOwnedFilingDryRunAsDuplicate,
@@ -27,7 +30,7 @@ import type { JusticeIntake } from "@/lib/justice/types";
 const TASK_SELECT =
   "id, user_id, case_id, title, due_date, notes, completed_at, created_at, updated_at" as const;
 
-export type OwnedFilingDryRunDestination = "bbb" | "ftc";
+export type OwnedFilingDryRunDestination = "bbb" | "ftc" | "fcc";
 
 export type OwnedFilingDryRunResult = {
   ok: boolean;
@@ -94,13 +97,19 @@ async function loadOpenOwnedFilingTask(
 
   const rows = (tasks ?? []) as JusticeCaseTaskRow[];
   const task =
-    destination === "bbb" ? findOpenBbbFilingTask(rows, caseId) : findOpenFtcFilingTask(rows, caseId);
+    destination === "bbb"
+      ? findOpenBbbFilingTask(rows, caseId)
+      : destination === "ftc"
+        ? findOpenFtcFilingTask(rows, caseId)
+        : findOpenFccFilingTask(rows, caseId);
   if (!task) return { error: `no open ${destination.toUpperCase()} filing task` };
 
   const delivery =
     destination === "bbb"
       ? parseBbbOwnedFilingDeliveryRecord(task.notes)
-      : parseFtcOwnedFilingDeliveryRecord(task.notes);
+      : destination === "ftc"
+        ? parseFtcOwnedFilingDeliveryRecord(task.notes)
+        : parseFccOwnedFilingDeliveryRecord(task.notes);
   if (delivery?.delivery_state === "filed") {
     return { error: `${destination.toUpperCase()} already filed — dry-run refused` };
   }
@@ -186,6 +195,21 @@ export async function runOwnedFilingDryRun(
     };
   }
 
+  // FCC has no built field-selector harness yet — fail closed unless explicitly opted in, and
+  // never reach the shared Browserless readiness check (irrelevant while disabled).
+  if (destination === "fcc" && !isRealFccComplaintAutofillEnabled()) {
+    return await persistDryRunFailure(
+      supabase,
+      trimmedUserId,
+      task,
+      destination,
+      trimmedCaseId,
+      0,
+      REAL_FCC_AUTOFILL_DISABLED_ERROR,
+      "config"
+    );
+  }
+
   const readiness = evaluateOwnedBbbAutofillExecutionReadiness(trimmedUserId);
   if (!readiness.ok) {
     return await persistDryRunFailure(
@@ -246,6 +270,13 @@ export async function runOwnedFilingDryRun(
         detail = searchFailure || bounded.error;
         buttonLabel = searchFailure ? undefined : blocked?.detail;
       }
+    } else if (destination === "fcc") {
+      // No real field-selector harness exists for FCC yet — always fails closed here even if the
+      // flag is enabled. The flag only gates whether this branch is reachable at all (see the
+      // config-fail-closed return above); it never grants real submission capability.
+      stopReason = "no_verified_harness";
+      detail =
+        "No verified FCC portal field-selector harness exists yet — dry-run intentionally fails closed.";
     } else {
       const bounded = await runRealFtcBoundedSubmit({
         url: FTC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL,
@@ -353,7 +384,9 @@ export async function runOwnedFilingDryRun(
   const delivery =
     destination === "bbb"
       ? parseBbbOwnedFilingDeliveryRecord(patched.notes)
-      : parseFtcOwnedFilingDeliveryRecord(patched.notes);
+      : destination === "ftc"
+        ? parseFtcOwnedFilingDeliveryRecord(patched.notes)
+        : parseFccOwnedFilingDeliveryRecord(patched.notes);
   if (!stillOpen || delivery?.delivery_state === "filed") {
     return {
       ok: false,
