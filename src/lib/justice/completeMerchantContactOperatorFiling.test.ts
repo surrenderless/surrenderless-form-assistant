@@ -21,6 +21,22 @@ const TASK_ID = "550e8400-e29b-41d4-a716-446655440099";
 
 const timelineStore: { entries: TimelineEntry[] } = { entries: [] };
 
+// Wraps the real implementation (still calls through, so ladder-logic behavior for every
+// existing test is unchanged) purely so its call arguments can be inspected — the correct
+// boundary for proving this file threads real per-case evidence through, since this
+// completion path always records "ticket" contact proof internally (see the comment on
+// the direct advanceApprovedNextActionAfterCompleted test above), which means the CFPB
+// destination outcome itself can never depend on hasUploadedEvidenceFile here.
+vi.mock("@/lib/justice/recomputeApprovedNextActionAfterIntake", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/justice/recomputeApprovedNextActionAfterIntake")
+  >();
+  return {
+    ...actual,
+    advanceApprovedNextActionAfterCompleted: vi.fn(actual.advanceApprovedNextActionAfterCompleted),
+  };
+});
+
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(
     async (
@@ -142,6 +158,40 @@ describe("merchant contact completion ladder advance", () => {
     expect(next?.href).toBe("/justice/ftc");
     expect(next?.status).toBe("approved");
   });
+
+  it("[ladder primitive, not this file's own proof shape — completeMerchantContactOperatorFiling always records 'ticket' proof internally, see the wiring test below] advanceApprovedNextActionAfterCompleted picks CFPB after merchant contact only when a real uploaded evidence file exists (CFPB priority 28 is downstream of merchant contact priority 10)", () => {
+    const prior = retailIntake({
+      problem_category: "financial_account_issue",
+      money_amount: "not sure",
+      pay_or_order_date: "",
+    });
+    const updated = buildUpdatedIntakeAfterMerchantContact(prior, {
+      contactMethod: "email",
+      contactDate: "2026-06-22",
+      merchantResponseType: "refused_help",
+      contactProofType: "upload",
+      contactProofText: "",
+    });
+    const existing = {
+      label: "Merchant contact",
+      href: "/justice/merchant",
+      status: "completed" as const,
+      completed_at: "2026-06-22T12:00:00.000Z",
+    };
+
+    const withFile = advanceApprovedNextActionAfterCompleted(updated, "/justice/merchant", {
+      existing,
+      hasUploadedEvidenceFile: true,
+    });
+    expect(withFile?.href).toBe("/justice/cfpb");
+    expect(withFile?.status).toBe("approved");
+
+    const withoutFile = advanceApprovedNextActionAfterCompleted(updated, "/justice/merchant", {
+      existing,
+      hasUploadedEvidenceFile: false,
+    });
+    expect(withoutFile?.href).not.toBe("/justice/cfpb");
+  });
 });
 
 type MockCaseState = {
@@ -150,6 +200,7 @@ type MockCaseState = {
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   filingInsertCount: number;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -289,7 +340,7 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
             eq: () => ({
               eq: () => ({
                 order: () => ({
-                  limit: async () => ({ data: [], error: null }),
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
                 }),
               }),
             }),
@@ -384,6 +435,72 @@ describe("completeMerchantContactOperatorFiling idempotency", () => {
     expect(
       timelineStore.entries.filter((e) => e.type === "merchant_contact_saved")[0]?.id
     ).toBe(contactIds[0]);
+  });
+
+  it("threads a hasUploadedEvidenceFile value derived from real evidence rows into the advance-after-completed call (shared boundary — this path always records 'ticket' contact proof internally, so the destination outcome itself is independent of evidence, but the value passed through must still reflect real per-case rows)", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const buildState = (evidence: MockCaseState["evidence"]): MockCaseState => ({
+      intake: retailIntake({ money_involved: "not sure", pay_or_order_date: "" }),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: "/justice/merchant",
+          status: "approved",
+          approved_at: "2026-06-21T00:00:10.000Z",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-21T00:00:00.000Z",
+        updated_at: "2026-06-21T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      evidence,
+    });
+    const input = {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Merchant contact",
+      filedAt: "2026-06-22",
+      confirmationNumber: "e2e-merchant-wiring-1",
+      contactMethod: "email" as const,
+      merchantResponseType: "refused_help" as const,
+      recipient: "Acme Retail",
+      notes: "Called support",
+    };
+    const spy = vi.mocked(advanceApprovedNextActionAfterCompleted);
+
+    spy.mockClear();
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    await completeMerchantContactOperatorFiling(createMerchantCompleteSupabase(withFile), USER_ID, input);
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: true })
+    );
+
+    spy.mockClear();
+    const withoutFile = buildState([]);
+    await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(withoutFile),
+      USER_ID,
+      input
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: false })
+    );
   });
 });
 

@@ -50,28 +50,38 @@ export function isValidDocumentedContactDate(s: string | undefined): boolean {
 }
 
 /**
- * True when intake records a documented contact attempt sufficient for CFPB prep unlock
- * (method, valid date, outcome, description when proof type is "none", ticket/case text when "ticket").
+ * True when intake records a documented contact attempt sufficient for CFPB prep unlock.
+ * "none"/"ticket"/"paste" claim text-based proof — require non-blank contact_proof_text.
+ * "upload"/"screenshot" claim a real attachment — require `hasUploadedEvidenceFile`, a signal
+ * verified against actual justice_case_evidence records (see justiceEvidenceRowHasUploadedFile),
+ * never trusted from the claim alone. Any unrecognized proof type fails closed.
  */
-export function cfpbPrepDocumentedFromIntake(intake: JusticeIntake): boolean {
+export function cfpbPrepDocumentedFromIntake(
+  intake: JusticeIntake,
+  hasUploadedEvidenceFile = false
+): boolean {
   if (intake.already_contacted !== "yes") return false;
   if (!intake.contact_method) return false;
   if (!isValidDocumentedContactDate(intake.contact_date)) return false;
   if (!intake.merchant_response_type) return false;
   const proofType = intake.contact_proof_type ?? "none";
-  if (proofType === "none") {
+  if (proofType === "none" || proofType === "ticket" || proofType === "paste") {
     return (intake.contact_proof_text?.trim().length ?? 0) > 0;
   }
-  if (proofType === "ticket") {
-    return (intake.contact_proof_text?.trim().length ?? 0) > 0;
+  if (proofType === "upload" || proofType === "screenshot") {
+    return hasUploadedEvidenceFile;
   }
-  return true;
+  return false;
 }
 
 /** CFPB prep / escalation checklist unlock (manual bypass matches FTC manual escalate). */
-export function cfpbPrepUnlockedFromIntake(intake: JusticeIntake, manualEscalate: boolean): boolean {
+export function cfpbPrepUnlockedFromIntake(
+  intake: JusticeIntake,
+  manualEscalate: boolean,
+  hasUploadedEvidenceFile = false
+): boolean {
   if (manualEscalate) return true;
-  return cfpbPrepDocumentedFromIntake(intake);
+  return cfpbPrepDocumentedFromIntake(intake, hasUploadedEvidenceFile);
 }
 
 export function isMerchantResolved(intake: JusticeIntake): boolean {
@@ -384,7 +394,8 @@ export function computeJusticeDestinations(
       priority: 50,
       internalRoute: "/justice/state-ag",
     });
-    const cfpbPrepUnlocked = cfpbRel && cfpbPrepUnlockedFromIntake(intake, ctx.manualFtc);
+    const cfpbPrepUnlocked =
+      cfpbRel && cfpbPrepUnlockedFromIntake(intake, ctx.manualFtc, ctx.hasUploadedEvidenceFile ?? false);
     push({
       id: "cfpb",
       label: "CFPB",

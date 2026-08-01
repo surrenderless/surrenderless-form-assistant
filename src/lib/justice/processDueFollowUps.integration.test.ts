@@ -87,6 +87,7 @@ type MockState = {
   /** When true, response-review task inserts fail (simulates ensure failure). */
   failResponseReviewInsert?: boolean;
   ownedFilingInserted: number;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 /**
@@ -277,6 +278,19 @@ function createCapableSupabase(state: MockState): SupabaseClient {
                 }
                 return { error: null };
               },
+            }),
+          }),
+        };
+      }
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
             }),
           }),
         };

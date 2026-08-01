@@ -4,6 +4,7 @@ import {
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
+  waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
 
 const MOCK_SUBMIT_USER_DATA = {
@@ -19,8 +20,11 @@ test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
 });
 
-test("signed-in POST /api/submit-form succeeds on mock FTC practice URL", async ({ request }) => {
-  const submitRes = await request.post("/api/submit-form", {
+test("signed-in POST /api/submit-form succeeds on mock FTC practice URL", async ({ page }) => {
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+
+  const submitRes = await page.request.post("/api/submit-form", {
     data: {
       url: MOCK_FTC_PRACTICE_SUBMIT_URL,
       userData: MOCK_SUBMIT_USER_DATA,

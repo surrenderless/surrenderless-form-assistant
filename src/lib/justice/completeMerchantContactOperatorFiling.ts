@@ -26,6 +26,7 @@ import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import { cfpbLikelyRelevant, fccLikelyRelevant } from "@/lib/justice/rules";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type {
@@ -359,8 +360,10 @@ export async function completeMerchantContactOperatorFiling(
   ) {
     const completedHref = approvedNext.href.trim();
     const { withTracking: completedWithTracking } = buildCompletedApprovedNextAction(approvedNext);
+    const hasUploadedEvidenceFile = await resolveHasUploadedEvidenceFile(supabase, caseId, userId);
     const advancedAction = advanceApprovedNextActionAfterCompleted(updatedIntake, completedHref, {
       existing: completedWithTracking,
+      hasUploadedEvidenceFile,
     });
     if (
       advancedAction?.href?.trim() &&

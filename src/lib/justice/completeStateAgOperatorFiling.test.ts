@@ -87,6 +87,28 @@ function retailIntake(): JusticeIntake {
   });
 }
 
+/** CFPB-relevant variant proving the hasUploadedEvidenceFile wiring doesn't wrongly
+ * pick CFPB after State AG completes — CFPB's priority (28) is below State AG's (50), so
+ * it's excluded from the downstream ladder regardless of evidence. */
+function cfpbRelevantRetailIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "financial_account_issue",
+    company_name: "North Bank",
+    purchase_or_signup: "checking account",
+    story: "Unauthorized charge on my checking account, bank won't reverse it.",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-01-15",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "upload",
+    contact_proof_text: "",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
+
 type MockCaseState = {
   intake: JusticeIntake;
   client_state: Record<string, unknown>;
@@ -97,6 +119,7 @@ type MockCaseState = {
   filingInsertCount: number;
   ownedFilingInsertFail: boolean;
   followUpInsertFail: boolean;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -279,6 +302,20 @@ function createStateAgCompleteSupabase(state: MockCaseState): SupabaseClient {
                 state.filings = [...state.filings, filing];
                 return { data: filing, error: null };
               },
+            }),
+          }),
+        };
+      }
+
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
             }),
           }),
         };
@@ -540,5 +577,65 @@ describe("completeStateAgOperatorFiling", () => {
       (state.client_state.approved_next_action as { follow_up_needed?: boolean } | undefined)
         ?.follow_up_needed
     ).toBe(true);
+  });
+
+  it("threads a hasUploadedEvidenceFile value derived from real evidence rows into the advance-after-completed call (shared boundary — independent of whether CFPB is reachable from this ladder position)", async () => {
+    const buildState = (evidence: MockCaseState["evidence"]): MockCaseState => ({
+      intake: cfpbRelevantRetailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "State Attorney General (consumer)",
+          href: "/justice/state-ag",
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: baseApprovedStateAgTask(),
+      filingInsertCount: 0,
+      ownedFilingTasks: [],
+      ownedFilingInsertFail: false,
+      followUpTasks: [],
+      followUpInsertFail: false,
+      evidence,
+    });
+    // vi.spyOn (not vi.mock) so it survives this file's beforeEach(vi.restoreAllMocks()) —
+    // created fresh here, calls through to the real implementation by default.
+    const spy = vi.spyOn(
+      recomputeApprovedNextActionAfterIntake,
+      "advanceApprovedNextActionAfterCompleted"
+    );
+
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    await completeStateAgOperatorFiling(createStateAgCompleteSupabase(withFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filedAt: "2026-02-15",
+      confirmationNumber: "AG-CA-12345",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: true })
+    );
+
+    spy.mockClear();
+    const withoutFile = buildState([]);
+    await completeStateAgOperatorFiling(createStateAgCompleteSupabase(withoutFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "State Attorney General (consumer)",
+      filedAt: "2026-02-15",
+      confirmationNumber: "AG-CA-12345",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: false })
+    );
+    spy.mockRestore();
   });
 });

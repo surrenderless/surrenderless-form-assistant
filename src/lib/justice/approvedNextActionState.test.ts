@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
+  mergeClientStateWithApprovedNextAction,
   parseApprovedNextAction,
+  parseJusticeCaseClientState,
   readSessionApprovedNextAction,
   resolveApprovedNextAction,
   STORAGE_APPROVED_NEXT_ACTION_V1,
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -45,6 +48,48 @@ describe("parseApprovedNextAction follow-up round-trip", () => {
   it("omits follow_up_needed when absent", () => {
     const { follow_up_needed: _cleared, ...withoutFollowUp } = clearedFollowUpAction;
     expect(parseApprovedNextAction(withoutFollowUp)?.follow_up_needed).toBeUndefined();
+  });
+});
+
+describe("parseApprovedNextAction proof_required round-trip", () => {
+  // This is the regression that would have caught the silent-strip bug: proof_required is
+  // reconstructed via an explicit allowlist, not a permissive spread, so a naive addition to
+  // the type alone would compile but vanish on every read (GET, PATCH merge, task-creation
+  // checks) without this test failing.
+  it("preserves proof_required: true through the allowlist reconstruction", () => {
+    const action = {
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      status: "approved",
+      proof_required: true,
+    };
+    expect(parseApprovedNextAction(action)?.proof_required).toBe(true);
+  });
+
+  it("omits proof_required when absent or false", () => {
+    const withoutFlag = {
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      status: "approved",
+    };
+    expect(parseApprovedNextAction(withoutFlag)?.proof_required).toBeUndefined();
+
+    const explicitFalse = { ...withoutFlag, proof_required: false };
+    expect(parseApprovedNextAction(explicitFalse)?.proof_required).toBeUndefined();
+  });
+
+  it("survives the full parseJusticeCaseClientState round trip used by shouldQueueCfpbFilingTask", () => {
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "CFPB",
+        href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+        status: "approved",
+        proof_required: true,
+      },
+    };
+    const parsed = parseJusticeCaseClientState(clientState);
+    expect(parsed.approved_next_action?.proof_required).toBe(true);
   });
 });
 
@@ -141,5 +186,46 @@ describe("mergeApprovedNextActionTrackingFields follow-up clear", () => {
     });
     expect(merged.follow_up_needed).toBe(false);
     expect(merged.follow_up_at).toBeUndefined();
+  });
+});
+
+describe("mergeClientStateWithApprovedNextAction prepared_packet_approved origin", () => {
+  // Regression for a real production bug: an unconditional `merged.prepared_packet_approved =
+  // true` sat after the conditional carry-forward block, so this merge silently approved every
+  // case on every call — including the very first write, before any explicit approval ever
+  // happened. Proven live via CI E2E diagnostics (source-mapped PATCH sites plus runtime
+  // existingClientState/merged capture) before this fix. prepared_packet_approved must only
+  // ever be true when the existing server-side client_state already says so.
+  const approvedNext = {
+    label: "FTC (consumer complaint)",
+    href: "/justice/ftc",
+    status: "approved" as const,
+    approved_at: "2026-08-01T00:00:00.000Z",
+  };
+
+  it("null existing state cannot create approval", () => {
+    const merged = mergeClientStateWithApprovedNextAction(null, approvedNext);
+    expect(merged.prepared_packet_approved).not.toBe(true);
+  });
+
+  it("missing (undefined) existing state cannot create approval", () => {
+    const merged = mergeClientStateWithApprovedNextAction(undefined, approvedNext);
+    expect(merged.prepared_packet_approved).not.toBe(true);
+  });
+
+  it("explicit false in existing state cannot become true", () => {
+    const merged = mergeClientStateWithApprovedNextAction(
+      { prepared_packet_approved: false },
+      approvedNext
+    );
+    expect(merged.prepared_packet_approved).not.toBe(true);
+  });
+
+  it("existing true is carried forward as true", () => {
+    const merged = mergeClientStateWithApprovedNextAction(
+      { prepared_packet_approved: true },
+      approvedNext
+    );
+    expect(merged.prepared_packet_approved).toBe(true);
   });
 });

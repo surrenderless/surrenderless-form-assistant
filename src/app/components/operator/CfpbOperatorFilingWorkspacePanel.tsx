@@ -76,6 +76,12 @@ export function CfpbOperatorFilingWorkspacePanel({
       setError("Confirmation number is required.");
       return;
     }
+    if (!workspace.proof_documented) {
+      setError(
+        "Proof of prior contact is missing or unverified for this case. Do not file until this is resolved."
+      );
+      return;
+    }
     setError(null);
     const result = await onSubmit({
       destination: workspace.filing_destination,
@@ -98,6 +104,17 @@ export function CfpbOperatorFilingWorkspacePanel({
         Not submitted in-app. Filing is complete only after you record a portal confirmation below.
         Status claimed here: {workspace.is_submitted ? "submitted" : "not submitted"}.
       </p>
+
+      {!workspace.proof_documented ? (
+        <p
+          role="alert"
+          className="rounded-lg border border-red-400 bg-red-50 p-3 text-[11px] font-semibold text-red-800 dark:border-red-700 dark:bg-red-950/40 dark:text-red-300"
+        >
+          Proof of prior contact is missing or unverified for this case (no confirmed uploaded
+          evidence, or no proof text on file). Do not file with CFPB until the consumer provides
+          real proof — completion is blocked here and on the server until this clears.
+        </p>
+      ) : null}
 
       <div className="space-y-2 rounded-lg border border-neutral-200/90 bg-neutral-50/80 p-3 dark:border-neutral-600 dark:bg-neutral-950/40">
         <p className="text-[11px] font-semibold text-neutral-800 dark:text-neutral-200">
@@ -204,7 +221,7 @@ export function CfpbOperatorFilingWorkspacePanel({
         {error ? <p className="text-xs font-medium text-red-700 dark:text-red-400">{error}</p> : null}
         <button
           type="submit"
-          disabled={saving || workspace.is_submitted}
+          disabled={saving || workspace.is_submitted || !workspace.proof_documented}
           className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {saving ? "Saving…" : "Mark fulfillment complete"}

@@ -74,6 +74,7 @@ type MockCaseState = {
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   filingInsertCount: number;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createPaymentCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -203,7 +204,7 @@ function createPaymentCompleteSupabase(state: MockCaseState): SupabaseClient {
             eq: () => ({
               eq: () => ({
                 order: () => ({
-                  limit: async () => ({ data: [], error: null }),
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
                 }),
               }),
             }),
@@ -337,5 +338,73 @@ describe("payment-dispute workspace completion behavior", () => {
     expect(result.task.completed_at).toBeTruthy();
     expect(shouldQueuePaymentDisputeFilingTask(state.client_state)).toBe(false);
     expect(workspace.is_submitted).toBe(false);
+  });
+});
+
+describe("payment-dispute completion ladder advance", () => {
+  it("advances to CFPB after payment dispute completes through the real completion path only when a real uploaded evidence file exists (CFPB priority 28 is downstream of payment dispute priority 20) — proves both the query-to-recompute wiring and the ladder outcome together", async () => {
+    const buildState = (evidence: MockCaseState["evidence"]): MockCaseState => ({
+      intake: paymentIntake({ contact_proof_type: "upload", contact_proof_text: "" }),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Payment dispute (bank/card)",
+          href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Payment dispute: Acme Retail",
+        due_date: null,
+        notes: `${paymentDisputeFilingTaskNotesMarker(CASE_ID)}\ncase_id: ${CASE_ID}\ndraft:\nDISPUTE`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      evidence,
+    });
+
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    const resultWithFile = await completePaymentDisputeOperatorFiling(
+      createPaymentCompleteSupabase(withFile),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Payment dispute (bank/card)",
+        filedAt: "2026-06-15",
+        confirmationNumber: "PD-998877",
+      }
+    );
+    expect(resultWithFile.ok).toBe(true);
+    if (!resultWithFile.ok) return;
+    expect(
+      (resultWithFile.clientState.approved_next_action as { href?: string }).href
+    ).toBe("/justice/cfpb");
+
+    const withoutFile = buildState([]);
+    const resultWithoutFile = await completePaymentDisputeOperatorFiling(
+      createPaymentCompleteSupabase(withoutFile),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Payment dispute (bank/card)",
+        filedAt: "2026-06-15",
+        confirmationNumber: "PD-998877",
+      }
+    );
+    expect(resultWithoutFile.ok).toBe(true);
+    if (!resultWithoutFile.ok) return;
+    expect(
+      (resultWithoutFile.clientState.approved_next_action as { href?: string }).href
+    ).not.toBe("/justice/cfpb");
   });
 });

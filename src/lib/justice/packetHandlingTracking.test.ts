@@ -31,6 +31,28 @@ describe("derivePacketHandlingTrackingLine", () => {
     confirmation_number: "DL-REAL-321",
   };
 
+  it("is ready for external manual action with any saved evidence row, including text-only proof with no uploaded file", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        evidenceCount: 1,
+        filings: [],
+        next: demandLetterNextAction,
+      })
+    ).not.toBe("Review packet and saved proof before external manual action.");
+  });
+
+  it("is not ready for external manual action when no evidence is saved at all", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        evidenceCount: 0,
+        filings: [],
+        next: demandLetterNextAction,
+      })
+    ).toBe("Review packet and saved proof before external manual action.");
+  });
+
   it("does not treat a prior-step filing as satisfying a mapped active step", () => {
     expect(
       derivePacketHandlingTrackingLine({

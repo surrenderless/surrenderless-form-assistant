@@ -189,6 +189,8 @@ export type AutoEndgameAfterManualFilingConfirmationParams = {
   confirmationNumber?: string | null;
   filedAt?: string;
   manualFtc?: boolean;
+  /** Whether the case has a real uploaded evidence record — see justiceEvidenceRowHasUploadedFile. */
+  hasUploadedEvidenceFile?: boolean;
   logLabel?: string;
   fetchFn?: typeof fetch;
   applyTimeline?: typeof applyServerTimelineFromResponse;
@@ -211,6 +213,7 @@ export async function autoEndgameAfterManualFilingConfirmation(
     confirmationNumber,
     filedAt,
     manualFtc = false,
+    hasUploadedEvidenceFile,
   } = params;
 
   if (!caseId.trim() || !isUuid(caseId)) return approvedAction;
@@ -242,6 +245,7 @@ export async function autoEndgameAfterManualFilingConfirmation(
   const advanced = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
     existing: completedWithTracking,
     manualFtc,
+    hasUploadedEvidenceFile,
   });
 
   if (

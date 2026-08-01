@@ -40,12 +40,35 @@ function multiDestinationRetailIntake(): JusticeIntake {
   });
 }
 
+/** CFPB-relevant, "upload" proof claim with no text — CFPB is documented only if a real
+ * evidence file exists. pickNextPreparedActionAfterCancelled has no downstream-priority
+ * filter (unlike the "advance after completed" ladder), so CFPB genuinely competes here. */
+function cfpbRelevantUploadClaimIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "financial_account_issue",
+    company_name: "North Bank",
+    purchase_or_signup: "checking account",
+    story: "Unauthorized charge on my checking account, bank won't reverse it.",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-01-15",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "upload",
+    contact_proof_text: "",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
+
 type MockState = {
   task: JusticeCaseTaskRow | null;
   case: MockCase | null;
   rpcCalls: Record<string, unknown>[];
   updateCalls: { table: string; patch: Record<string, unknown> }[];
   forceRpcTransportError: string | null;
+  evidence?: { file_name: string | null; mime_type: string | null; file_size_bytes: number | null }[];
 };
 
 function basePaymentDisputeTask(): JusticeCaseTaskRow {
@@ -182,6 +205,20 @@ function simulateCancelRpc(
 function createMockSupabase(state: MockState): SupabaseClient {
   return {
     from: (table: string) => {
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
       if (table === "justice_case_tasks") {
         return {
           select: () => ({
@@ -481,6 +518,42 @@ describe("cancellation followed by chat reload (post-cancel next-action recomput
     expect(reloaded).toBeDefined();
     expect(reloaded?.href).toBe(newAction?.href);
     expect(reloaded?.status).toBe("approved");
+  });
+
+  it("proposes CFPB after cancellation only when a real uploaded evidence file exists (no downstream-priority filter applies to a fresh post-cancel pick)", async () => {
+    const buildState = (evidence: MockState["evidence"]) =>
+      freshState({
+        case: {
+          id: CASE_ID,
+          user_id: USER_ID,
+          client_state: approvedPaymentDisputeClientState(),
+          timeline: [],
+          intake: cfpbRelevantUploadClaimIntake(),
+        },
+        evidence,
+      });
+
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    const resultWithFile = await cancelOperatorFulfillmentTask(createMockSupabase(withFile), {
+      taskId: TASK_ID,
+    });
+    expect(resultWithFile.ok).toBe(true);
+    if (!resultWithFile.ok) return;
+    expect(
+      (resultWithFile.clientState.approved_next_action as { href?: string } | undefined)?.href
+    ).toBe("/justice/cfpb");
+
+    const withoutFile = buildState([]);
+    const resultWithoutFile = await cancelOperatorFulfillmentTask(createMockSupabase(withoutFile), {
+      taskId: TASK_ID,
+    });
+    expect(resultWithoutFile.ok).toBe(true);
+    if (!resultWithoutFile.ok) return;
+    expect(
+      (resultWithoutFile.clientState.approved_next_action as { href?: string } | undefined)?.href
+    ).not.toBe("/justice/cfpb");
   });
 
   it("leaves client_state exactly as the RPC left it when intake cannot be loaded", async () => {

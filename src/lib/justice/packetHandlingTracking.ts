@@ -56,6 +56,7 @@ export function derivePacketHandlingTrackingLine(input: {
   basicsReady: boolean;
   draftReviewed: boolean;
   preparedPacketApproved: boolean;
+  /** Any saved evidence row (text note or uploaded file) — presence-based, not CFPB-verified. */
   evidenceCount: number;
   filings: ManualActionTrackingFiling[];
   next: JusticeApprovedNextAction;

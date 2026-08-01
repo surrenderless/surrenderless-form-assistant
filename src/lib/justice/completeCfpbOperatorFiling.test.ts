@@ -58,7 +58,7 @@ vi.mock("@/lib/justice/demandLetterEmailDelivery", () => ({
 
 import { completeCfpbOperatorFiling } from "@/lib/justice/completeCfpbOperatorFiling";
 
-function financialIntake(): JusticeIntake {
+function financialIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
   return buildJusticeIntakeFromParts({
     ...defaultBuildJusticeIntakeParts(),
     problem_category: "charge_dispute",
@@ -71,11 +71,16 @@ function financialIntake(): JusticeIntake {
     contact_method: "email",
     contact_date: "2026-03-05",
     merchant_response_type: "refused_help",
+    contact_proof_type: "paste",
+    contact_proof_text: "Refused refund by email on 2026-03-06.",
     user_display_name: "Jordan Lee",
     reply_email: "e2e@example.com",
     consumer_us_state: "CA",
+    ...overrides,
   });
 }
+
+type MockEvidenceRow = { file_name: string | null; mime_type: string | null; file_size_bytes: number | null };
 
 type MockCaseState = {
   intake: JusticeIntake;
@@ -83,11 +88,26 @@ type MockCaseState = {
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   filingInsertCount: number;
+  evidence?: MockEvidenceRow[];
 };
 
 function createCfpbCompleteSupabase(state: MockCaseState): SupabaseClient {
   return {
     from: (table: string) => {
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
       if (table === "justice_cases") {
         return {
           select: () => ({
@@ -319,5 +339,94 @@ describe("CFPB workspace completion behavior", () => {
     expect(result.filing.destination).toBe("CFPB");
     expect(result.task.completed_at).toBeTruthy();
     expect(shouldQueueCfpbFilingTask(state.client_state)).toBe(false);
+  });
+
+  it("rejects completion with 409 when documented-contact evidence is missing, independent of task/client_state", async () => {
+    const marker = cfpbFilingTaskNotesMarker(CASE_ID);
+    const state: MockCaseState = {
+      // "upload" proof type with no contact_proof_text and no real evidence row — the exact
+      // claim-without-substance scenario this gate exists to close.
+      intake: financialIntake({ contact_proof_type: "upload", contact_proof_text: "" }),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "CFPB",
+          href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+          status: "approved",
+          proof_required: false, // deliberately wrong/stale client_state — must not be trusted
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "CFPB filing: North Bank",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+        completed_at: null,
+        created_at: "2026-03-01T00:00:00.000Z",
+        updated_at: "2026-03-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      evidence: [],
+    };
+
+    const result = await completeCfpbOperatorFiling(createCfpbCompleteSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "CFPB",
+      filedAt: "2026-03-15",
+      confirmationNumber: "CFPB-998877",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(409);
+      expect(result.error).toMatch(/evidence/i);
+    }
+    expect(state.filings).toHaveLength(0);
+    expect(state.task.completed_at).toBeNull();
+  });
+
+  it("allows completion for an 'upload' proof claim once a real uploaded evidence row exists", async () => {
+    const marker = cfpbFilingTaskNotesMarker(CASE_ID);
+    const state: MockCaseState = {
+      intake: financialIntake({ contact_proof_type: "upload", contact_proof_text: "" }),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "CFPB",
+          href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "CFPB filing: North Bank",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+        completed_at: null,
+        created_at: "2026-03-01T00:00:00.000Z",
+        updated_at: "2026-03-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      evidence: [{ file_name: "email-thread.png", mime_type: "image/png", file_size_bytes: 4096 }],
+    };
+
+    const result = await completeCfpbOperatorFiling(createCfpbCompleteSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "CFPB",
+      filedAt: "2026-03-15",
+      confirmationNumber: "CFPB-998877",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.filing.confirmation_number).toBe("CFPB-998877");
   });
 });

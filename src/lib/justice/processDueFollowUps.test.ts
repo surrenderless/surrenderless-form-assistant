@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import {
   buildNoResponseOutcomeNote,
@@ -79,6 +79,40 @@ describe("isOpenFollowUpTaskDue", () => {
       })
     ).toBe(false);
   });
+
+  describe("due_date evaluation uses the supplied `now`, not wall-clock time", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // Real wall-clock frozen well *after* the task's due_date, unambiguous in any timezone.
+      // processDueFollowUps.ts:374 threads one `now` per batch run through this function
+      // specifically so every task in the batch is evaluated against that instant, not
+      // whatever the real clock happens to read while the batch is running.
+      vi.setSystemTime(new Date("2026-08-05T12:00:00.000Z"));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("treats a future due_date as not due when `now` precedes it, even though real time has passed it", () => {
+      const pastRelativeToRealClock = new Date("2026-07-01T00:00:00.000Z");
+      expect(
+        isOpenFollowUpTaskDue({
+          task: { due_date: "2026-08-01", completed_at: null },
+          now: pastRelativeToRealClock,
+        })
+      ).toBe(false);
+    });
+
+    it("treats a due_date as overdue when `now` is after it, even though real time has not reached it", () => {
+      const futureRelativeToRealClock = new Date("2026-09-01T00:00:00.000Z");
+      expect(
+        isOpenFollowUpTaskDue({
+          task: { due_date: "2026-08-01", completed_at: null },
+          now: futureRelativeToRealClock,
+        })
+      ).toBe(true);
+    });
+  });
 });
 
 describe("resolution and no-response notes", () => {
@@ -135,6 +169,44 @@ describe("planDueFollowUpClientState", () => {
     expect(plan.nextAction.follow_up_needed).not.toBe(true);
     const next = (plan.clientState.approved_next_action ?? {}) as JusticeApprovedNextAction;
     expect(next.follow_up_needed).not.toBe(true);
+  });
+
+  it("advances to CFPB after payment dispute wait only when a real uploaded evidence file exists (CFPB priority 28 is downstream of payment dispute priority 20)", () => {
+    const cfpbRelevantIntake = intake({
+      problem_category: "financial_account_issue",
+      contact_proof_type: "upload",
+      contact_proof_text: "",
+    });
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "Payment dispute (bank/card)",
+        href: "/justice/payment-dispute",
+        status: "completed",
+        completed_at: "2026-05-01T00:00:00.000Z",
+        follow_up_needed: true,
+        follow_up_at: "2026-06-15T12:00:00.000Z",
+        outcome_note: "Payment dispute filed. Awaiting response.",
+      } satisfies JusticeApprovedNextAction,
+    };
+
+    const withFile = planDueFollowUpClientState({
+      intake: cfpbRelevantIntake,
+      clientState,
+      hasUploadedEvidenceFile: true,
+    });
+    expect(withFile.kind).toBe("advanced");
+    if (withFile.kind !== "advanced") return;
+    expect(withFile.nextAction.href).toBe("/justice/cfpb");
+
+    const withoutFile = planDueFollowUpClientState({
+      intake: cfpbRelevantIntake,
+      clientState,
+      hasUploadedEvidenceFile: false,
+    });
+    expect(withoutFile.kind).toBe("advanced");
+    if (withoutFile.kind !== "advanced") return;
+    expect(withoutFile.nextAction.href).not.toBe("/justice/cfpb");
   });
 
   it("creates terminal response-review plan when ladder is complete", () => {

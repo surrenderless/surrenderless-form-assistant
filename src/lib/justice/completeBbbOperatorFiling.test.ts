@@ -20,6 +20,20 @@ const TASK_ID = "550e8400-e29b-41d4-a716-446655440088";
 
 const timelineStore: { entries: TimelineEntry[] } = { entries: [] };
 
+// Wraps the real implementation (still calls through, so ladder-logic behavior for every
+// existing test is unchanged) purely so its call arguments can be inspected — the correct,
+// ladder-independent boundary for proving this file threads real per-case evidence through,
+// rather than a hardcoded or stale value.
+vi.mock("@/lib/justice/recomputeApprovedNextActionAfterIntake", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/justice/recomputeApprovedNextActionAfterIntake")
+  >();
+  return {
+    ...actual,
+    advanceApprovedNextActionAfterCompleted: vi.fn(actual.advanceApprovedNextActionAfterCompleted),
+  };
+});
+
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(
     async (
@@ -211,7 +225,30 @@ vi.mock("@/lib/justice/demandLetterFilingTask", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/justice/cfpbFilingTask", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/justice/cfpbFilingTask")>();
+  return {
+    ...mod,
+    ensureCfpbFilingTask: vi.fn(async () => ({
+      task: {
+        id: "queued-cfpb",
+        user_id: "user-owner-1",
+        case_id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Queued",
+        due_date: null,
+        notes: "stub",
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      created: true,
+      timeline: null,
+    })),
+  };
+});
+
 import { completeBbbOperatorFiling } from "@/lib/justice/completeBbbOperatorFiling";
+import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 
 function bbbIntake(): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -232,6 +269,27 @@ function bbbIntake(): JusticeIntake {
   });
 }
 
+/** CFPB-relevant variant so completing BBB can advance into a CFPB pick — proves the
+ * hasUploadedEvidenceFile wiring actually changes which destination gets picked next. */
+function cfpbRelevantBbbIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "financial_account_issue",
+    company_name: "North Bank",
+    purchase_or_signup: "checking account",
+    story: "Unauthorized charge on my checking account, bank won't reverse it.",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-05-05",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "upload",
+    contact_proof_text: "",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
+
 type MockCaseState = {
   intake: JusticeIntake;
   client_state: Record<string, unknown>;
@@ -239,6 +297,7 @@ type MockCaseState = {
   task: JusticeCaseTaskRow;
   filingInsertCount: number;
   clientStateConflict?: boolean;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createBbbCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -359,6 +418,20 @@ function createBbbCompleteSupabase(state: MockCaseState): SupabaseClient {
                 state.filings = [...state.filings, filing];
                 return { data: filing, error: null };
               },
+            }),
+          }),
+        };
+      }
+
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
             }),
           }),
         };
@@ -518,5 +591,67 @@ describe("BBB workspace completion behavior", () => {
     expect(result.error).toMatch(/updated concurrently/i);
     // The concurrent writer's client_state must not be clobbered by this losing write.
     expect(state.client_state).toBe(originalClientState);
+  });
+
+  it("threads a hasUploadedEvidenceFile value derived from real evidence rows into the advance-after-completed call (shared boundary — independent of whether CFPB is reachable from this ladder position)", async () => {
+    const marker = bbbFilingTaskNotesMarker(CASE_ID);
+    const buildState = (evidence: MockCaseState["evidence"]): MockCaseState => ({
+      intake: cfpbRelevantBbbIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Better Business Bureau",
+          href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "BBB filing: North Bank",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      evidence,
+    });
+    const spy = vi.mocked(advanceApprovedNextActionAfterCompleted);
+
+    spy.mockClear();
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    await completeBbbOperatorFiling(createBbbCompleteSupabase(withFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Better Business Bureau",
+      filedAt: "2026-06-15",
+      confirmationNumber: "BBB-998877",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: true })
+    );
+
+    spy.mockClear();
+    const withoutFile = buildState([]);
+    await completeBbbOperatorFiling(createBbbCompleteSupabase(withoutFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Better Business Bureau",
+      filedAt: "2026-06-15",
+      confirmationNumber: "BBB-998877",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: false })
+    );
   });
 });

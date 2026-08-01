@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensureBbbFilingTask, shouldQueueBbbFilingTask } from "@/lib/justice/bbbFilingTask";
 import { ensureCfpbFilingTask, shouldQueueCfpbFilingTask } from "@/lib/justice/cfpbFilingTask";
+import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
+import { cfpbPrepDocumentedFromIntake } from "@/lib/justice/rules";
 import {
   ensureDemandLetterFilingTask,
   shouldQueueDemandLetterFilingTask,
@@ -107,6 +109,33 @@ export async function ensureOwnedFilingTaskAfterClientStateWrite(
   }
 
   const intake = params.intake;
+
+  if (kind === "cfpb") {
+    // Server-authoritative re-check: client_state.approved_next_action.proof_required is a UX
+    // signal only. Never trust it — independently verify against real evidence before creating
+    // an operator task for a real government complaint.
+    const { data: evidenceRows, error: evidenceErr } = await supabase
+      .from("justice_case_evidence")
+      .select("file_name, mime_type, file_size_bytes")
+      .eq("case_id", caseId)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .limit(200);
+    if (evidenceErr) {
+      return {
+        ok: false,
+        error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR,
+        kind,
+        timeline: null,
+        created: false,
+        task: null,
+      };
+    }
+    const hasUploadedEvidenceFile = (evidenceRows ?? []).some(justiceEvidenceRowHasUploadedFile);
+    if (!cfpbPrepDocumentedFromIntake(intake, hasUploadedEvidenceFile)) {
+      return { ok: true, kind: null, timeline: null, created: false, task: null };
+    }
+  }
   let result: {
     task: JusticeCaseTaskRow | null;
     timeline: TimelineEntry[] | null;

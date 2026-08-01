@@ -20,6 +20,20 @@ const TASK_ID = "550e8400-e29b-41d4-a716-446655440088";
 
 const timelineStore: { entries: TimelineEntry[] } = { entries: [] };
 
+// Wraps the real implementation (still calls through, so ladder-logic behavior for every
+// existing test is unchanged) purely so its call arguments can be inspected — the correct,
+// ladder-independent boundary for proving this file threads real per-case evidence through,
+// rather than a hardcoded or stale value.
+vi.mock("@/lib/justice/recomputeApprovedNextActionAfterIntake", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/justice/recomputeApprovedNextActionAfterIntake")
+  >();
+  return {
+    ...actual,
+    advanceApprovedNextActionAfterCompleted: vi.fn(actual.advanceApprovedNextActionAfterCompleted),
+  };
+});
+
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(
     async (
@@ -57,6 +71,7 @@ vi.mock("@/lib/justice/demandLetterEmailDelivery", () => ({
 }));
 
 import { completeFtcOperatorFiling } from "@/lib/justice/completeFtcOperatorFiling";
+import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 
 function retailIntake(): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -77,12 +92,35 @@ function retailIntake(): JusticeIntake {
   });
 }
 
+/** CFPB-relevant variant proving the hasUploadedEvidenceFile wiring doesn't wrongly
+ * pick CFPB after FTC completes — CFPB's priority (28) is below FTC's (30), so it's
+ * excluded from the downstream ladder regardless of evidence. */
+function cfpbRelevantRetailIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "financial_account_issue",
+    company_name: "North Bank",
+    purchase_or_signup: "checking account",
+    story: "Unauthorized charge on my checking account, bank won't reverse it.",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-05-05",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "upload",
+    contact_proof_text: "",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
+
 type MockCaseState = {
   intake: JusticeIntake;
   client_state: Record<string, unknown>;
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   filingInsertCount: number;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
 function createFtcCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -210,6 +248,20 @@ function createFtcCompleteSupabase(state: MockCaseState): SupabaseClient {
         };
       }
 
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: state.evidence ?? [], error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
       throw new Error(`unexpected table ${table}`);
     },
   } as unknown as SupabaseClient;
@@ -319,5 +371,67 @@ describe("FTC workspace completion behavior", () => {
     expect(result.filing.destination).toBe("FTC (consumer complaint)");
     expect(result.task.completed_at).toBeTruthy();
     expect(shouldQueueFtcFilingTask(state.client_state)).toBe(false);
+  });
+
+  it("threads a hasUploadedEvidenceFile value derived from real evidence rows into the advance-after-completed call (shared boundary — independent of whether CFPB is reachable from this ladder position)", async () => {
+    const marker = ftcFilingTaskNotesMarker(CASE_ID);
+    const buildState = (evidence: MockCaseState["evidence"]): MockCaseState => ({
+      intake: cfpbRelevantRetailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "FTC (consumer complaint)",
+          href: MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
+          status: "approved",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "FTC filing: North Bank",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nComplaint`,
+        completed_at: null,
+        created_at: "2026-05-01T00:00:00.000Z",
+        updated_at: "2026-05-01T00:00:00.000Z",
+      },
+      filingInsertCount: 0,
+      evidence,
+    });
+    const spy = vi.mocked(advanceApprovedNextActionAfterCompleted);
+
+    spy.mockClear();
+    const withFile = buildState([
+      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+    ]);
+    await completeFtcOperatorFiling(createFtcCompleteSupabase(withFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "FTC (consumer complaint)",
+      filedAt: "2026-05-15",
+      confirmationNumber: "FTC-998877",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: true })
+    );
+
+    spy.mockClear();
+    const withoutFile = buildState([]);
+    await completeFtcOperatorFiling(createFtcCompleteSupabase(withoutFile), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "FTC (consumer complaint)",
+      filedAt: "2026-05-15",
+      confirmationNumber: "FTC-998877",
+    });
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ hasUploadedEvidenceFile: false })
+    );
   });
 });

@@ -4,7 +4,40 @@ import {
   type PatchJusticeCaseFromChatFetch,
 } from "@/lib/justice/patchJusticeCaseFromChat";
 import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { isPlaywrightMockIntakeCaseHydrationCaseId } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 import type { JusticeApprovedNextAction, JusticeCaseClientState } from "@/lib/justice/types";
+
+let playwrightPersistInvocationCounter = 0;
+
+/**
+ * TEMPORARY diagnostic for the packet-approval premature-auto-approve E2E investigation.
+ * Gated on the fixed Playwright mock case ids and the E2E-only relay binding — never fires
+ * outside that test. Relays only kind/event/invocationId/time/stack — never request bodies,
+ * case state, actions, or user data. Remove once the auto-approval trigger is identified.
+ */
+function logPlaywrightPersistDiagnostic(
+  event: "entry" | "before-patch",
+  caseId: string,
+  invocationId: number,
+  stack: string
+): void {
+  if (typeof window === "undefined") return;
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
+  const relay = (
+    window as unknown as {
+      __e2ePatchStackRelay?: (payload: {
+        kind: "persist";
+        event: "entry" | "before-patch";
+        invocationId: number;
+        time: number;
+        stack: string;
+      }) => void;
+    }
+  ).__e2ePatchStackRelay;
+  if (typeof relay === "function") {
+    relay({ kind: "persist", event, invocationId, time: Date.now(), stack });
+  }
+}
 
 export type PersistPreparedPacketApprovalResult =
   | {
@@ -35,6 +68,10 @@ export async function persistPreparedPacketApprovalToCase(params: {
   const caseId = params.caseId.trim();
   const fetchFn = params.fetchFn ?? fetch;
   const logLabel = params.logLabel ?? "justice chat-ai";
+
+  const invocationId = ++playwrightPersistInvocationCounter;
+  const entryStack = new Error().stack ?? "";
+  logPlaywrightPersistDiagnostic("entry", caseId, invocationId, entryStack);
 
   if (!caseId) {
     return {
@@ -87,6 +124,7 @@ export async function persistPreparedPacketApprovalToCase(params: {
     approved_next_action: params.nextAction,
   };
 
+  logPlaywrightPersistDiagnostic("before-patch", caseId, invocationId, entryStack);
   const patchResult = await patchJusticeCaseFromChat({
     caseId,
     patch: { client_state: merged },

@@ -11,12 +11,14 @@ import {
   resolveRequiredOwnedFilingTaskKind,
 } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import { taskNotesMatchCfpbFilingMarker } from "@/lib/justice/cfpbFilingTask";
 import {
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
@@ -93,6 +95,8 @@ type MockState = {
   tasks: JusticeCaseTaskRow[];
   insertCount: number;
   insertFail: boolean;
+  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
+  evidenceQueryFails?: boolean;
 };
 
 function createTaskSupabase(state: MockState): SupabaseClient {
@@ -104,7 +108,10 @@ function createTaskSupabase(state: MockState): SupabaseClient {
             eq: () => ({
               eq: () => ({
                 order: () => ({
-                  limit: async () => ({ data: [], error: null }),
+                  limit: async () =>
+                    state.evidenceQueryFails
+                      ? { data: null, error: { message: "evidence query failed" } }
+                      : { data: state.evidence ?? [], error: null },
                 }),
               }),
             }),
@@ -179,6 +186,27 @@ function intake(): JusticeIntake {
     contact_method: "email",
     contact_date: "2026-01-15",
     merchant_response_type: "refused_help",
+    user_display_name: "Jordan Lee",
+    reply_email: "e2e@example.com",
+    consumer_us_state: "CA",
+  });
+}
+
+/** CFPB-relevant, "upload" proof claim with no text — documented only if a real evidence
+ * file exists, the exact scenario this file's server-authoritative re-check gate exists for. */
+function cfpbUploadClaimIntake(): JusticeIntake {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "financial_account_issue",
+    company_name: "North Bank",
+    purchase_or_signup: "checking account",
+    story: "Unauthorized charge on my checking account, bank won't reverse it.",
+    already_contacted: "yes",
+    contact_method: "email",
+    contact_date: "2026-01-15",
+    merchant_response_type: "refused_help",
+    contact_proof_type: "upload",
+    contact_proof_text: "",
     user_display_name: "Jordan Lee",
     reply_email: "e2e@example.com",
     consumer_us_state: "CA",
@@ -497,5 +525,90 @@ describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {
     expect(result.kind).toBeNull();
     expect(state.insertCount).toBe(0);
     expect(paymentDisputeEmailAfterEnsure).not.toHaveBeenCalled();
+  });
+
+  it("creates a CFPB task when an 'upload' proof claim is backed by a real uploaded evidence row", async () => {
+    const state: MockState = {
+      tasks: [],
+      insertCount: 0,
+      insertFail: false,
+      evidence: [{ file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 }],
+    };
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "CFPB",
+        href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+        status: "approved" as const,
+      },
+    };
+
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState,
+      intake: cfpbUploadClaimIntake(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe("cfpb");
+    expect(result.created).toBe(true);
+    expect(state.insertCount).toBe(1);
+    expect(taskNotesMatchCfpbFilingMarker(state.tasks[0].notes, CASE_ID)).toBe(true);
+  });
+
+  it("does not create a CFPB task when an 'upload' proof claim has no real uploaded evidence row, even though client_state calls for it", async () => {
+    const state: MockState = { tasks: [], insertCount: 0, insertFail: false, evidence: [] };
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "CFPB",
+        href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+        status: "approved" as const,
+      },
+    };
+
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState,
+      intake: cfpbUploadClaimIntake(),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBeNull();
+    expect(result.created).toBe(false);
+    expect(state.insertCount).toBe(0);
+  });
+
+  it("returns a retriable failure instead of creating a CFPB task when the evidence re-check query fails", async () => {
+    const state: MockState = {
+      tasks: [],
+      insertCount: 0,
+      insertFail: false,
+      evidenceQueryFails: true,
+    };
+    const clientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "CFPB",
+        href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+        status: "approved" as const,
+      },
+    };
+
+    const result = await ensureOwnedFilingTaskAfterClientStateWrite(createTaskSupabase(state), {
+      userId: USER_ID,
+      caseId: CASE_ID,
+      clientState,
+      intake: cfpbUploadClaimIntake(),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe(OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR);
+    expect(state.insertCount).toBe(0);
   });
 });

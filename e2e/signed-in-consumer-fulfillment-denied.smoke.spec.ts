@@ -3,6 +3,7 @@ import {
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
+  waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { PLAYWRIGHT_MOCK_STATE_AG_TASK_ID } from "@/lib/testing/playwrightMockHumanFulfillmentLadderPipeline";
@@ -12,6 +13,9 @@ test.beforeEach(() => {
 });
 
 test("consumer cannot POST operator-owned state ag fulfillment complete", async ({ page }) => {
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+
   const res = await page.request.post("/api/justice/state-ag-filing/complete", {
     data: {
       case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID,
@@ -25,6 +29,9 @@ test("consumer cannot POST operator-owned state ag fulfillment complete", async 
 });
 
 test("consumer cannot load operator fulfillment queue", async ({ page }) => {
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+
   const res = await page.request.get("/api/operator/fulfillment-queue");
   expect(res.status()).toBe(403);
 });

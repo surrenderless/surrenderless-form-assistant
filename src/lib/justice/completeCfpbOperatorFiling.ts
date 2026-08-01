@@ -13,10 +13,12 @@ import {
   taskNotesMatchCfpbFilingMarker,
 } from "@/lib/justice/cfpbFilingTask";
 import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
+import { cfpbPrepDocumentedFromIntake } from "@/lib/justice/rules";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import { mergeResolutionTrackingIntoClientState } from "@/lib/justice/initiateResolutionAfterEscalationTerminal";
 import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
@@ -126,6 +128,31 @@ export async function completeCfpbOperatorFiling(
     return { ok: false, error: "Case intake is invalid", status: 400 };
   }
   const intake = caseRow.intake as JusticeIntake;
+
+  // Final, server-side, race-proof gate: independently re-verify proof readiness from current
+  // intake + evidence, never trusting client_state.approved_next_action.proof_required or the
+  // mere existence of this task (which may have been created before proof was required, or
+  // before evidence claimed at task-creation time was later deleted).
+  const { data: evidenceRows, error: evidenceErr } = await supabase
+    .from("justice_case_evidence")
+    .select("file_name, mime_type, file_size_bytes")
+    .eq("case_id", caseId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(200);
+  if (evidenceErr) {
+    console.warn("justice cfpb operator filing: list evidence", evidenceErr.message);
+    return { ok: false, error: evidenceErr.message, status: 500 };
+  }
+  const hasUploadedEvidenceFile = (evidenceRows ?? []).some(justiceEvidenceRowHasUploadedFile);
+  if (!cfpbPrepDocumentedFromIntake(intake, hasUploadedEvidenceFile)) {
+    return {
+      ok: false,
+      error:
+        "Evidence documenting contact is missing for this case. Resolve before recording this CFPB filing.",
+      status: 409,
+    };
+  }
 
   const { data: taskRow, error: taskErr } = await supabase
     .from("justice_case_tasks")
@@ -239,6 +266,7 @@ export async function completeCfpbOperatorFiling(
     const { withTracking: completedWithTracking } = buildCompletedApprovedNextAction(approvedNext);
     const advancedAction = advanceApprovedNextActionAfterCompleted(intake, completedHref, {
       existing: completedWithTracking,
+      hasUploadedEvidenceFile,
     });
     if (
       advancedAction?.href?.trim() &&

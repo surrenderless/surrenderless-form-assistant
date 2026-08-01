@@ -48,14 +48,15 @@ export function parseDueDateToLocalYmd(dueDate: string | null | undefined): stri
 }
 
 export function getJusticeTaskDueKind(
-  row: Pick<JusticeCaseTaskRow, "due_date" | "completed_at">
+  row: Pick<JusticeCaseTaskRow, "due_date" | "completed_at">,
+  now?: Date
 ): JusticeTaskDueKind {
   if (row.completed_at?.trim()) return "completed";
 
   const ymd = parseDueDateToLocalYmd(row.due_date);
   if (!ymd) return "no_due_date";
 
-  const today = localTodayYmd();
+  const today = localTodayYmd(now);
   if (ymd < today) return "overdue";
   if (ymd === today) return "due_today";
   return "upcoming";

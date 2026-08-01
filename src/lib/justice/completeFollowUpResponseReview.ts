@@ -17,6 +17,7 @@ import {
   taskNotesMatchFollowUpResponseReviewMarker,
 } from "@/lib/justice/followUpResponseReviewTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -77,6 +78,8 @@ export function planFollowUpResponseReviewClientState(params: {
   clientState: unknown;
   outcome: FollowUpResponseReviewOutcome;
   operatorNotes?: string | null;
+  /** Whether the case has a real uploaded evidence record — see justiceEvidenceRowHasUploadedFile. */
+  hasUploadedEvidenceFile?: boolean;
 }):
   | { kind: "error"; error: string; status: number }
   | {
@@ -149,6 +152,7 @@ export function planFollowUpResponseReviewClientState(params: {
 
   const advanced = advanceApprovedNextActionAfterCompleted(params.intake, completedHref, {
     existing: localCompleted,
+    hasUploadedEvidenceFile: params.hasUploadedEvidenceFile,
   });
 
   if (
@@ -278,11 +282,13 @@ export async function completeFollowUpResponseReview(
     };
   }
 
+  const hasUploadedEvidenceFile = await resolveHasUploadedEvidenceFile(supabase, caseId, userId);
   const plan = planFollowUpResponseReviewClientState({
     intake,
     clientState: caseRow.client_state,
     outcome: input.outcome,
     operatorNotes: input.notes,
+    hasUploadedEvidenceFile,
   });
   if (plan.kind === "error") {
     return { ok: false, error: plan.error, status: plan.status };

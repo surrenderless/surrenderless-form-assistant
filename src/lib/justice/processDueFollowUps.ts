@@ -24,6 +24,7 @@ import {
 } from "@/lib/justice/followUpCaseTask";
 import { ensureFollowUpResponseReviewTask } from "@/lib/justice/followUpResponseReviewTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
+import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import { getJusticeTaskDueKind, parseDueDateToLocalYmd } from "@/lib/justice/taskDueStatus";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -76,7 +77,7 @@ export function isOpenFollowUpTaskDue(params: {
 }): boolean {
   if (params.task.completed_at?.trim()) return false;
   const now = params.now ?? new Date();
-  const kind = getJusticeTaskDueKind(params.task);
+  const kind = getJusticeTaskDueKind(params.task, now);
   if (kind === "overdue" || kind === "due_today") return true;
   if (kind === "upcoming") return false;
 
@@ -133,6 +134,8 @@ export function planDueFollowUpClientState(params: {
   intake: JusticeIntake;
   clientState: unknown;
   now?: Date;
+  /** Whether the case has a real uploaded evidence record — see justiceEvidenceRowHasUploadedFile. */
+  hasUploadedEvidenceFile?: boolean;
 }):
   | { kind: "skip"; reason: DueFollowUpSkipReason }
   | {
@@ -164,6 +167,7 @@ export function planDueFollowUpClientState(params: {
 
   const advanced = advanceApprovedNextActionAfterCompleted(params.intake, localCompleted.href?.trim() ?? "", {
     existing: localCompleted,
+    hasUploadedEvidenceFile: params.hasUploadedEvidenceFile,
   });
 
   if (
@@ -442,10 +446,12 @@ export async function processDueFollowUps(
       }
     }
 
+    const hasUploadedEvidenceFile = await resolveHasUploadedEvidenceFile(supabase, caseId, userId);
     const plan = planDueFollowUpClientState({
       intake,
       clientState: caseRow.client_state,
       now,
+      hasUploadedEvidenceFile,
     });
 
     if (plan.kind === "skip") {

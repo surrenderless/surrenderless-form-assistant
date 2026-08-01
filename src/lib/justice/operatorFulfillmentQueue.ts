@@ -38,6 +38,7 @@ import {
 } from "@/lib/justice/followUpResponseReviewTask";
 import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
 import { mapOperatorFulfillmentQueueEvidenceRow } from "@/lib/justice/operatorFulfillmentQueueEvidence";
+import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
@@ -529,7 +530,7 @@ export async function listOperatorFulfillmentQueue(
 
   const { data: evidenceRows, error: evidenceErr } = await supabase
     .from("justice_case_evidence")
-    .select("id, case_id, title, evidence_type, file_name, evidence_date")
+    .select("id, case_id, title, evidence_type, file_name, evidence_date, mime_type, file_size_bytes")
     .in("case_id", workspaceCaseIds)
     .order("created_at", { ascending: true })
     .limit(200);
@@ -552,12 +553,18 @@ export async function listOperatorFulfillmentQueue(
       evidence_date: string | null;
     }[]
   >();
+  // mime_type/file_size_bytes are only used server-side, to verify CFPB "upload"/"screenshot"
+  // contact-proof claims against real evidence — never exposed in the display evidence shape.
+  const hasUploadedEvidenceFileByCaseId = new Map<string, boolean>();
   for (const row of evidenceRows ?? []) {
     const mapped = mapOperatorFulfillmentQueueEvidenceRow(row);
     if (!mapped) continue;
     const list = evidenceByCaseId.get(mapped.caseId) ?? [];
     list.push(mapped.evidence);
     evidenceByCaseId.set(mapped.caseId, list);
+    if (justiceEvidenceRowHasUploadedFile(row)) {
+      hasUploadedEvidenceFileByCaseId.set(mapped.caseId, true);
+    }
   }
 
   return items.map((item) => {
@@ -584,6 +591,7 @@ export async function listOperatorFulfillmentQueue(
           intake,
           taskNotes: task?.notes,
           evidence,
+          hasUploadedEvidenceFile: hasUploadedEvidenceFileByCaseId.get(item.case_id) ?? false,
         }),
       };
     }

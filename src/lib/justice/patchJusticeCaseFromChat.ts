@@ -1,4 +1,40 @@
 import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { isPlaywrightMockIntakeCaseHydrationCaseId } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+
+let playwrightPatchInvocationCounter = 0;
+
+/**
+ * TEMPORARY diagnostic for the packet-approval premature-auto-approve E2E investigation.
+ * Gated on the fixed Playwright mock case ids and the E2E-only relay binding — never fires
+ * outside that test. Relays only kind/event/invocationId/fetchAttempt/time/stack — never
+ * request bodies, patch data, case state, or user data. Remove once the auto-approval
+ * trigger is identified.
+ */
+function logPlaywrightPatchDiagnostic(
+  event: "entry" | "before-fetch",
+  caseId: string,
+  invocationId: number,
+  fetchAttempt: number,
+  stack: string
+): void {
+  if (typeof window === "undefined") return;
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
+  const relay = (
+    window as unknown as {
+      __e2ePatchStackRelay?: (payload: {
+        kind: "patch";
+        event: "entry" | "before-fetch";
+        invocationId: number;
+        fetchAttempt: number;
+        time: number;
+        stack: string;
+      }) => void;
+    }
+  ).__e2ePatchStackRelay;
+  if (typeof relay === "function") {
+    relay({ kind: "patch", event, invocationId, fetchAttempt, time: Date.now(), stack });
+  }
+}
 
 export type PatchJusticeCaseFromChatFetch = (
   input: RequestInfo | URL,
@@ -74,6 +110,10 @@ export async function patchJusticeCaseFromChat(params: {
   const retryDelayMs = params.retryDelayMs ?? 0;
   const logLabel = params.logLabel ?? "justice chat";
 
+  const invocationId = ++playwrightPatchInvocationCounter;
+  const entryStack = new Error().stack ?? "";
+  logPlaywrightPatchDiagnostic("entry", caseId, invocationId, 0, entryStack);
+
   if (!caseId) {
     return {
       ok: false,
@@ -90,6 +130,13 @@ export async function patchJusticeCaseFromChat(params: {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      logPlaywrightPatchDiagnostic(
+        "before-fetch",
+        caseId,
+        invocationId,
+        attempt,
+        new Error().stack ?? ""
+      );
       const res = await fetchFn(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
