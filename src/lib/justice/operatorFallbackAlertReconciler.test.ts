@@ -10,6 +10,7 @@ import { bbbOwnedFilingIdempotencyKey } from "@/lib/justice/bbbOwnedFilingDelive
 import { ftcOwnedFilingIdempotencyKey } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
+import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 import { parseKeysetOrFilter } from "@/lib/justice/reconcilerKeysetPaginationTestSupport";
 
@@ -693,5 +694,155 @@ describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts
     expect(second.sent).toBe(0);
     expect(second.skipped).toBe(2);
     expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reconcileOperatorFallbackAlerts — 24h/72h staleness escalation", () => {
+  const T0 = Date.parse("2026-07-01T00:00:00.000Z");
+  const HOUR = 3_600_000;
+
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("preserves the existing immediate alert for a freshly queued task", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: stateAgFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 });
+
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].subject).toContain("Manual filing needed");
+    expect(send.mock.calls[0][0].subject).not.toContain("ESCALATION");
+  });
+
+  it("does not escalate before the 24h boundary, then escalates exactly at 24h (distinct tier key, no resend of immediate)", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: stateAgFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+
+    const immediate = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    expect(immediate.sent).toBe(1);
+
+    const justUnder = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR - 1 });
+    expect(justUnder.sent).toBe(0);
+    expect(justUnder.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    const atBoundary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    expect(atBoundary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].subject).toContain("ESCALATION (24h)");
+
+    // Distinct per-tier marker keys — both the immediate and the 24h escalation are recorded.
+    const notes = store.tasks[0].notes ?? "";
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue", "state_ag"))).toBe(true);
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "state_ag"))).toBe(true);
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-72h", "state_ag"))).toBe(false);
+  });
+
+  it("escalates to 72h after 24h, and never resends the 24h tier once 72h has fired", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: merchantContactFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    expect(send).toHaveBeenCalledTimes(2);
+
+    const justUnder72 = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR - 1 });
+    expect(justUnder72.sent).toBe(0);
+    expect(send).toHaveBeenCalledTimes(2);
+
+    const at72 = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR });
+    expect(at72.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[2][0].subject).toContain("ESCALATION (72h)");
+
+    // Long after 72h, nothing new ever fires again for this task (no tier beyond 72h exists).
+    const wellPast = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 200 * HOUR });
+    expect(wellPast.sent).toBe(0);
+    expect(wellPast.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("sends only the single highest due tier when a task is first observed already past 72h — no burst of immediate + 24h + 72h", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: ftcFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 + 80 * HOUR });
+
+    expect(summary.sent).toBe(1);
+    expect(summary.attempted).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (72h)");
+    expect(send.mock.calls[0][0].subject).not.toContain("ESCALATION (24h)");
+
+    const notes = store.tasks[0].notes ?? "";
+    // Only the 72h key is recorded — immediate and 24h were never sent, and never will be.
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue", "ftc"))).toBe(false);
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "ftc"))).toBe(false);
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-72h", "ftc"))).toBe(true);
+
+    // A later run never fires the skipped lower tiers.
+    const later = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 + 200 * HOUR });
+    expect(later.sent).toBe(0);
+    expect(later.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("is idempotent: identical concurrent runs at the same escalated age share one tier key and send exactly once", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: bbbFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    // Immediate already sent in an earlier run, so this run is the 24h escalation.
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    send.mockClear();
+
+    await Promise.all([
+      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR }),
+      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR }),
+    ]);
+
+    const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
+    expect(keys.size).toBe(1);
+    expect([...keys][0]).toBe("operator-queue-alert:task_c1:bbb:24h");
+    const occurrences = (store.tasks[0].notes ?? "").match(/operator_alert_sent: task_c1\|operator-queue-24h\|bbb/g) ?? [];
+    expect(occurrences.length).toBe(1);
+  });
+
+  it("excludes a completed (terminal) task from escalation even though its age would otherwise qualify", async () => {
+    const store: Store = {
+      tasks: [
+        openTask({
+          caseId: "c1",
+          marker: dotFilingTaskNotesMarker("c1"),
+          created_at: new Date(T0).toISOString(),
+          completed_at: new Date(T0 + HOUR).toISOString(),
+        }),
+      ],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 + 200 * HOUR });
+
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
   });
 });

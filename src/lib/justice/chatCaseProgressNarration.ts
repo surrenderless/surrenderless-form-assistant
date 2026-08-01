@@ -10,6 +10,7 @@ import {
 import { isChatPendingHumanFulfillmentEscalation } from "@/lib/justice/chatPendingHumanFulfillmentRefresh";
 import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
 import {
+  findOpenCfpbFilingTask,
   hasCfpbFilingWithConfirmation,
   isApprovedCfpbFilingAction,
 } from "@/lib/justice/cfpbFilingTask";
@@ -23,10 +24,12 @@ import {
   isDemandLetterEmailSending,
 } from "@/lib/justice/demandLetterEmailDelivery";
 import {
+  findOpenDotFilingTask,
   hasDotFilingWithConfirmation,
   isApprovedDotFilingAction,
 } from "@/lib/justice/dotFilingTask";
 import {
+  findOpenFccFilingTask,
   hasFccFilingWithConfirmation,
   isApprovedFccFilingAction,
 } from "@/lib/justice/fccFilingTask";
@@ -59,6 +62,7 @@ import {
   isPaymentDisputeEmailSending,
 } from "@/lib/justice/paymentDisputeEmailDelivery";
 import {
+  findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
 } from "@/lib/justice/stateAgFilingTask";
@@ -69,31 +73,40 @@ import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type ChatCaseProgressMilestone =
   | "merchant_contact_queued"
+  | "merchant_contact_queued_stale"
   | "merchant_contact_sending"
   | "merchant_contact_send_failed"
   | "merchant_contact_confirmed"
   | "payment_dispute_queued"
+  | "payment_dispute_queued_stale"
   | "payment_dispute_sending"
   | "payment_dispute_send_failed"
   | "payment_dispute_confirmed"
   | "fcc_queued"
+  | "fcc_queued_stale"
   | "fcc_confirmed"
   | "dot_queued"
+  | "dot_queued_stale"
   | "dot_confirmed"
   | "cfpb_queued"
+  | "cfpb_queued_stale"
   | "cfpb_confirmed"
   | "ftc_queued"
+  | "ftc_queued_stale"
   | "ftc_submitting"
   | "ftc_submit_failed"
   | "ftc_confirmed"
   | "bbb_queued"
+  | "bbb_queued_stale"
   | "bbb_submitting"
   | "bbb_submit_failed"
   | "bbb_confirmed"
   | "bbb_filed"
   | "state_ag_queued"
+  | "state_ag_queued_stale"
   | "state_ag_confirmed"
   | "demand_letter_queued"
+  | "demand_letter_queued_stale"
   | "demand_letter_sending"
   | "demand_letter_send_failed"
   | "demand_letter_sent"
@@ -103,31 +116,40 @@ export type ChatCaseProgressMilestone =
 
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
   "merchant_contact_queued",
+  "merchant_contact_queued_stale",
   "merchant_contact_sending",
   "merchant_contact_send_failed",
   "merchant_contact_confirmed",
   "payment_dispute_queued",
+  "payment_dispute_queued_stale",
   "payment_dispute_sending",
   "payment_dispute_send_failed",
   "payment_dispute_confirmed",
   "fcc_queued",
+  "fcc_queued_stale",
   "fcc_confirmed",
   "dot_queued",
+  "dot_queued_stale",
   "dot_confirmed",
   "cfpb_queued",
+  "cfpb_queued_stale",
   "cfpb_confirmed",
   "ftc_queued",
+  "ftc_queued_stale",
   "ftc_submitting",
   "ftc_submit_failed",
   "ftc_confirmed",
   "bbb_queued",
+  "bbb_queued_stale",
   "bbb_submitting",
   "bbb_submit_failed",
   "bbb_confirmed",
   "bbb_filed",
   "state_ag_queued",
+  "state_ag_queued_stale",
   "state_ag_confirmed",
   "demand_letter_queued",
+  "demand_letter_queued_stale",
   "demand_letter_sending",
   "demand_letter_send_failed",
   "demand_letter_sent",
@@ -137,6 +159,91 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
 ] as const;
 
 export const STORAGE_CHAT_CASE_PROGRESS_NARRATED_V1 = "justice_chat_case_progress_narrated_v1";
+
+/** Age past which an operator-queued milestone's narration switches to a "taking longer" message. */
+const OPERATOR_QUEUE_STALE_NARRATION_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+type QueuedMilestoneStaleConfig = {
+  /** Destination phrase substituted into the "taking longer than expected" sentence. */
+  destinationPhrase: string;
+  findOpenTask: (
+    tasks: readonly JusticeCaseTaskRow[],
+    caseId: string
+  ) => JusticeCaseTaskRow | undefined;
+  /** The distinct milestone identity narrated once, separately from the base queued milestone. */
+  staleMilestone: ChatCaseProgressMilestone;
+};
+
+/**
+ * Operator-fulfillment-queued milestones eligible for a separate, one-time "taking longer than
+ * expected" staleness update, keyed by the same task age used server-side by the operator-queue
+ * alert escalation (reconcileOperatorFallbackAlerts). CFPB automation itself is out of scope, but
+ * its manual operator queue still gets the same staleness handling as every other destination.
+ */
+const QUEUED_MILESTONE_STALE_CONFIG: Partial<
+  Record<ChatCaseProgressMilestone, QueuedMilestoneStaleConfig>
+> = {
+  merchant_contact_queued: {
+    destinationPhrase: "merchant or company contact outreach",
+    findOpenTask: findOpenMerchantContactFilingTask,
+    staleMilestone: "merchant_contact_queued_stale",
+  },
+  payment_dispute_queued: {
+    destinationPhrase: "payment dispute filing",
+    findOpenTask: findOpenPaymentDisputeFilingTask,
+    staleMilestone: "payment_dispute_queued_stale",
+  },
+  fcc_queued: {
+    destinationPhrase: "FCC complaint filing",
+    findOpenTask: findOpenFccFilingTask,
+    staleMilestone: "fcc_queued_stale",
+  },
+  dot_queued: {
+    destinationPhrase: "USDOT aviation complaint filing",
+    findOpenTask: findOpenDotFilingTask,
+    staleMilestone: "dot_queued_stale",
+  },
+  cfpb_queued: {
+    destinationPhrase: "CFPB complaint filing",
+    findOpenTask: findOpenCfpbFilingTask,
+    staleMilestone: "cfpb_queued_stale",
+  },
+  ftc_queued: {
+    destinationPhrase: "FTC consumer complaint filing",
+    findOpenTask: findOpenFtcFilingTask,
+    staleMilestone: "ftc_queued_stale",
+  },
+  bbb_queued: {
+    destinationPhrase: "Better Business Bureau complaint filing",
+    findOpenTask: findOpenBbbFilingTask,
+    staleMilestone: "bbb_queued_stale",
+  },
+  state_ag_queued: {
+    destinationPhrase: "State Attorney General complaint filing",
+    findOpenTask: findOpenStateAgFilingTask,
+    staleMilestone: "state_ag_queued_stale",
+  },
+  demand_letter_queued: {
+    destinationPhrase: "demand letter",
+    findOpenTask: findOpenDemandLetterFilingTask,
+    staleMilestone: "demand_letter_queued_stale",
+  },
+};
+
+/** Authoritative task age for a queued milestone: null when the task or its created_at is unknown. */
+function resolveQueuedMilestoneAgeMs(
+  milestone: ChatCaseProgressMilestone,
+  tasks: readonly JusticeCaseTaskRow[],
+  caseId: string,
+  nowMs: number
+): number | null {
+  const cfg = QUEUED_MILESTONE_STALE_CONFIG[milestone];
+  if (!cfg) return null;
+  const task = cfg.findOpenTask(tasks, caseId);
+  const createdAtMs = task?.created_at ? Date.parse(task.created_at) : NaN;
+  if (!Number.isFinite(createdAtMs)) return null;
+  return Math.max(0, nowMs - createdAtMs);
+}
 
 export type ChatCaseProgressObservation = {
   caseId: string;
@@ -151,7 +258,8 @@ export type ChatCaseProgressObservation = {
 export { hasBbbFilingWithConfirmation };
 
 export function deriveSatisfiedChatCaseProgressMilestones(
-  input: ChatCaseProgressObservation
+  input: ChatCaseProgressObservation,
+  nowMs: number = Date.now()
 ): ChatCaseProgressMilestone[] {
   const caseId = input.caseId.trim();
   if (!caseId) return [];
@@ -369,7 +477,26 @@ export function deriveSatisfiedChatCaseProgressMilestones(
     }
   }
 
+  // Second pass: a queued milestone that is also stale (>= 24h old) additionally satisfies its
+  // own distinct stale milestone, so it can be narrated as a separate, later, one-time update.
+  for (const baseMilestone of Object.keys(
+    QUEUED_MILESTONE_STALE_CONFIG
+  ) as ChatCaseProgressMilestone[]) {
+    if (!satisfied.includes(baseMilestone)) continue;
+    const cfg = QUEUED_MILESTONE_STALE_CONFIG[baseMilestone];
+    if (!cfg) continue;
+    const ageMs = resolveQueuedMilestoneAgeMs(baseMilestone, input.tasks, caseId, nowMs);
+    if (ageMs != null && ageMs >= OPERATOR_QUEUE_STALE_NARRATION_THRESHOLD_MS) {
+      satisfied.push(cfg.staleMilestone);
+    }
+  }
+
   return CHAT_CASE_PROGRESS_MILESTONE_ORDER.filter((milestone) => satisfied.includes(milestone));
+}
+
+/** Shared wording for every destination's separate, one-time staleness update. */
+function stalePhraseMessage(destinationPhrase: string): string {
+  return `Your ${destinationPhrase} is taking longer than expected. Surrenderless operators are still working on this — stay here in chat for updates.`;
 }
 
 export function buildChatCaseProgressNarrationMessage(
@@ -378,6 +505,8 @@ export function buildChatCaseProgressNarrationMessage(
   switch (milestone) {
     case "merchant_contact_queued":
       return "I've queued merchant or company contact with Surrenderless. Stay here in chat — I'll update you when outreach is sending or sent.";
+    case "merchant_contact_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.merchant_contact_queued!.destinationPhrase);
     case "merchant_contact_sending":
       return "Surrenderless is sending your merchant or company first-contact email now. Stay here in chat for confirmation.";
     case "merchant_contact_send_failed":
@@ -386,6 +515,8 @@ export function buildChatCaseProgressNarrationMessage(
       return "Merchant or company contact is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "payment_dispute_queued":
       return "I've queued your payment dispute with Surrenderless. Stay here in chat — I'll update you when it's sending or filed with your bank or card issuer.";
+    case "payment_dispute_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.payment_dispute_queued!.destinationPhrase);
     case "payment_dispute_sending":
       return "Surrenderless is sending your payment dispute email to your bank or card issuer now. Stay here in chat for confirmation.";
     case "payment_dispute_send_failed":
@@ -394,18 +525,26 @@ export function buildChatCaseProgressNarrationMessage(
       return "Your payment dispute filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "fcc_queued":
       return "I've queued your FCC complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "fcc_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.fcc_queued!.destinationPhrase);
     case "fcc_confirmed":
       return "Your FCC filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "dot_queued":
       return "I've queued your USDOT aviation complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "dot_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.dot_queued!.destinationPhrase);
     case "dot_confirmed":
       return "Your USDOT aviation filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "cfpb_queued":
       return "I've queued your CFPB complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "cfpb_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.cfpb_queued!.destinationPhrase);
     case "cfpb_confirmed":
       return "Your CFPB filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "ftc_queued":
       return "I've queued your FTC consumer complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "ftc_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.ftc_queued!.destinationPhrase);
     case "ftc_submitting":
       return "Surrenderless is filing your FTC consumer complaint now. Stay here in chat for confirmation.";
     case "ftc_submit_failed":
@@ -414,6 +553,8 @@ export function buildChatCaseProgressNarrationMessage(
       return "Your FTC consumer complaint filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "bbb_queued":
       return "I've queued your Better Business Bureau complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "bbb_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.bbb_queued!.destinationPhrase);
     case "bbb_submitting":
       return "Surrenderless is filing your Better Business Bureau complaint now. Stay here in chat for confirmation.";
     case "bbb_submit_failed":
@@ -424,10 +565,14 @@ export function buildChatCaseProgressNarrationMessage(
       return "Your Better Business Bureau complaint is on file with confirmation recorded. Surrenderless will carry your case to the next escalation step — you can stay in this chat.";
     case "state_ag_queued":
       return "I've queued your State Attorney General complaint with Surrenderless for operator filing. Stay here in chat — I'll update you when it's filed.";
+    case "state_ag_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.state_ag_queued!.destinationPhrase);
     case "state_ag_confirmed":
       return "Your State Attorney General filing is confirmed on file. Surrenderless is advancing your case to the next step.";
     case "demand_letter_queued":
       return "Your demand letter is queued with Surrenderless. Stay here in chat — I'll update you when it's sending or sent.";
+    case "demand_letter_queued_stale":
+      return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.demand_letter_queued!.destinationPhrase);
     case "demand_letter_sending":
       return "Surrenderless is sending your demand letter email to the company now. Stay here in chat for confirmation.";
     case "demand_letter_send_failed":
@@ -496,16 +641,29 @@ export function markChatCaseProgressMilestonesNarrated(
 
 /** New milestones to narrate in ladder order; marks them durable in session storage. */
 export function collectNewChatCaseProgressNarrationMessages(
-  input: ChatCaseProgressObservation
+  input: ChatCaseProgressObservation,
+  nowMs: number = Date.now()
 ): string[] {
   const caseId = input.caseId.trim();
   if (!caseId) return [];
 
   const alreadyNarrated = readNarratedChatCaseProgressMilestones(caseId);
-  const satisfied = deriveSatisfiedChatCaseProgressMilestones(input);
+  const satisfied = deriveSatisfiedChatCaseProgressMilestones(input, nowMs);
   const toNarrate = satisfied.filter((milestone) => !alreadyNarrated.has(milestone));
   if (toNarrate.length === 0) return [];
 
+  // Mark every newly-satisfied milestone narrated, including a base queued milestone that is
+  // suppressed below — once resolved (sent or superseded), it must never be reconsidered.
   markChatCaseProgressMilestonesNarrated(caseId, toNarrate);
-  return toNarrate.map((milestone) => buildChatCaseProgressNarrationMessage(milestone));
+
+  const toNarrateSet = new Set(toNarrate);
+  return toNarrate
+    .filter((milestone) => {
+      // A base queued milestone whose stale variant is satisfied in this same batch means the
+      // task was first observed already stale — send only the stale "taking longer" message,
+      // never both together.
+      const staleVariant = QUEUED_MILESTONE_STALE_CONFIG[milestone]?.staleMilestone;
+      return !(staleVariant && toNarrateSet.has(staleVariant));
+    })
+    .map((milestone) => buildChatCaseProgressNarrationMessage(milestone));
 }

@@ -160,6 +160,75 @@ const QUEUE_ALERT_FAILURE_TEXT =
 /** Distinguishes queue-alert idempotency keys from automated-fallback-alert keys on the same task. */
 const QUEUE_ALERT_KEY_NAMESPACE = "operator-queue";
 
+/** Escalation tiers for the ordinary (non-automated-fallback) queue alert, keyed by task age. */
+type QueueAlertTierKey = "immediate" | "24h" | "72h";
+
+type QueueAlertTier = {
+  key: QueueAlertTierKey;
+  thresholdMs: number;
+  /**
+   * Idempotency-key namespace slot passed to operatorFallbackAlertKey. "immediate" reuses the
+   * original pre-escalation namespace unchanged so alerts already marked sent in production stay
+   * deduped exactly as before; the escalation tiers use distinct namespaces so each tier gets its
+   * own durable exactly-once key on the same task.
+   */
+  keyNamespace: string;
+  subjectPrefix: string;
+  reasonSuffix: string;
+};
+
+const QUEUE_ALERT_TIERS: readonly QueueAlertTier[] = [
+  { key: "immediate", thresholdMs: 0, keyNamespace: QUEUE_ALERT_KEY_NAMESPACE, subjectPrefix: "", reasonSuffix: "" },
+  {
+    key: "24h",
+    thresholdMs: 24 * 60 * 60 * 1000,
+    keyNamespace: `${QUEUE_ALERT_KEY_NAMESPACE}-24h`,
+    subjectPrefix: "ESCALATION (24h): ",
+    reasonSuffix: " This task has been awaiting operator fulfillment for over 24 hours.",
+  },
+  {
+    key: "72h",
+    thresholdMs: 72 * 60 * 60 * 1000,
+    keyNamespace: `${QUEUE_ALERT_KEY_NAMESPACE}-72h`,
+    subjectPrefix: "ESCALATION (72h): ",
+    reasonSuffix: " This task has been awaiting operator fulfillment for over 72 hours — urgent.",
+  },
+];
+
+/**
+ * Picks the single escalation tier due for a task right now, or null when nothing new is due.
+ *
+ * Compares the highest tier already marked sent against the highest tier whose age threshold has
+ * been crossed. Only ever returns the single highest due-and-unsent tier — so a task first
+ * scanned when already older than 72h fires just the 72h alert, never a burst of immediate + 24h
+ * + 72h together — and once a higher tier has been sent, an earlier/lower tier is never returned
+ * again for that task, even if it was never individually marked sent.
+ */
+function resolveDueQueueAlertTier(
+  notes: string | null | undefined,
+  taskId: string,
+  destinationKind: AllDestinationKind,
+  ageMs: number
+): { tier: QueueAlertTierKey; key: string; subjectPrefix: string; reasonSuffix: string } | null {
+  let highestSentIndex = -1;
+  for (let i = 0; i < QUEUE_ALERT_TIERS.length; i++) {
+    const candidateKey = operatorFallbackAlertKey(taskId, QUEUE_ALERT_TIERS[i].keyNamespace, destinationKind);
+    if (hasOperatorAlertBeenSent(notes, candidateKey)) highestSentIndex = i;
+  }
+  let dueIndex = 0;
+  for (let i = 0; i < QUEUE_ALERT_TIERS.length; i++) {
+    if (ageMs >= QUEUE_ALERT_TIERS[i].thresholdMs) dueIndex = i;
+  }
+  if (dueIndex <= highestSentIndex) return null;
+  const tier = QUEUE_ALERT_TIERS[dueIndex];
+  return {
+    tier: tier.key,
+    key: operatorFallbackAlertKey(taskId, tier.keyNamespace, destinationKind),
+    subjectPrefix: tier.subjectPrefix,
+    reasonSuffix: tier.reasonSuffix,
+  };
+}
+
 export function resolveOperatorWorkspaceUrl(caseId: string): string {
   const trimmedCase = caseId.trim();
   const query = trimmedCase ? `?case=${encodeURIComponent(trimmedCase)}` : "";
@@ -479,8 +548,12 @@ export async function reconcileOperatorFallbackAlerts(
 
       summary.scanned += 1;
 
-      const key = operatorFallbackAlertKey(task.id, QUEUE_ALERT_KEY_NAMESPACE, cfg.kind);
-      if (hasOperatorAlertBeenSent(task.notes, key)) {
+      const createdAtMs = task.created_at ? Date.parse(task.created_at) : NaN;
+      const ageMs = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) : 0;
+      const ageLabel = Number.isFinite(createdAtMs) ? formatAgeMs(ageMs) : "unknown";
+
+      const due = resolveDueQueueAlertTier(task.notes, task.id, cfg.kind, ageMs);
+      if (!due) {
         summary.results.push({
           case_id: caseId,
           user_id: userId,
@@ -493,27 +566,34 @@ export async function reconcileOperatorFallbackAlerts(
         summary.skipped += 1;
         continue;
       }
+      const { tier, key, subjectPrefix, reasonSuffix } = due;
 
       summary.attempted += 1;
 
-      const createdAtMs = task.created_at ? Date.parse(task.created_at) : NaN;
-      const ageLabel = Number.isFinite(createdAtMs) ? formatAgeMs(nowMs - createdAtMs) : "unknown";
+      // Immediate keeps its original provider idempotency key unchanged (no production behavior
+      // change); escalation tiers get a distinct suffixed key so a resend at a later tier is
+      // never deduped against an earlier tier's email.
+      const providerIdempotencyKey =
+        tier === "immediate"
+          ? `${QUEUE_ALERT_KEY_NAMESPACE}-alert:${task.id}:${cfg.kind}`
+          : `${QUEUE_ALERT_KEY_NAMESPACE}-alert:${task.id}:${cfg.kind}:${tier}`;
 
       try {
         const sendResult = await providerResolved.provider.send({
           from: providerResolved.from,
           to: recipient,
-          subject: buildOperatorFallbackAlertSubject(cfg, caseId),
+          subject: `${subjectPrefix}${buildOperatorFallbackAlertSubject(cfg, caseId)}`,
           text: buildOperatorFallbackAlertBody({
             destinationLabel: cfg.destinationLabel,
             caseId,
             taskTitle: task.title?.trim() || `${cfg.destinationLabel} filing`,
-            failureReason: QUEUE_ALERT_FAILURE_TEXT,
+            failureReason: `${QUEUE_ALERT_FAILURE_TEXT}${reasonSuffix}`,
             ageLabel,
             workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
           }),
-          // Per task + destination: retries never duplicate the email even before the marker lands.
-          idempotencyKey: `${QUEUE_ALERT_KEY_NAMESPACE}-alert:${task.id}:${cfg.kind}`,
+          // Per task + destination + tier: retries never duplicate the email even before the
+          // marker lands, and an escalation tier never dedupes against an earlier tier's send.
+          idempotencyKey: providerIdempotencyKey,
         });
 
         if (!sendResult.ok) {
@@ -555,11 +635,13 @@ export async function reconcileOperatorFallbackAlerts(
           continue;
         }
 
+        const timelineIdSuffix = tier === "immediate" ? "" : `:${tier}`;
+        const timelineLabelSuffix = tier === "immediate" ? "" : ` (${tier} escalation)`;
         await appendCaseTimelineEntry(supabase, userId, caseId, {
-          id: `operator_queue_alert:${task.id}:${cfg.kind}`,
+          id: `operator_queue_alert:${task.id}:${cfg.kind}${timelineIdSuffix}`,
           type: "outcome_recorded",
-          label: `Operator alerted — ${cfg.destinationLabel} filing awaiting fulfillment`,
-          detail: QUEUE_ALERT_FAILURE_TEXT,
+          label: `Operator alerted — ${cfg.destinationLabel} filing awaiting fulfillment${timelineLabelSuffix}`,
+          detail: `${QUEUE_ALERT_FAILURE_TEXT}${reasonSuffix}`,
           ts: sentAt,
         });
 
@@ -569,7 +651,7 @@ export async function reconcileOperatorFallbackAlerts(
           kind: cfg.kind,
           task_id: task.id,
           result: "sent",
-          stop_reason: QUEUE_ALERT_REASON,
+          stop_reason: tier === "immediate" ? QUEUE_ALERT_REASON : `${QUEUE_ALERT_REASON}_${tier}`,
         });
         summary.sent += 1;
       } catch (err) {
