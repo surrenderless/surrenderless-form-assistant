@@ -401,6 +401,7 @@ import {
   isFtcOwnedFilingFailed,
   isFtcOwnedFilingSubmitting,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
+import { isPlaywrightMockIntakeCaseHydrationCaseId } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
 
 type UiMessage = {
   id: string;
@@ -435,6 +436,24 @@ const SESSION_PROOF_ADDED_LINE = "Added proof note(s) this visit";
 
 const STORAGE_PREPARED_PACKET_APPROVED_V1 = "justice_prepared_packet_approved_v1";
 const STORAGE_SUBMISSION_DRAFT_REVIEWED_V1 = "justice_submission_draft_reviewed_v1";
+
+/**
+ * TEMPORARY diagnostics for the packet-approval premature-auto-approve E2E investigation.
+ * Gated on the fixed Playwright mock case ids — a real user's case id can never match, so
+ * this never logs in production. Logs booleans/enums/hrefs and a browser stack only, no
+ * chat/user content. Remove once the auto-approval trigger is identified.
+ */
+function logPlaywrightApprovePacketDiagnostic(
+  event: string,
+  caseId: string,
+  details: Record<string, unknown>
+): void {
+  if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
+  console.log(`[e2e-diag:approve-packet] ${event}`, {
+    ...details,
+    stack: new Error().stack,
+  });
+}
 
 function readSessionPreparedPacketApproved(caseId: string): boolean {
   if (typeof window === "undefined" || !caseId) return false;
@@ -2935,6 +2954,16 @@ export default function JusticeChatAiPage() {
   async function handleApprovePreparedPacketFromChat(options?: {
     fromChatConsent?: boolean;
   }): Promise<boolean> {
+    logPlaywrightApprovePacketDiagnostic(
+      "handler:entry",
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "",
+      {
+        fromChatConsent: options?.fromChatConsent === true,
+        approvePreparedPacketChecked,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+      }
+    );
     if ((!approvePreparedPacketChecked && !options?.fromChatConsent) || !isLoaded || !isSignedIn) {
       return false;
     }
@@ -2966,6 +2995,12 @@ export default function JusticeChatAiPage() {
     setApprovingPreparedPacket(true);
     setTrackingSaveError(null);
     try {
+      logPlaywrightApprovePacketDiagnostic("handler:before-persist", caseId, {
+        fromChatConsent: options?.fromChatConsent === true,
+        approvePreparedPacketChecked,
+        nextActionHref: withTracking.href,
+        contacted,
+      });
       const result = await persistPreparedPacketApprovalToCase({
         caseId,
         nextAction: withTracking,
@@ -4977,6 +5012,14 @@ export default function JusticeChatAiPage() {
                   "I could not save your draft review on the server. Please try again or use the checklist below.";
               }
             } else if (parsed.kind === "prepared_packet_approval") {
+              logPlaywrightApprovePacketDiagnostic("origin:chat-consent", consentCaseId, {
+                pendingGate,
+                parsedKind: parsed.kind,
+                submissionDraftReviewed,
+                preparedPacketApproved,
+                bbbComplaintPrepVisible,
+                bbbAutofillCompleted: ftcPracticeSuccess,
+              });
               const ok = await handleApprovePreparedPacketFromChat({ fromChatConsent: true });
               if (!ok) {
                 assistantText =
@@ -6094,7 +6137,20 @@ export default function JusticeChatAiPage() {
                 expanded={packetPreviewExpanded}
                 onExpandedChange={setPacketPreviewExpanded}
                 approving={approvingPreparedPacket}
-                onSubmit={() => void handleApprovePreparedPacketFromChat()}
+                onSubmit={() => {
+                  logPlaywrightApprovePacketDiagnostic(
+                    "origin:form-submit",
+                    typeof window !== "undefined"
+                      ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
+                      : "",
+                    {
+                      approvePreparedPacketChecked,
+                      showInlinePreparedPacketApproval,
+                      approvingPreparedPacket,
+                    }
+                  );
+                  void handleApprovePreparedPacketFromChat();
+                }}
                 suppressHubLink={suppressInlineMainLadderHubLinks}
                 copyHint={inlinePacketCopyHint}
                 onCopyPacket={() => {
