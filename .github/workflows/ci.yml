@@ -37,4 +37,8 @@ jobs:
         if: failure()
         with:
           name: playwright-test-results
-          path: test-results/**
+          include-hidden-files: true
+          path: |
+            test-results/**
+            .next/static/chunks/app/justice/chat-ai/page-*.js
+            .next/static/chunks/app/justice/chat-ai/page-*.js.map
