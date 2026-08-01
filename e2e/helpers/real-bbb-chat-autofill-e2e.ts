@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { waitForClerkBrowserApiSession } from "./clerk-e2e";
 import { ASSISTED_SUBMISSION_REAL_BBB_PREP_HREF } from "@/lib/justice/assistedSubmissionLane";
 import { STORAGE_APPROVED_NEXT_ACTION_V1 } from "@/lib/justice/approvedNextActionState";
 import { REAL_BBB_COMPLAINT_FILING_CONFIRMATION } from "@/lib/justice/recordRealBbbComplaintFiling";
@@ -55,6 +56,9 @@ function buildRealBbbChatAutofillE2eTimeline(caseId: string): TimelineEntry[] {
 
 /** Reset cumulative Playwright mock justice state for the fixed E2E case id. */
 export async function resetPlaywrightMockCaseForRealBbbChatAutofill(page: Page): Promise<void> {
+  await page.goto("/justice/chat-ai");
+  await waitForClerkBrowserApiSession(page);
+
   const intake = buildPlaywrightMockE2eCaseIntake();
   const resetRes = await page.request.post("/api/justice/cases", {
     data: { intake, timeline: [] },
