@@ -77,7 +77,7 @@ export function isOpenFollowUpTaskDue(params: {
 }): boolean {
   if (params.task.completed_at?.trim()) return false;
   const now = params.now ?? new Date();
-  const kind = getJusticeTaskDueKind(params.task);
+  const kind = getJusticeTaskDueKind(params.task, now);
   if (kind === "overdue" || kind === "due_today") return true;
   if (kind === "upcoming") return false;
 

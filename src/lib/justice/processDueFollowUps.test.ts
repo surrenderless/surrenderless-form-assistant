@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import {
   buildNoResponseOutcomeNote,
@@ -78,6 +78,40 @@ describe("isOpenFollowUpTaskDue", () => {
         now,
       })
     ).toBe(false);
+  });
+
+  describe("due_date evaluation uses the supplied `now`, not wall-clock time", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // Real wall-clock frozen well *after* the task's due_date, unambiguous in any timezone.
+      // processDueFollowUps.ts:374 threads one `now` per batch run through this function
+      // specifically so every task in the batch is evaluated against that instant, not
+      // whatever the real clock happens to read while the batch is running.
+      vi.setSystemTime(new Date("2026-08-05T12:00:00.000Z"));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("treats a future due_date as not due when `now` precedes it, even though real time has passed it", () => {
+      const pastRelativeToRealClock = new Date("2026-07-01T00:00:00.000Z");
+      expect(
+        isOpenFollowUpTaskDue({
+          task: { due_date: "2026-08-01", completed_at: null },
+          now: pastRelativeToRealClock,
+        })
+      ).toBe(false);
+    });
+
+    it("treats a due_date as overdue when `now` is after it, even though real time has not reached it", () => {
+      const futureRelativeToRealClock = new Date("2026-09-01T00:00:00.000Z");
+      expect(
+        isOpenFollowUpTaskDue({
+          task: { due_date: "2026-08-01", completed_at: null },
+          now: futureRelativeToRealClock,
+        })
+      ).toBe(true);
+    });
   });
 });
 
