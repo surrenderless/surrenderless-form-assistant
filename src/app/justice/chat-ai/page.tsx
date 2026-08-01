@@ -449,7 +449,7 @@ function logPlaywrightApprovePacketDiagnostic(
   details: Record<string, unknown>
 ): void {
   if (!isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) return;
-  console.log(`[e2e-diag:approve-packet] ${event}`, {
+  console.error(`[e2e-diag:approve-packet] ${event}`, {
     ...details,
     stack: new Error().stack,
   });
