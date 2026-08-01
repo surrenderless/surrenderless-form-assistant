@@ -36,4 +36,16 @@ describe("syncChatProgressNarrationFromTranscript", () => {
     expect(narrated.has("resolution_ready")).toBe(false);
     expect(sessionStorage.getItem(STORAGE_CHAT_CASE_PROGRESS_NARRATED_V1)).toBeTruthy();
   });
+
+  it("recognizes a restored staleness-escalation message as its own distinct milestone", () => {
+    const caseId = "case-456";
+    syncChatProgressNarrationFromTranscript(caseId, [
+      { role: "assistant", text: buildChatCaseProgressNarrationMessage("bbb_queued") },
+      { role: "assistant", text: buildChatCaseProgressNarrationMessage("bbb_queued_stale") },
+    ]);
+
+    const narrated = readNarratedChatCaseProgressMilestones(caseId);
+    expect(narrated.has("bbb_queued")).toBe(true);
+    expect(narrated.has("bbb_queued_stale")).toBe(true);
+  });
 });

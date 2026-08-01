@@ -167,7 +167,10 @@ import {
 } from "@/lib/testing/playwrightMockJusticeFilingsPipeline";
 import type { PlaywrightMockJusticeTaskRow } from "@/lib/testing/playwrightMockJusticeTasksPipeline";
 
-const PLAYWRIGHT_MOCK_TASK_TIMESTAMP = "2026-06-21T00:00:04.000Z";
+// Recent (not a fixed past date): chat progress narration now derives each queued milestone's
+// authoritative age from task created_at, and a fixed date would drift into 24h-stale narration
+// as real wall-clock time passes.
+const PLAYWRIGHT_MOCK_TASK_TIMESTAMP = new Date().toISOString();
 export const PLAYWRIGHT_MOCK_STATE_AG_TASK_ID = "00000000-0000-4000-8000-000000000746";
 export const PLAYWRIGHT_MOCK_DEMAND_LETTER_TASK_ID = "00000000-0000-4000-8000-000000000747";
 export const PLAYWRIGHT_MOCK_CFPB_TASK_ID = "00000000-0000-4000-8000-000000000748";
