@@ -29,6 +29,21 @@ test("after evidence upload, consumer reviews draft and approves packet without 
 }) => {
   test.setTimeout(240_000);
 
+  // TEMPORARY diagnostic: forward only [e2e-merge-diag-prefixed page console.log calls (added
+  // at the two source-mapped PATCH sites in chat-ai/page.tsx, gated on the fixed Playwright
+  // mock case id) directly to Node/CI output. Uses the live page "console" event rather than
+  // Playwright's trace console capture, since that capture did not surface earlier diagnostics
+  // that were later proven (via CDP breakpoints) to be on code paths that never executed —
+  // this listens on the actual, now-confirmed-correct call sites instead. Forwards no other
+  // console output.
+  const MERGE_DIAG_PREFIX = "[e2e-merge-diag";
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.startsWith(MERGE_DIAG_PREFIX)) {
+      console.log(text);
+    }
+  });
+
   // TEMPORARY diagnostic: set CDP breakpoints at the exact minified locations observed in
   // prior [e2e-fetch-diag] stacks for the two PATCH-issuing call sites inside the chat-ai
   // chunk, so a debugger pause captures CDP's own synchronous + async call-frame chain —

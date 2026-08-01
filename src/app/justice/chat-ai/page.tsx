@@ -3105,6 +3105,17 @@ export default function JusticeChatAiPage() {
         }
         const existing = (await getRes.json()) as { client_state?: unknown };
         const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextAction);
+        if (isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+          console.log(
+            "[e2e-merge-diag:merchant-contact-doc]",
+            JSON.stringify({
+              site: "merchant-contact-doc",
+              existingClientState: existing.client_state,
+              merged,
+              time: Date.now(),
+            })
+          );
+        }
         const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -4219,6 +4230,17 @@ export default function JusticeChatAiPage() {
         }
         const existing = (await getRes.json()) as { client_state?: unknown };
         const merged = mergeClientStateWithApprovedNextAction(existing.client_state, nextAction);
+        if (isPlaywrightMockIntakeCaseHydrationCaseId(caseId)) {
+          console.log(
+            "[e2e-merge-diag:evidence-effect]",
+            JSON.stringify({
+              site: "evidence-effect",
+              existingClientState: existing.client_state,
+              merged,
+              time: Date.now(),
+            })
+          );
+        }
         const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
