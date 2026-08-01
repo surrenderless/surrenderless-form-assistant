@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   hydrateApprovedNextActionForDisplay,
   mergeApprovedNextActionTrackingFields,
+  mergeClientStateWithApprovedNextAction,
   parseApprovedNextAction,
   parseJusticeCaseClientState,
   readSessionApprovedNextAction,
@@ -185,5 +186,46 @@ describe("mergeApprovedNextActionTrackingFields follow-up clear", () => {
     });
     expect(merged.follow_up_needed).toBe(false);
     expect(merged.follow_up_at).toBeUndefined();
+  });
+});
+
+describe("mergeClientStateWithApprovedNextAction prepared_packet_approved origin", () => {
+  // Regression for a real production bug: an unconditional `merged.prepared_packet_approved =
+  // true` sat after the conditional carry-forward block, so this merge silently approved every
+  // case on every call — including the very first write, before any explicit approval ever
+  // happened. Proven live via CI E2E diagnostics (source-mapped PATCH sites plus runtime
+  // existingClientState/merged capture) before this fix. prepared_packet_approved must only
+  // ever be true when the existing server-side client_state already says so.
+  const approvedNext = {
+    label: "FTC (consumer complaint)",
+    href: "/justice/ftc",
+    status: "approved" as const,
+    approved_at: "2026-08-01T00:00:00.000Z",
+  };
+
+  it("null existing state cannot create approval", () => {
+    const merged = mergeClientStateWithApprovedNextAction(null, approvedNext);
+    expect(merged.prepared_packet_approved).not.toBe(true);
+  });
+
+  it("missing (undefined) existing state cannot create approval", () => {
+    const merged = mergeClientStateWithApprovedNextAction(undefined, approvedNext);
+    expect(merged.prepared_packet_approved).not.toBe(true);
+  });
+
+  it("explicit false in existing state cannot become true", () => {
+    const merged = mergeClientStateWithApprovedNextAction(
+      { prepared_packet_approved: false },
+      approvedNext
+    );
+    expect(merged.prepared_packet_approved).not.toBe(true);
+  });
+
+  it("existing true is carried forward as true", () => {
+    const merged = mergeClientStateWithApprovedNextAction(
+      { prepared_packet_approved: true },
+      approvedNext
+    );
+    expect(merged.prepared_packet_approved).toBe(true);
   });
 });

@@ -636,7 +636,6 @@ export function mergeClientStateWithApprovedNextAction(
       };
     }
   }
-  merged.prepared_packet_approved = true;
   if (merged.approved_next_action) {
     merged.approved_next_action = omitClearedHandlingRequestNoteFromApprovedNextAction(
       merged.approved_next_action
