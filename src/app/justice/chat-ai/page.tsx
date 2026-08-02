@@ -318,6 +318,11 @@ import {
 } from "@/lib/justice/chatAiLadderNavigation";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
+  clearIntakeDraft,
+  readValidIntakeDraft,
+  saveIntakeDraft,
+} from "@/lib/justice/intakeDraftPersistence";
+import {
   clearPreviewChatUpdateSummary,
   writePreviewChatUpdateSummary,
 } from "@/lib/justice/previewChatUpdateHandoff";
@@ -2473,6 +2478,17 @@ export default function JusticeChatAiPage() {
     messagesRef.current = messages;
   }, [messages]);
 
+  useEffect(() => {
+    // Only while genuinely pre-commit: no committed case id yet, and not hydrating/updating an
+    // already-existing case. Once commitIntakeToSessionAndServer succeeds, STORAGE_CASE_ID is
+    // set and this stops saving on its own; the explicit clearIntakeDraft() call after commit
+    // (and inside clearLocalJusticeSession for explicit resets) removes the stored draft itself.
+    if (isUpdatingExistingCase) return;
+    const hasCommittedCaseId = Boolean(sessionStorage.getItem(STORAGE_CASE_ID)?.trim());
+    if (hasCommittedCaseId) return;
+    saveIntakeDraft({ parts, messages });
+  }, [parts, messages, isUpdatingExistingCase]);
+
   const persistChatTurnsForCase = useCallback(
     async (caseId: string, turns: readonly UiMessage[], source: JusticeCaseChatMessageSource) => {
       if (!isLoaded || !isSignedIn || !caseId || !isUuid(caseId) || turns.length === 0) {
@@ -3610,6 +3626,15 @@ export default function JusticeChatAiPage() {
       sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
       setParts(hydrated);
       setIsUpdatingExistingCase(true);
+    } else {
+      // No committed case yet — restore a pre-commit intake draft (if any) instead. Replaces
+      // (never appends to) the initial opening-greeting message, so this cannot duplicate turns.
+      const draft = readValidIntakeDraft();
+      if (draft) {
+        setParts(draft.parts);
+        setMessages(draft.messages);
+        messagesRef.current = draft.messages;
+      }
     }
     setStagedProofNotes(readStagedProofNotes());
   }, []);
@@ -5364,6 +5389,10 @@ export default function JusticeChatAiPage() {
         commitLogLabel: "justice chat-ai",
         mode: isUpdatingExistingCase ? "update" : "create",
       });
+      // STORAGE_INTAKE/STORAGE_CASE_ID are durable from this point on (set synchronously inside
+      // commitIntakeToSessionAndServer regardless of server round-trip outcome) — the pre-commit
+      // draft's protective purpose is fulfilled, so it is cleared here rather than left to expire.
+      clearIntakeDraft();
 
       if (!isUpdatingExistingCase && stagedToFlush.length > 0) {
         if (!commitResult.serverPersisted || !isUuid(commitResult.caseId)) {

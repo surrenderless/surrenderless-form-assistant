@@ -1,6 +1,7 @@
 import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 import { STORAGE_APPROVED_NEXT_ACTION_V1 } from "@/lib/justice/approvedNextActionState";
 import { STORAGE_CHAT_BBB_ACCURACY_CONSENTED_V1 } from "@/lib/justice/chatLegalConsentGates";
+import { STORAGE_INTAKE_DRAFT_V1 } from "@/lib/justice/intakeDraftPersistence";
 import {
   STORAGE_CASE_ID,
   STORAGE_FTC_MANUAL_UNLOCK,
@@ -27,4 +28,5 @@ export function clearLocalJusticeSession(): void {
   sessionStorage.removeItem(STORAGE_SUBMISSION_DRAFT_REVIEWED_V1);
   sessionStorage.removeItem(STORAGE_APPROVED_NEXT_ACTION_V1);
   sessionStorage.removeItem(STORAGE_CHAT_BBB_ACCURACY_CONSENTED_V1);
+  sessionStorage.removeItem(STORAGE_INTAKE_DRAFT_V1);
 }
