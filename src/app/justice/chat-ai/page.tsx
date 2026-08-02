@@ -2322,6 +2322,12 @@ export default function JusticeChatAiPage() {
   const signedInConsumerEmail = resolveSignedInConsumerReplyEmail(user);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sendInFlightRef = useRef(false);
+  /** Skips the pre-commit draft-save effect's very first (mount) invocation, which otherwise
+   *  races the mount-time draft-restore effect: both observe the fresh-mount default parts/
+   *  messages within the same initial effect flush (setters from restore don't land until the
+   *  next render), so an unguarded save on mount would overwrite a real saved draft with empty
+   *  defaults before restore ever gets to read it back. */
+  const skipInitialDraftSaveRef = useRef(true);
   const sessionBaselinePartsRef = useRef<BuildJusticeIntakeParts | null>(null);
   const sessionBaselineEvidenceCountRef = useRef<number | null>(null);
   /** Last-observed hasUploadedEvidenceFile, scoped to its case — a caseId mismatch (including
@@ -2479,6 +2485,15 @@ export default function JusticeChatAiPage() {
   }, [messages]);
 
   useEffect(() => {
+    // Skip the mount-time invocation: parts/messages are still fresh-mount defaults here even
+    // when a real draft exists in storage (the sibling restore effect's setParts/setMessages
+    // haven't landed yet within this same initial flush) — saving now would clobber the real
+    // draft with empty defaults before restore ever reads it. Every subsequent invocation (the
+    // restore's own state update, or a real chat turn) runs with genuinely current values.
+    if (skipInitialDraftSaveRef.current) {
+      skipInitialDraftSaveRef.current = false;
+      return;
+    }
     // Only while genuinely pre-commit: no committed case id yet, and not hydrating/updating an
     // already-existing case. Once commitIntakeToSessionAndServer succeeds, STORAGE_CASE_ID is
     // set and this stops saving on its own; the explicit clearIntakeDraft() call after commit
