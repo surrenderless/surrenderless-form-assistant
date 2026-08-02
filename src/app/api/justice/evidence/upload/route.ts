@@ -19,6 +19,7 @@ import {
 } from "@/lib/justice/evidenceFileAccess";
 import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
+import { rateLimit } from "@/utils/rateLimiter";
 import {
   appendPlaywrightMockJusticeEvidenceUpload,
   isPlaywrightMockJusticeEvidenceCaseId,
@@ -147,6 +148,15 @@ export async function POST(req: NextRequest) {
   const userId = getUserOr401(req);
   if (!userId) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  try {
+    if (await rateLimit(userId)) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("rateLimit failed, allowing:", msg);
   }
 
   let form: FormData;
