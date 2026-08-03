@@ -13,6 +13,8 @@ jobs:
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_ci_placeholder' }}
       E2E_CLERK_USER_EMAIL: ${{ secrets.E2E_CLERK_USER_EMAIL }}
       E2E_CLERK_USER_PASSWORD: ${{ secrets.E2E_CLERK_USER_PASSWORD }}
+      E2E_OPERATOR_CLERK_USER_EMAIL: ${{ secrets.E2E_OPERATOR_CLERK_USER_EMAIL }}
+      E2E_OPERATOR_CLERK_USER_PASSWORD: ${{ secrets.E2E_OPERATOR_CLERK_USER_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
