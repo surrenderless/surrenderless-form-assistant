@@ -35,8 +35,8 @@ export default function OperatorFulfillmentPage() {
     }
   }, [isLoaded, isSignedIn, isOperator, router]);
 
-  const loadQueue = useCallback(async () => {
-    setLoading(true);
+  const loadQueue = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setLoadError(null);
     try {
       const res = await fetch("/api/operator/fulfillment-queue");
@@ -58,14 +58,17 @@ export default function OperatorFulfillmentPage() {
       setItems([]);
       setClosableCases([]);
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !isOperator) return;
     void loadQueue();
-    const interval = window.setInterval(() => void loadQueue(), 5000);
+    // Background polls refresh data silently — they must never toggle `loading`, which would
+    // unmount the entire queue/closable-cases UI (and any in-progress operator form input inside
+    // it) every 5 seconds.
+    const interval = window.setInterval(() => void loadQueue(true), 5000);
     return () => window.clearInterval(interval);
   }, [isLoaded, isSignedIn, isOperator, loadQueue]);
 
