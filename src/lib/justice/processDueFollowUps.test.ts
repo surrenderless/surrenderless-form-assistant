@@ -63,18 +63,13 @@ describe("isOpenFollowUpTaskDue", () => {
     ).toBe(false);
   });
 
-  it("falls back to follow_up_at when task has no due_date", () => {
+  it("is never due when the task has no due_date of its own — no case-level fallback", () => {
+    // A case can have more than one lane's follow-up open at once; falling back to the case's
+    // approved_next_action.follow_up_at would let a task fire off a DIFFERENT lane's schedule.
+    // A task without its own due_date must simply never fire, regardless of the case's state.
     expect(
       isOpenFollowUpTaskDue({
         task: { due_date: null, completed_at: null },
-        followUpAt: "2026-07-01T12:00:00.000Z",
-        now,
-      })
-    ).toBe(true);
-    expect(
-      isOpenFollowUpTaskDue({
-        task: { due_date: null, completed_at: null },
-        followUpAt: "2026-08-01T12:00:00.000Z",
         now,
       })
     ).toBe(false);

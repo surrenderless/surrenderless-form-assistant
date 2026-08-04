@@ -10,6 +10,8 @@ import {
 } from "@/lib/justice/taskDueStatus";
 import { applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { followUpTaskOwnerHref } from "@/lib/justice/followUpCaseTask";
+import { taskNotesMatchSupersededLaneReviewMarker } from "@/lib/justice/followUpResponseReviewTask";
 
 const cardCls =
   "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-lg shadow-neutral-900/5 ring-1 ring-neutral-950/[0.04] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40 dark:ring-white/[0.06] sm:p-6";
@@ -63,6 +65,8 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
   const [editNotes, setEditNotes] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [supersededDecidingId, setSupersededDecidingId] = useState<string | null>(null);
+  const [supersededErrorById, setSupersededErrorById] = useState<Record<string, string>>({});
 
   const syncCaseId = useCallback(() => {
     setCaseId(readCaseId());
@@ -270,6 +274,51 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
     }
   }
 
+  async function decideSupersededLaneReview(
+    row: JusticeCaseTaskRow,
+    outcome: "response_received" | "no_response"
+  ) {
+    const ownerHref = followUpTaskOwnerHref(row.notes);
+    const cid = readCaseId();
+    if (!ownerHref || !cid) return;
+    setSupersededDecidingId(row.id);
+    setSupersededErrorById((prev) => ({ ...prev, [row.id]: "" }));
+    try {
+      const res = await fetch(
+        "/api/justice/follow-up-response-review/consumer-complete-superseded",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            case_id: cid,
+            task_id: row.id,
+            owner_href: ownerHref,
+            outcome,
+          }),
+        }
+      );
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as {
+          error?: string;
+        };
+        setSupersededErrorById((prev) => ({
+          ...prev,
+          [row.id]: err.error ?? "Could not record response.",
+        }));
+        return;
+      }
+      applyServerTimelineFromResponse(cid, payload);
+      onCaseTimelineSynced?.();
+      await refreshList();
+      onTasksChange?.();
+    } catch {
+      setSupersededErrorById((prev) => ({ ...prev, [row.id]: "Could not record response." }));
+    } finally {
+      setSupersededDecidingId(null);
+    }
+  }
+
   return (
     <div className={`mt-6 ${cardCls}`}>
       <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Follow-up tasks</h2>
@@ -441,32 +490,65 @@ export default function JusticeCaseTasks({ onTasksChange, onCaseTimelineSynced }
                               {row.notes.trim()}
                             </p>
                           ) : null}
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={Boolean(editingId) && editingId !== row.id}
-                              onClick={() => startEdit(row)}
-                              className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              disabled={togglingId === row.id}
-                              onClick={() => void toggleComplete(row)}
-                              className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
-                            >
-                              {togglingId === row.id ? "Saving…" : done ? "Reopen" : "Mark complete"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deletingId === row.id}
-                              onClick={() => void handleDelete(row.id)}
-                              className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
-                            >
-                              {deletingId === row.id ? "Deleting…" : "Delete"}
-                            </button>
-                          </div>
+                          {!done && taskNotesMatchSupersededLaneReviewMarker(row.notes, caseId) ? (
+                            <div className="mt-3 space-y-2 rounded-lg border border-amber-200/90 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+                              <p className="text-xs leading-relaxed text-amber-900/90 dark:text-amber-100/90">
+                                Did this attempt ever get a response? You can confirm &quot;Response
+                                received&quot; at any time. &quot;No response&quot; can only be confirmed
+                                once this attempt&apos;s own follow-up date has passed.
+                              </p>
+                              {supersededErrorById[row.id] ? (
+                                <p className="text-xs text-red-700 dark:text-red-300" role="alert">
+                                  {supersededErrorById[row.id]}
+                                </p>
+                              ) : null}
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={supersededDecidingId === row.id}
+                                  onClick={() => void decideSupersededLaneReview(row, "response_received")}
+                                  className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  {supersededDecidingId === row.id ? "Saving…" : "Response received"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={supersededDecidingId === row.id}
+                                  onClick={() => void decideSupersededLaneReview(row, "no_response")}
+                                  className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                                >
+                                  {supersededDecidingId === row.id ? "Saving…" : "No response"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={Boolean(editingId) && editingId !== row.id}
+                                onClick={() => startEdit(row)}
+                                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                disabled={togglingId === row.id}
+                                onClick={() => void toggleComplete(row)}
+                                className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                              >
+                                {togglingId === row.id ? "Saving…" : done ? "Reopen" : "Mark complete"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deletingId === row.id}
+                                onClick={() => void handleDelete(row.id)}
+                                className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-neutral-900 dark:text-red-200 dark:hover:bg-red-950/40"
+                              >
+                                {deletingId === row.id ? "Deleting…" : "Delete"}
+                              </button>
+                            </div>
+                          )}
                         </>
                       )}
                     </li>

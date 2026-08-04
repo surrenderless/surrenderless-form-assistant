@@ -9,7 +9,7 @@ import {
 } from "@/lib/justice/handlingRequestTimeline";
 import { ensureHandlingRequestTask } from "@/lib/justice/handlingRequestTask";
 import {
-  completeFollowUpCaseTaskIfOpen,
+  completeFollowUpCaseTaskIfOwnedByAction,
   isFirstFollowUpClearedTransition,
 } from "@/lib/justice/followUpCaseTask";
 import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
@@ -415,9 +415,22 @@ async function patchJusticeCase(
     Object.prototype.hasOwnProperty.call(patch, "client_state") &&
     isFirstFollowUpClearedTransition(existingClientState, patch.client_state)
   ) {
-    const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, id);
-    if (taskResult.timeline) {
-      responseData = { ...responseData, timeline: taskResult.timeline };
+    // The follow-up being cleared is the one belonging to whichever action's follow_up_needed
+    // just went true → false — i.e. the PRE-patch approved action, not necessarily the lane the
+    // patch is advancing to. Scope completion to that lane's own follow-up: a case can have more
+    // than one lane's follow-up open at once, and this must never close a different one. If the
+    // owning href can't be determined, safely no-op rather than guessing at an open row.
+    const clearedActionHref = parseApprovedNextActionFromClientState(existingClientState)?.href?.trim();
+    if (clearedActionHref) {
+      const taskResult = await completeFollowUpCaseTaskIfOwnedByAction(
+        supabase,
+        userId,
+        id,
+        clearedActionHref
+      );
+      if (taskResult.timeline) {
+        responseData = { ...responseData, timeline: taskResult.timeline };
+      }
     }
   }
 

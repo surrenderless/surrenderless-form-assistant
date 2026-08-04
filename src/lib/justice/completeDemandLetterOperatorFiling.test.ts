@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
   canonicalFilingDestinationForApprovedActionHref,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
@@ -62,7 +63,14 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 import { completeDemandLetterOperatorFiling } from "@/lib/justice/completeDemandLetterOperatorFiling";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { FOLLOW_UP_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureFollowUpAfterOperatorClientStateWrite";
-import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
+import { followUpTaskOwnerHref, taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
+import {
+  supersededLaneReviewLinkedFollowUpTaskId,
+  taskNotesMatchSupersededLaneReviewMarker,
+} from "@/lib/justice/followUpResponseReviewTask";
+import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
+import { classifyOpenOperatorTask } from "@/lib/justice/operatorFulfillmentQueue";
+import { upsertDemandLetterEmailDeliveryNotes } from "@/lib/justice/demandLetterEmailDelivery";
 
 function demandLetterIntake(): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -113,8 +121,12 @@ type MockCaseState = {
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
   followUpTasks: JusticeCaseTaskRow[];
+  /** Owner_href-scoped superseded-lane review rows, created by the real
+   * ensureSupersededLaneResponseReviewTask call inside the bounce-remediation branch. */
+  supersededLaneReviews?: JusticeCaseTaskRow[];
   filingInsertCount: number;
   followUpInsertFail: boolean;
+  filingInsertShouldFail?: boolean;
   evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
@@ -160,7 +172,7 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
       if (table === "justice_case_tasks") {
         const tasksMatchingLike = (pattern: string) => {
           const prefix = String(pattern).replace(/%$/, "");
-          const all = [state.task, ...state.followUpTasks];
+          const all = [state.task, ...state.followUpTasks, ...(state.supersededLaneReviews ?? [])];
           return all.filter((task) => (task.notes ?? "").startsWith(prefix));
         };
         return {
@@ -173,17 +185,25 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
                 }),
                 like: (_column: string, pattern: string) => ({
                   is: () => ({
+                    // No slice(0, N) — a real .limit() in ensureFollowUpCaseTask/
+                    // findOpenFollowUpCaseTasks may need to see every currently-open follow-up
+                    // (one per lane can coexist) to dedupe by owner_href, not just the first one.
                     limit: async () => ({
-                      data: tasksMatchingLike(pattern)
-                        .filter((task) => !task.completed_at?.trim())
-                        .slice(0, 1),
+                      data: tasksMatchingLike(pattern).filter((task) => !task.completed_at?.trim()),
                       error: null,
                     }),
                   }),
-                  limit: async () => ({
-                    data: tasksMatchingLike(pattern).slice(0, 1),
-                    error: null,
-                  }),
+                  limit: async () => {
+                    // ensureSupersededLaneResponseReviewTask's own dedupe scan (.eq().eq().like()
+                    // .limit(), no .is()) needs every matching row — open or already completed —
+                    // to tell "still pending" from "decision already recorded" apart. Other
+                    // markers keep the pre-existing single-row .limit(1) semantics.
+                    const matched = tasksMatchingLike(pattern);
+                    const data = String(pattern).startsWith("superseded_lane_review:")
+                      ? matched
+                      : matched.slice(0, 1);
+                    return { data, error: null };
+                  },
                 }),
                 limit: async () => ({ data: [state.task], error: null }),
                 maybeSingle: async () => ({ data: state.task, error: null }),
@@ -191,9 +211,7 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
               like: (_column: string, pattern: string) => ({
                 is: () => ({
                   limit: async () => ({
-                    data: tasksMatchingLike(pattern)
-                      .filter((task) => !task.completed_at?.trim())
-                      .slice(0, 1),
+                    data: tasksMatchingLike(pattern).filter((task) => !task.completed_at?.trim()),
                     error: null,
                   }),
                 }),
@@ -228,6 +246,24 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
             select: () => ({
               single: async () => {
                 const notes = typeof row.notes === "string" ? row.notes : "";
+                if (notes.startsWith("superseded_lane_review:")) {
+                  if (state.followUpInsertFail) {
+                    return { data: null, error: { message: "review insert failed" } };
+                  }
+                  const review: JusticeCaseTaskRow = {
+                    id: `superseded-review-${(state.supersededLaneReviews?.length ?? 0) + 1}`,
+                    user_id: USER_ID,
+                    case_id: CASE_ID,
+                    title: String(row.title ?? ""),
+                    due_date: typeof row.due_date === "string" ? row.due_date : null,
+                    notes,
+                    completed_at: null,
+                    created_at: "2026-06-15T12:06:30.000Z",
+                    updated_at: "2026-06-15T12:06:30.000Z",
+                  };
+                  state.supersededLaneReviews = [...(state.supersededLaneReviews ?? []), review];
+                  return { data: review, error: null };
+                }
                 if (!notes.startsWith("follow_up:")) {
                   return { data: null, error: { message: "unexpected task insert" } };
                 }
@@ -263,6 +299,9 @@ function createDemandLetterCompleteSupabase(state: MockCaseState): SupabaseClien
           insert: (row: Record<string, unknown>) => ({
             select: () => ({
               single: async () => {
+                if (state.filingInsertShouldFail) {
+                  return { data: null, error: { message: "filing insert failed" } };
+                }
                 state.filingInsertCount += 1;
                 const filing: JusticeCaseFilingRow = {
                   id: `fil-${state.filingInsertCount}`,
@@ -575,5 +614,455 @@ describe("demand-letter workspace completion behavior", () => {
       expect.anything(),
       expect.objectContaining({ hasUploadedEvidenceFile: false })
     );
+  });
+});
+
+function bouncedDemandLetterFiling(): JusticeCaseFilingRow {
+  return {
+    id: "fil-original-bounced",
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    destination: "Small claims / demand letter",
+    filed_at: "2026-06-01",
+    confirmation_number: "re_original_1",
+    filing_url: null,
+    notes: upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "bounced" as never,
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_original_1",
+    }),
+    created_at: "2026-06-01T00:00:00.000Z",
+    updated_at: "2026-06-01T00:00:00.000Z",
+  };
+}
+
+describe("completeDemandLetterOperatorFiling bounce remediation", () => {
+  beforeEach(() => {
+    timelineStore.entries = [];
+  });
+
+  it("creates a fresh filing after a bounce, closes the reopened task, and starts a fresh follow-up — preserving the bounced filing untouched", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedDemandLetterFiling();
+    const state: MockCaseState = {
+      intake: demandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "completed",
+          follow_up_needed: true,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Demand letter: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      followUpInsertFail: false,
+    };
+
+    const result = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Small claims / demand letter",
+        filedAt: "2026-06-21",
+        confirmationNumber: "DL-REMEDIATED-456",
+        notes: "Re-sent via certified mail after email bounce",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.idempotent).toBe(false);
+    expect(result.filing.confirmation_number).toBe("DL-REMEDIATED-456");
+    expect(result.filing.id).not.toBe(bounced.id);
+    expect(result.task.completed_at).toBeTruthy();
+
+    expect(state.filings).toHaveLength(2);
+    const preservedBounced = state.filings.find((f) => f.id === bounced.id);
+    expect(preservedBounced?.confirmation_number).toBe("re_original_1");
+    expect(preservedBounced?.notes).toBe(bounced.notes);
+
+    expect(state.followUpTasks).toHaveLength(1);
+    expect(taskNotesMatchFollowUpMarker(state.followUpTasks[0].notes, CASE_ID)).toBe(true);
+  });
+
+  it("still reuses an existing non-bounced confirmed filing as idempotent (unchanged regression)", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const existing: JusticeCaseFilingRow = {
+      id: "fil-accepted-1",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      destination: "Small claims / demand letter",
+      filed_at: "2026-06-15",
+      confirmation_number: "DL-SEND-998877",
+      filing_url: null,
+      notes: upsertDemandLetterEmailDeliveryNotes(null, {
+        delivery_state: "accepted",
+        provider: "resend",
+        recipient: "support@acme.example",
+        provider_message_id: "DL-SEND-998877",
+      }),
+      created_at: "2026-06-15T00:00:00.000Z",
+      updated_at: "2026-06-15T00:00:00.000Z",
+    };
+    const state: MockCaseState = {
+      intake: demandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "completed",
+        },
+      },
+      filings: [existing],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Demand letter: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: "2026-06-15T00:00:00.000Z",
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-15T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      followUpInsertFail: false,
+    };
+
+    const result = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Small claims / demand letter",
+        filedAt: "2026-06-15",
+        confirmationNumber: "DL-SEND-998877",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.idempotent).toBe(true);
+    expect(result.filing.id).toBe("fil-accepted-1");
+    expect(state.filings).toHaveLength(1);
+  });
+
+  it("does not complete the task or start a follow-up when the remediation filing insert fails", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedDemandLetterFiling();
+    const state: MockCaseState = {
+      intake: demandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "completed",
+          follow_up_needed: true,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Demand letter: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      followUpInsertFail: false,
+      filingInsertShouldFail: true,
+    };
+
+    const result = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Small claims / demand letter",
+        filedAt: "2026-06-21",
+        confirmationNumber: "DL-REMEDIATED-456",
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(state.task.completed_at).toBeNull();
+    expect(state.followUpTasks).toHaveLength(0);
+    expect(state.filings).toHaveLength(1);
+  });
+
+  it("after the ladder has advanced to payment dispute, builds demand letter's own fresh follow-up without touching payment dispute's or the ladder — and doesn't duplicate on retry", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedDemandLetterFiling();
+    const paymentDisputeFollowUp: JusticeCaseTaskRow = {
+      id: "followup-payment-dispute",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: Payment dispute (bank/card)",
+      due_date: "2026-07-01",
+      notes: "follow_up:" + CASE_ID + "\nowner_href:" + MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+      completed_at: null,
+      created_at: "2026-06-25T00:00:00.000Z",
+      updated_at: "2026-06-25T00:00:00.000Z",
+    };
+    const state: MockCaseState = {
+      intake: demandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        // The escalation ladder already advanced past demand letter to payment dispute before
+        // demand letter's delayed bounce arrived and reopened its task.
+        approved_next_action: {
+          label: "Payment dispute (bank/card)",
+          href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+          status: "approved",
+          follow_up_needed: true,
+          follow_up_at: paymentDisputeFollowUp.due_date,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Demand letter: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [paymentDisputeFollowUp],
+      filingInsertCount: 0,
+      followUpInsertFail: false,
+    };
+    const clientStateBefore = JSON.parse(JSON.stringify(state.client_state));
+
+    const result = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Small claims / demand letter",
+        filedAt: "2026-06-21",
+        confirmationNumber: "DL-REMEDIATED-456",
+        notes: "Re-sent via certified mail after email bounce",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.idempotent).toBe(false);
+    expect(result.advanced).toBe(false);
+    expect(result.task.completed_at).toBeTruthy();
+    // approved_next_action must be left exactly as it was — still payment dispute's, not
+    // rewound to demand letter and not advanced any further.
+    expect(state.client_state).toEqual(clientStateBefore);
+
+    // Payment dispute's own follow-up is completely untouched.
+    const stillPaymentDispute = state.followUpTasks.find((t) => t.id === "followup-payment-dispute");
+    expect(stillPaymentDispute?.completed_at).toBeNull();
+    expect(stillPaymentDispute?.due_date).toBe("2026-07-01");
+    expect(followUpTaskOwnerHref(stillPaymentDispute?.notes)).toBe(
+      MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
+    );
+
+    // A distinct, fresh, demand-letter-owned follow-up now also exists, open.
+    expect(state.followUpTasks).toHaveLength(2);
+    const demandLetterFollowUp = state.followUpTasks.find((t) => t.id !== "followup-payment-dispute");
+    expect(demandLetterFollowUp).toBeDefined();
+    expect(demandLetterFollowUp?.completed_at).toBeNull();
+    expect(followUpTaskOwnerHref(demandLetterFollowUp?.notes)).toBe(
+      MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+    );
+    expect(taskNotesMatchFollowUpMarker(demandLetterFollowUp?.notes, CASE_ID)).toBe(true);
+    // It carries its own valid due_date, scheduled from the remediation filing's own filedAt
+    // (2026-06-21 + 45 days) — never inherited from payment dispute's due_date (2026-07-01), and
+    // never left null, or processDueFollowUps could never process it.
+    expect(demandLetterFollowUp?.due_date).toBe("2026-08-05");
+    expect(demandLetterFollowUp?.due_date).not.toBe(stillPaymentDispute?.due_date);
+
+    // Remediation also immediately creates demand letter's own owner_href-scoped review — real
+    // production code, not a test-only helper — so a response arriving well before the
+    // follow-up's due date has somewhere to be recorded. It is real-listing reachable through
+    // the exact marker/classifier the operator queue and generic PATCH route use.
+    expect(state.supersededLaneReviews).toHaveLength(1);
+    const review = state.supersededLaneReviews?.[0];
+    expect(review?.completed_at).toBeNull();
+    expect(taskNotesMatchSupersededLaneReviewMarker(review?.notes, CASE_ID)).toBe(true);
+    expect(followUpTaskOwnerHref(review?.notes)).toBe(MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF);
+    // Durably linked to the exact fresh follow-up attempt just created — never merely to
+    // (case, owner_href) — so a later, genuinely new remediation cycle can never have this
+    // review silently answer for it.
+    expect(supersededLaneReviewLinkedFollowUpTaskId(review?.notes)).toBe(demandLetterFollowUp?.id);
+    expect(taskNotesMatchAnyOperatorFulfillmentMarker(review?.notes, CASE_ID)).toBe(true);
+    expect(classifyOpenOperatorTask(review!, state.intake)?.step).toBe("superseded_lane_review");
+
+    // Retry (e.g. a webhook replay hitting the now-idempotent completion again) must not
+    // duplicate demand letter's fresh follow-up or its review.
+    const retry = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Small claims / demand letter",
+        filedAt: "2026-06-21",
+        confirmationNumber: "DL-REMEDIATED-456",
+      }
+    );
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    expect(retry.idempotent).toBe(true);
+    expect(state.followUpTasks).toHaveLength(2);
+    expect(state.supersededLaneReviews).toHaveLength(1);
+  });
+
+  it("a prior remediation cycle's OLD completed follow-up/review for demand letter never gets reused by a genuinely NEW remediation attempt on the same lane", async () => {
+    const marker = demandLetterFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedDemandLetterFiling();
+    // A PRIOR remediation cycle already ran to completion on demand letter itself: its follow-up
+    // closed, and its review was decided — both are historical, closed rows for an OLDER attempt.
+    const oldDemandLetterFollowUp: JusticeCaseTaskRow = {
+      id: "followup-demand-letter-old",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: demand letter (old attempt)",
+      due_date: "2026-04-01",
+      notes: `follow_up:${CASE_ID}\nowner_href:${MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF}`,
+      completed_at: "2026-04-02T00:00:00.000Z",
+      created_at: "2026-03-01T00:00:00.000Z",
+      updated_at: "2026-04-02T00:00:00.000Z",
+    };
+    const oldDemandLetterReview: JusticeCaseTaskRow = {
+      id: "review-demand-letter-old",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Follow-up response review: demand letter (old attempt)",
+      due_date: null,
+      notes: [
+        `superseded_lane_review:${CASE_ID}`,
+        `owner_href:${MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF}`,
+        "follow_up_task_id:followup-demand-letter-old",
+        `case_id: ${CASE_ID}`,
+        "guidance:",
+        "prior attempt",
+        "decision:no_response",
+      ].join("\n"),
+      completed_at: "2026-04-02T00:00:00.000Z",
+      created_at: "2026-03-01T00:00:00.000Z",
+      updated_at: "2026-04-02T00:00:00.000Z",
+    };
+    // Current lane's own open follow-up, pre-existing — keeps the unrelated
+    // resolution-tracking/current-lane-ensure machinery a no-op (idempotent reuse), so this test
+    // stays focused purely on the demand-letter bounce-remediation branch.
+    const currentLaneFollowUp: JusticeCaseTaskRow = {
+      id: "followup-payment-dispute-current",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: Payment dispute (bank/card)",
+      due_date: "2026-07-01",
+      notes: `follow_up:${CASE_ID}\nowner_href:${MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF}`,
+      completed_at: null,
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z",
+    };
+    const state: MockCaseState = {
+      intake: demandLetterIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Payment dispute (bank/card)",
+          href: MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+          status: "approved",
+          follow_up_needed: true,
+          follow_up_at: currentLaneFollowUp.due_date,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Demand letter: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nLetter`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [oldDemandLetterFollowUp, currentLaneFollowUp],
+      supersededLaneReviews: [oldDemandLetterReview],
+      filingInsertCount: 0,
+      followUpInsertFail: false,
+    };
+
+    const result = await completeDemandLetterOperatorFiling(
+      createDemandLetterCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Small claims / demand letter",
+        filedAt: "2026-06-21",
+        confirmationNumber: "DL-REMEDIATED-SECOND-789",
+        notes: "Re-sent again after a second bounce",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // A brand-new demand-letter follow-up was created (the old one is completed, so dedup never
+    // blocks this) — the pre-existing current-lane (payment dispute) follow-up is reused as-is.
+    expect(state.followUpTasks).toHaveLength(3);
+    const newFollowUp = state.followUpTasks.find(
+      (t) => followUpTaskOwnerHref(t.notes) === MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF && t.id !== "followup-demand-letter-old"
+    );
+    expect(newFollowUp).toBeDefined();
+    expect(newFollowUp?.completed_at).toBeNull();
+    expect(currentLaneFollowUp.completed_at).toBeNull();
+
+    // A brand-new review was created too — linked to the NEW follow-up id — never the old
+    // completed review reused, even though it's the exact same lane on the exact same case.
+    expect(state.supersededLaneReviews).toHaveLength(2);
+    const newReview = state.supersededLaneReviews?.find((t) => t.id !== "review-demand-letter-old");
+    expect(newReview).toBeDefined();
+    expect(newReview?.completed_at).toBeNull();
+    expect(supersededLaneReviewLinkedFollowUpTaskId(newReview?.notes)).toBe(newFollowUp?.id);
+    expect(supersededLaneReviewLinkedFollowUpTaskId(newReview?.notes)).not.toBe(
+      "followup-demand-letter-old"
+    );
+
+    // The old attempt's rows are byte-for-byte untouched.
+    expect(oldDemandLetterFollowUp.completed_at).toBe("2026-04-02T00:00:00.000Z");
+    expect(oldDemandLetterReview.completed_at).toBe("2026-04-02T00:00:00.000Z");
+    expect(oldDemandLetterReview.notes).toContain("decision:no_response");
   });
 });

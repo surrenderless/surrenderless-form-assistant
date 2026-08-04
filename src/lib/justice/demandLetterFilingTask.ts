@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
+import { buildDefaultFollowUpAtAfterRealBbbAutofill } from "@/lib/justice/autoOutcomeTrackingAfterRealBbbAutofill";
 import { buildDemandLetterDraft } from "@/lib/justice/buildDemandLetterDraft";
 import {
   filingsForApprovedActionManualTracking,
@@ -96,6 +97,25 @@ const DEMAND_LETTER_APPROVED_ACTION_FOR_FILING_TRACKING = {
   label: "Small claims / demand letter",
 } as const;
 
+/**
+ * Demand letter's own action identity — stable regardless of where the case's escalation ladder
+ * currently points. Used to ensure demand letter's own follow-up after a bounce remediation even
+ * once the ladder has advanced to a later lane; must never be built from (or written back into)
+ * the case's current approved_next_action, which may no longer be demand letter's.
+ *
+ * Carries its own follow_up_at, scheduled from the successful remediation itself (filedAt,
+ * defaulting to now) — never inherited from the case's current action, since that belongs to a
+ * different lane. Without its own due date this follow-up could never become due and would sit
+ * open forever (processDueFollowUps only ever evaluates a task's own due_date).
+ */
+export function demandLetterCanonicalApprovedActionForFollowUp(filedAt?: string): JusticeApprovedNextAction {
+  return {
+    ...DEMAND_LETTER_APPROVED_ACTION_FOR_FILING_TRACKING,
+    follow_up_needed: true,
+    follow_up_at: buildDefaultFollowUpAtAfterRealBbbAutofill(filedAt),
+  };
+}
+
 export function demandLetterFilingsForManualTracking<T extends ManualActionTrackingFiling>(
   filings: readonly T[]
 ): T[] {
@@ -123,6 +143,48 @@ export function findDemandLetterFilingWithConfirmation(
   return demandLetterFilingsForManualTracking(filings).find((f) =>
     Boolean(f.confirmation_number?.trim())
   );
+}
+
+/**
+ * Most recently created demand-letter filing for this case, regardless of confirmation state.
+ * After a bounce, remediation creates a fresh filing row alongside the preserved bounced one —
+ * this is what chat/status bounce alerts read so they clear once the newer filing lands.
+ */
+export function findLatestDemandLetterFiling(
+  filings: readonly JusticeCaseFilingRow[]
+): JusticeCaseFilingRow | undefined {
+  const laneFilings = demandLetterFilingsForManualTracking(filings);
+  if (laneFilings.length === 0) return undefined;
+  return [...laneFilings].sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+}
+
+/**
+ * created_at of the most recently created demand-letter filing for this case, fetched fresh from
+ * the database: null if none exists yet (confirmed absence), or the literal "error" if the lookup
+ * itself failed. Used by bounce/complaint replay handling to detect whether a given attempt has
+ * since been superseded by a newer, successful filing — callers must fail closed on "error"
+ * rather than treat it as confirmed absence.
+ */
+export async function findLatestDemandLetterFilingCreatedAt(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<string | null | "error"> {
+  const { data, error } = await supabase
+    .from("justice_case_filings")
+    .select(
+      "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at"
+    )
+    .eq("user_id", userId)
+    .eq("case_id", caseId);
+
+  if (error) {
+    console.warn("justice demand letter filing task: select latest filing created_at", error.message);
+    return "error";
+  }
+
+  const latest = findLatestDemandLetterFiling((data ?? []) as JusticeCaseFilingRow[]);
+  return latest?.created_at ?? null;
 }
 
 /** Stable idempotent timeline id when a demand-letter operator fulfillment task is completed. */
@@ -274,4 +336,77 @@ export async function ensureDemandLetterFilingTask(
   });
 
   return { task, timeline, created: true };
+}
+
+const BOUNCE_TITLE_PREFIX_PATTERN = /^\[Needs manual follow-up[^\]]*\]\s*/;
+
+export type ReopenDemandLetterFilingTaskForBounceResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: TimelineEntry[] | null;
+  reopened: boolean;
+};
+
+/**
+ * Reopens the demand-letter operator task after a bounce/complaint so the case reappears in
+ * /operator/fulfillment for manual follow-up, and prefixes the title so the reason is visible
+ * directly in the queue. Targets the most recently created task matching this case's marker
+ * (a case can accumulate more than one over its lifetime if the step was re-queued).
+ */
+export async function reopenDemandLetterFilingTaskForBounce(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string,
+  bounceState: "bounced" | "complained"
+): Promise<ReopenDemandLetterFilingTaskForBounceResult> {
+  const marker = demandLetterFilingTaskNotesMarker(caseId);
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (existingErr) {
+    console.warn("justice demand letter filing task: select for bounce reopen", existingErr.message);
+    return { task: null, timeline: null, reopened: false };
+  }
+
+  const task = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  if (!task || !taskNotesMatchDemandLetterFilingMarker(task.notes, caseId)) {
+    return { task: null, timeline: null, reopened: false };
+  }
+
+  const prefix =
+    bounceState === "complained"
+      ? "[Needs manual follow-up — marked as spam] "
+      : "[Needs manual follow-up — bounced] ";
+  const bareTitle = task.title.replace(BOUNCE_TITLE_PREFIX_PATTERN, "");
+  const nextTitle = clampLen(`${prefix}${bareTitle}`, MAX_TITLE);
+
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: null, title: nextTitle })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn("justice demand letter filing task: bounce reopen update", error?.message ?? "not found");
+    return { task, timeline: null, reopened: false };
+  }
+
+  const updated = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: `demand_letter_filing_task_reopened_${bounceState}:${task.id}`,
+    type: "task_added",
+    label: "Demand letter task reopened for manual follow-up",
+    detail:
+      "The email did not reach the recipient. Reopened in the operator queue so the company can be contacted another way.",
+  });
+
+  return { task: updated, timeline, reopened: true };
 }

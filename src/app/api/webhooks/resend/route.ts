@@ -4,7 +4,22 @@ import {
   recordConsumerClosedNotificationDeliveryEvent,
   type ResendDeliveryEventType,
 } from "@/lib/justice/consumerClosedNotificationDelivery";
+import { recordDemandLetterEmailBounceEvent } from "@/lib/justice/demandLetterEmailDelivery";
+import type { FilingEmailBounceEventType } from "@/lib/justice/filingEmailBounceTracking";
+import { recordMerchantContactEmailBounceEvent } from "@/lib/justice/merchantContactEmailDelivery";
+import { recordPaymentDisputeEmailBounceEvent } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { readSvixHeaders, verifyResendWebhookSignature } from "@/server/verifyResendWebhookSignature";
+
+/**
+ * Tried in order for bounce/complaint events once the consumer-closed-notification marker
+ * doesn't match: these are the filing-critical outbound sends, where a bounce means the actual
+ * legal step never reached the company even though it was recorded as filed.
+ */
+const FILING_EMAIL_BOUNCE_RECORDERS = [
+  recordDemandLetterEmailBounceEvent,
+  recordPaymentDisputeEmailBounceEvent,
+  recordMerchantContactEmailBounceEvent,
+];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +44,10 @@ function getSupabaseAdmin(): SupabaseClient | null {
 
 function readString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isFilingBounceEventType(eventType: ResendDeliveryEventType): eventType is FilingEmailBounceEventType {
+  return eventType === "email.bounced" || eventType === "email.complained";
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -66,11 +85,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Supabase is not configured on this server." }, { status: 503 });
   }
 
-  const result = await recordConsumerClosedNotificationDeliveryEvent(supabase, {
-    messageId,
-    idempotencyKey,
-    eventType,
-  });
+  let result: { status: string; [key: string]: unknown } = await recordConsumerClosedNotificationDeliveryEvent(
+    supabase,
+    { messageId, idempotencyKey, eventType }
+  );
+
+  if (result.status === "ignored_unknown" && messageId && isFilingBounceEventType(eventType)) {
+    for (const recorder of FILING_EMAIL_BOUNCE_RECORDERS) {
+      const filingResult = await recorder(supabase, { messageId, eventType });
+      if (filingResult.status !== "ignored_unknown") {
+        result = filingResult;
+        break;
+      }
+    }
+  }
 
   // Surface transient DB errors as 5xx so the provider retries; everything else is a 200 ack.
   const status = result.status === "error" ? 500 : 200;

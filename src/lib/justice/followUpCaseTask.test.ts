@@ -5,6 +5,7 @@ import {
   followUpTaskCompletedTimelineId,
   followUpTaskDueDateFromApprovedNext,
   followUpTaskNotesMarker,
+  followUpTaskOwnerHref,
   isFirstFollowUpClearedTransition,
   isFirstFollowUpNeededTransition,
   taskNotesMatchFollowUpMarker,
@@ -96,6 +97,43 @@ describe("buildFollowUpTaskNotes", () => {
     expect(buildFollowUpTaskNotes(CASE_ID, { label: "File BBB complaint" })).toBe(
       `follow_up:${CASE_ID}`
     );
+  });
+
+  it("embeds an owner_href tag right after the marker when the approved action has an href", () => {
+    expect(buildFollowUpTaskNotes(CASE_ID, { href: "/justice/demand-letter" })).toBe(
+      `follow_up:${CASE_ID}\nowner_href:/justice/demand-letter`
+    );
+  });
+
+  it("orders marker, then owner_href, then outcome note", () => {
+    expect(
+      buildFollowUpTaskNotes(CASE_ID, {
+        href: "/justice/payment-dispute",
+        outcome_note: "Bank asked for more documentation.",
+      })
+    ).toBe(
+      `follow_up:${CASE_ID}\nowner_href:/justice/payment-dispute\nBank asked for more documentation.`
+    );
+  });
+});
+
+describe("followUpTaskOwnerHref", () => {
+  it("reads the owner_href tag back out of notes built with an href", () => {
+    const notes = buildFollowUpTaskNotes(CASE_ID, {
+      href: "/justice/merchant",
+      outcome_note: "Awaiting reply.",
+    });
+    expect(followUpTaskOwnerHref(notes)).toBe("/justice/merchant");
+  });
+
+  it("returns null for a legacy row with no owner_href tag (marker-only or marker+note)", () => {
+    expect(followUpTaskOwnerHref(`follow_up:${CASE_ID}`)).toBeNull();
+    expect(followUpTaskOwnerHref(`follow_up:${CASE_ID}\nMerchant promised refund.`)).toBeNull();
+  });
+
+  it("returns null for missing notes", () => {
+    expect(followUpTaskOwnerHref(null)).toBeNull();
+    expect(followUpTaskOwnerHref(undefined)).toBeNull();
   });
 });
 

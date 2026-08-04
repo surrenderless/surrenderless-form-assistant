@@ -4,12 +4,31 @@ import {
   buildJusticeIntakeFromParts,
   defaultBuildJusticeIntakeParts,
 } from "@/lib/justice/buildJusticeIntake";
-import { MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 
 const mockCaseSelectMaybeSingle = vi.fn();
 const mockCaseUpdateMaybeSingle = vi.fn();
 const mockTasksSelect = vi.fn();
 const mockFilingsSelect = vi.fn();
+
+type FollowUpTaskRow = {
+  id: string;
+  user_id: string;
+  case_id: string;
+  title: string;
+  due_date: string | null;
+  notes: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+/** Backs the real (unmocked) completeFollowUpCaseTaskIfOwnedByAction's own supabase queries —
+ * separate from mockTasksSelect, which backs the unrelated "all tasks for escalation validation"
+ * fetch. Reset per test so seeded rows don't leak across cases. */
+let followUpTasksStore: FollowUpTaskRow[] = [];
 
 vi.mock("@/server/requireUser", () => ({
   getUserOr401: vi.fn(),
@@ -71,13 +90,9 @@ vi.mock("@/lib/justice/handlingRequestTask", () => ({
   ensureHandlingRequestTask: vi.fn(async () => ({ timeline: null, created: false, task: null })),
 }));
 
-vi.mock("@/lib/justice/followUpCaseTask", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/justice/followUpCaseTask")>();
-  return {
-    ...actual,
-    completeFollowUpCaseTaskIfOpen: vi.fn(async () => ({ timeline: null })),
-  };
-});
+// Not mocked — completeFollowUpCaseTaskIfOwnedByAction runs for real against the fake supabase
+// below (via followUpTasksStore), so the route's actual row-scoping is what's under test here,
+// not a stand-in.
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(() => ({
@@ -111,9 +126,49 @@ vi.mock("@supabase/supabase-js", () => ({
         return {
           select: () => ({
             eq: () => ({
-              eq: () => mockTasksSelect(),
+              eq: () => {
+                const plain = mockTasksSelect();
+                return {
+                  // Preserves the existing "await select().eq().eq()" callers (escalation
+                  // validation) exactly as before...
+                  then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
+                    Promise.resolve(plain).then(onF, onR),
+                  // ...while also supporting completeFollowUpCaseTaskIfOwnedByAction's real
+                  // .like().is().limit() scan over the seeded follow-up rows.
+                  like: () => ({
+                    is: () => ({
+                      limit: async () => ({
+                        data: followUpTasksStore.filter((t) => !t.completed_at?.trim()),
+                        error: null,
+                      }),
+                    }),
+                  }),
+                };
+              },
             }),
           }),
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, string> = {};
+            const builder = {
+              eq: (col: string, val: string) => {
+                filters[col] = val;
+                return builder;
+              },
+              select: () => ({
+                maybeSingle: async () => {
+                  const row = followUpTasksStore.find(
+                    (t) => t.id === filters.id && t.user_id === filters.user_id
+                  );
+                  if (!row) return { data: null, error: null };
+                  if (typeof patch.completed_at === "string") {
+                    row.completed_at = patch.completed_at;
+                  }
+                  return { data: { ...row }, error: null };
+                },
+              }),
+            };
+            return builder;
+          },
         };
       }
       if (table === "justice_case_filings") {
@@ -186,6 +241,7 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
     vi.mocked(getUserOr401).mockReturnValue(USER_ID);
+    followUpTasksStore = [];
     mockCaseSelectMaybeSingle.mockResolvedValue({
       data: { client_state: {}, archived_at: null },
       error: null,
@@ -287,5 +343,164 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
     expect(attemptAutomatedMerchantContactEmailDelivery).not.toHaveBeenCalled();
     expect(attemptAutomatedPaymentDisputeEmailDelivery).not.toHaveBeenCalled();
     expect(attemptAutomatedDemandLetterEmailDeliveryAfterEnsure).not.toHaveBeenCalled();
+  });
+});
+
+function followUpRow(id: string, ownerHref: string, ownerLabel: string): FollowUpTaskRow {
+  return {
+    id,
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    title: `Surrenderless follow-up: ${ownerLabel}`,
+    due_date: null,
+    notes: `follow_up:${CASE_ID}\nowner_href:${ownerHref}`,
+    completed_at: null,
+    created_at: "2026-06-01T00:00:00.000Z",
+    updated_at: "2026-06-01T00:00:00.000Z",
+  };
+}
+
+const merchantFollowUpNeededClientState = {
+  prepared_packet_approved: true,
+  approved_next_action: {
+    label: "Merchant contact",
+    href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+    status: "approved",
+    follow_up_needed: true,
+  },
+};
+
+const merchantFollowUpClearedClientState = {
+  prepared_packet_approved: true,
+  approved_next_action: {
+    label: "Merchant contact",
+    href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+    status: "approved",
+    follow_up_needed: false,
+    outcome_note: "Customer resolved directly.",
+  },
+};
+
+describe("PATCH /api/justice/cases/[id] follow-up clearing — multiple simultaneously open lanes", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+    vi.mocked(getUserOr401).mockReturnValue(USER_ID);
+    followUpTasksStore = [];
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { client_state: merchantFollowUpNeededClientState, archived_at: null },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [], error: null });
+    // Clearing an owned step's outcome/follow-up tracking is only allowed once the escalation
+    // ladder has reached its terminal step (demand letter) with a confirmed filing — otherwise
+    // rejectPrematureResolutionClientStatePatch blocks the patch outright. Unrelated to the
+    // multi-open-follow-up behavior under test here; just satisfying that separate, pre-existing
+    // gate so this test can reach it.
+    mockFilingsSelect.mockResolvedValue({
+      data: [{ destination: "Small claims / demand letter", confirmation_number: "DL-DONE-1" }],
+      error: null,
+    });
+    mockCaseUpdateMaybeSingle.mockResolvedValue({
+      data: {
+        id: CASE_ID,
+        intake,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: merchantFollowUpClearedClientState,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        archived_at: null,
+        case_label: null,
+      },
+      error: null,
+    });
+    vi.mocked(ensureOwnedFilingTaskAfterClientStateWrite).mockResolvedValue({
+      ok: true,
+      kind: null,
+      timeline: null,
+      created: false,
+      task: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  it("closes only the merchant-owned follow-up and leaves payment dispute's open — merchant row seeded first", async () => {
+    followUpTasksStore = [
+      followUpRow("task-merchant", MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF, "Merchant contact"),
+      followUpRow(
+        "task-payment-dispute",
+        MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+        "Payment dispute (bank/card)"
+      ),
+    ];
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantFollowUpClearedClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    expect(followUpTasksStore.find((t) => t.id === "task-merchant")?.completed_at).toBeTruthy();
+    expect(followUpTasksStore.find((t) => t.id === "task-payment-dispute")?.completed_at).toBeNull();
+  });
+
+  it("closes only the merchant-owned follow-up and leaves payment dispute's open — payment dispute row seeded first (row order must not matter)", async () => {
+    followUpTasksStore = [
+      followUpRow(
+        "task-payment-dispute",
+        MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+        "Payment dispute (bank/card)"
+      ),
+      followUpRow("task-merchant", MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF, "Merchant contact"),
+    ];
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantFollowUpClearedClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    expect(followUpTasksStore.find((t) => t.id === "task-merchant")?.completed_at).toBeTruthy();
+    expect(followUpTasksStore.find((t) => t.id === "task-payment-dispute")?.completed_at).toBeNull();
+  });
+
+  it("safely no-ops (does not close either row) when the cleared action's href can't be determined", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: {
+          prepared_packet_approved: true,
+          approved_next_action: { follow_up_needed: true },
+        },
+        archived_at: null,
+      },
+      error: null,
+    });
+    followUpTasksStore = [
+      followUpRow("task-merchant", MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF, "Merchant contact"),
+      followUpRow(
+        "task-payment-dispute",
+        MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+        "Payment dispute (bank/card)"
+      ),
+    ];
+
+    const res = await PATCH(
+      buildPatchRequest({
+        client_state: {
+          prepared_packet_approved: true,
+          approved_next_action: { follow_up_needed: false },
+        },
+      }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    expect(followUpTasksStore.find((t) => t.id === "task-merchant")?.completed_at).toBeNull();
+    expect(followUpTasksStore.find((t) => t.id === "task-payment-dispute")?.completed_at).toBeNull();
   });
 });

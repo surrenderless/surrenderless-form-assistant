@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmailProvider } from "@/lib/email/emailProvider";
 import {
   resolvePaymentDisputeOutreachEmailEnv,
@@ -9,8 +10,10 @@ import {
   formatPaymentDisputeOutreachEmailBody,
   isPaymentDisputeEmailFailed,
   isPaymentDisputeEmailSending,
+  paymentDisputeEmailBounceState,
   paymentDisputeEmailIdempotencyKey,
   parsePaymentDisputeEmailDeliveryRecord,
+  recordPaymentDisputeEmailBounceEvent,
   resolvePaymentDisputeRecipientEmail,
   upsertPaymentDisputeEmailDeliveryNotes,
 } from "@/lib/justice/paymentDisputeEmailDelivery";
@@ -20,6 +23,19 @@ import {
   buildJusticeIntakeFromParts,
   defaultBuildJusticeIntakeParts,
 } from "@/lib/justice/buildJusticeIntake";
+import { MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+
+vi.mock("@/lib/justice/paymentDisputeFilingTask", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/justice/paymentDisputeFilingTask")>();
+  return { ...actual, reopenPaymentDisputeFilingTaskForBounce: vi.fn() };
+});
+
+vi.mock("@/lib/justice/followUpCaseTask", () => ({
+  completeFollowUpCaseTaskIfOwnedByAction: vi.fn(),
+}));
+
+import { reopenPaymentDisputeFilingTaskForBounce } from "@/lib/justice/paymentDisputeFilingTask";
+import { completeFollowUpCaseTaskIfOwnedByAction } from "@/lib/justice/followUpCaseTask";
 
 const baseIntake = (): JusticeIntake => ({
   problem_category: "charge_dispute",
@@ -184,5 +200,220 @@ describe("mock payment dispute outreach email provider", () => {
       idempotencyKey: "k1",
     });
     expect(failed.ok).toBe(false);
+  });
+});
+
+describe("recordPaymentDisputeEmailBounceEvent", () => {
+  const CASE_ID = "case-pd-1";
+  const USER_ID = "user-pd-1";
+
+  beforeEach(() => {
+    vi.mocked(reopenPaymentDisputeFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: true,
+    });
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockResolvedValue({
+      task: null,
+      timeline: null,
+      completed: true,
+      skippedNotOwned: false,
+      error: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.mocked(reopenPaymentDisputeFilingTaskForBounce).mockReset();
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockReset();
+  });
+
+  function makeBounceSupabase(filingNotes: string) {
+    const filing = { id: "filing-1", user_id: USER_ID, case_id: CASE_ID, notes: filingNotes };
+    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[] };
+
+    return {
+      from(table: string) {
+        if (table === "justice_case_filings") {
+          return {
+            select: () => ({
+              like: () => ({
+                limit: async () => ({ data: [filing], error: null }),
+              }),
+              eq: () => ({
+                eq: async () => ({ data: [filing], error: null }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  filing.notes = String(payload.notes);
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        if (table === "justice_case_tasks") {
+          return { select: () => ({ like: () => ({ limit: async () => ({ data: [], error: null }) }) }) };
+        }
+        if (table === "justice_cases") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: { timeline: caseRow.timeline }, error: null }) }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  caseRow.timeline = payload.timeline as unknown[];
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("flags a bounce on the completed filing as actionable, reopens the operator task, and stops the follow-up countdown", async () => {
+    const notes = upsertPaymentDisputeEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "disputes@issuer.example",
+      provider_message_id: "re_pd_1",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const result = await recordPaymentDisputeEmailBounceEvent(supabase, {
+      messageId: "re_pd_1",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({
+      status: "recorded",
+      caseId: CASE_ID,
+      state: "bounced",
+    });
+    expect(reopenPaymentDisputeFilingTaskForBounce).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      "bounced"
+    );
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
+    );
+  });
+
+  it("returns an error on the initial complaint when follow-up stop fails, without hiding it as success", async () => {
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockResolvedValue({
+      task: { id: "follow-up-1" } as never,
+      timeline: null,
+      completed: false,
+      skippedNotOwned: false,
+      error: false,
+    });
+    const notes = upsertPaymentDisputeEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "disputes@issuer.example",
+      provider_message_id: "re_pd_2",
+    });
+
+    const result = await recordPaymentDisputeEmailBounceEvent(makeBounceSupabase(notes), {
+      messageId: "re_pd_2",
+      eventType: "email.complained",
+    });
+
+    expect(result).toEqual({ status: "error", reason: "follow_up_stop_failed" });
+  });
+
+  it("repairs an incomplete action on a replay: retries and succeeds once follow-up stop works", async () => {
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockResolvedValue({
+      task: { id: "follow-up-1" } as never,
+      timeline: null,
+      completed: false,
+      skippedNotOwned: false,
+      error: false,
+    });
+    const notes = upsertPaymentDisputeEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "disputes@issuer.example",
+      provider_message_id: "re_pd_3",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const first = await recordPaymentDisputeEmailBounceEvent(supabase, {
+      messageId: "re_pd_3",
+      eventType: "email.complained",
+    });
+    expect(first).toEqual({ status: "error", reason: "follow_up_stop_failed" });
+
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockResolvedValue({
+      task: { id: "follow-up-1" } as never,
+      timeline: null,
+      completed: true,
+      skippedNotOwned: false,
+      error: false,
+    });
+    const second = await recordPaymentDisputeEmailBounceEvent(supabase, {
+      messageId: "re_pd_3",
+      eventType: "email.complained",
+    });
+
+    expect(second).toEqual({ status: "recorded", caseId: CASE_ID, state: "complained" });
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("is harmless on a later replay once everything is already satisfied", async () => {
+    const notes = upsertPaymentDisputeEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "disputes@issuer.example",
+      provider_message_id: "re_pd_4",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const first = await recordPaymentDisputeEmailBounceEvent(supabase, {
+      messageId: "re_pd_4",
+      eventType: "email.complained",
+    });
+    const second = await recordPaymentDisputeEmailBounceEvent(supabase, {
+      messageId: "re_pd_4",
+      eventType: "email.complained",
+    });
+
+    expect(first).toEqual({ status: "recorded", caseId: CASE_ID, state: "complained" });
+    expect(second).toEqual({ status: "recorded", caseId: CASE_ID, state: "complained" });
+    expect(reopenPaymentDisputeFilingTaskForBounce).toHaveBeenCalledTimes(2);
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("paymentDisputeEmailBounceState", () => {
+  it("reads bounced/complained off the filing, distinct from a genuinely accepted send", () => {
+    const bounced = upsertPaymentDisputeEmailDeliveryNotes(null, {
+      delivery_state: "bounced" as never,
+      provider: "resend",
+      recipient: "disputes@issuer.example",
+      provider_message_id: "re_1",
+    });
+    const accepted = upsertPaymentDisputeEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "disputes@issuer.example",
+      provider_message_id: "re_2",
+    });
+
+    expect(paymentDisputeEmailBounceState({ notes: bounced })).toBe("bounced");
+    expect(paymentDisputeEmailBounceState({ notes: accepted })).toBeNull();
+    expect(paymentDisputeEmailBounceState(undefined)).toBeNull();
   });
 });

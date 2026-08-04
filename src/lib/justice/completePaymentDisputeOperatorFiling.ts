@@ -7,6 +7,7 @@ import {
 } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { parsePaymentDisputeEmailDeliveryRecord } from "@/lib/justice/paymentDisputeEmailDelivery";
 import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
@@ -17,9 +18,12 @@ import { ensureFollowUpAfterOperatorClientStateWrite } from "@/lib/justice/ensur
 import {
   completePaymentDisputeFilingTaskIfOpen,
   hasPaymentDisputeFilingWithConfirmation,
+  paymentDisputeCanonicalApprovedActionForFollowUp,
   paymentDisputeFilingsForManualTracking,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import { ensureFollowUpCaseTask } from "@/lib/justice/followUpCaseTask";
+import { ensureSupersededLaneResponseReviewTask } from "@/lib/justice/followUpResponseReviewTask";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
@@ -40,6 +44,12 @@ const MAX_NOTES = 8000;
 
 function clampLen(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
+}
+
+/** A bounced/complained filing must not be treated as an already-successful send. */
+function isPaymentDisputeFilingBouncedOrComplained(notes: string | null | undefined): boolean {
+  const state = parsePaymentDisputeEmailDeliveryRecord(notes)?.delivery_state;
+  return state === "bounced" || state === "complained";
 }
 
 function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNextAction): {
@@ -170,16 +180,21 @@ export async function completePaymentDisputeOperatorFiling(
     }
   }
 
+  // A bounced/complained filing does not count as an already-successful send — remediation
+  // after a bounce must produce a fresh filing row with the operator's new confirmation,
+  // preserving the failed one as history rather than silently discarding the new attempt.
+  const confirmedNonBouncedFiling = paymentDisputeFilings.find(
+    (f) =>
+      Boolean(f.confirmation_number?.trim()) && !isPaymentDisputeFilingBouncedOrComplained(f.notes)
+  );
+
   let filing: JusticeCaseFilingRow;
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (paymentDisputeFilings.length > 0 && task.completed_at?.trim()) {
+  if (confirmedNonBouncedFiling) {
     idempotent = true;
-    filing = paymentDisputeFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (paymentDisputeFilings.length > 0) {
-    filing = paymentDisputeFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-    idempotent = true;
+    filing = confirmedNonBouncedFiling;
   } else {
     const insertRow: Record<string, unknown> = {
       user_id: userId,
@@ -217,6 +232,12 @@ export async function completePaymentDisputeOperatorFiling(
       detail,
     });
   }
+
+  // True only for the actual remediation call (a fresh filing was just inserted because the
+  // prior one bounced/complained) — never on a later idempotent replay, which must not re-ensure
+  // (or duplicate) the follow-up it already started.
+  const isBounceRemediation =
+    !idempotent && paymentDisputeFilings.some((f) => isPaymentDisputeFilingBouncedOrComplained(f.notes));
 
   const taskResult = await completePaymentDisputeFilingTaskIfOpen(
     supabase,
@@ -330,6 +351,57 @@ export async function completePaymentDisputeOperatorFiling(
     }
     if (ownedEnsure.timeline) {
       timeline = ownedEnsure.timeline;
+    }
+  }
+
+  // The above only ensures a follow-up for whichever action is CURRENTLY approved — if the
+  // escalation ladder has already advanced past payment dispute (approvedNext is some later
+  // lane's action), it never builds a payment-dispute-flavored follow-up at all. On a genuine
+  // bounce remediation, payment dispute still needs its own fresh follow-up regardless of ladder
+  // position, built from its own stable identity — never from (or written back into)
+  // approved_next_action.
+  if (
+    isBounceRemediation &&
+    approvedNext?.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
+  ) {
+    const followUpEnsure = await ensureFollowUpCaseTask(
+      supabase,
+      userId,
+      caseId,
+      paymentDisputeCanonicalApprovedActionForFollowUp(filing.filed_at ?? undefined)
+    );
+    if (!followUpEnsure.task) {
+      return {
+        ok: false,
+        error: "Filing recorded but could not start a fresh payment dispute follow-up",
+        status: 500,
+      };
+    }
+    if (followUpEnsure.timeline) {
+      timeline = followUpEnsure.timeline;
+    }
+
+    // A response can arrive at any point before this lane's own follow-up due date, not only
+    // after — so this lane's owner_href-scoped review must exist from the moment remediation
+    // succeeds, not only once processDueFollowUps notices the follow-up is overdue. Idempotent
+    // by (case, owner_href); never touches client_state/approved_next_action.
+    const reviewEnsure = await ensureSupersededLaneResponseReviewTask(
+      supabase,
+      userId,
+      caseId,
+      MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+      followUpEnsure.task.id,
+      canonicalDestination
+    );
+    if (!reviewEnsure.task) {
+      return {
+        ok: false,
+        error: "Filing recorded but could not start this lane's own response review",
+        status: 500,
+      };
+    }
+    if (reviewEnsure.timeline) {
+      timeline = reviewEnsure.timeline;
     }
   }
 

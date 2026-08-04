@@ -9,12 +9,20 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
+  recordFilingEmailBounceEventAndEnsureActionability,
+  type FilingEmailBounceActionResult,
+  type FilingEmailBounceEventType,
+} from "@/lib/justice/filingEmailBounceTracking";
+import {
+  findLatestPaymentDisputeFilingCreatedAt,
   findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingWithConfirmation,
   parsePaymentDisputeFilingTaskDraft,
   paymentDisputeFilingsForManualTracking,
+  reopenPaymentDisputeFilingTaskForBounce,
   taskNotesMatchPaymentDisputeFilingMarker,
 } from "@/lib/justice/paymentDisputeFilingTask";
+import { completeFollowUpCaseTaskIfOwnedByAction } from "@/lib/justice/followUpCaseTask";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -29,7 +37,12 @@ const TASK_SELECT =
 const MAX_NOTES = 8000;
 const DELIVERY_BLOCK_MARKER = "---payment_dispute_outreach_delivery---";
 
-export type PaymentDisputeEmailDeliveryState = "sending" | "accepted" | "failed";
+export type PaymentDisputeEmailDeliveryState =
+  | "sending"
+  | "accepted"
+  | "failed"
+  | "bounced"
+  | "complained";
 
 export type PaymentDisputeEmailDeliveryRecord = {
   delivery_state: PaymentDisputeEmailDeliveryState;
@@ -72,7 +85,15 @@ export function parsePaymentDisputeEmailDeliveryRecord(
     map.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
   }
   const state = map.get("delivery_state");
-  if (state !== "sending" && state !== "accepted" && state !== "failed") return null;
+  if (
+    state !== "sending" &&
+    state !== "accepted" &&
+    state !== "failed" &&
+    state !== "bounced" &&
+    state !== "complained"
+  ) {
+    return null;
+  }
   const provider = map.get("provider")?.trim() ?? "";
   const recipient = map.get("recipient")?.trim() ?? "";
   if (!provider || !recipient) return null;
@@ -493,4 +514,56 @@ export function isPaymentDisputeEmailSending(task: JusticeCaseTaskRow | undefine
 export function isPaymentDisputeEmailFailed(task: JusticeCaseTaskRow | undefined): boolean {
   if (!task || task.completed_at?.trim()) return false;
   return parsePaymentDisputeEmailDeliveryRecord(task.notes)?.delivery_state === "failed";
+}
+
+/**
+ * True (with which kind) when the payment-dispute filing on file bounced or was marked as spam —
+ * read from the filing that survives after the operator task completes, so this reflects the
+ * outcome regardless of whether the task has since been reopened. Chat/status UI uses this to
+ * stop showing the dispute as successfully sent.
+ */
+export function paymentDisputeEmailBounceState(
+  filing: Pick<JusticeCaseFilingRow, "notes"> | undefined
+): "bounced" | "complained" | null {
+  const state = parsePaymentDisputeEmailDeliveryRecord(filing?.notes)?.delivery_state;
+  return state === "bounced" || state === "complained" ? state : null;
+}
+
+/**
+ * Records a Resend bounce/complaint for a payment dispute outreach send and ensures both
+ * follow-on actions are complete: reopening the operator task so the case reappears in
+ * /operator/fulfillment, and stopping the false no-response follow-up countdown. Looks up the
+ * completed filing first (the common case, since acceptance and filing completion happen back to
+ * back), falling back to a still-open task if provider acceptance completed but the filing write
+ * itself failed.
+ *
+ * Runs the actionability check on every call, including replays after the delivery state already
+ * flipped — so an incomplete action from a prior attempt is retried rather than silently
+ * swallowed as a duplicate. Returns "error" (triggering a webhook 5xx / provider retry) whenever
+ * either action can't be confirmed complete. See recordFilingEmailBounceEventAndEnsureActionability
+ * for the full contract.
+ */
+export async function recordPaymentDisputeEmailBounceEvent(
+  supabase: SupabaseClient,
+  params: { messageId: string; eventType: FilingEmailBounceEventType }
+): Promise<FilingEmailBounceActionResult> {
+  return recordFilingEmailBounceEventAndEnsureActionability(
+    supabase,
+    {
+      label: "Payment dispute",
+      timelineIdPrefix: "payment_dispute_email",
+      parseRecord: parsePaymentDisputeEmailDeliveryRecord,
+      upsertNotes: upsertPaymentDisputeEmailDeliveryNotes,
+      reopenTask: reopenPaymentDisputeFilingTaskForBounce,
+      stopFollowUp: (supabase, userId, caseId) =>
+        completeFollowUpCaseTaskIfOwnedByAction(
+          supabase,
+          userId,
+          caseId,
+          MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF
+        ),
+      findLatestFilingCreatedAt: findLatestPaymentDisputeFilingCreatedAt,
+    },
+    params
+  );
 }

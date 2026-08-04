@@ -19,13 +19,25 @@ import {
   stripResolutionTrackingFromApprovedAction,
 } from "@/lib/justice/escalationLadderResolution";
 import {
-  completeFollowUpCaseTaskIfOpen,
+  completeFollowUpCaseTaskById,
+  followUpTaskOwnerHref,
   taskNotesMatchFollowUpMarker,
 } from "@/lib/justice/followUpCaseTask";
-import { ensureFollowUpResponseReviewTask } from "@/lib/justice/followUpResponseReviewTask";
+import {
+  ensureFollowUpResponseReviewTask,
+  ensureSupersededLaneResponseReviewTask,
+  supersededLaneReviewOutcomeFromNotes,
+  supersededLaneReviewOutcomeTimelineId,
+} from "@/lib/justice/followUpResponseReviewTask";
+import {
+  canonicalFilingDestinationForApprovedActionHref,
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 import { advanceApprovedNextActionAfterCompleted } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
-import { getJusticeTaskDueKind, parseDueDateToLocalYmd } from "@/lib/justice/taskDueStatus";
+import { getJusticeTaskDueKind } from "@/lib/justice/taskDueStatus";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -37,6 +49,34 @@ const OUTCOME_NOTE_MAX = 500;
 
 export const NO_RESPONSE_OUTCOME_MARKER = "No response recorded by follow-up date";
 
+/** Retriable when a superseded lane's own owned response review task can't be ensured. */
+export const SUPERSEDED_LANE_REVIEW_ENSURE_RETRYABLE_ERROR =
+  "The superseded lane's own response review task could not be created. Retry to finish handoff.";
+
+/** Retriable when a superseded lane's reviewed outcome can't be recorded on the case timeline —
+ * the task must stay open so a retry can persist the outcome before it's ever closed. */
+export const SUPERSEDED_LANE_OUTCOME_APPEND_RETRYABLE_ERROR =
+  "The superseded lane's reviewed outcome could not be recorded. Retry to finish handoff.";
+
+/** Retriable when a superseded lane's own due follow-up can't be closed after its reviewed
+ * outcome was durably recorded. */
+export const SUPERSEDED_LANE_FOLLOW_UP_CLOSE_RETRYABLE_ERROR =
+  "Case updated but the superseded lane's follow-up task could not be closed. Retry to finish handoff.";
+
+/**
+ * Owner hrefs this cron can independently process when they no longer match the case's current
+ * approved action — i.e. lanes whose bounce-remediation flow can leave a fresh, correctly-owned
+ * follow-up open on a case whose ladder has already advanced past them (see
+ * completeDemandLetterOperatorFiling.ts and its payment-dispute/merchant-contact mirrors). Any
+ * other owner_href (a lane without this remediation-follow-up model, or one this cron doesn't
+ * recognize) is left alone — "unsupported" is a safe skip, not a guess.
+ */
+export const SUPPORTED_SUPERSEDED_LANE_HREFS: ReadonlySet<string> = new Set([
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF,
+  MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+]);
+
 export type DueFollowUpSkipReason =
   | "not_due"
   | "already_completed"
@@ -44,11 +84,15 @@ export type DueFollowUpSkipReason =
   | "resolved"
   | "invalid"
   | "follow_up_not_needed"
-  | "already_processed";
+  | "already_processed"
+  | "not_current_lane"
+  | "missing_owner";
 
 export type DueFollowUpProcessKind =
   | "advanced"
   | "terminal_response_review"
+  | "superseded_lane_closed"
+  | "superseded_lane_review_pending"
   | "skipped"
   | "failed_retryable";
 
@@ -62,29 +106,21 @@ export type DueFollowUpProcessResult = {
   error?: string;
 };
 
-function localTodayYmd(now: Date): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** True when follow-up task due_date is today or earlier (or follow_up_at fallback is due). */
+/**
+ * True when this SPECIFIC follow-up task's own due_date is today or earlier. Deliberately never
+ * falls back to the case-level approved_next_action.follow_up_at: with more than one lane's
+ * follow-up able to be open on the same case at once, that fallback would let a task fire off a
+ * different lane's schedule. A task with no due_date of its own is simply not due — it must not
+ * fire until it has its own valid schedule.
+ */
 export function isOpenFollowUpTaskDue(params: {
   task: Pick<JusticeCaseTaskRow, "due_date" | "completed_at">;
-  followUpAt?: string | null;
   now?: Date;
 }): boolean {
   if (params.task.completed_at?.trim()) return false;
   const now = params.now ?? new Date();
   const kind = getJusticeTaskDueKind(params.task, now);
-  if (kind === "overdue" || kind === "due_today") return true;
-  if (kind === "upcoming") return false;
-
-  // No due_date on task — fall back to approved_next_action.follow_up_at.
-  const fromAt = parseDueDateToLocalYmd(params.followUpAt);
-  if (!fromAt) return false;
-  return fromAt <= localTodayYmd(now);
+  return kind === "overdue" || kind === "due_today";
 }
 
 export function caseHasConfirmedResolution(
@@ -276,6 +312,8 @@ export type ProcessDueFollowUpsSummary = {
   processed: number;
   advanced: number;
   terminal_response_review: number;
+  superseded_lane_closed: number;
+  superseded_lane_review_pending: number;
   skipped: number;
   failed_retryable: number;
   results: DueFollowUpProcessResult[];
@@ -309,6 +347,8 @@ export async function processDueFollowUps(
       processed: 0,
       advanced: 0,
       terminal_response_review: 0,
+      superseded_lane_closed: 0,
+      superseded_lane_review_pending: 0,
       skipped: 0,
       failed_retryable: 0,
       results: [],
@@ -322,6 +362,8 @@ export async function processDueFollowUps(
 
   let advancedCount = 0;
   let terminalCount = 0;
+  let supersededLaneClosedCount = 0;
+  let supersededLaneReviewPendingCount = 0;
   let skippedCount = 0;
   let failedRetryableCount = 0;
   let processedCount = 0;
@@ -367,13 +409,139 @@ export async function processDueFollowUps(
     const intake = caseRow.intake as JusticeIntake;
     const action = parseApprovedNextActionFromClientState(caseRow.client_state);
 
-    if (
-      !isOpenFollowUpTaskDue({
-        task,
-        followUpAt: action?.follow_up_at,
-        now,
-      })
-    ) {
+    // The ladder-advance / response-review logic below reasons entirely from the case's
+    // CURRENTLY approved action — it is never correct to apply it to a follow-up that isn't
+    // confirmed to belong to that same lane. A row with no owner_href tag predates
+    // lane-ownership tracking; its true owner is unknown, so it must be skipped rather than
+    // assumed compatible — ensureFollowUpCaseTask can duplicate an untagged row into a second,
+    // correctly-owned one for the current lane (see followUpCaseTask.ts), so an untagged row
+    // firing here could advance/record-outcome-for the current lane using a stale schedule while
+    // the current lane's real follow-up stays untouched.
+    const taskOwnerHref = followUpTaskOwnerHref(task.notes);
+    if (!taskOwnerHref) {
+      results.push({ case_id: caseId, task_id: task.id, kind: "skipped", reason: "missing_owner" });
+      skippedCount += 1;
+      continue;
+    }
+    const currentActionHref = action?.href?.trim() || null;
+    if (taskOwnerHref !== currentActionHref) {
+      // A follow-up owned by a lane the ladder has already advanced past. It still deserves its
+      // own due-date processing — closing this task specifically once it goes unanswered — but
+      // must NEVER touch client_state (no rewinding/advancing the ladder, no mutating the
+      // current lane's approved_next_action, follow-up, or outcome) since that belongs entirely
+      // to whichever lane is current. Only lanes with a known remediation-follow-up model are
+      // handled this way; anything else is left alone.
+      if (!SUPPORTED_SUPERSEDED_LANE_HREFS.has(taskOwnerHref)) {
+        results.push({ case_id: caseId, task_id: task.id, kind: "skipped", reason: "not_current_lane" });
+        skippedCount += 1;
+        continue;
+      }
+      if (!isOpenFollowUpTaskDue({ task, now })) {
+        results.push({ case_id: caseId, task_id: task.id, kind: "skipped", reason: "not_due" });
+        skippedCount += 1;
+        continue;
+      }
+      if (caseHasConfirmedResolution(intake, action)) {
+        results.push({ case_id: caseId, task_id: task.id, kind: "skipped", reason: "resolved" });
+        skippedCount += 1;
+        continue;
+      }
+
+      const supersededLabel =
+        canonicalFilingDestinationForApprovedActionHref(taskOwnerHref) ?? "This attempt";
+
+      // The deadline passing is never itself evidence of "no response" — lane A's own reply
+      // status lives nowhere in client_state (that belongs to whichever lane is current), so an
+      // owner_href-scoped review task is the durable place a real decision gets recorded. Ensure
+      // it (idempotent by case + owner_href + this EXACT follow-up task id — see
+      // ensureSupersededLaneResponseReviewTask) and only ever act on ITS completion state. Passing
+      // task.id (not just taskOwnerHref) means an older, already-decided review from a prior
+      // attempt on this same lane is never reused for this specific follow-up.
+      const reviewEnsure = await ensureSupersededLaneResponseReviewTask(
+        supabase,
+        userId,
+        caseId,
+        taskOwnerHref,
+        task.id,
+        supersededLabel
+      );
+      if (!reviewEnsure.task) {
+        results.push({
+          case_id: caseId,
+          task_id: task.id,
+          kind: "failed_retryable",
+          error: SUPERSEDED_LANE_REVIEW_ENSURE_RETRYABLE_ERROR,
+        });
+        failedRetryableCount += 1;
+        continue;
+      }
+
+      if (!reviewEnsure.task.completed_at?.trim()) {
+        // No explicit lane-A decision yet. Keep lane A's follow-up open — closing it here would
+        // permanently lose the chance to record what actually happened on this attempt.
+        results.push({
+          case_id: caseId,
+          task_id: task.id,
+          kind: "superseded_lane_review_pending",
+        });
+        supersededLaneReviewPendingCount += 1;
+        continue;
+      }
+
+      // Reviewed outcome must be durably persisted BEFORE the follow-up task is ever closed —
+      // appendCaseTimelineEntry returns null (never throws) on failure, so its result must be
+      // checked explicitly rather than assumed. The stable per-task id keeps a retry from ever
+      // duplicating this entry once it does succeed. The decision itself was already durably
+      // recorded on the review task's own notes by completeSupersededLaneReviewTask — this entry
+      // just reflects that recorded decision, never infers one.
+      const decision = supersededLaneReviewOutcomeFromNotes(reviewEnsure.task.notes);
+      const outcomeTimeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+        id: supersededLaneReviewOutcomeTimelineId(caseId, task.id),
+        type: "outcome_recorded",
+        label:
+          decision === "response_received"
+            ? `${supersededLabel}: response received (follow-up closed)`
+            : decision === "no_response"
+              ? `${supersededLabel}: no response confirmed (follow-up closed)`
+              : `${supersededLabel}: response review completed`,
+        detail:
+          `${supersededLabel}'s own response review was completed. This attempt was already ` +
+          `superseded by later escalation — no change to the case's current step.`,
+      });
+      if (!outcomeTimeline) {
+        results.push({
+          case_id: caseId,
+          task_id: task.id,
+          kind: "failed_retryable",
+          error: SUPERSEDED_LANE_OUTCOME_APPEND_RETRYABLE_ERROR,
+        });
+        failedRetryableCount += 1;
+        continue;
+      }
+
+      const supersededTaskResult = await completeFollowUpCaseTaskById(
+        supabase,
+        userId,
+        caseId,
+        task.id
+      );
+      if (!supersededTaskResult.completed) {
+        results.push({
+          case_id: caseId,
+          task_id: task.id,
+          kind: "failed_retryable",
+          error: SUPERSEDED_LANE_FOLLOW_UP_CLOSE_RETRYABLE_ERROR,
+        });
+        failedRetryableCount += 1;
+        continue;
+      }
+      results.push({ case_id: caseId, task_id: task.id, kind: "superseded_lane_closed" });
+      supersededLaneClosedCount += 1;
+      processedCount += 1;
+      continue;
+    }
+
+    if (!isOpenFollowUpTaskDue({ task, now })) {
       results.push({ case_id: caseId, task_id: task.id, kind: "skipped", reason: "not_due" });
       skippedCount += 1;
       continue;
@@ -434,7 +602,7 @@ export async function processDueFollowUps(
             continue;
           }
         }
-        await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
+        await completeFollowUpCaseTaskById(supabase, userId, caseId, task.id);
         results.push({
           case_id: caseId,
           task_id: task.id,
@@ -502,7 +670,7 @@ export async function processDueFollowUps(
         continue;
       }
       timeline = ownedEnsure.timeline;
-      const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
+      const taskResult = await completeFollowUpCaseTaskById(supabase, userId, caseId, task.id);
       if (taskResult.timeline) timeline = taskResult.timeline;
       results.push({
         case_id: caseId,
@@ -534,7 +702,7 @@ export async function processDueFollowUps(
       continue;
     }
     timeline = reviewEnsure.timeline;
-    const taskResult = await completeFollowUpCaseTaskIfOpen(supabase, userId, caseId);
+    const taskResult = await completeFollowUpCaseTaskById(supabase, userId, caseId, task.id);
     if (taskResult.timeline) timeline = taskResult.timeline;
     results.push({
       case_id: caseId,
@@ -550,6 +718,8 @@ export async function processDueFollowUps(
     processed: processedCount,
     advanced: advancedCount,
     terminal_response_review: terminalCount,
+    superseded_lane_review_pending: supersededLaneReviewPendingCount,
+    superseded_lane_closed: supersededLaneClosedCount,
     skipped: skippedCount,
     failed_retryable: failedRetryableCount,
     results,

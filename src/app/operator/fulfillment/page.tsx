@@ -8,6 +8,7 @@ import {
   OperatorClosableCasesPanel,
   OperatorFulfillmentQueuePanel,
   type ResponseReviewInput,
+  type SupersededLaneReviewInput,
 } from "@/app/components/operator/OperatorFulfillmentQueuePanel";
 import { isOperatorRole, readClerkRole } from "@/lib/clerkRoles";
 import type { OperatorFulfillmentQueueItem } from "@/lib/justice/operatorFulfillmentQueue";
@@ -173,6 +174,39 @@ export default function OperatorFulfillmentPage() {
     }
   }
 
+  async function completeSupersededLaneReview(
+    item: OperatorFulfillmentQueueItem,
+    input: SupersededLaneReviewInput
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    setSavingTaskId(item.task_id);
+    try {
+      const res = await fetch("/api/justice/follow-up-response-review/complete-superseded", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: item.case_id,
+          task_id: item.task_id,
+          owner_href: item.owner_href ?? "",
+          outcome: input.outcome,
+          notes: input.notes || null,
+        }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as { error?: string };
+        return { ok: false, error: err.error ?? "Could not complete response review." };
+      }
+      await loadQueue();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not complete response review." };
+    } finally {
+      setSavingTaskId(null);
+    }
+  }
+
   async function closeCase(
     item: OperatorClosableCaseItem,
     confirmArchive: boolean
@@ -261,6 +295,7 @@ export default function OperatorFulfillmentPage() {
                 cancellingTaskId={cancellingTaskId}
                 onRecordComplete={recordComplete}
                 onCompleteResponseReview={completeResponseReview}
+                onCompleteSupersededLaneReview={completeSupersededLaneReview}
                 onCancelTask={cancelTask}
               />
               <h2 className="mt-10 text-lg font-semibold text-neutral-900 dark:text-neutral-100">

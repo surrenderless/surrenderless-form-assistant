@@ -34,8 +34,11 @@ import {
 } from "@/lib/justice/paymentDisputeFilingTask";
 import {
   parseFollowUpResponseReviewTaskDraft,
+  parseSupersededLaneReviewTaskDraft,
   taskNotesMatchFollowUpResponseReviewMarker,
+  taskNotesMatchSupersededLaneReviewMarker,
 } from "@/lib/justice/followUpResponseReviewTask";
+import { followUpTaskOwnerHref } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
 import { mapOperatorFulfillmentQueueEvidenceRow } from "@/lib/justice/operatorFulfillmentQueueEvidence";
 import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
@@ -97,7 +100,8 @@ export type OperatorFulfillmentStep =
   | "dot"
   | "ftc"
   | "bbb"
-  | "follow_up_response_review";
+  | "follow_up_response_review"
+  | "superseded_lane_review";
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -133,6 +137,12 @@ export type OperatorFulfillmentQueueItem = {
   evidence?: OperatorWorkspaceEvidenceItem[];
   /** Task creation timestamp — used to measure queue age / response SLA. */
   created_at?: string | null;
+  /**
+   * Present only for superseded-lane response review — the approved-action href this specific
+   * review belongs to, required by the semantic completion API so a decision can never be
+   * recorded against the wrong lane's row.
+   */
+  owner_href?: string;
 };
 
 /** Aggregate response-SLA metrics for the operator fulfillment queue. */
@@ -180,6 +190,7 @@ export type OperatorFulfillmentPanelKind =
   | "merchant_contact_workspace"
   | "payment_dispute_workspace"
   | "follow_up_response_review"
+  | "superseded_lane_review"
   | "record_form";
 
 /** UI branching for /operator/fulfillment — keeps workspace panels scoped by step. */
@@ -214,6 +225,7 @@ export function resolveOperatorFulfillmentPanelKind(
     return "payment_dispute_workspace";
   }
   if (item.step === "follow_up_response_review") return "follow_up_response_review";
+  if (item.step === "superseded_lane_review") return "superseded_lane_review";
   return "record_form";
 }
 
@@ -229,19 +241,23 @@ export function operatorFulfillmentStepLoadsCaseEvidence(step: OperatorFulfillme
     step === "bbb" ||
     step === "merchant_contact" ||
     step === "payment_dispute" ||
-    step === "follow_up_response_review"
+    step === "follow_up_response_review" ||
+    step === "superseded_lane_review"
   );
 }
 
 /**
- * Attaches mapped evidence inventory to a follow-up response-review queue item.
- * Other steps are unchanged (their evidence lives inside guided workspaces).
+ * Attaches mapped evidence inventory to a follow-up response-review (or superseded-lane
+ * response-review) queue item. Other steps are unchanged (their evidence lives inside guided
+ * workspaces).
  */
 export function withFollowUpResponseReviewEvidence(
   item: OperatorFulfillmentQueueItem,
   evidence: readonly OperatorWorkspaceEvidenceInput[]
 ): OperatorFulfillmentQueueItem {
-  if (item.step !== "follow_up_response_review") return item;
+  if (item.step !== "follow_up_response_review" && item.step !== "superseded_lane_review") {
+    return item;
+  }
   return {
     ...item,
     evidence: mapOperatorWorkspaceEvidence(evidence),
@@ -278,6 +294,26 @@ export function classifyOpenOperatorTask(
       company_name: intake.company_name.trim() || "Consumer case",
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseFollowUpResponseReviewTaskDraft(task.notes)),
+      evidence: [],
+    };
+  }
+
+  if (taskNotesMatchSupersededLaneReviewMarker(task.notes, caseId)) {
+    // A row predating owner_href tagging can never happen for this marker (it's only ever
+    // created with an owner_href by ensureSupersededLaneResponseReviewTask), but a malformed row
+    // must still fail closed rather than surface an unactionable review with no lane identity.
+    const ownerHref = followUpTaskOwnerHref(task.notes);
+    if (!ownerHref) return null;
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "superseded_lane_review",
+      task_title: task.title?.trim() || "Superseded-lane response review",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: truncateDraft(parseSupersededLaneReviewTaskDraft(task.notes)),
+      owner_href: ownerHref,
       evidence: [],
     };
   }
@@ -674,7 +710,7 @@ export async function listOperatorFulfillmentQueue(
       };
     }
 
-    if (item.step === "follow_up_response_review") {
+    if (item.step === "follow_up_response_review" || item.step === "superseded_lane_review") {
       return withFollowUpResponseReviewEvidence(item, evidence);
     }
 
