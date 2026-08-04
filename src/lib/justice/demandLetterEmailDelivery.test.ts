@@ -4,11 +4,13 @@ import type { EmailProvider } from "@/lib/email/emailProvider";
 import {
   attemptAutomatedDemandLetterEmailDelivery,
   buildDemandLetterOutreachEmailSubject,
+  demandLetterEmailBounceState,
   demandLetterEmailIdempotencyKey,
   formatDemandLetterOutreachEmailBody,
   isDemandLetterEmailFailed,
   isDemandLetterEmailSending,
   parseDemandLetterEmailDeliveryRecord,
+  recordDemandLetterEmailBounceEvent,
   resolveDemandLetterRecipientEmail,
   upsertDemandLetterEmailDeliveryNotes,
 } from "@/lib/justice/demandLetterEmailDelivery";
@@ -19,6 +21,7 @@ import {
   buildDemandLetterFilingTaskNotes,
   demandLetterFilingTaskNotesMarker,
 } from "@/lib/justice/demandLetterFilingTask";
+import { MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 
 vi.mock("@/lib/email/resolveMerchantOutreachEmailProvider", () => ({
   resolveMerchantOutreachEmailProvider: vi.fn(),
@@ -36,8 +39,19 @@ vi.mock("@/lib/justice/surrenderlessOwnedStep", () => ({
   shouldSuppressChatManualActionForSurrenderlessOwnedStep: vi.fn(() => true),
 }));
 
+vi.mock("@/lib/justice/demandLetterFilingTask", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/justice/demandLetterFilingTask")>();
+  return { ...actual, reopenDemandLetterFilingTaskForBounce: vi.fn() };
+});
+
+vi.mock("@/lib/justice/followUpCaseTask", () => ({
+  completeFollowUpCaseTaskIfOwnedByAction: vi.fn(),
+}));
+
 import { resolveMerchantOutreachEmailProvider } from "@/lib/email/resolveMerchantOutreachEmailProvider";
 import { completeDemandLetterOperatorFiling } from "@/lib/justice/completeDemandLetterOperatorFiling";
+import { reopenDemandLetterFilingTaskForBounce } from "@/lib/justice/demandLetterFilingTask";
+import { completeFollowUpCaseTaskIfOwnedByAction } from "@/lib/justice/followUpCaseTask";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -413,5 +427,219 @@ describe("attemptAutomatedDemandLetterEmailDelivery", () => {
     });
     expect(send).not.toHaveBeenCalled();
     expect(completeDemandLetterOperatorFiling).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordDemandLetterEmailBounceEvent", () => {
+  beforeEach(() => {
+    vi.mocked(reopenDemandLetterFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: true,
+    });
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockResolvedValue({
+      task: null,
+      timeline: null,
+      completed: true,
+      skippedNotOwned: false,
+      error: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.mocked(reopenDemandLetterFilingTaskForBounce).mockReset();
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockReset();
+  });
+
+  function makeBounceSupabase(filingNotes: string) {
+    const filing = { id: "filing-1", user_id: USER_ID, case_id: CASE_ID, notes: filingNotes };
+    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[] };
+
+    return {
+      from(table: string) {
+        if (table === "justice_case_filings") {
+          return {
+            select: () => ({
+              like: () => ({
+                limit: async () => ({ data: [filing], error: null }),
+              }),
+              eq: () => ({
+                eq: async () => ({ data: [filing], error: null }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  filing.notes = String(payload.notes);
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        if (table === "justice_case_tasks") {
+          return { select: () => ({ like: () => ({ limit: async () => ({ data: [], error: null }) }) }) };
+        }
+        if (table === "justice_cases") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: { timeline: caseRow.timeline }, error: null }) }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  caseRow.timeline = payload.timeline as unknown[];
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("flags a bounce on the completed filing as actionable, reopens the operator task, and stops the follow-up countdown", async () => {
+    const notes = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_demand_1",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const result = await recordDemandLetterEmailBounceEvent(supabase, {
+      messageId: "re_demand_1",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({
+      status: "recorded",
+      caseId: CASE_ID,
+      state: "bounced",
+    });
+    expect(reopenDemandLetterFilingTaskForBounce).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      "bounced"
+    );
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+    );
+  });
+
+  it("returns an error on the initial bounce when task reopen fails, without hiding it as success", async () => {
+    vi.mocked(reopenDemandLetterFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: false,
+    });
+    const notes = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_demand_3",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const result = await recordDemandLetterEmailBounceEvent(supabase, {
+      messageId: "re_demand_3",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({ status: "error", reason: "task_reopen_failed" });
+  });
+
+  it("repairs an incomplete action on a replay: retries and succeeds once the task reopen works", async () => {
+    vi.mocked(reopenDemandLetterFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: false,
+    });
+    const notes = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_demand_4",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const first = await recordDemandLetterEmailBounceEvent(supabase, {
+      messageId: "re_demand_4",
+      eventType: "email.bounced",
+    });
+    expect(first).toEqual({ status: "error", reason: "task_reopen_failed" });
+
+    vi.mocked(reopenDemandLetterFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: true,
+    });
+    const second = await recordDemandLetterEmailBounceEvent(supabase, {
+      messageId: "re_demand_4",
+      eventType: "email.bounced",
+    });
+
+    expect(second).toEqual({ status: "recorded", caseId: CASE_ID, state: "bounced" });
+    expect(reopenDemandLetterFilingTaskForBounce).toHaveBeenCalledTimes(2);
+  });
+
+  it("is harmless on a later replay once everything is already satisfied", async () => {
+    const notes = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_demand_5",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const first = await recordDemandLetterEmailBounceEvent(supabase, {
+      messageId: "re_demand_5",
+      eventType: "email.bounced",
+    });
+    const second = await recordDemandLetterEmailBounceEvent(supabase, {
+      messageId: "re_demand_5",
+      eventType: "email.bounced",
+    });
+
+    expect(first).toEqual({ status: "recorded", caseId: CASE_ID, state: "bounced" });
+    expect(second).toEqual({ status: "recorded", caseId: CASE_ID, state: "bounced" });
+    expect(reopenDemandLetterFilingTaskForBounce).toHaveBeenCalledTimes(2);
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("demandLetterEmailBounceState", () => {
+  it("reads bounced/complained off the filing, distinct from a genuinely accepted send", () => {
+    const bounced = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "bounced" as never,
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_1",
+    });
+    const complained = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "complained" as never,
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_2",
+    });
+    const accepted = upsertDemandLetterEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_3",
+    });
+
+    expect(demandLetterEmailBounceState({ notes: bounced })).toBe("bounced");
+    expect(demandLetterEmailBounceState({ notes: complained })).toBe("complained");
+    expect(demandLetterEmailBounceState({ notes: accepted })).toBeNull();
+    expect(demandLetterEmailBounceState(undefined)).toBeNull();
   });
 });

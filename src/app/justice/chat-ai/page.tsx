@@ -352,6 +352,7 @@ import {
   isApprovedFtcFilingAction,
 } from "@/lib/justice/ftcFilingTask";
 import {
+  findLatestMerchantContactFiling,
   findOpenMerchantContactFilingTask,
   hasMerchantContactFilingWithConfirmation,
   isApprovedMerchantContactFilingAction,
@@ -359,6 +360,7 @@ import {
 import {
   isMerchantContactEmailFailed,
   isMerchantContactEmailSending,
+  merchantContactEmailBounceState,
 } from "@/lib/justice/merchantContactEmailDelivery";
 import {
   findOpenStateAgFilingTask,
@@ -366,11 +368,13 @@ import {
   isApprovedStateAgFilingAction,
 } from "@/lib/justice/stateAgFilingTask";
 import {
+  findLatestDemandLetterFiling,
   findOpenDemandLetterFilingTask,
   hasDemandLetterFilingWithConfirmation,
   isApprovedDemandLetterFilingAction,
 } from "@/lib/justice/demandLetterFilingTask";
 import {
+  demandLetterEmailBounceState,
   isDemandLetterEmailFailed,
   isDemandLetterEmailSending,
 } from "@/lib/justice/demandLetterEmailDelivery";
@@ -390,6 +394,7 @@ import {
   isApprovedDotFilingAction,
 } from "@/lib/justice/dotFilingTask";
 import {
+  findLatestPaymentDisputeFiling,
   findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingWithConfirmation,
   isApprovedPaymentDisputeFilingAction,
@@ -397,6 +402,7 @@ import {
 import {
   isPaymentDisputeEmailFailed,
   isPaymentDisputeEmailSending,
+  paymentDisputeEmailBounceState,
 } from "@/lib/justice/paymentDisputeEmailDelivery";
 import {
   isBbbOwnedFilingFailed,
@@ -5697,11 +5703,18 @@ export default function JusticeChatAiPage() {
     showBbbFilingQueuedNotice && isBbbOwnedFilingSubmitting(openBbbFilingTask);
   const showBbbFilingSubmitFailedNotice =
     showBbbFilingQueuedNotice && isBbbOwnedFilingFailed(openBbbFilingTask);
+  const demandLetterBounceState = demandLetterEmailBounceState(
+    findLatestDemandLetterFiling(savedFilings)
+  );
   const showDemandLetterSentNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedDemandLetterFilingAction(approvedNextAction) &&
     !findOpenDemandLetterFilingTask(savedTasks, activeUuidCaseId ?? "") &&
-    hasDemandLetterFilingWithConfirmation(savedFilings);
+    hasDemandLetterFilingWithConfirmation(savedFilings) &&
+    !demandLetterBounceState;
+  // Independent of approved_next_action.href so it stays visible after the ladder advances past
+  // this step, and reads the latest filing so it clears once remediation lands a fresh one.
+  const showDemandLetterBouncedNotice = Boolean(activeUuidCaseId) && Boolean(demandLetterBounceState);
   const showStateAgFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedStateAgFilingAction(approvedNextAction) &&
@@ -5712,11 +5725,19 @@ export default function JusticeChatAiPage() {
     isApprovedCfpbFilingAction(approvedNextAction) &&
     !findOpenCfpbFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasCfpbFilingWithConfirmation(savedFilings);
+  const paymentDisputeBounceState = paymentDisputeEmailBounceState(
+    findLatestPaymentDisputeFiling(savedFilings)
+  );
   const showPaymentDisputeFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedPaymentDisputeFilingAction(approvedNextAction) &&
     !findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId ?? "") &&
-    hasPaymentDisputeFilingWithConfirmation(savedFilings);
+    hasPaymentDisputeFilingWithConfirmation(savedFilings) &&
+    !paymentDisputeBounceState;
+  // Independent of approved_next_action.href so it stays visible after the ladder advances past
+  // this step, and reads the latest filing so it clears once remediation lands a fresh one.
+  const showPaymentDisputeBouncedNotice =
+    Boolean(activeUuidCaseId) && Boolean(paymentDisputeBounceState);
   const showFccFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFccFilingAction(approvedNextAction) &&
@@ -5727,11 +5748,19 @@ export default function JusticeChatAiPage() {
     isApprovedDotFilingAction(approvedNextAction) &&
     !findOpenDotFilingTask(savedTasks, activeUuidCaseId ?? "") &&
     hasDotFilingWithConfirmation(savedFilings);
+  const merchantContactBounceState = merchantContactEmailBounceState(
+    findLatestMerchantContactFiling(savedFilings)
+  );
   const showMerchantContactFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedMerchantContactFilingAction(approvedNextAction) &&
     !findOpenMerchantContactFilingTask(savedTasks, activeUuidCaseId ?? "") &&
-    hasMerchantContactFilingWithConfirmation(savedFilings);
+    hasMerchantContactFilingWithConfirmation(savedFilings) &&
+    !merchantContactBounceState;
+  // Independent of approved_next_action.href so it stays visible after the ladder advances past
+  // this step, and reads the latest filing so it clears once remediation lands a fresh one.
+  const showMerchantContactBouncedNotice =
+    Boolean(activeUuidCaseId) && Boolean(merchantContactBounceState);
   const showFtcFilingFiledNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFtcFilingAction(approvedNextAction) &&
@@ -7024,6 +7053,20 @@ export default function JusticeChatAiPage() {
                     </span>
                   </p>
                 ) : null}
+                {showDemandLetterBouncedNotice ? (
+                  <div className="mt-2 rounded-lg border border-amber-300/80 bg-amber-50/80 px-3 py-2 dark:border-amber-700/60 dark:bg-amber-950/30">
+                    <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                      Demand letter did not reach the company.
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-900 dark:text-amber-200">
+                      {demandLetterBounceState === "complained"
+                        ? "The company's email provider marked it as spam."
+                        : "The email bounced and was not delivered."}{" "}
+                      Surrenderless operators have been notified and will follow up with the
+                      company another way.
+                    </p>
+                  </div>
+                ) : null}
                 {showDemandLetterSentNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Demand letter sent.</span> Surrenderless recorded
@@ -7045,6 +7088,19 @@ export default function JusticeChatAiPage() {
                     approved step when tracking updates.
                   </p>
                 ) : null}
+                {showPaymentDisputeBouncedNotice ? (
+                  <div className="mt-2 rounded-lg border border-amber-300/80 bg-amber-50/80 px-3 py-2 dark:border-amber-700/60 dark:bg-amber-950/30">
+                    <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                      Payment dispute did not reach the bank/card issuer.
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-900 dark:text-amber-200">
+                      {paymentDisputeBounceState === "complained"
+                        ? "The issuer's email provider marked it as spam."
+                        : "The email bounced and was not delivered."}{" "}
+                      Surrenderless operators have been notified and will follow up another way.
+                    </p>
+                  </div>
+                ) : null}
                 {showPaymentDisputeFilingFiledNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">Payment dispute sent.</span> Surrenderless recorded
@@ -7065,6 +7121,20 @@ export default function JusticeChatAiPage() {
                     aviation complaint filing with confirmation on file. Your case will advance to the
                     next approved step when tracking updates.
                   </p>
+                ) : null}
+                {showMerchantContactBouncedNotice ? (
+                  <div className="mt-2 rounded-lg border border-amber-300/80 bg-amber-50/80 px-3 py-2 dark:border-amber-700/60 dark:bg-amber-950/30">
+                    <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                      Merchant outreach did not reach the company.
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-900 dark:text-amber-200">
+                      {merchantContactBounceState === "complained"
+                        ? "The company's email provider marked it as spam."
+                        : "The email bounced and was not delivered."}{" "}
+                      Surrenderless operators have been notified and will follow up with the
+                      company another way.
+                    </p>
+                  </div>
                 ) : null}
                 {showMerchantContactFiledNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">

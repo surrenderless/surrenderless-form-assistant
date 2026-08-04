@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
 import {
@@ -9,12 +10,15 @@ import {
   buildPaymentDisputeEvidenceInventory,
   buildPaymentDisputeFilingTaskNotes,
   buildPaymentDisputeFilingTaskTitle,
+  findLatestPaymentDisputeFiling,
+  findLatestPaymentDisputeFilingCreatedAt,
   findOpenPaymentDisputeFilingTask,
   hasPaymentDisputeFilingRecord,
   hasPaymentDisputeFilingWithConfirmation,
   parsePaymentDisputeFilingTaskDraft,
   paymentDisputeFilingTaskCompletedTimelineId,
   paymentDisputeFilingTaskNotesMarker,
+  reopenPaymentDisputeFilingTaskForBounce,
   resolvePaymentDisputeDraftForOperatorPacket,
   shouldQueuePaymentDisputeFilingTask,
   taskNotesMatchPaymentDisputeFilingMarker,
@@ -95,6 +99,31 @@ describe("paymentDisputeFilingTask", () => {
         { ...filings[1]!, confirmation_number: "pd-123" },
       ])
     ).toBe(true);
+  });
+
+  it("findLatestPaymentDisputeFiling picks the most recently created filing regardless of confirmation state", () => {
+    const older = {
+      id: "fil-pd-older",
+      user_id: "user",
+      case_id: CASE_ID,
+      destination: "Payment dispute (bank/card)",
+      filed_at: "2026-06-01",
+      confirmation_number: "re_bounced",
+      filing_url: null,
+      notes: null,
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z",
+    };
+    const newer = {
+      ...older,
+      id: "fil-pd-newer",
+      confirmation_number: "PD-REMEDIATED",
+      created_at: "2026-06-21T00:00:00.000Z",
+      updated_at: "2026-06-21T00:00:00.000Z",
+    };
+    expect(findLatestPaymentDisputeFiling([older, newer])?.id).toBe("fil-pd-newer");
+    expect(findLatestPaymentDisputeFiling([newer, older])?.id).toBe("fil-pd-newer");
+    expect(findLatestPaymentDisputeFiling([])).toBeUndefined();
   });
 
   it("builds notes with packet, evidence inventory, and bank letter draft", () => {
@@ -243,5 +272,181 @@ describe("paymentDisputeFilingTask", () => {
     expect(resolved.dispute_reason).toBe("duplicate_charge");
     expect(resolved.payment_method).toBe("debit_card");
     expect(resolved.proof_type).toBe("bank_statement");
+  });
+});
+
+describe("reopenPaymentDisputeFilingTaskForBounce", () => {
+  const USER_ID = "user-pd-bounce";
+
+  function makeCompletedTask(): JusticeCaseTaskRow {
+    const marker = paymentDisputeFilingTaskNotesMarker(CASE_ID);
+    return {
+      id: "task-pd-bounce",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Payment dispute: Acme Retail",
+      due_date: null,
+      notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nDISPUTE REQUEST...`,
+      completed_at: "2026-01-10T00:00:00.000Z",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-10T00:00:00.000Z",
+    };
+  }
+
+  function makeSupabase(task: JusticeCaseTaskRow | null) {
+    const store = { task: task ? { ...task } : null, timeline: [] as unknown[] };
+    return {
+      from(table: string) {
+        if (table === "justice_case_tasks") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  like: () => ({
+                    order: () => ({
+                      limit: async () => ({
+                        data: store.task ? [store.task] : [],
+                        error: null,
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => ({
+                  select: () => ({
+                    maybeSingle: async () => {
+                      if (!store.task) return { data: null, error: null };
+                      store.task = { ...store.task, ...payload } as JusticeCaseTaskRow;
+                      return { data: store.task, error: null };
+                    },
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "justice_cases") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: { timeline: store.timeline }, error: null }) }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  store.timeline = payload.timeline as unknown[];
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("reopens a completed task, prefixes the title, and appends an actionable timeline entry", async () => {
+    const supabase = makeSupabase(makeCompletedTask());
+
+    const result = await reopenPaymentDisputeFilingTaskForBounce(supabase, USER_ID, CASE_ID, "bounced");
+
+    expect(result.reopened).toBe(true);
+    expect(result.task?.completed_at).toBeNull();
+    expect(result.task?.title).toBe("[Needs manual follow-up — bounced] Payment dispute: Acme Retail");
+    expect(result.timeline).toHaveLength(1);
+    expect(result.timeline?.[0]?.label).toBe("Payment dispute task reopened for manual follow-up");
+  });
+
+  it("uses a distinct title prefix for a spam complaint", async () => {
+    const supabase = makeSupabase(makeCompletedTask());
+
+    const result = await reopenPaymentDisputeFilingTaskForBounce(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      "complained"
+    );
+
+    expect(result.task?.title).toBe(
+      "[Needs manual follow-up — marked as spam] Payment dispute: Acme Retail"
+    );
+  });
+
+  it("is a no-op (not reopened) when no matching task exists for the case", async () => {
+    const supabase = makeSupabase(null);
+
+    const result = await reopenPaymentDisputeFilingTaskForBounce(supabase, USER_ID, CASE_ID, "bounced");
+
+    expect(result).toEqual({ task: null, timeline: null, reopened: false });
+  });
+});
+
+describe("findLatestPaymentDisputeFilingCreatedAt", () => {
+  const USER_ID = "user-pd-latest";
+
+  function makeFilingsSupabase(filings: JusticeCaseFilingRow[]) {
+    return {
+      from(table: string) {
+        if (table !== "justice_case_filings") throw new Error(`unexpected table ${table}`);
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: async () => ({ data: filings, error: null }),
+            }),
+          }),
+        };
+      },
+    } as unknown as import("@supabase/supabase-js").SupabaseClient;
+  }
+
+  function paymentDisputeFiling(id: string, createdAt: string): JusticeCaseFilingRow {
+    return {
+      id,
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      destination: "Payment dispute (bank/card)",
+      filed_at: createdAt.slice(0, 10),
+      confirmation_number: `conf-${id}`,
+      filing_url: null,
+      notes: null,
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+  }
+
+  it("returns the created_at of the most recently created payment-dispute filing", async () => {
+    const supabase = makeFilingsSupabase([
+      paymentDisputeFiling("fil-1", "2026-06-01T00:00:00.000Z"),
+      paymentDisputeFiling("fil-2", "2026-06-21T00:00:00.000Z"),
+    ]);
+
+    await expect(findLatestPaymentDisputeFilingCreatedAt(supabase, USER_ID, CASE_ID)).resolves.toBe(
+      "2026-06-21T00:00:00.000Z"
+    );
+  });
+
+  it("returns null when no payment-dispute filing exists yet", async () => {
+    const supabase = makeFilingsSupabase([]);
+
+    await expect(findLatestPaymentDisputeFilingCreatedAt(supabase, USER_ID, CASE_ID)).resolves.toBeNull();
+  });
+
+  it('returns "error" on a select error rather than throwing or reporting confirmed absence', async () => {
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: async () => ({ data: null, error: { message: "select down" } }),
+          }),
+        }),
+      }),
+    } as unknown as import("@supabase/supabase-js").SupabaseClient;
+
+    await expect(findLatestPaymentDisputeFilingCreatedAt(supabase, USER_ID, CASE_ID)).resolves.toBe("error");
   });
 });

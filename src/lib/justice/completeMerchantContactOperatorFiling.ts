@@ -12,12 +12,16 @@ import {
   type MerchantContactDocumentationInput,
 } from "@/lib/justice/documentMerchantContact";
 import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
+import { parseMerchantContactEmailDeliveryRecord } from "@/lib/justice/merchantContactEmailDelivery";
 import {
   completeMerchantContactFilingTaskIfOpen,
   hasMerchantContactFilingWithConfirmation,
+  merchantContactCanonicalApprovedActionForFollowUp,
   merchantContactFilingsForManualTracking,
   taskNotesMatchMerchantContactFilingMarker,
 } from "@/lib/justice/merchantContactFilingTask";
+import { ensureFollowUpCaseTask } from "@/lib/justice/followUpCaseTask";
+import { ensureSupersededLaneResponseReviewTask } from "@/lib/justice/followUpResponseReviewTask";
 import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
@@ -72,6 +76,12 @@ const MERCHANT_RESPONSE_TYPES = new Set<MerchantResponseType>([
 
 function clampLen(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
+}
+
+/** A bounced/complained filing must not be treated as an already-successful send. */
+function isMerchantContactFilingBouncedOrComplained(notes: string | null | undefined): boolean {
+  const state = parseMerchantContactEmailDeliveryRecord(notes)?.delivery_state;
+  return state === "bounced" || state === "complained";
 }
 
 function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNextAction): {
@@ -249,16 +259,21 @@ export async function completeMerchantContactOperatorFiling(
     }
   }
 
+  // A bounced/complained filing does not count as an already-successful send — remediation
+  // after a bounce must produce a fresh filing row with the operator's new confirmation,
+  // preserving the failed one as history rather than silently discarding the new attempt.
+  const confirmedNonBouncedFiling = merchantFilings.find(
+    (f) =>
+      Boolean(f.confirmation_number?.trim()) && !isMerchantContactFilingBouncedOrComplained(f.notes)
+  );
+
   let filing: JusticeCaseFilingRow;
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (merchantFilings.length > 0 && task.completed_at?.trim()) {
+  if (confirmedNonBouncedFiling) {
     idempotent = true;
-    filing = merchantFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (merchantFilings.length > 0) {
-    filing = merchantFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-    idempotent = true;
+    filing = confirmedNonBouncedFiling;
   } else {
     const filingNotes = buildOperatorFilingNotes({
       contactMethod,
@@ -298,6 +313,12 @@ export async function completeMerchantContactOperatorFiling(
       detail,
     });
   }
+
+  // True only for the actual remediation call (a fresh filing was just inserted because the
+  // prior one bounced/complained) — never on a later idempotent replay, which must not re-ensure
+  // (or duplicate) the follow-up it already started.
+  const isBounceRemediation =
+    !idempotent && merchantFilings.some((f) => isMerchantContactFilingBouncedOrComplained(f.notes));
 
   const companyContact = cfpbLikelyRelevant(updatedIntake) || fccLikelyRelevant(updatedIntake);
   const contactTimeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
@@ -437,6 +458,57 @@ export async function completeMerchantContactOperatorFiling(
     }
     if (ownedEnsure.timeline) {
       timeline = ownedEnsure.timeline;
+    }
+  }
+
+  // The above only ensures a follow-up for whichever action is CURRENTLY approved — if the
+  // escalation ladder has already advanced past merchant contact (approvedNext is some later
+  // lane's action), it never builds a merchant-contact-flavored follow-up at all. On a genuine
+  // bounce remediation, merchant contact still needs its own fresh follow-up regardless of ladder
+  // position, built from its own stable identity — never from (or written back into)
+  // approved_next_action.
+  if (
+    isBounceRemediation &&
+    approvedNext?.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF
+  ) {
+    const followUpEnsure = await ensureFollowUpCaseTask(
+      supabase,
+      userId,
+      caseId,
+      merchantContactCanonicalApprovedActionForFollowUp(filing.filed_at ?? undefined)
+    );
+    if (!followUpEnsure.task) {
+      return {
+        ok: false,
+        error: "Filing recorded but could not start a fresh merchant contact follow-up",
+        status: 500,
+      };
+    }
+    if (followUpEnsure.timeline) {
+      timeline = followUpEnsure.timeline;
+    }
+
+    // A response can arrive at any point before this lane's own follow-up due date, not only
+    // after — so this lane's owner_href-scoped review must exist from the moment remediation
+    // succeeds, not only once processDueFollowUps notices the follow-up is overdue. Idempotent
+    // by (case, owner_href); never touches client_state/approved_next_action.
+    const reviewEnsure = await ensureSupersededLaneResponseReviewTask(
+      supabase,
+      userId,
+      caseId,
+      MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+      followUpEnsure.task.id,
+      canonicalDestination
+    );
+    if (!reviewEnsure.task) {
+      return {
+        ok: false,
+        error: "Filing recorded but could not start this lane's own response review",
+        status: 500,
+      };
+    }
+    if (reviewEnsure.timeline) {
+      timeline = reviewEnsure.timeline;
     }
   }
 

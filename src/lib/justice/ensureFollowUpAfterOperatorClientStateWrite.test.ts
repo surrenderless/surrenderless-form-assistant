@@ -187,7 +187,10 @@ describe("ensureFollowUpAfterOperatorClientStateWrite", () => {
       case_id: CASE_ID,
       title: "Surrenderless follow-up: Small claims / demand letter",
       due_date: "2026-08-01",
-      notes: marker,
+      // Owned by the same action (/justice/demand-letter) as nextWithFollowUp below — dedup is
+      // by (case, owner_href), so idempotent reuse requires the existing row to be confirmed as
+      // this same action's, not just case-scoped-marker-matching.
+      notes: `${marker}\nowner_href:/justice/demand-letter`,
       completed_at: null,
       created_at: "2026-07-01T00:00:00.000Z",
       updated_at: "2026-07-01T00:00:00.000Z",

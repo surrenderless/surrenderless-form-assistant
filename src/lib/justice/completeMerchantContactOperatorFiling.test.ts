@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { buildUpdatedIntakeAfterMerchantContact } from "@/lib/justice/documentMerchantContact";
 import {
+  MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   canonicalFilingDestinationForApprovedActionHref,
 } from "@/lib/justice/handlingTrackingProgress";
@@ -64,6 +65,14 @@ vi.mock("@/server/justiceTimelineAppend", () => ({
 
 import { completeMerchantContactOperatorFiling } from "@/lib/justice/completeMerchantContactOperatorFiling";
 import { buildMerchantContactOperatorFilingWorkspace } from "@/lib/justice/merchantContactOperatorFilingWorkspace";
+import { upsertMerchantContactEmailDeliveryNotes } from "@/lib/justice/merchantContactEmailDelivery";
+import { followUpTaskOwnerHref, taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
+import {
+  supersededLaneReviewLinkedFollowUpTaskId,
+  taskNotesMatchSupersededLaneReviewMarker,
+} from "@/lib/justice/followUpResponseReviewTask";
+import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
+import { classifyOpenOperatorTask } from "@/lib/justice/operatorFulfillmentQueue";
 
 function retailIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
   return buildJusticeIntakeFromParts({
@@ -199,8 +208,20 @@ type MockCaseState = {
   client_state: Record<string, unknown>;
   filings: JusticeCaseFilingRow[];
   task: JusticeCaseTaskRow;
+  followUpTasks: JusticeCaseTaskRow[];
+  /** Owner_href-scoped superseded-lane review rows, created by the real
+   * ensureSupersededLaneResponseReviewTask call inside the bounce-remediation branch. */
+  supersededLaneReviews?: JusticeCaseTaskRow[];
   filingInsertCount: number;
-  evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
+  filingInsertShouldFail?: boolean;
+  evidence?: Array<{
+    id?: string;
+    file_name: string | null;
+    mime_type: string | null;
+    file_size_bytes: number | null;
+    evidence_type?: string;
+    title?: string;
+  }>;
 };
 
 function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
@@ -254,6 +275,11 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
       }
 
       if (table === "justice_case_tasks") {
+        const tasksMatchingLike = (pattern: string) => {
+          const prefix = String(pattern).replace(/%$/, "");
+          const all = [state.task, ...state.followUpTasks, ...(state.supersededLaneReviews ?? [])];
+          return all.filter((task) => (task.notes ?? "").startsWith(prefix));
+        };
         return {
           select: () => ({
             eq: () => ({
@@ -262,20 +288,42 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
                   limit: async () => ({ data: [state.task], error: null }),
                   maybeSingle: async () => ({ data: state.task, error: null }),
                 }),
-                like: () => ({
+                like: (_column: string, pattern: string) => ({
                   is: () => ({
-                    limit: async () => ({ data: [state.task], error: null }),
+                    // No slice(0, N) — a real .limit() in ensureFollowUpCaseTask/
+                    // findOpenFollowUpCaseTasks may need to see every currently-open follow-up
+                    // (one per lane can coexist) to dedupe by owner_href, not just the first one.
+                    limit: async () => ({
+                      data: tasksMatchingLike(pattern).filter((task) => !task.completed_at?.trim()),
+                      error: null,
+                    }),
                   }),
-                  limit: async () => ({ data: [state.task], error: null }),
+                  limit: async () => {
+                    // ensureSupersededLaneResponseReviewTask's own dedupe scan (.eq().eq().like()
+                    // .limit(), no .is()) needs every matching row — open or already completed —
+                    // to tell "still pending" from "decision already recorded" apart. Other
+                    // markers keep the pre-existing single-row .limit(1) semantics.
+                    const matched = tasksMatchingLike(pattern);
+                    const data = String(pattern).startsWith("superseded_lane_review:")
+                      ? matched
+                      : matched.slice(0, 1);
+                    return { data, error: null };
+                  },
                 }),
                 limit: async () => ({ data: [state.task], error: null }),
                 maybeSingle: async () => ({ data: state.task, error: null }),
               }),
-              like: () => ({
+              like: (_column: string, pattern: string) => ({
                 is: () => ({
-                  limit: async () => ({ data: [state.task], error: null }),
+                  limit: async () => ({
+                    data: tasksMatchingLike(pattern).filter((task) => !task.completed_at?.trim()),
+                    error: null,
+                  }),
                 }),
-                limit: async () => ({ data: [state.task], error: null }),
+                limit: async () => ({
+                  data: tasksMatchingLike(pattern).slice(0, 1),
+                  error: null,
+                }),
               }),
               maybeSingle: async () => ({ data: state.task, error: null }),
             }),
@@ -299,6 +347,41 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
               }),
             }),
           }),
+          insert: (row: Record<string, unknown>) => ({
+            select: () => ({
+              single: async () => {
+                const notes = typeof row.notes === "string" ? row.notes : "";
+                if (notes.startsWith("superseded_lane_review:")) {
+                  const review: JusticeCaseTaskRow = {
+                    id: `superseded-review-${(state.supersededLaneReviews?.length ?? 0) + 1}`,
+                    user_id: USER_ID,
+                    case_id: CASE_ID,
+                    title: String(row.title ?? ""),
+                    due_date: typeof row.due_date === "string" ? row.due_date : null,
+                    notes,
+                    completed_at: null,
+                    created_at: "2026-06-22T12:06:30.000Z",
+                    updated_at: "2026-06-22T12:06:30.000Z",
+                  };
+                  state.supersededLaneReviews = [...(state.supersededLaneReviews ?? []), review];
+                  return { data: review, error: null };
+                }
+                const task: JusticeCaseTaskRow = {
+                  id: `follow-up-${state.followUpTasks.length + 1}`,
+                  user_id: USER_ID,
+                  case_id: CASE_ID,
+                  title: String(row.title ?? ""),
+                  due_date: typeof row.due_date === "string" ? row.due_date : null,
+                  notes,
+                  completed_at: null,
+                  created_at: "2026-06-22T12:06:00.000Z",
+                  updated_at: "2026-06-22T12:06:00.000Z",
+                };
+                state.followUpTasks = [...state.followUpTasks, task];
+                return { data: task, error: null };
+              },
+            }),
+          }),
         };
       }
 
@@ -312,6 +395,9 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
           insert: (row: Record<string, unknown>) => ({
             select: () => ({
               single: async () => {
+                if (state.filingInsertShouldFail) {
+                  return { data: null, error: { message: "filing insert failed" } };
+                }
                 state.filingInsertCount += 1;
                 const filing: JusticeCaseFilingRow = {
                   id: `fil-${state.filingInsertCount}`,
@@ -384,6 +470,7 @@ describe("completeMerchantContactOperatorFiling idempotency", () => {
         created_at: "2026-06-21T00:00:00.000Z",
         updated_at: "2026-06-21T00:00:00.000Z",
       },
+      followUpTasks: [],
       filingInsertCount: 0,
     };
 
@@ -462,6 +549,7 @@ describe("completeMerchantContactOperatorFiling idempotency", () => {
         created_at: "2026-06-21T00:00:00.000Z",
         updated_at: "2026-06-21T00:00:00.000Z",
       },
+      followUpTasks: [],
       filingInsertCount: 0,
       evidence,
     });
@@ -480,7 +568,14 @@ describe("completeMerchantContactOperatorFiling idempotency", () => {
 
     spy.mockClear();
     const withFile = buildState([
-      { file_name: "bank-statement.png", mime_type: "image/png", file_size_bytes: 2048 },
+      {
+        id: "550e8400-e29b-41d4-a716-446655449999",
+        file_name: "bank-statement.png",
+        mime_type: "image/png",
+        file_size_bytes: 2048,
+        evidence_type: "other",
+        title: "Bank statement",
+      },
     ]);
     await completeMerchantContactOperatorFiling(createMerchantCompleteSupabase(withFile), USER_ID, input);
     expect(spy).toHaveBeenCalledWith(
@@ -551,6 +646,7 @@ describe("merchant-contact workspace completion behavior", () => {
         created_at: "2026-06-01T00:00:00.000Z",
         updated_at: "2026-06-01T00:00:00.000Z",
       },
+      followUpTasks: [],
       filingInsertCount: 0,
     };
     const result = await completeMerchantContactOperatorFiling(
@@ -602,6 +698,7 @@ describe("merchant-contact workspace completion behavior", () => {
         created_at: "2026-06-01T00:00:00.000Z",
         updated_at: "2026-06-01T00:00:00.000Z",
       },
+      followUpTasks: [],
       filingInsertCount: 0,
     };
 
@@ -630,5 +727,465 @@ describe("merchant-contact workspace completion behavior", () => {
     expect(result.task.completed_at).toBeTruthy();
     expect(shouldQueueMerchantContactFilingTask(state.client_state)).toBe(false);
     expect(workspace.is_submitted).toBe(false);
+  });
+});
+
+function bouncedMerchantContactFiling(): JusticeCaseFilingRow {
+  return {
+    id: "fil-original-bounced",
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    destination: "Merchant contact",
+    filed_at: "2026-06-01",
+    confirmation_number: "re_original_1",
+    filing_url: null,
+    notes: upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "bounced" as never,
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_original_1",
+    }),
+    created_at: "2026-06-01T00:00:00.000Z",
+    updated_at: "2026-06-01T00:00:00.000Z",
+  };
+}
+
+describe("completeMerchantContactOperatorFiling bounce remediation", () => {
+  beforeEach(() => {
+    timelineStore.entries = [];
+  });
+
+  it("creates a fresh filing after a bounce, closes the reopened task, and starts a fresh follow-up — preserving the bounced filing untouched", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedMerchantContactFiling();
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+          status: "completed",
+          follow_up_needed: true,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+    };
+
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-21",
+        confirmationNumber: "MC-REMEDIATED-456",
+        contactMethod: "phone",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+        notes: "Re-contacted by phone after email bounce",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.idempotent).toBe(false);
+    expect(result.filing.confirmation_number).toBe("MC-REMEDIATED-456");
+    expect(result.filing.id).not.toBe(bounced.id);
+    expect(result.task.completed_at).toBeTruthy();
+
+    expect(state.filings).toHaveLength(2);
+    const preservedBounced = state.filings.find((f) => f.id === bounced.id);
+    expect(preservedBounced?.confirmation_number).toBe("re_original_1");
+    expect(preservedBounced?.notes).toBe(bounced.notes);
+
+    const followUp = state.followUpTasks.find((t) => taskNotesMatchFollowUpMarker(t.notes, CASE_ID));
+    expect(followUp).toBeDefined();
+  });
+
+  it("still reuses an existing non-bounced confirmed filing as idempotent (unchanged regression)", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const existing: JusticeCaseFilingRow = {
+      id: "fil-accepted-1",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      destination: "Merchant contact",
+      filed_at: "2026-06-15",
+      confirmation_number: "MC-SEND-998877",
+      filing_url: null,
+      notes: upsertMerchantContactEmailDeliveryNotes(null, {
+        delivery_state: "accepted",
+        provider: "resend",
+        recipient: "support@acme.example",
+        provider_message_id: "MC-SEND-998877",
+      }),
+      created_at: "2026-06-15T00:00:00.000Z",
+      updated_at: "2026-06-15T00:00:00.000Z",
+    };
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+          status: "completed",
+        },
+      },
+      filings: [existing],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: "2026-06-15T00:00:00.000Z",
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-15T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+    };
+
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-15",
+        confirmationNumber: "MC-SEND-998877",
+        contactMethod: "email",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.idempotent).toBe(true);
+    expect(result.filing.id).toBe("fil-accepted-1");
+    expect(state.filings).toHaveLength(1);
+  });
+
+  it("does not complete the task or start a follow-up when the remediation filing insert fails", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedMerchantContactFiling();
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+          status: "completed",
+          follow_up_needed: true,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      filingInsertShouldFail: true,
+    };
+
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-21",
+        confirmationNumber: "MC-REMEDIATED-456",
+        contactMethod: "phone",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(state.task.completed_at).toBeNull();
+    expect(state.followUpTasks).toHaveLength(0);
+    expect(state.filings).toHaveLength(1);
+  });
+
+  it("after the ladder has advanced to demand letter, builds merchant contact's own fresh follow-up without touching demand letter's or the ladder — and doesn't duplicate on retry", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedMerchantContactFiling();
+    const demandLetterFollowUp: JusticeCaseTaskRow = {
+      id: "followup-demand-letter",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: Small claims / demand letter",
+      due_date: "2026-07-01",
+      notes: "follow_up:" + CASE_ID + "\nowner_href:" + MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+      completed_at: null,
+      created_at: "2026-06-25T00:00:00.000Z",
+      updated_at: "2026-06-25T00:00:00.000Z",
+    };
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        // The escalation ladder already advanced past merchant contact to demand letter before
+        // merchant contact's delayed bounce arrived and reopened its task. "completed" — demand
+        // letter already filed successfully (that's how its own open follow-up exists) — so this
+        // fixture doesn't also need to model the unrelated owned-filing-task queue.
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "completed",
+          follow_up_needed: true,
+          follow_up_at: demandLetterFollowUp.due_date,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [demandLetterFollowUp],
+      filingInsertCount: 0,
+    };
+    const clientStateBefore = JSON.parse(JSON.stringify(state.client_state));
+
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-21",
+        confirmationNumber: "MC-REMEDIATED-456",
+        contactMethod: "phone",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+        notes: "Re-contacted by phone after email bounce",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.idempotent).toBe(false);
+    expect(result.task.completed_at).toBeTruthy();
+    // approved_next_action's identity must be left exactly as it was — still demand letter's, not
+    // rewound to merchant contact and not advanced to some third lane.
+    const approvedNextAfter = (state.client_state as { approved_next_action?: Record<string, unknown> })
+      .approved_next_action;
+    expect(approvedNextAfter).toMatchObject(
+      (clientStateBefore as { approved_next_action: Record<string, unknown> }).approved_next_action
+    );
+
+    const stillDemandLetter = state.followUpTasks.find((t) => t.id === "followup-demand-letter");
+    expect(stillDemandLetter?.completed_at).toBeNull();
+    expect(stillDemandLetter?.due_date).toBe("2026-07-01");
+    expect(followUpTaskOwnerHref(stillDemandLetter?.notes)).toBe(
+      MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+    );
+
+    expect(state.followUpTasks).toHaveLength(2);
+    const merchantFollowUp = state.followUpTasks.find((t) => t.id !== "followup-demand-letter");
+    expect(merchantFollowUp).toBeDefined();
+    expect(merchantFollowUp?.completed_at).toBeNull();
+    expect(followUpTaskOwnerHref(merchantFollowUp?.notes)).toBe(
+      MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF
+    );
+    expect(taskNotesMatchFollowUpMarker(merchantFollowUp?.notes, CASE_ID)).toBe(true);
+    // It carries its own valid due_date, scheduled from the remediation filing's own filedAt
+    // (2026-06-21 + 45 days) — never inherited from demand letter's due_date (2026-07-01), and
+    // never left null, or processDueFollowUps could never process it.
+    expect(merchantFollowUp?.due_date).toBe("2026-08-05");
+    expect(merchantFollowUp?.due_date).not.toBe(stillDemandLetter?.due_date);
+
+    // Remediation also immediately creates merchant contact's own owner_href-scoped review —
+    // real production code, not a test-only helper — real-listing reachable through the exact
+    // marker/classifier the operator queue and generic PATCH route use.
+    expect(state.supersededLaneReviews).toHaveLength(1);
+    const review = state.supersededLaneReviews?.[0];
+    expect(review?.completed_at).toBeNull();
+    expect(taskNotesMatchSupersededLaneReviewMarker(review?.notes, CASE_ID)).toBe(true);
+    expect(followUpTaskOwnerHref(review?.notes)).toBe(MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF);
+    // Durably linked to the exact fresh follow-up attempt just created — never merely to
+    // (case, owner_href) — so a later, genuinely new remediation cycle can never have this
+    // review silently answer for it.
+    expect(supersededLaneReviewLinkedFollowUpTaskId(review?.notes)).toBe(merchantFollowUp?.id);
+    expect(taskNotesMatchAnyOperatorFulfillmentMarker(review?.notes, CASE_ID)).toBe(true);
+    expect(classifyOpenOperatorTask(review!, state.intake)?.step).toBe("superseded_lane_review");
+
+    const retry = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-21",
+        confirmationNumber: "MC-REMEDIATED-456",
+        contactMethod: "phone",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+      }
+    );
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    expect(retry.idempotent).toBe(true);
+    expect(state.followUpTasks).toHaveLength(2);
+    expect(state.supersededLaneReviews).toHaveLength(1);
+  });
+
+  it("a prior remediation cycle's OLD completed follow-up/review for merchant contact never gets reused by a genuinely NEW remediation attempt on the same lane", async () => {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const bounced = bouncedMerchantContactFiling();
+    // A PRIOR remediation cycle already ran to completion on merchant contact itself: its
+    // follow-up closed, and its review was decided — both are historical, closed rows.
+    const oldMerchantFollowUp: JusticeCaseTaskRow = {
+      id: "followup-merchant-contact-old",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: merchant contact (old attempt)",
+      due_date: "2026-04-01",
+      notes: `follow_up:${CASE_ID}\nowner_href:${MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF}`,
+      completed_at: "2026-04-02T00:00:00.000Z",
+      created_at: "2026-03-01T00:00:00.000Z",
+      updated_at: "2026-04-02T00:00:00.000Z",
+    };
+    const oldMerchantReview: JusticeCaseTaskRow = {
+      id: "review-merchant-contact-old",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Follow-up response review: merchant contact (old attempt)",
+      due_date: null,
+      notes: [
+        `superseded_lane_review:${CASE_ID}`,
+        `owner_href:${MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF}`,
+        "follow_up_task_id:followup-merchant-contact-old",
+        `case_id: ${CASE_ID}`,
+        "guidance:",
+        "prior attempt",
+        "decision:no_response",
+      ].join("\n"),
+      completed_at: "2026-04-02T00:00:00.000Z",
+      created_at: "2026-03-01T00:00:00.000Z",
+      updated_at: "2026-04-02T00:00:00.000Z",
+    };
+    // Current lane's own open follow-up, pre-existing — keeps the unrelated current-lane-ensure
+    // machinery a no-op (idempotent reuse), so this test stays focused on the bounce-remediation
+    // branch for merchant contact specifically.
+    const currentLaneFollowUp: JusticeCaseTaskRow = {
+      id: "followup-demand-letter-current",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Surrenderless follow-up: Small claims / demand letter",
+      due_date: "2026-07-01",
+      notes: `follow_up:${CASE_ID}\nowner_href:${MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF}`,
+      completed_at: null,
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z",
+    };
+    const state: MockCaseState = {
+      intake: retailIntake(),
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+          status: "completed",
+          follow_up_needed: true,
+          follow_up_at: currentLaneFollowUp.due_date,
+        },
+      },
+      filings: [bounced],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "[Needs manual follow-up — bounced] Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-20T00:00:00.000Z",
+      },
+      followUpTasks: [oldMerchantFollowUp, currentLaneFollowUp],
+      supersededLaneReviews: [oldMerchantReview],
+      filingInsertCount: 0,
+    };
+
+    const result = await completeMerchantContactOperatorFiling(
+      createMerchantCompleteSupabase(state),
+      USER_ID,
+      {
+        caseId: CASE_ID,
+        taskId: TASK_ID,
+        destination: "Merchant contact",
+        filedAt: "2026-06-21",
+        confirmationNumber: "MC-REMEDIATED-SECOND-789",
+        contactMethod: "phone",
+        merchantResponseType: "no_response",
+        recipient: "Acme Retail",
+        notes: "Re-contacted again after a second bounce",
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(state.followUpTasks).toHaveLength(3);
+    const newFollowUp = state.followUpTasks.find(
+      (t) =>
+        followUpTaskOwnerHref(t.notes) === MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF &&
+        t.id !== "followup-merchant-contact-old"
+    );
+    expect(newFollowUp).toBeDefined();
+    expect(newFollowUp?.completed_at).toBeNull();
+    expect(currentLaneFollowUp.completed_at).toBeNull();
+
+    expect(state.supersededLaneReviews).toHaveLength(2);
+    const newReview = state.supersededLaneReviews?.find((t) => t.id !== "review-merchant-contact-old");
+    expect(newReview).toBeDefined();
+    expect(newReview?.completed_at).toBeNull();
+    expect(supersededLaneReviewLinkedFollowUpTaskId(newReview?.notes)).toBe(newFollowUp?.id);
+    expect(supersededLaneReviewLinkedFollowUpTaskId(newReview?.notes)).not.toBe(
+      "followup-merchant-contact-old"
+    );
+
+    expect(oldMerchantFollowUp.completed_at).toBe("2026-04-02T00:00:00.000Z");
+    expect(oldMerchantReview.completed_at).toBe("2026-04-02T00:00:00.000Z");
+    expect(oldMerchantReview.notes).toContain("decision:no_response");
   });
 });

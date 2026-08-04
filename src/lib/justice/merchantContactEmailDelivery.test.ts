@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmailProvider } from "@/lib/email/emailProvider";
 import { createMockMerchantOutreachEmailProvider } from "@/lib/email/resolveMerchantOutreachEmailProvider";
 import {
   buildMerchantOutreachEmailSubject,
   isMerchantContactEmailFailed,
   isMerchantContactEmailSending,
+  merchantContactEmailBounceState,
   merchantContactEmailIdempotencyKey,
   parseMerchantContactEmailDeliveryRecord,
+  recordMerchantContactEmailBounceEvent,
   resolveMerchantOutreachRecipientEmail,
   upsertMerchantContactEmailDeliveryNotes,
 } from "@/lib/justice/merchantContactEmailDelivery";
@@ -16,6 +19,19 @@ import {
   isValidMerchantOutreachEmailAddress,
   resolveMerchantOutreachEmailEnv,
 } from "@/lib/email/merchantOutreachEmailEnv";
+import { MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+
+vi.mock("@/lib/justice/merchantContactFilingTask", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/justice/merchantContactFilingTask")>();
+  return { ...actual, reopenMerchantContactFilingTaskForBounce: vi.fn() };
+});
+
+vi.mock("@/lib/justice/followUpCaseTask", () => ({
+  completeFollowUpCaseTaskIfOwnedByAction: vi.fn(),
+}));
+
+import { reopenMerchantContactFilingTaskForBounce } from "@/lib/justice/merchantContactFilingTask";
+import { completeFollowUpCaseTaskIfOwnedByAction } from "@/lib/justice/followUpCaseTask";
 
 const baseIntake = (): JusticeIntake => ({
   problem_category: "online_purchase",
@@ -158,5 +174,302 @@ describe("mock merchant outreach email provider", () => {
       idempotencyKey: "k1",
     });
     expect(failed.ok).toBe(false);
+  });
+});
+
+describe("recordMerchantContactEmailBounceEvent", () => {
+  const CASE_ID = "case-mc-1";
+  const USER_ID = "user-mc-1";
+
+  beforeEach(() => {
+    vi.mocked(reopenMerchantContactFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: true,
+    });
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockResolvedValue({
+      task: null,
+      timeline: null,
+      completed: true,
+      skippedNotOwned: false,
+      error: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.mocked(reopenMerchantContactFilingTaskForBounce).mockReset();
+    vi.mocked(completeFollowUpCaseTaskIfOwnedByAction).mockReset();
+  });
+
+  function makeBounceSupabase(filingNotes: string) {
+    const filing = { id: "filing-1", user_id: USER_ID, case_id: CASE_ID, notes: filingNotes };
+    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[] };
+
+    return {
+      from(table: string) {
+        if (table === "justice_case_filings") {
+          return {
+            select: () => ({
+              like: () => ({
+                limit: async () => ({ data: [filing], error: null }),
+              }),
+              eq: () => ({
+                eq: async () => ({ data: [filing], error: null }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  filing.notes = String(payload.notes);
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        if (table === "justice_case_tasks") {
+          return { select: () => ({ like: () => ({ limit: async () => ({ data: [], error: null }) }) }) };
+        }
+        if (table === "justice_cases") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: { timeline: caseRow.timeline }, error: null }) }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  caseRow.timeline = payload.timeline as unknown[];
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("flags a bounce on the completed filing as actionable, reopens the operator task, and stops the follow-up countdown", async () => {
+    const notes = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_mc_1",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const result = await recordMerchantContactEmailBounceEvent(supabase, {
+      messageId: "re_mc_1",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({
+      status: "recorded",
+      caseId: CASE_ID,
+      state: "bounced",
+    });
+    expect(reopenMerchantContactFilingTaskForBounce).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      "bounced"
+    );
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledWith(
+      supabase,
+      USER_ID,
+      CASE_ID,
+      MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF
+    );
+  });
+
+  it("returns an error on the initial bounce when task reopen fails, without hiding it as success", async () => {
+    vi.mocked(reopenMerchantContactFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: false,
+    });
+    const notes = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_mc_4",
+    });
+
+    const result = await recordMerchantContactEmailBounceEvent(makeBounceSupabase(notes), {
+      messageId: "re_mc_4",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({ status: "error", reason: "task_reopen_failed" });
+  });
+
+  it("repairs an incomplete action on a replay: retries and succeeds once the task reopen works", async () => {
+    vi.mocked(reopenMerchantContactFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: false,
+    });
+    const notes = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_mc_5",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const first = await recordMerchantContactEmailBounceEvent(supabase, {
+      messageId: "re_mc_5",
+      eventType: "email.bounced",
+    });
+    expect(first).toEqual({ status: "error", reason: "task_reopen_failed" });
+
+    vi.mocked(reopenMerchantContactFilingTaskForBounce).mockResolvedValue({
+      task: null,
+      timeline: null,
+      reopened: true,
+    });
+    const second = await recordMerchantContactEmailBounceEvent(supabase, {
+      messageId: "re_mc_5",
+      eventType: "email.bounced",
+    });
+
+    expect(second).toEqual({ status: "recorded", caseId: CASE_ID, state: "bounced" });
+    expect(reopenMerchantContactFilingTaskForBounce).toHaveBeenCalledTimes(2);
+  });
+
+  it("is harmless on a later replay once everything is already satisfied", async () => {
+    const notes = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_mc_6",
+    });
+    const supabase = makeBounceSupabase(notes);
+
+    const first = await recordMerchantContactEmailBounceEvent(supabase, {
+      messageId: "re_mc_6",
+      eventType: "email.bounced",
+    });
+    const second = await recordMerchantContactEmailBounceEvent(supabase, {
+      messageId: "re_mc_6",
+      eventType: "email.bounced",
+    });
+
+    expect(first).toEqual({ status: "recorded", caseId: CASE_ID, state: "bounced" });
+    expect(second).toEqual({ status: "recorded", caseId: CASE_ID, state: "bounced" });
+    expect(reopenMerchantContactFilingTaskForBounce).toHaveBeenCalledTimes(2);
+    expect(completeFollowUpCaseTaskIfOwnedByAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to a still-open task when no filing matches yet", async () => {
+    const notes = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_mc_2",
+    });
+    const task = { id: "task-1", user_id: USER_ID, case_id: CASE_ID, notes };
+    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[] };
+    const supabase = {
+      from(table: string) {
+        if (table === "justice_case_filings") {
+          return {
+            select: () => ({
+              like: () => ({ limit: async () => ({ data: [], error: null }) }),
+              eq: () => ({ eq: async () => ({ data: [], error: null }) }),
+            }),
+          };
+        }
+        if (table === "justice_case_tasks") {
+          return {
+            select: () => ({
+              like: () => ({
+                limit: async () => ({ data: [task], error: null }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  task.notes = String(payload.notes);
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        if (table === "justice_cases") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: { timeline: caseRow.timeline }, error: null }) }),
+              }),
+            }),
+            update: (payload: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => {
+                  caseRow.timeline = payload.timeline as unknown[];
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as unknown as SupabaseClient;
+
+    const result = await recordMerchantContactEmailBounceEvent(supabase, {
+      messageId: "re_mc_2",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({
+      status: "recorded",
+      caseId: CASE_ID,
+      state: "bounced",
+    });
+    expect(parseMerchantContactEmailDeliveryRecord(task.notes)?.delivery_state).toBe("bounced");
+  });
+
+  it("ignores an unknown message id", async () => {
+    const notes = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_mc_3",
+    });
+
+    const result = await recordMerchantContactEmailBounceEvent(makeBounceSupabase(notes), {
+      messageId: "re_does_not_exist",
+      eventType: "email.bounced",
+    });
+
+    expect(result).toEqual({ status: "ignored_unknown" });
+    expect(reopenMerchantContactFilingTaskForBounce).not.toHaveBeenCalled();
+    expect(completeFollowUpCaseTaskIfOwnedByAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("merchantContactEmailBounceState", () => {
+  it("reads bounced/complained off the filing, distinct from a genuinely accepted send", () => {
+    const complained = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "complained" as never,
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_1",
+    });
+    const accepted = upsertMerchantContactEmailDeliveryNotes(null, {
+      delivery_state: "accepted",
+      provider: "resend",
+      recipient: "support@acme.example",
+      provider_message_id: "re_2",
+    });
+
+    expect(merchantContactEmailBounceState({ notes: complained })).toBe("complained");
+    expect(merchantContactEmailBounceState({ notes: accepted })).toBeNull();
+    expect(merchantContactEmailBounceState(undefined)).toBeNull();
   });
 });

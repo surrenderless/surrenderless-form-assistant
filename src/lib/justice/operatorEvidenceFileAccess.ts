@@ -5,7 +5,10 @@ import { taskNotesMatchDemandLetterFilingMarker } from "@/lib/justice/demandLett
 import { taskNotesMatchDotFilingMarker } from "@/lib/justice/dotFilingTask";
 import { taskNotesMatchFccFilingMarker } from "@/lib/justice/fccFilingTask";
 import { taskNotesMatchFtcFilingMarker } from "@/lib/justice/ftcFilingTask";
-import { taskNotesMatchFollowUpResponseReviewMarker } from "@/lib/justice/followUpResponseReviewTask";
+import {
+  taskNotesMatchFollowUpResponseReviewMarker,
+  taskNotesMatchSupersededLaneReviewMarker,
+} from "@/lib/justice/followUpResponseReviewTask";
 import { taskNotesMatchMerchantContactFilingMarker } from "@/lib/justice/merchantContactFilingTask";
 import { taskNotesMatchPaymentDisputeFilingMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { taskNotesMatchStateAgFilingMarker } from "@/lib/justice/stateAgFilingTask";
@@ -25,6 +28,7 @@ export function taskNotesMatchAnyOperatorFulfillmentMarker(
   if (!trimmedCaseId) return false;
   return (
     taskNotesMatchFollowUpResponseReviewMarker(notes, trimmedCaseId) ||
+    taskNotesMatchSupersededLaneReviewMarker(notes, trimmedCaseId) ||
     taskNotesMatchMerchantContactFilingMarker(notes, trimmedCaseId) ||
     taskNotesMatchStateAgFilingMarker(notes, trimmedCaseId) ||
     taskNotesMatchDemandLetterFilingMarker(notes, trimmedCaseId) ||

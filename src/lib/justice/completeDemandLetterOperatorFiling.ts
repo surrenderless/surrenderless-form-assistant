@@ -8,10 +8,14 @@ import {
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
   completeDemandLetterFilingTaskIfOpen,
+  demandLetterCanonicalApprovedActionForFollowUp,
   demandLetterFilingsForManualTracking,
   hasDemandLetterFilingWithConfirmation,
   taskNotesMatchDemandLetterFilingMarker,
 } from "@/lib/justice/demandLetterFilingTask";
+import { ensureFollowUpCaseTask } from "@/lib/justice/followUpCaseTask";
+import { ensureSupersededLaneResponseReviewTask } from "@/lib/justice/followUpResponseReviewTask";
+import { parseDemandLetterEmailDeliveryRecord } from "@/lib/justice/demandLetterEmailDelivery";
 import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
@@ -39,6 +43,12 @@ const MAX_NOTES = 8000;
 
 function clampLen(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
+}
+
+/** A bounced/complained filing must not be treated as an already-successful send. */
+function isDemandLetterFilingBouncedOrComplained(notes: string | null | undefined): boolean {
+  const state = parseDemandLetterEmailDeliveryRecord(notes)?.delivery_state;
+  return state === "bounced" || state === "complained";
 }
 
 function buildCompletedApprovedNextAction(approvedNextAction: JusticeApprovedNextAction): {
@@ -169,16 +179,20 @@ export async function completeDemandLetterOperatorFiling(
     }
   }
 
+  // A bounced/complained filing does not count as an already-successful send — remediation
+  // after a bounce must produce a fresh filing row with the operator's new confirmation,
+  // preserving the failed one as history rather than silently discarding the new attempt.
+  const confirmedNonBouncedFiling = demandLetterFilings.find(
+    (f) => Boolean(f.confirmation_number?.trim()) && !isDemandLetterFilingBouncedOrComplained(f.notes)
+  );
+
   let filing: JusticeCaseFilingRow;
   let timeline: TimelineEntry[] | null = null;
   let idempotent = false;
 
-  if (demandLetterFilings.length > 0 && task.completed_at?.trim()) {
+  if (confirmedNonBouncedFiling) {
     idempotent = true;
-    filing = demandLetterFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-  } else if (demandLetterFilings.length > 0) {
-    filing = demandLetterFilings.find((f) => f.confirmation_number?.trim()) as JusticeCaseFilingRow;
-    idempotent = true;
+    filing = confirmedNonBouncedFiling;
   } else {
     const insertRow: Record<string, unknown> = {
       user_id: userId,
@@ -209,6 +223,12 @@ export async function completeDemandLetterOperatorFiling(
       detail,
     });
   }
+
+  // True only for the actual remediation call (a fresh filing was just inserted because the
+  // prior one bounced/complained) — never on a later idempotent replay, which must not re-ensure
+  // (or duplicate) the follow-up it already started.
+  const isBounceRemediation =
+    !idempotent && demandLetterFilings.some((f) => isDemandLetterFilingBouncedOrComplained(f.notes));
 
   const taskResult = await completeDemandLetterFilingTaskIfOpen(supabase, userId, caseId, taskId);
   if (!taskResult.task) {
@@ -299,6 +319,56 @@ export async function completeDemandLetterOperatorFiling(
     }
     if (followUpEnsure.timeline) {
       timeline = followUpEnsure.timeline;
+    }
+  }
+
+  // The above only ensures a follow-up for whichever action is CURRENTLY approved — if the
+  // escalation ladder has already advanced past demand letter (approvedNext is some later lane's
+  // action), it never builds a demand-letter-flavored follow-up at all. On a genuine bounce
+  // remediation, demand letter still needs its own fresh follow-up regardless of ladder position,
+  // built from its own stable identity — never from (or written back into) approved_next_action.
+  if (
+    isBounceRemediation &&
+    approvedNext?.href?.trim() !== MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF
+  ) {
+    const followUpEnsure = await ensureFollowUpCaseTask(
+      supabase,
+      userId,
+      caseId,
+      demandLetterCanonicalApprovedActionForFollowUp(filing.filed_at ?? undefined)
+    );
+    if (!followUpEnsure.task) {
+      return {
+        ok: false,
+        error: "Filing recorded but could not start a fresh demand letter follow-up",
+        status: 500,
+      };
+    }
+    if (followUpEnsure.timeline) {
+      timeline = followUpEnsure.timeline;
+    }
+
+    // A response can arrive at any point before this lane's own follow-up due date, not only
+    // after — so this lane's owner_href-scoped review must exist from the moment remediation
+    // succeeds, not only once processDueFollowUps notices the follow-up is overdue. Idempotent
+    // by (case, owner_href); never touches client_state/approved_next_action.
+    const reviewEnsure = await ensureSupersededLaneResponseReviewTask(
+      supabase,
+      userId,
+      caseId,
+      MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+      followUpEnsure.task.id,
+      canonicalDestination
+    );
+    if (!reviewEnsure.task) {
+      return {
+        ok: false,
+        error: "Filing recorded but could not start this lane's own response review",
+        status: 500,
+      };
+    }
+    if (reviewEnsure.timeline) {
+      timeline = reviewEnsure.timeline;
     }
   }
 

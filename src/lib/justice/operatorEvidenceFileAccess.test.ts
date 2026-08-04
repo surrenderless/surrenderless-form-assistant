@@ -15,6 +15,12 @@ describe("operatorEvidenceFileAccess", () => {
     expect(taskNotesMatchAnyOperatorFulfillmentMarker("unrelated notes", CASE_ID)).toBe(false);
   });
 
+  it("matches a superseded-lane response review, so the generic task PATCH cannot bare-complete it", () => {
+    const notes = `superseded_lane_review:${CASE_ID}\nowner_href:/justice/demand-letter\ncase_id: ${CASE_ID}`;
+    expect(taskNotesMatchAnyOperatorFulfillmentMarker(notes, CASE_ID)).toBe(true);
+    expect(taskNotesMatchAnyOperatorFulfillmentMarker(notes, OTHER_CASE)).toBe(false);
+  });
+
   it("grants evidence access only for open matching tasks on the same case", () => {
     const openNotes = `cfpb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}\ndraft:\nBody`;
 
