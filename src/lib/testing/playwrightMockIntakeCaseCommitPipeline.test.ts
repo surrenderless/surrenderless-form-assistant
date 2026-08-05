@@ -42,4 +42,14 @@ describe("playwrightMockIntakeCaseCommitPipeline", () => {
     expect(result.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(result.updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+
+  it("returns a fixed non-null paid_at, matching the server's own treatment of mock cases as already paid", () => {
+    const result = buildPlaywrightMockCaseCreateResponse(
+      { problem_category: "online_purchase" },
+      []
+    );
+
+    expect(result.paid_at).toEqual(expect.any(String));
+    expect(result.paid_at?.trim()).not.toBe("");
+  });
 });
