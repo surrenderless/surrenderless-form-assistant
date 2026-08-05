@@ -259,6 +259,7 @@ import {
   parseReviewTaskDeepLinkParams,
   resolveReviewTaskDeepLinkAction,
 } from "@/lib/justice/resolveReviewTaskDeepLink";
+import { parseCheckoutReturnStatus } from "@/lib/stripe/parseCheckoutReturnStatus";
 import {
   buildSupersededLaneReviewCompletionRequest,
   selectOpenSupersededLaneReviewTasks,
@@ -2452,6 +2453,9 @@ export default function JusticeChatAiPage() {
    *  once per page load — set only once we've actually settled sign-in state (see the effect),
    *  never on a signed-out visit, so it can still retry once the consumer signs in. */
   const reviewDeepLinkHandledRef = useRef(false);
+  /** Guards the Stripe checkout-return effect below (?case=&checkout=success|cancelled) so it
+   *  resolves at most once per page load, same lifecycle as reviewDeepLinkHandledRef. */
+  const checkoutReturnHandledRef = useRef(false);
   const persistedTurnIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<UiMessage[]>([]);
   const prevApprovedActionHrefForAssistedPracticeRef = useRef<string | undefined>(undefined);
@@ -2596,6 +2600,13 @@ export default function JusticeChatAiPage() {
   const ownedFulfillmentSnapshotRef = useRef<ChatOwnedFulfillmentObservationSnapshot | null>(null);
   /** Latest server archived_at for the active case (from case GET refresh). */
   const caseArchivedAtRef = useRef<string | null>(null);
+  /** Durable one-time-payment entitlement for the active case, read from the server's own
+   *  paid_at on every case refresh — never set from a redirect param or any other client-side
+   *  signal. Only the Stripe webhook (server-side, signature-verified) can make this non-null. */
+  const casePaidAtRef = useRef<string | null>(null);
+  /** Immediate (synchronous) reentrancy guard for handleApprovePreparedPacketFromChat — a ref so
+   *  a second invocation arriving before the next render still sees it, unlike React state. */
+  const approvingPreparedPacketRef = useRef(false);
   const partsRef = useRef(parts);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
@@ -2991,6 +3002,56 @@ export default function JusticeChatAiPage() {
     };
   }, [isLoaded, isSignedIn]);
 
+  // Resolves a return from Stripe Checkout (?case=&checkout=success|cancelled). Never treats the
+  // redirect itself as proof of payment — it only ensures the exact case is loaded, then
+  // refreshes from the server (paid_at only ever comes from there) with a few bounded retries to
+  // absorb ordinary webhook-delivery latency, so approval can resume cleanly without the
+  // consumer needing to manually reload.
+  useEffect(() => {
+    if (!isLoaded || typeof window === "undefined") return;
+    if (checkoutReturnHandledRef.current) return;
+
+    const search = window.location.search;
+    const checkoutStatus = parseCheckoutReturnStatus(search);
+    if (!checkoutStatus) {
+      checkoutReturnHandledRef.current = true;
+      return;
+    }
+    if (!isSignedIn) return;
+    checkoutReturnHandledRef.current = true;
+
+    const returnCaseId = new URLSearchParams(search).get("case")?.trim() ?? "";
+    if (!returnCaseId || !isUuid(returnCaseId)) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const sessionCaseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+        if (sessionCaseId !== returnCaseId) {
+          const caseRow = await fetchJusticeCaseById(returnCaseId);
+          if (cancelled || !caseRow?.id) return;
+          await hydrateChatFromJusticeCaseRow(caseRow);
+        } else {
+          await refreshChatCaseFromServer(returnCaseId);
+        }
+        if (cancelled || checkoutStatus !== "success") return;
+
+        for (let attempt = 0; attempt < 3 && !casePaidAtRef.current; attempt += 1) {
+          if (cancelled) return;
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+          if (cancelled) return;
+          await refreshChatCaseFromServer(returnCaseId);
+        }
+      } catch (e) {
+        console.warn("justice chat-ai: checkout return resolve error", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn]);
+
   async function handleRestoreMostRecentArchivedCaseFromChat(): Promise<{
     ok: boolean;
     companyName?: string;
@@ -3209,71 +3270,126 @@ export default function JusticeChatAiPage() {
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId)) return false;
 
-    const intake = buildJusticeIntakeFromParts(parts);
-    const manualFtc =
-      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
-    const contacted = intake.already_contacted === "yes";
-    const cfpbRel = cfpbLikelyRelevant(intake);
-    const fccRel = fccLikelyRelevant(intake);
-    const dotRel = dotLikelyRelevant(intake);
-    const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
-    const destinations = computeJusticeDestinations(intake, {
-      manualFtc,
-      useCompanyContactLabels,
-      hasUploadedEvidenceFile: savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile),
-    });
-    const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
-    const nextActionTarget = buildApprovedNextActionTarget(prepared);
-    const withTracking = mergeApprovedNextActionTrackingFields(
-      approvedNextAction,
-      nextActionTarget
-    );
+    // Immediate reentrancy guard — a ref (not React state) so it is visible synchronously to a
+    // second invocation arriving before the next render, covering both the button click (already
+    // disabled while approvingPreparedPacket is true) and the fromChatConsent trigger path (which
+    // isn't gated by that button state). This is a client-side UX guard only — the server
+    // independently enforces payment on PATCH and Stripe's own idempotency key (below) guarantees
+    // at most one payable session server-side regardless of what happens here.
+    if (approvingPreparedPacketRef.current) return false;
+    approvingPreparedPacketRef.current = true;
 
-    // Persist first — never commit optimistic approved session/UI state before PATCH succeeds.
-    setApprovingPreparedPacket(true);
-    setTrackingSaveError(null);
     try {
-      logPlaywrightApprovePacketDiagnostic("handler:before-persist", caseId, {
-        fromChatConsent: options?.fromChatConsent === true,
-        approvePreparedPacketChecked,
-        nextActionHref: withTracking.href,
-        contacted,
-      });
-      const result = await persistPreparedPacketApprovalToCase({
-        caseId,
-        nextAction: withTracking,
-        logLabel: "justice chat-ai",
-      });
-      if (!result.ok) {
-        console.warn(
-          "justice chat-ai: prepared packet approve failed",
-          result.retryableOwnedFilingEnsure ? "owned-filing ensure" : result.error
-        );
-        setTrackingSaveError(
-          result.retryableOwnedFilingEnsure
-            ? OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR
-            : CHAT_TRACKING_SAVE_ERROR_MESSAGE
-        );
-        return false;
+      // One-time payment gate: the server independently enforces this on PATCH regardless of what
+      // happens here — this is purely the consumer-facing redirect to Stripe. casePaidAtRef is
+      // read-only client state populated from the server's own paid_at; never treated as proof by
+      // itself, only used to decide whether to send the consumer to checkout first.
+      if (!casePaidAtRef.current) {
+        setApprovingPreparedPacket(true);
+        setTrackingSaveError(null);
+        try {
+          const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}/checkout`, {
+            method: "POST",
+          });
+          const payload = (await res.json().catch(() => null)) as {
+            url?: string;
+            alreadyPaid?: boolean;
+            error?: string;
+          } | null;
+          if (!res.ok || !payload) {
+            setTrackingSaveError(payload?.error ?? "Could not start payment. Try again.");
+            return false;
+          }
+          if (payload.alreadyPaid) {
+            // Paid via another tab/session since our last refresh — sync the ref and let the
+            // consumer retry the same click rather than silently proceeding on a stale read.
+            casePaidAtRef.current = new Date().toISOString();
+            setTrackingSaveError("Payment already confirmed — click Approve again to continue.");
+            return false;
+          }
+          if (!payload.url) {
+            setTrackingSaveError("Could not start payment. Try again.");
+            return false;
+          }
+          window.location.href = payload.url;
+          return false;
+        } catch (e) {
+          console.warn("justice chat-ai: checkout start error", e);
+          setTrackingSaveError("Could not start payment. Try again.");
+          return false;
+        } finally {
+          setApprovingPreparedPacket(false);
+        }
       }
 
-      const hydrated =
-        hydrateApprovedNextActionForDisplay(caseId, result.clientState) ?? withTracking;
-      writePreparedPacketApproved(caseId);
-      writeSessionApprovedNextAction(caseId, hydrated);
-      setPreparedPacketApproved(
-        parseJusticeCaseClientState(result.clientState).prepared_packet_approved === true
+      const intake = buildJusticeIntakeFromParts(parts);
+      const manualFtc =
+        typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+      const contacted = intake.already_contacted === "yes";
+      const cfpbRel = cfpbLikelyRelevant(intake);
+      const fccRel = fccLikelyRelevant(intake);
+      const dotRel = dotLikelyRelevant(intake);
+      const useCompanyContactLabels = cfpbRel || fccRel || dotRel;
+      const destinations = computeJusticeDestinations(intake, {
+        manualFtc,
+        useCompanyContactLabels,
+        hasUploadedEvidenceFile: savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile),
+      });
+      const prepared = pickPreparedNextAction({ contacted, useCompanyContactLabels, destinations });
+      const nextActionTarget = buildApprovedNextActionTarget(prepared);
+      const withTracking = mergeApprovedNextActionTrackingFields(
+        approvedNextAction,
+        nextActionTarget
       );
-      setApprovedNextAction(hydrated);
-      setApprovePreparedPacketChecked(false);
+
+      // Persist first — never commit optimistic approved session/UI state before PATCH succeeds.
+      setApprovingPreparedPacket(true);
       setTrackingSaveError(null);
-      return true;
-    } catch (e) {
-      console.warn("justice chat-ai: prepared packet approve error", e);
-      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
-      return false;
+      try {
+        logPlaywrightApprovePacketDiagnostic("handler:before-persist", caseId, {
+          fromChatConsent: options?.fromChatConsent === true,
+          approvePreparedPacketChecked,
+          nextActionHref: withTracking.href,
+          contacted,
+        });
+        const result = await persistPreparedPacketApprovalToCase({
+          caseId,
+          nextAction: withTracking,
+          logLabel: "justice chat-ai",
+        });
+        if (!result.ok) {
+          console.warn(
+            "justice chat-ai: prepared packet approve failed",
+            result.retryableOwnedFilingEnsure ? "owned-filing ensure" : result.error
+          );
+          setTrackingSaveError(
+            result.retryableOwnedFilingEnsure
+              ? OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR
+              : CHAT_TRACKING_SAVE_ERROR_MESSAGE
+          );
+          return false;
+        }
+
+        const hydrated =
+          hydrateApprovedNextActionForDisplay(caseId, result.clientState) ?? withTracking;
+        writePreparedPacketApproved(caseId);
+        writeSessionApprovedNextAction(caseId, hydrated);
+        setPreparedPacketApproved(
+          parseJusticeCaseClientState(result.clientState).prepared_packet_approved === true
+        );
+        setApprovedNextAction(hydrated);
+        setApprovePreparedPacketChecked(false);
+        setTrackingSaveError(null);
+        return true;
+      } catch (e) {
+        console.warn("justice chat-ai: prepared packet approve error", e);
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return false;
+      } finally {
+        setApprovingPreparedPacket(false);
+      }
     } finally {
-      setApprovingPreparedPacket(false);
+      approvingPreparedPacketRef.current = false;
     }
   }
 
@@ -3941,12 +4057,15 @@ export default function JusticeChatAiPage() {
           client_state?: unknown;
           timeline?: unknown;
           archived_at?: string | null;
+          paid_at?: string | null;
         };
         if (options?.signal?.aborted) return hydrated;
         caseArchivedAtRef.current =
           typeof data.archived_at === "string" && data.archived_at.trim()
             ? data.archived_at.trim()
             : null;
+        casePaidAtRef.current =
+          typeof data.paid_at === "string" && data.paid_at.trim() ? data.paid_at.trim() : null;
         if (Array.isArray(data.timeline)) {
           const localTimeline = readTimeline(caseId);
           replaceTimelineForCase(

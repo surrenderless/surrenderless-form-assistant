@@ -40,6 +40,7 @@ import {
 import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merchantContactEmailDelivery";
 import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
+import { rejectUnpaidPreparedPacketApprovalPatch } from "@/lib/justice/rejectUnpaidPreparedPacketApprovalPatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import { CLIENT_STATE_UPDATE_CONFLICT_ERROR } from "@/lib/justice/updateClientStateIfUnchanged";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
@@ -87,10 +88,11 @@ type CaseResponse = {
   updated_at: string;
   archived_at: string | null;
   case_label: string | null;
+  paid_at: string | null;
 };
 
 const SELECT =
-  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label" as const;
+  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label, paid_at" as const;
 
 function isValidArchivedAt(value: unknown): value is string | null {
   if (value === null) return true;
@@ -245,6 +247,9 @@ async function patchJusticeCase(
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
   let existingRowUpdatedAt: string | undefined;
+  // Mock/E2E cases have no real Stripe-backed payment record — treated as already paid so the
+  // payment gate never interferes with the Playwright pipeline.
+  let existingPaidAt: string | null | undefined = isMockCase ? new Date(0).toISOString() : undefined;
   let validationTasks: JusticeCaseTaskRow[] = [];
   let validationFilings: ManualActionTrackingFiling[] = [];
 
@@ -264,7 +269,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("client_state, archived_at, updated_at")
+        .select("client_state, archived_at, updated_at, paid_at")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -280,6 +285,7 @@ async function patchJusticeCase(
       existingClientState = existingRow.client_state;
       existingArchivedAt = existingRow.archived_at as string | null;
       existingRowUpdatedAt = existingRow.updated_at as string;
+      existingPaidAt = existingRow.paid_at as string | null;
 
       if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
         const { data: taskRows, error: tasksErr } = await supabaseForValidation
@@ -336,6 +342,24 @@ async function patchJusticeCase(
     });
     if (escalationReject) {
       return NextResponse.json({ error: escalationReject }, { status: 409 });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+      // Gate ONLY the first prepared-packet-approval transition — the exact moment Surrenderless/
+      // operator labor is committed. Intake, evidence, and an already-approved/in-progress case
+      // are never blocked by this check. paid_at here comes only from the database (written
+      // exclusively by the signature-verified Stripe webhook) — never from this request's body.
+      const paymentReject = rejectUnpaidPreparedPacketApprovalPatch({
+        existingClientState,
+        incomingClientState: patch.client_state,
+        paidAt: existingPaidAt,
+      });
+      if (paymentReject) {
+        return NextResponse.json(
+          { error: paymentReject, requiresPayment: true },
+          { status: 402 }
+        );
+      }
     }
   }
 
