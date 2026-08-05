@@ -48,6 +48,7 @@ import {
   writeSessionApprovedNextAction,
 } from "@/lib/justice/approvedNextActionState";
 import {
+  canonicalFilingDestinationForApprovedActionHref,
   chatResolutionTrackingFormOpen,
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
@@ -245,9 +246,23 @@ import {
   readLastAssistedSubmissionAttemptFromClientState,
   type LastAssistedSubmissionAttemptSnapshot,
 } from "@/lib/justice/submissionAttemptState";
-import { taskNotesMatchFollowUpMarker } from "@/lib/justice/followUpCaseTask";
-import { taskNotesMatchFollowUpResponseReviewMarker } from "@/lib/justice/followUpResponseReviewTask";
+import {
+  followUpTaskOwnerHref,
+  taskNotesMatchFollowUpMarker,
+} from "@/lib/justice/followUpCaseTask";
+import {
+  taskNotesMatchFollowUpResponseReviewMarker,
+  type SupersededLaneReviewOutcome,
+} from "@/lib/justice/followUpResponseReviewTask";
 import { taskNotesMatchHandlingRequestMarker } from "@/lib/justice/handlingRequestTask";
+import {
+  parseReviewTaskDeepLinkParams,
+  resolveReviewTaskDeepLinkAction,
+} from "@/lib/justice/resolveReviewTaskDeepLink";
+import {
+  buildSupersededLaneReviewCompletionRequest,
+  selectOpenSupersededLaneReviewTasks,
+} from "@/lib/justice/supersededLaneReviewChatPrompt";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import {
   getJusticeTaskDueKind,
@@ -2017,6 +2032,77 @@ function ChatFollowUpResponseReviewPrompt({
   );
 }
 
+/**
+ * Renders every open superseded_lane_review task for this case — never just one, since more than
+ * one prior lane can have its own open review simultaneously. When a notification email's deep
+ * link identifies an exact task (deepLinkTaskId), that task is sorted first and highlighted, so
+ * it stays visible even with several open reviews — never hidden or silently dropped.
+ */
+function ChatSupersededLaneReviewPrompt({
+  caseId,
+  tasks,
+  savingTaskId,
+  errorByTaskId,
+  deepLinkTaskId,
+  onOutcome,
+}: {
+  caseId: string;
+  tasks: JusticeCaseTaskRow[];
+  savingTaskId: string | null;
+  errorByTaskId: Record<string, string>;
+  deepLinkTaskId: string | null;
+  onOutcome: (task: JusticeCaseTaskRow, outcome: SupersededLaneReviewOutcome) => void;
+}) {
+  if (!caseId) return null;
+  const sortedReviews = selectOpenSupersededLaneReviewTasks(tasks, caseId, deepLinkTaskId);
+  if (sortedReviews.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-2">
+      {sortedReviews.map((task) => {
+        const ownerHref = followUpTaskOwnerHref(task.notes) ?? "";
+        const laneLabel = canonicalFilingDestinationForApprovedActionHref(ownerHref) ?? "this step";
+        const isDeepLinked = deepLinkTaskId != null && task.id === deepLinkTaskId;
+        const saving = savingTaskId === task.id;
+        const error = errorByTaskId[task.id];
+        return (
+          <div
+            key={task.id}
+            className={
+              isDeepLinked
+                ? "space-y-1.5 rounded-md border border-blue-400/60 bg-blue-50/60 px-2 py-1.5 dark:border-blue-600/50 dark:bg-blue-950/30"
+                : "space-y-1.5 rounded-md border border-amber-400/40 bg-amber-50/60 px-2 py-1.5 dark:border-amber-600/40 dark:bg-amber-950/30"
+            }
+          >
+            <p className="text-[11px] font-medium text-amber-950 dark:text-amber-100">
+              Did {laneLabel} ever receive a response?
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onOutcome(task, "response_received")}
+                className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-700 dark:bg-neutral-900 dark:text-emerald-200 dark:hover:bg-emerald-950"
+              >
+                {saving ? "Saving…" : "Response received"}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onOutcome(task, "no_response")}
+                className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                {saving ? "Saving…" : "No response"}
+              </button>
+            </div>
+            {error ? <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ChatHandlingTrackingStatusReadOnly({
   readinessLoading,
   approvedNextAction,
@@ -2040,6 +2126,10 @@ function ChatHandlingTrackingStatusReadOnly({
   savingFollowUpResponseReviewOutcome = false,
   followUpResponseReviewError = null,
   onFollowUpResponseReviewOutcome,
+  savingSupersededLaneReviewTaskId = null,
+  supersededLaneReviewErrorByTaskId = {},
+  reviewDeepLinkTaskId = null,
+  onSupersededLaneReviewOutcome,
 }: {
   readinessLoading: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -2065,6 +2155,13 @@ function ChatHandlingTrackingStatusReadOnly({
   onFollowUpResponseReviewOutcome?: (
     taskId: string,
     outcome: "resolved" | "no_resolution"
+  ) => void;
+  savingSupersededLaneReviewTaskId?: string | null;
+  supersededLaneReviewErrorByTaskId?: Record<string, string>;
+  reviewDeepLinkTaskId?: string | null;
+  onSupersededLaneReviewOutcome?: (
+    task: JusticeCaseTaskRow,
+    outcome: SupersededLaneReviewOutcome
   ) => void;
 }) {
   const handlingRequested = Boolean(approvedNextAction.handling_requested_at?.trim());
@@ -2139,6 +2236,16 @@ function ChatHandlingTrackingStatusReadOnly({
           saving={savingFollowUpResponseReviewOutcome}
           error={followUpResponseReviewError}
           onOutcome={onFollowUpResponseReviewOutcome}
+        />
+      ) : null}
+      {caseId && onSupersededLaneReviewOutcome ? (
+        <ChatSupersededLaneReviewPrompt
+          caseId={caseId}
+          tasks={tasks}
+          savingTaskId={savingSupersededLaneReviewTaskId}
+          errorByTaskId={supersededLaneReviewErrorByTaskId}
+          deepLinkTaskId={reviewDeepLinkTaskId}
+          onOutcome={onSupersededLaneReviewOutcome}
         />
       ) : null}
       {showArchiveWhenComplete ? (
@@ -2341,6 +2448,10 @@ export default function JusticeChatAiPage() {
    *  different case can never suppress or falsely trigger a recompute. */
   const hasUploadedEvidenceFileRef = useRef<{ caseId: string; value: boolean } | null>(null);
   const transcriptCaseIdRef = useRef("");
+  /** Guards the review-task deep-link effect below so a `?case=&task=` link is resolved at most
+   *  once per page load — set only once we've actually settled sign-in state (see the effect),
+   *  never on a signed-out visit, so it can still retry once the consumer signs in. */
+  const reviewDeepLinkHandledRef = useRef(false);
   const persistedTurnIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<UiMessage[]>([]);
   const prevApprovedActionHrefForAssistedPracticeRef = useRef<string | undefined>(undefined);
@@ -2377,6 +2488,16 @@ export default function JusticeChatAiPage() {
   const [followUpResponseReviewError, setFollowUpResponseReviewError] = useState<string | null>(
     null
   );
+  const [savingSupersededLaneReviewTaskId, setSavingSupersededLaneReviewTaskId] = useState<
+    string | null
+  >(null);
+  const [supersededLaneReviewErrorByTaskId, setSupersededLaneReviewErrorByTaskId] = useState<
+    Record<string, string>
+  >({});
+  /** Source task id from a notification email's `?case=&task=` deep link — kept independent of
+   *  the hydrate/reject decision so it still prioritizes/highlights the right review once tasks
+   *  load, including when the link's case already matched the active session (same-case links). */
+  const [reviewDeepLinkTaskId, setReviewDeepLinkTaskId] = useState<string | null>(null);
   const [markingActionHandled, setMarkingActionHandled] = useState(false);
   const [markingActionStarted, setMarkingActionStarted] = useState(false);
   const [approvedNextAction, setApprovedNextAction] = useState<JusticeApprovedNextAction | undefined>(
@@ -2806,6 +2927,69 @@ export default function JusticeChatAiPage() {
 
     return { ok: true, companyName: intake.company_name?.trim() || undefined };
   }
+
+  // Resolves a consumer-review-notification email's `?case=&task=` deep link. Runs at most once
+  // per page load. Handles the fresh-tab case (sessionStorage empty — the confirmed blocker this
+  // exists to fix) and the wrong-existing-session case (a different case already active) by
+  // hydrating the EXACT linked case, never a "most recent" substitute. Malformed, unauthorized,
+  // completed, cross-case, or mismatched-type links are rejected silently: no active-state change,
+  // no distinguishing error, so nothing about which case/task exists is ever leaked.
+  useEffect(() => {
+    if (!isLoaded || typeof window === "undefined") return;
+    if (reviewDeepLinkHandledRef.current) return;
+
+    const search = window.location.search;
+    const deepLink = parseReviewTaskDeepLinkParams(search);
+    if (!deepLink) {
+      reviewDeepLinkHandledRef.current = true;
+      return;
+    }
+    // Set independent of the hydrate/reject decision below (including the same-case case, which
+    // never reaches the fetch flow) — inert unless it happens to match an already-legitimately-
+    // loaded open task, so it's safe to record before authorization/case-matching is resolved.
+    setReviewDeepLinkTaskId(deepLink.taskId);
+    // Not yet known whether this consumer is signed in — wait rather than reject, so a link
+    // opened before auth finishes loading still resolves once isSignedIn settles.
+    if (!isSignedIn) return;
+    reviewDeepLinkHandledRef.current = true;
+
+    const sessionCaseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const caseLookup = await fetchJusticeCaseById(deepLink.caseId);
+        if (cancelled) return;
+
+        let tasks: JusticeCaseTaskRow[] | null = null;
+        if (caseLookup?.id === deepLink.caseId) {
+          const res = await fetch(
+            `/api/justice/tasks?case_id=${encodeURIComponent(deepLink.caseId)}`
+          );
+          if (cancelled) return;
+          const body: unknown = res.ok ? await res.json() : null;
+          tasks = Array.isArray(body) ? (body as JusticeCaseTaskRow[]) : null;
+        }
+        if (cancelled) return;
+
+        const action = resolveReviewTaskDeepLinkAction({
+          search,
+          sessionCaseId,
+          caseLookup: caseLookup?.id ? { id: caseLookup.id } : null,
+          tasks,
+        });
+        if (action.kind !== "hydrate" || !caseLookup) return;
+
+        await hydrateChatFromJusticeCaseRow(caseLookup);
+      } catch (e) {
+        console.warn("justice chat-ai: review deep link resolve error", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn]);
 
   async function handleRestoreMostRecentArchivedCaseFromChat(): Promise<{
     ok: boolean;
@@ -3982,6 +4166,49 @@ export default function JusticeChatAiPage() {
       setFollowUpResponseReviewError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
     } finally {
       setSavingFollowUpResponseReviewOutcome(false);
+    }
+  }
+
+  async function handleSupersededLaneReviewOutcome(
+    task: JusticeCaseTaskRow,
+    outcome: SupersededLaneReviewOutcome
+  ) {
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    const requestBody = buildSupersededLaneReviewCompletionRequest(caseId, task, outcome);
+    if (!requestBody) return;
+
+    setSavingSupersededLaneReviewTaskId(task.id);
+    setSupersededLaneReviewErrorByTaskId((prev) => ({ ...prev, [task.id]: "" }));
+    try {
+      const res = await fetch(
+        "/api/justice/follow-up-response-review/consumer-complete-superseded",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        }
+      );
+      if (!res.ok) {
+        console.warn("justice chat-ai: superseded lane review outcome failed", res.status);
+        setSupersededLaneReviewErrorByTaskId((prev) => ({
+          ...prev,
+          [task.id]: CHAT_TRACKING_SAVE_ERROR_MESSAGE,
+        }));
+        return;
+      }
+      // Re-fetches tasks from the server, so the now-completed task's completed_at excludes it
+      // from ChatSupersededLaneReviewPrompt's open-task filter — this IS the refresh/remove step.
+      await refreshFullChatCaseContextFromServer(caseId);
+      setSupersededLaneReviewErrorByTaskId((prev) => ({ ...prev, [task.id]: "" }));
+    } catch (e) {
+      console.warn("justice chat-ai: superseded lane review outcome error", e);
+      setSupersededLaneReviewErrorByTaskId((prev) => ({
+        ...prev,
+        [task.id]: CHAT_TRACKING_SAVE_ERROR_MESSAGE,
+      }));
+    } finally {
+      setSavingSupersededLaneReviewTaskId(null);
     }
   }
 
@@ -7295,6 +7522,12 @@ export default function JusticeChatAiPage() {
                       onFollowUpResponseReviewOutcome={(taskId, outcome) =>
                         void handleFollowUpResponseReviewOutcome(taskId, outcome)
                       }
+                      savingSupersededLaneReviewTaskId={savingSupersededLaneReviewTaskId}
+                      supersededLaneReviewErrorByTaskId={supersededLaneReviewErrorByTaskId}
+                      reviewDeepLinkTaskId={reviewDeepLinkTaskId}
+                      onSupersededLaneReviewOutcome={(task, outcome) =>
+                        void handleSupersededLaneReviewOutcome(task, outcome)
+                      }
                     />
                   </>
                 ) : null}
@@ -7374,6 +7607,12 @@ export default function JusticeChatAiPage() {
                       followUpResponseReviewError={followUpResponseReviewError}
                       onFollowUpResponseReviewOutcome={(taskId, outcome) =>
                         void handleFollowUpResponseReviewOutcome(taskId, outcome)
+                      }
+                      savingSupersededLaneReviewTaskId={savingSupersededLaneReviewTaskId}
+                      supersededLaneReviewErrorByTaskId={supersededLaneReviewErrorByTaskId}
+                      reviewDeepLinkTaskId={reviewDeepLinkTaskId}
+                      onSupersededLaneReviewOutcome={(task, outcome) =>
+                        void handleSupersededLaneReviewOutcome(task, outcome)
                       }
                     />
                     {approvedNextAction.status !== "completed" &&
