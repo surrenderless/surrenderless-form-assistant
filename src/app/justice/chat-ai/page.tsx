@@ -259,6 +259,20 @@ import {
   parseReviewTaskDeepLinkParams,
   resolveReviewTaskDeepLinkAction,
 } from "@/lib/justice/resolveReviewTaskDeepLink";
+import {
+  buildCheckoutPriceHeadline,
+  CHECKOUT_DISCLOSURE_PARAGRAPHS,
+  CHECKOUT_PRICE_LOADING_MESSAGE,
+  CHECKOUT_PRICE_UNAVAILABLE_MESSAGE,
+  isCheckoutApprovalBlockedByPricing,
+  type CheckoutPriceState,
+} from "@/lib/stripe/checkoutDisclosureCopy";
+import {
+  isCheckoutPriceResponseStale,
+  nextCheckoutPriceRequestId,
+  shouldClearFetchedGuardOnFailure,
+  shouldSkipCheckoutPriceFetchForPaidCase,
+} from "@/lib/stripe/checkoutPriceRequestTracker";
 import { parseCheckoutReturnStatus } from "@/lib/stripe/parseCheckoutReturnStatus";
 import {
   buildSupersededLaneReviewCompletionRequest,
@@ -686,6 +700,8 @@ const CHAT_INLINE_SUBMISSION_DRAFT_REVIEWED_CHECKBOX_ID =
 const CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID =
   "chat-inline-prepared-packet-reviewed-checkbox";
 
+const CHAT_AI_CHECKOUT_PRICE_DISCLOSURE_ELEMENT_ID = "chat-ai-checkout-price-disclosure";
+
 function isChatPreviewSelectableDestination(d: JusticeDestination): boolean {
   return d.status === "recommended" || d.status === "available";
 }
@@ -855,6 +871,8 @@ function ChatInlinePreparedPacketApprovalBlock({
   suppressHubLink,
   copyHint,
   onCopyPacket,
+  checkoutPriceState,
+  onRetryPricing,
 }: {
   packetText: string;
   loading: boolean;
@@ -867,6 +885,8 @@ function ChatInlinePreparedPacketApprovalBlock({
   suppressHubLink: boolean;
   copyHint: string | null;
   onCopyPacket: () => void;
+  checkoutPriceState: CheckoutPriceState;
+  onRetryPricing: () => void;
 }) {
   const canTruncate = packetText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
   const displayText =
@@ -927,13 +947,51 @@ function ChatInlinePreparedPacketApprovalBlock({
           I reviewed this prepared packet
         </label>
       </div>
+      {checkoutPriceState.status !== "not_needed" ? (
+        <div
+          id={CHAT_AI_CHECKOUT_PRICE_DISCLOSURE_ELEMENT_ID}
+          className="space-y-1.5 rounded-md border border-emerald-300/70 bg-white/70 px-2.5 py-2 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-800/60 dark:bg-neutral-950/40 dark:text-emerald-100"
+        >
+          {checkoutPriceState.status === "ready" ? (
+            <>
+              <p className="font-medium">
+                {buildCheckoutPriceHeadline(checkoutPriceState.unitAmount, checkoutPriceState.currency)}
+              </p>
+              {CHECKOUT_DISCLOSURE_PARAGRAPHS.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+            </>
+          ) : checkoutPriceState.status === "unavailable" ? (
+            <>
+              <p className="text-red-700 dark:text-red-300">{CHECKOUT_PRICE_UNAVAILABLE_MESSAGE}</p>
+              <button
+                type="button"
+                onClick={() => onRetryPricing()}
+                className="inline-flex rounded-lg border border-red-400/80 bg-white px-2.5 py-1 text-[11px] font-medium text-red-800 shadow-sm transition hover:bg-red-50 dark:border-red-700/60 dark:bg-neutral-950 dark:text-red-200 dark:hover:bg-red-950/40"
+              >
+                Retry pricing
+              </button>
+            </>
+          ) : (
+            <p>{CHECKOUT_PRICE_LOADING_MESSAGE}</p>
+          )}
+        </div>
+      ) : null}
       <button
         type="button"
-        disabled={!checked || !packetText || approving}
+        disabled={
+          !checked || !packetText || approving || isCheckoutApprovalBlockedByPricing(checkoutPriceState)
+        }
         onClick={() => void onSubmit()}
         className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
       >
-        {approving ? "Saving…" : "Approve prepared packet"}
+        {approving
+          ? "Saving…"
+          : checkoutPriceState.status === "loading"
+            ? "Loading price…"
+            : checkoutPriceState.status === "unavailable"
+              ? "Pricing unavailable"
+              : "Approve prepared packet"}
       </button>
       {!suppressHubLink ? (
         <p className="text-xs text-emerald-800 dark:text-emerald-200">
@@ -2547,6 +2605,12 @@ export default function JusticeChatAiPage() {
   const [archiveCaseError, setArchiveCaseError] = useState<string | null>(null);
   const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
   const [approvingPreparedPacket, setApprovingPreparedPacket] = useState(false);
+  /** Pre-checkout price disclosure state — "loading" until the first fetch resolves for the
+   *  active case, so checkout is disabled by default rather than ever appearing available before
+   *  a real price has been confirmed. */
+  const [checkoutPriceState, setCheckoutPriceState] = useState<CheckoutPriceState>({
+    status: "loading",
+  });
   const [submissionDraftReviewChecked, setSubmissionDraftReviewChecked] = useState(false);
   const [markingSubmissionDraftReviewed, setMarkingSubmissionDraftReviewed] = useState(false);
   const [submissionDraftReviewError, setSubmissionDraftReviewError] = useState<string | null>(null);
@@ -2607,6 +2671,14 @@ export default function JusticeChatAiPage() {
   /** Immediate (synchronous) reentrancy guard for handleApprovePreparedPacketFromChat — a ref so
    *  a second invocation arriving before the next render still sees it, unlike React state. */
   const approvingPreparedPacketRef = useRef(false);
+  /** Case id the checkout price has already been fetched for (successfully or is currently
+   *  in flight for) — cleared back to null on failure so a retry is always possible. Set to the
+   *  active case id without a fetch when casePaidAtRef already shows the case paid. */
+  const checkoutPriceFetchedForCaseRef = useRef<string | null>(null);
+  /** Identifies the most recent price request per case, so a stale/superseded response (an
+   *  older attempt resolving after a retry, or after the consumer switched to a different case)
+   *  can never overwrite state for a request that is no longer the one in flight. */
+  const checkoutPriceRequestRef = useRef<{ caseId: string; requestId: number } | null>(null);
   const partsRef = useRef(parts);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
@@ -3042,6 +3114,19 @@ export default function JusticeChatAiPage() {
           if (cancelled) return;
           await refreshChatCaseFromServer(returnCaseId);
         }
+        // Payment is now confirmed for this case — the price/payment disclosure no longer
+        // applies (checkout will never be triggered again for it), so stop showing stale pricing
+        // copy that would otherwise incorrectly claim "Approve" is about to open Stripe again.
+        // Also invalidates any in-flight price request for this case via the request-id ref, so
+        // a late-resolving response can never clobber "not_needed" back to "ready"/"unavailable".
+        if (!cancelled && casePaidAtRef.current) {
+          checkoutPriceFetchedForCaseRef.current = returnCaseId;
+          checkoutPriceRequestRef.current = {
+            caseId: returnCaseId,
+            requestId: nextCheckoutPriceRequestId(checkoutPriceRequestRef.current, returnCaseId),
+          };
+          setCheckoutPriceState({ status: "not_needed" });
+        }
       } catch (e) {
         console.warn("justice chat-ai: checkout return resolve error", e);
       }
@@ -3285,6 +3370,14 @@ export default function JusticeChatAiPage() {
       // read-only client state populated from the server's own paid_at; never treated as proof by
       // itself, only used to decide whether to send the consumer to checkout first.
       if (!casePaidAtRef.current) {
+        // Never trigger checkout without a confirmed, disclosed price — covers the
+        // fromChatConsent trigger path too, which isn't gated by the Approve button's disabled
+        // state. The price/disclosure must already be visible before this can ever be reached
+        // from the button; this is the same rule enforced for the chat-consent path.
+        if (isCheckoutApprovalBlockedByPricing(checkoutPriceState)) {
+          setTrackingSaveError("Pricing is not available yet. Try again in a moment.");
+          return false;
+        }
         setApprovingPreparedPacket(true);
         setTrackingSaveError(null);
         try {
@@ -3304,6 +3397,7 @@ export default function JusticeChatAiPage() {
             // Paid via another tab/session since our last refresh — sync the ref and let the
             // consumer retry the same click rather than silently proceeding on a stale read.
             casePaidAtRef.current = new Date().toISOString();
+            setCheckoutPriceState({ status: "not_needed" });
             setTrackingSaveError("Payment already confirmed — click Approve again to continue.");
             return false;
           }
@@ -5871,6 +5965,82 @@ export default function JusticeChatAiPage() {
     Boolean(activeUuidCaseId) &&
     activeCaseDraftReviewed &&
     !preparedPacketApproved;
+
+  // Issues (or re-issues, on retry) the price request for an exact case. Tags every attempt with
+  // a per-case request id so a stale response — an earlier attempt resolving after a retry
+  // superseded it, or after the consumer switched to a different case — can never overwrite
+  // state for a request that is no longer the one in flight. Never call this when the case is
+  // already known paid (see the effect below and the checkout-return effect) — pricing is
+  // irrelevant once paid, and this endpoint must never be hit merely to reconfirm that.
+  const fetchCheckoutPrice = useCallback((caseId: string) => {
+    const requestId = nextCheckoutPriceRequestId(checkoutPriceRequestRef.current, caseId);
+    checkoutPriceRequestRef.current = { caseId, requestId };
+    checkoutPriceFetchedForCaseRef.current = caseId;
+    setCheckoutPriceState({ status: "loading" });
+
+    const isStale = () => isCheckoutPriceResponseStale(checkoutPriceRequestRef.current, caseId, requestId);
+    const failClosed = () => {
+      if (isStale()) return;
+      // Clear the fetched-for guard (not the request id) so a later retry — either this same
+      // case re-entering the approval step, or the explicit Retry pricing action — can always
+      // issue a fresh request rather than being permanently skipped by the "already fetched" guard.
+      if (shouldClearFetchedGuardOnFailure(checkoutPriceFetchedForCaseRef.current, caseId)) {
+        checkoutPriceFetchedForCaseRef.current = null;
+      }
+      setCheckoutPriceState({ status: "unavailable" });
+    };
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}/checkout`);
+        const payload = (await res.json().catch(() => null)) as {
+          unitAmount?: number;
+          currency?: string;
+          alreadyPaid?: boolean;
+        } | null;
+        if (isStale()) return;
+        if (!res.ok || !payload) {
+          failClosed();
+          return;
+        }
+        if (payload.alreadyPaid) {
+          setCheckoutPriceState({ status: "not_needed" });
+          return;
+        }
+        if (typeof payload.unitAmount === "number" && typeof payload.currency === "string") {
+          setCheckoutPriceState({
+            status: "ready",
+            unitAmount: payload.unitAmount,
+            currency: payload.currency,
+          });
+        } else {
+          failClosed();
+        }
+      } catch (e) {
+        console.warn("justice chat-ai: checkout price fetch error", e);
+        failClosed();
+      }
+    })();
+  }, []);
+
+  // Resolves the price disclosure BEFORE checkout can ever be triggered — never after the
+  // consumer clicks Approve, and never by creating a Checkout Session merely to reveal a price
+  // (the endpoint is a read-only Stripe Price lookup). An already-paid case (casePaidAtRef
+  // already populated from the server's own paid_at) never issues a pricing/Stripe request at
+  // all — pricing is irrelevant once paid, and re-confirming it would be a pointless real
+  // network call (and, for the Playwright mock pipeline specifically, one this read-only price
+  // endpoint has no mock awareness for, so it would incorrectly report "unavailable").
+  useEffect(() => {
+    if (!showInlinePreparedPacketApproval || !activeUuidCaseId) return;
+    if (shouldSkipCheckoutPriceFetchForPaidCase(Boolean(casePaidAtRef.current))) {
+      checkoutPriceFetchedForCaseRef.current = activeUuidCaseId;
+      setCheckoutPriceState((prev) => (prev.status === "not_needed" ? prev : { status: "not_needed" }));
+      return;
+    }
+    if (checkoutPriceFetchedForCaseRef.current === activeUuidCaseId) return;
+    fetchCheckoutPrice(activeUuidCaseId);
+  }, [showInlinePreparedPacketApproval, activeUuidCaseId, fetchCheckoutPrice]);
+
   const chatInlineApprovedPrepContent = useMemo(() => {
     if (!preparedPacketApproved || !approvedNextAction) return null;
     return getChatInlineApprovedPrepContent(
@@ -6623,6 +6793,10 @@ export default function JusticeChatAiPage() {
                       setInlinePacketCopyHint("Copy failed — select the text and copy manually.");
                     }
                   })();
+                }}
+                checkoutPriceState={checkoutPriceState}
+                onRetryPricing={() => {
+                  if (activeUuidCaseId) fetchCheckoutPrice(activeUuidCaseId);
                 }}
                 />
               </div>
