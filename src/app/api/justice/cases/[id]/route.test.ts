@@ -243,7 +243,10 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
     vi.mocked(getUserOr401).mockReturnValue(USER_ID);
     followUpTasksStore = [];
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { client_state: {}, archived_at: null },
+      // Paid so this describe block's first-approval-transition patches (merchantClientState)
+      // exercise owned-filing-ensure behavior, not the separate payment gate (covered on its own
+      // in rejectUnpaidPreparedPacketApprovalPatch.test.ts and the "payment gating" block below).
+      data: { client_state: {}, archived_at: null, paid_at: "2026-01-01T00:00:00.000Z" },
       error: null,
     });
     mockTasksSelect.mockResolvedValue({ data: [], error: null });
@@ -259,6 +262,7 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
         updated_at: "2026-01-01T00:00:00.000Z",
         archived_at: null,
         case_label: null,
+        paid_at: "2026-01-01T00:00:00.000Z",
       },
       error: null,
     });
@@ -311,7 +315,12 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
 
   it("returns 409 when the case was written concurrently between the pre-patch read and this write (e.g. by an operator completing a filing)", async () => {
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { client_state: {}, archived_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+      data: {
+        client_state: {},
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+      },
       error: null,
     });
     // A CAS-guarded update matching zero rows is exactly what a concurrent writer having
@@ -343,6 +352,123 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
     expect(attemptAutomatedMerchantContactEmailDelivery).not.toHaveBeenCalled();
     expect(attemptAutomatedPaymentDisputeEmailDelivery).not.toHaveBeenCalled();
     expect(attemptAutomatedDemandLetterEmailDeliveryAfterEnsure).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /api/justice/cases/[id] payment gating", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+    vi.mocked(getUserOr401).mockReturnValue(USER_ID);
+    followUpTasksStore = [];
+    mockTasksSelect.mockResolvedValue({ data: [], error: null });
+    mockFilingsSelect.mockResolvedValue({ data: [], error: null });
+    vi.mocked(ensureOwnedFilingTaskAfterClientStateWrite).mockResolvedValue({
+      ok: true,
+      kind: "merchant_contact",
+      timeline: null,
+      created: true,
+      task: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  it("rejects the first prepared-packet-approval transition with 402 when the case is unpaid", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { client_state: {}, archived_at: null, paid_at: null },
+      error: null,
+    });
+
+    const res = await PATCH(buildPatchRequest({ client_state: merchantClientState }), routeContext());
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toMatchObject({ requiresPayment: true });
+    expect(ensureOwnedFilingTaskAfterClientStateWrite).not.toHaveBeenCalled();
+  });
+
+  it("allows the same approval transition once paid_at is set", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { client_state: {}, archived_at: null, paid_at: "2026-08-01T00:00:00.000Z" },
+      error: null,
+    });
+    mockCaseUpdateMaybeSingle.mockResolvedValue({
+      data: {
+        id: CASE_ID,
+        intake,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: merchantClientState,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        archived_at: null,
+        case_label: null,
+        paid_at: "2026-08-01T00:00:00.000Z",
+      },
+      error: null,
+    });
+
+    const res = await PATCH(buildPatchRequest({ client_state: merchantClientState }), routeContext());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("never blocks a case that is already approved/in-progress, even while unpaid", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { client_state: merchantClientState, archived_at: null, paid_at: null },
+      error: null,
+    });
+    mockCaseUpdateMaybeSingle.mockResolvedValue({
+      data: {
+        id: CASE_ID,
+        intake,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: merchantFollowUpClearedClientState,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        archived_at: null,
+        case_label: null,
+        paid_at: null,
+      },
+      error: null,
+    });
+    mockFilingsSelect.mockResolvedValue({
+      data: [{ destination: "Small claims / demand letter", confirmation_number: "DL-DONE-1" }],
+      error: null,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantFollowUpClearedClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it("never blocks intake-only writes (no client_state in the patch, so the gate never runs)", async () => {
+    mockCaseUpdateMaybeSingle.mockResolvedValue({
+      data: {
+        id: CASE_ID,
+        intake,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        archived_at: null,
+        case_label: null,
+        paid_at: null,
+      },
+      error: null,
+    });
+
+    const res = await PATCH(buildPatchRequest({ intake }), routeContext());
+
+    expect(res.status).toBe(200);
   });
 });
 

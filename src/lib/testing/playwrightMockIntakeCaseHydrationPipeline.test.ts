@@ -57,6 +57,22 @@ describe("playwrightMockIntakeCaseHydrationPipeline", () => {
     ]);
   });
 
+  it("returns a fixed non-null paid_at on GET, matching the server's own treatment of mock cases as already paid — without this, casePaidAtRef stays null client-side and packet approval incorrectly redirects to /checkout instead of PATCHing", () => {
+    const result = buildPlaywrightMockCaseGetResponse(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+
+    expect(result.paid_at).toEqual(expect.any(String));
+    expect(result.paid_at?.trim()).not.toBe("");
+  });
+
+  it("returns a fixed non-null paid_at on PATCH and preserves it across the prepared-packet-approval patch", () => {
+    const result = buildPlaywrightMockCasePatchResponse(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID, {
+      client_state: { prepared_packet_approved: true },
+    });
+
+    expect(result.paid_at).toEqual(expect.any(String));
+    expect(result.paid_at?.trim()).not.toBe("");
+  });
+
   it("returns production PATCH /api/justice/cases/[id] contract echoing client_state", () => {
     const clientState = {
       prepared_packet_approved: true,

@@ -14,6 +14,7 @@ export type PlaywrightMockCaseCreateResponse = {
   updated_at: string;
   archived_at: string | null;
   case_label: string | null;
+  paid_at: string | null;
 };
 
 /** Enabled only when Playwright webServer sets PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_PIPELINE=1. */
@@ -49,5 +50,9 @@ export function buildPlaywrightMockCaseCreateResponse(
     updated_at: PLAYWRIGHT_MOCK_CASE_CREATE_TIMESTAMP,
     archived_at: null,
     case_label: null,
+    // Fixed non-null, matching the server's own treatment of mock/E2E cases as already paid
+    // (see the isMockCase branch in PATCH /api/justice/cases/[id]) — CI has no Stripe/Supabase
+    // configuration, so the mock must never require a real checkout round-trip.
+    paid_at: PLAYWRIGHT_MOCK_CASE_CREATE_TIMESTAMP,
   };
 }

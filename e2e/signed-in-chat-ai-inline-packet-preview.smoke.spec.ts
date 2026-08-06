@@ -260,8 +260,16 @@ test("after evidence upload, consumer reviews draft and approves packet without 
   const checklist = page.getByRole("status", { name: "Active case" }).locator("ul").first();
   await expectNoRequiredMainLadderOffChatLinks(checklist);
 
+  const packetApprovalPatchResponse = page.waitForResponse(
+    (res) =>
+      res.request().method() === "PATCH" &&
+      res.url().includes("/api/justice/cases/") &&
+      (res.request().postData() ?? "").includes('"prepared_packet_approved":true'),
+    { timeout: 30_000 }
+  );
   await chatInput.fill(CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
+  expect((await packetApprovalPatchResponse).ok()).toBeTruthy();
   await expect(
     chatTranscript.getByText(CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE)
   ).toBeVisible({ timeout: 15_000 });
