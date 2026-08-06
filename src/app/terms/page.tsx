@@ -107,6 +107,33 @@ export default function TermsOfServicePage() {
         </p>
       </Section>
 
+      <Section title="Payment and refunds">
+        <p>
+          Surrenderless charges a one-time fee per case before Surrenderless-owned case handling begins. The exact fee
+          and currency are shown to you before checkout, and payment is collected once, through Stripe Checkout, when
+          you complete it. The fee is per case and does not cover any other case.
+        </p>
+        <p>
+          Payment does not guarantee a successful outcome. Payment is final once checkout completes. Changing your
+          mind, withdrawing, or asking to stop after payment does not qualify for a refund. You may stop future
+          actions on your case at any time, but actions already submitted or queued before you stop may not be
+          reversible.
+        </p>
+        <p>Refunds are limited to:</p>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>Duplicate charges for the same case;</li>
+          <li>
+            A verified Surrenderless technical failure that prevents completion of the paid handling and cannot be
+            fixed or completed through a supported alternative; or
+          </li>
+          <li>Refunds required by applicable law.</li>
+        </ul>
+        <p>
+          To request a refund under this policy, contact us through the account or support channel provided in the
+          service.
+        </p>
+      </Section>
+
       <Section title="Accounts and access">
         <p>
           Sign-in is provided through Clerk. You must have a valid account to use signed-in features. We may modify,
@@ -114,8 +141,8 @@ export default function TermsOfServicePage() {
           governing your deployment.
         </p>
         <p>
-          Optional payment checkout (Stripe) may be available in some deployments. Payment terms for paid features, if
-          any, are presented at checkout and are in addition to these Terms.
+          Surrenderless-owned case handling requires a one-time, per-case payment made through Stripe Checkout. See
+          &quot;Payment and refunds&quot; below for the full policy, which applies in addition to these Terms.
         </p>
       </Section>
 
