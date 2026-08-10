@@ -393,6 +393,10 @@ import {
   merchantContactEmailBounceState,
 } from "@/lib/justice/merchantContactEmailDelivery";
 import {
+  hasValidMerchantContactRecipient,
+  MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE,
+} from "@/lib/justice/merchantContactRecipient";
+import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
   isApprovedStateAgFilingAction,
@@ -699,6 +703,8 @@ const CHAT_INLINE_SUBMISSION_DRAFT_REVIEWED_CHECKBOX_ID =
 
 const CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID =
   "chat-inline-prepared-packet-reviewed-checkbox";
+const CHAT_INLINE_MERCHANT_CONTACT_EMAIL_INPUT_ID = "chat-inline-merchant-contact-email-input";
+const CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID = "chat-merchant-contact-recipient-retry-input";
 
 const CHAT_AI_CHECKOUT_PRICE_DISCLOSURE_ELEMENT_ID = "chat-ai-checkout-price-disclosure";
 
@@ -873,6 +879,10 @@ function ChatInlinePreparedPacketApprovalBlock({
   onCopyPacket,
   checkoutPriceState,
   onRetryPricing,
+  merchantContactRecipientRequired,
+  merchantContactRecipientValid,
+  merchantContactRecipientValue,
+  onMerchantContactRecipientChange,
 }: {
   packetText: string;
   loading: boolean;
@@ -887,7 +897,13 @@ function ChatInlinePreparedPacketApprovalBlock({
   onCopyPacket: () => void;
   checkoutPriceState: CheckoutPriceState;
   onRetryPricing: () => void;
+  merchantContactRecipientRequired: boolean;
+  merchantContactRecipientValid: boolean;
+  merchantContactRecipientValue: string;
+  onMerchantContactRecipientChange: (value: string) => void;
 }) {
+  const merchantContactRecipientBlocking =
+    merchantContactRecipientRequired && !merchantContactRecipientValid;
   const canTruncate = packetText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
   const displayText =
     expanded || !canTruncate ? packetText : `${packetText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
@@ -934,6 +950,32 @@ function ChatInlinePreparedPacketApprovalBlock({
           Packet preview is loading. Stay in this chat — it will appear here when ready.
         </p>
       )}
+      {merchantContactRecipientRequired ? (
+        <div className="space-y-1 rounded-md border border-emerald-300/70 bg-white/70 px-2.5 py-2 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-800/60 dark:bg-neutral-950/40 dark:text-emerald-100">
+          <label htmlFor={CHAT_INLINE_MERCHANT_CONTACT_EMAIL_INPUT_ID} className="block font-medium">
+            Company / merchant contact email
+          </label>
+          <p className="text-emerald-800/90 dark:text-emerald-200/90">
+            Surrenderless sends your first message to the company itself, so we need a valid email
+            address to send it to before you approve.
+          </p>
+          <input
+            id={CHAT_INLINE_MERCHANT_CONTACT_EMAIL_INPUT_ID}
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            value={merchantContactRecipientValue}
+            onChange={(e) => onMerchantContactRecipientChange(e.target.value)}
+            placeholder="support@company.com"
+            className="w-full rounded-md border border-emerald-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-emerald-500 dark:border-emerald-800/60 dark:bg-neutral-950 dark:text-neutral-100"
+          />
+          {merchantContactRecipientBlocking && merchantContactRecipientValue.trim() ? (
+            <p className="text-red-700 dark:text-red-300">
+              Enter a valid email address (for example, support@company.com).
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex items-start gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
         <input
           id={CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID}
@@ -980,18 +1022,24 @@ function ChatInlinePreparedPacketApprovalBlock({
       <button
         type="button"
         disabled={
-          !checked || !packetText || approving || isCheckoutApprovalBlockedByPricing(checkoutPriceState)
+          !checked ||
+          !packetText ||
+          approving ||
+          merchantContactRecipientBlocking ||
+          isCheckoutApprovalBlockedByPricing(checkoutPriceState)
         }
         onClick={() => void onSubmit()}
         className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
       >
         {approving
           ? "Saving…"
-          : checkoutPriceState.status === "loading"
-            ? "Loading price…"
-            : checkoutPriceState.status === "unavailable"
-              ? "Pricing unavailable"
-              : "Approve prepared packet"}
+          : merchantContactRecipientBlocking
+            ? "Add the company's email to approve"
+            : checkoutPriceState.status === "loading"
+              ? "Loading price…"
+              : checkoutPriceState.status === "unavailable"
+                ? "Pricing unavailable"
+                : "Approve prepared packet"}
       </button>
       {!suppressHubLink ? (
         <p className="text-xs text-emerald-800 dark:text-emerald-200">
@@ -2605,6 +2653,7 @@ export default function JusticeChatAiPage() {
   const [archiveCaseError, setArchiveCaseError] = useState<string | null>(null);
   const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
   const [approvingPreparedPacket, setApprovingPreparedPacket] = useState(false);
+  const [addingMerchantContactRecipient, setAddingMerchantContactRecipient] = useState(false);
   /** Pre-checkout price disclosure state — "loading" until the first fetch resolves for the
    *  active case, so checkout is disabled by default rather than ever appearing available before
    *  a real price has been confirmed. */
@@ -3365,6 +3414,36 @@ export default function JusticeChatAiPage() {
     approvingPreparedPacketRef.current = true;
 
     try {
+      // Merchant-contact outreach is sent by Surrenderless itself, so it can only be approved once
+      // the case has a real recipient email — otherwise the server rejects the approval and, even if
+      // it slipped through, automated delivery would silently skip and the action would sit "queued".
+      // Enforce this BEFORE payment so the consumer is never charged and then blocked, and persist the
+      // recipient to the stored intake now: the approval PATCH below sends only client_state, and both
+      // the server gate and the inline delivery read the intake already stored on the case.
+      if (approvePreparedTargetIsMerchantContact) {
+        const intakeForRecipient = buildJusticeIntakeFromParts(parts);
+        if (!hasValidMerchantContactRecipient(intakeForRecipient)) {
+          setTrackingSaveError(MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE);
+          return false;
+        }
+        setTrackingSaveError(null);
+        try {
+          const intakeRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ intake: intakeForRecipient }),
+          });
+          if (!intakeRes.ok) {
+            setTrackingSaveError("Could not save the company's contact email. Try again.");
+            return false;
+          }
+        } catch (e) {
+          console.warn("justice chat-ai: save merchant recipient before approve error", e);
+          setTrackingSaveError("Could not save the company's contact email. Try again.");
+          return false;
+        }
+      }
+
       // One-time payment gate: the server independently enforces this on PATCH regardless of what
       // happens here — this is purely the consumer-facing redirect to Stripe. casePaidAtRef is
       // read-only client state populated from the server's own paid_at; never treated as proof by
@@ -3484,6 +3563,61 @@ export default function JusticeChatAiPage() {
       }
     } finally {
       approvingPreparedPacketRef.current = false;
+    }
+  }
+
+  /**
+   * Recovery path for an already-approved merchant-contact case that has no recipient on file (its
+   * outreach is stuck showing "queued" because automated delivery skipped). Saves the newly supplied
+   * company email to the case intake, then re-sends the SAME approved next action so the PATCH route
+   * re-runs inline delivery — this is not a first approval transition, so the payment and recipient
+   * gates pass straight through and delivery now finds the recipient.
+   */
+  async function handleAddMerchantContactRecipientAndRetry(): Promise<void> {
+    const caseId = activeUuidCaseId;
+    if (!caseId || !isUuid(caseId) || !isLoaded || !isSignedIn) return;
+    const intake = buildJusticeIntakeFromParts(parts);
+    if (!hasValidMerchantContactRecipient(intake) || !approvedNextAction) {
+      setTrackingSaveError(MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE);
+      return;
+    }
+    setAddingMerchantContactRecipient(true);
+    setTrackingSaveError(null);
+    try {
+      const intakeRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intake }),
+      });
+      if (!intakeRes.ok) {
+        setTrackingSaveError("Could not save the company's contact email. Try again.");
+        return;
+      }
+      // The recipient is now persisted, so advance the session baseline that drives the
+      // needs-recipient prompt's visibility — it no longer reflects a missing recipient.
+      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(parts);
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) {
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
+      }
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = mergeClientStateWithApprovedNextAction(existing.client_state, approvedNextAction);
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      if (!patchRes.ok) {
+        setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+        return;
+      }
+      requestSavedEvidencePreviewRefresh();
+    } catch (e) {
+      console.warn("justice chat-ai: add merchant recipient retry error", e);
+      setTrackingSaveError(CHAT_TRACKING_SAVE_ERROR_MESSAGE);
+    } finally {
+      setAddingMerchantContactRecipient(false);
     }
   }
 
@@ -6082,6 +6216,31 @@ export default function JusticeChatAiPage() {
     () => buildMerchantContactDocumentationInputFromIntakeParts(parts),
     [parts]
   );
+  /** Whether approving right now would queue Surrenderless-owned merchant contact (which Surrenderless
+   *  sends itself and therefore needs a recipient email for). Mirrors the target the approve handler
+   *  computes, so the card gate and the handler gate agree. */
+  const approvePreparedTargetIsMerchantContact = useMemo(() => {
+    const intake = buildJusticeIntakeFromParts(parts);
+    const manualFtc =
+      typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
+    const useCompanyContactLabels =
+      cfpbLikelyRelevant(intake) || fccLikelyRelevant(intake) || dotLikelyRelevant(intake);
+    const destinations = computeJusticeDestinations(intake, {
+      manualFtc,
+      useCompanyContactLabels,
+      hasUploadedEvidenceFile: savedEvidenceRows.some(justiceEvidenceRowHasUploadedFile),
+    });
+    const prepared = pickPreparedNextAction({
+      contacted: intake.already_contacted === "yes",
+      useCompanyContactLabels,
+      destinations,
+    });
+    return isApprovedMerchantContactFilingAction(buildApprovedNextActionTarget(prepared));
+  }, [parts, savedEvidenceRows]);
+  const merchantContactRecipientOnFileValid = useMemo(
+    () => hasValidMerchantContactRecipient(buildJusticeIntakeFromParts(parts)),
+    [parts]
+  );
   const merchantContactDocumentedInTimeline = useMemo(() => {
     if (!activeUuidCaseId) return false;
     return isMerchantContactDocumentedInTimeline(readTimeline(activeUuidCaseId));
@@ -6178,6 +6337,22 @@ export default function JusticeChatAiPage() {
     showMerchantContactQueuedNotice && isMerchantContactEmailSending(openMerchantContactTask);
   const showMerchantContactSendFailedNotice =
     showMerchantContactQueuedNotice && isMerchantContactEmailFailed(openMerchantContactTask);
+  // Never show merchant contact as "queued" when there is no recipient to send to — automated
+  // delivery skips (no recipient) and would otherwise leave the action stuck as queued forever.
+  // Surface a recipient prompt instead so the consumer can supply the company's email and send.
+  //
+  // Visibility is driven by the recipient PERSISTED on the case (the session baseline captured at
+  // hydration), not the live editable field — otherwise typing a valid address would flip
+  // merchantContactRecipientOnFileValid true and unmount this prompt (and its submit button) before
+  // the consumer could send it. The submit button's enabled state below still uses the live value.
+  const persistedMerchantContactRecipientMissing = !hasValidMerchantContactRecipient(
+    buildJusticeIntakeFromParts(sessionBaselinePartsRef.current ?? parts)
+  );
+  const showMerchantContactNeedsRecipientNotice =
+    showMerchantContactQueuedNotice &&
+    persistedMerchantContactRecipientMissing &&
+    !showMerchantContactSendingNotice &&
+    !showMerchantContactSendFailedNotice;
   const openPaymentDisputeTask = activeUuidCaseId
     ? findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId)
     : undefined;
@@ -6798,6 +6973,12 @@ export default function JusticeChatAiPage() {
                 onRetryPricing={() => {
                   if (activeUuidCaseId) fetchCheckoutPrice(activeUuidCaseId);
                 }}
+                merchantContactRecipientRequired={approvePreparedTargetIsMerchantContact}
+                merchantContactRecipientValid={merchantContactRecipientOnFileValid}
+                merchantContactRecipientValue={parts.company_contact_email}
+                onMerchantContactRecipientChange={(value) =>
+                  setParts((prev) => ({ ...prev, company_contact_email: value }))
+                }
                 />
               </div>
             ) : null}
@@ -7498,30 +7679,67 @@ export default function JusticeChatAiPage() {
                   </p>
                 ) : null}
                 {showMerchantContactQueuedNotice ? (
-                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    {showMerchantContactSendingNotice ? (
-                      <>
-                        <span className="font-medium">Merchant contact sending.</span> Surrenderless
-                        is delivering your first-contact email to the company using your case packet
-                        and draft.
-                      </>
-                    ) : showMerchantContactSendFailedNotice ? (
-                      <>
-                        <span className="font-medium">Merchant contact email failed.</span> Automated
-                        delivery did not go through. Operators will complete outreach manually — nothing
-                        is marked sent until delivery succeeds.
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-medium">Merchant contact queued.</span> Surrenderless has
-                        queued merchant or company outreach using your case packet and draft. Nothing
-                        has been sent yet.
-                      </>
-                    )}
-                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — status updates will appear here.
-                    </span>
-                  </p>
+                  showMerchantContactNeedsRecipientNotice ? (
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-amber-300/80 bg-amber-50/70 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
+                      <p>
+                        <span className="font-medium">We need the company&apos;s email to send your
+                        first contact.</span>{" "}
+                        Surrenderless sends this message to the company itself, so it can&apos;t go out
+                        until you add a valid recipient address. Nothing has been sent yet.
+                      </p>
+                      <label
+                        htmlFor={CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID}
+                        className="block font-medium"
+                      >
+                        Company / merchant contact email
+                      </label>
+                      <input
+                        id={CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID}
+                        type="email"
+                        inputMode="email"
+                        autoComplete="off"
+                        value={parts.company_contact_email}
+                        onChange={(e) =>
+                          setParts((prev) => ({ ...prev, company_contact_email: e.target.value }))
+                        }
+                        placeholder="support@company.com"
+                        className="w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-amber-500 dark:border-amber-800/60 dark:bg-neutral-950 dark:text-neutral-100"
+                      />
+                      <button
+                        type="button"
+                        disabled={!merchantContactRecipientOnFileValid || addingMerchantContactRecipient}
+                        onClick={() => void handleAddMerchantContactRecipientAndRetry()}
+                        className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
+                      >
+                        {addingMerchantContactRecipient ? "Sending…" : "Save and send first contact"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                      {showMerchantContactSendingNotice ? (
+                        <>
+                          <span className="font-medium">Merchant contact sending.</span> Surrenderless
+                          is delivering your first-contact email to the company using your case packet
+                          and draft.
+                        </>
+                      ) : showMerchantContactSendFailedNotice ? (
+                        <>
+                          <span className="font-medium">Merchant contact email failed.</span> Automated
+                          delivery did not go through. Operators will complete outreach manually —
+                          nothing is marked sent until delivery succeeds.
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium">Merchant contact queued.</span> Surrenderless
+                          has queued merchant or company outreach using your case packet and draft.
+                          Nothing has been sent yet.
+                        </>
+                      )}
+                      <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                        Stay in this chat — status updates will appear here.
+                      </span>
+                    </p>
+                  )
                 ) : null}
                 {showFtcFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">

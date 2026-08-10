@@ -246,7 +246,7 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
       // Paid so this describe block's first-approval-transition patches (merchantClientState)
       // exercise owned-filing-ensure behavior, not the separate payment gate (covered on its own
       // in rejectUnpaidPreparedPacketApprovalPatch.test.ts and the "payment gating" block below).
-      data: { client_state: {}, archived_at: null, paid_at: "2026-01-01T00:00:00.000Z" },
+      data: { client_state: {}, archived_at: null, paid_at: "2026-01-01T00:00:00.000Z", intake },
       error: null,
     });
     mockTasksSelect.mockResolvedValue({ data: [], error: null });
@@ -320,6 +320,7 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
         archived_at: null,
         updated_at: "2026-01-01T00:00:00.000Z",
         paid_at: "2026-01-01T00:00:00.000Z",
+        intake,
       },
       error: null,
     });
@@ -392,7 +393,7 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
 
   it("allows the same approval transition once paid_at is set", async () => {
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { client_state: {}, archived_at: null, paid_at: "2026-08-01T00:00:00.000Z" },
+      data: { client_state: {}, archived_at: null, paid_at: "2026-08-01T00:00:00.000Z", intake },
       error: null,
     });
     mockCaseUpdateMaybeSingle.mockResolvedValue({
@@ -414,6 +415,26 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
     const res = await PATCH(buildPatchRequest({ client_state: merchantClientState }), routeContext());
 
     expect(res.status).toBe(200);
+  });
+
+  it("rejects the first merchant-contact approval with 422 when the case has no recipient email", async () => {
+    const intakeNoRecipient = { ...intake, company_contact_email: "" };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: {},
+        archived_at: null,
+        paid_at: "2026-08-01T00:00:00.000Z",
+        intake: intakeNoRecipient,
+      },
+      error: null,
+    });
+
+    const res = await PATCH(buildPatchRequest({ client_state: merchantClientState }), routeContext());
+
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.requiresMerchantContactEmail).toBe(true);
+    expect(ensureOwnedFilingTaskAfterClientStateWrite).not.toHaveBeenCalled();
   });
 
   it("never blocks a case that is already approved/in-progress, even while unpaid", async () => {
