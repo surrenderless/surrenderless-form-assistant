@@ -17,6 +17,7 @@
   "dependencies": {
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@clerk/nextjs": "^6.32.0",
+    "@react-email/render": "^2.1.0",
     "@supabase/supabase-js": "^2.50.5",
     "@surrenderless/crew-js": "^1.0.0",
     "@upstash/redis": "^1.35.6",
