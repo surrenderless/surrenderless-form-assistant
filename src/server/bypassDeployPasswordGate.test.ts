@@ -20,4 +20,14 @@ describe("shouldBypassDeployPasswordGate", () => {
     expect(shouldBypassDeployPasswordGate("/favicon.ico")).toBe(true);
     expect(shouldBypassDeployPasswordGate("/api/healthz")).toBe(true);
   });
+
+  it("bypasses the Stripe webhook so its signature-verified POST can reach the route", () => {
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/stripe")).toBe(true);
+  });
+
+  it("does not bypass unrelated webhook or near-miss paths — only the exact Stripe webhook is exempt", () => {
+    expect(shouldBypassDeployPasswordGate("/api/webhooks")).toBe(false);
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/resend")).toBe(false);
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/stripe/extra")).toBe(false);
+  });
 });
