@@ -40,6 +40,7 @@ import {
 import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merchantContactEmailDelivery";
 import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
+import { rejectMerchantContactApprovalWithoutRecipient } from "@/lib/justice/rejectMerchantContactApprovalWithoutRecipient";
 import { rejectUnpaidPreparedPacketApprovalPatch } from "@/lib/justice/rejectUnpaidPreparedPacketApprovalPatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import { CLIENT_STATE_UPDATE_CONFLICT_ERROR } from "@/lib/justice/updateClientStateIfUnchanged";
@@ -247,6 +248,7 @@ async function patchJusticeCase(
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
   let existingRowUpdatedAt: string | undefined;
+  let existingIntake: JusticeIntake | null | undefined;
   // Mock/E2E cases have no real Stripe-backed payment record — treated as already paid so the
   // payment gate never interferes with the Playwright pipeline.
   let existingPaidAt: string | null | undefined = isMockCase ? new Date(0).toISOString() : undefined;
@@ -269,7 +271,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("client_state, archived_at, updated_at, paid_at")
+        .select("client_state, archived_at, updated_at, paid_at, intake")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -286,6 +288,7 @@ async function patchJusticeCase(
       existingArchivedAt = existingRow.archived_at as string | null;
       existingRowUpdatedAt = existingRow.updated_at as string;
       existingPaidAt = existingRow.paid_at as string | null;
+      existingIntake = existingRow.intake as JusticeIntake | null;
 
       if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
         const { data: taskRows, error: tasksErr } = await supabaseForValidation
@@ -359,6 +362,25 @@ async function patchJusticeCase(
           { error: paymentReject, requiresPayment: true },
           { status: 402 }
         );
+      }
+
+      // Merchant-contact outreach is sent by Surrenderless itself, so the exact approval transition
+      // that queues it must have a valid recipient email — otherwise delivery silently skips and the
+      // action is stuck showing "queued". Mock/E2E cases are exempt (no real outreach). The effective
+      // recipient is the intake this write persists (patch.intake) or, when the approval PATCH carries
+      // only client_state, the intake already stored on the case.
+      if (!isMockCase) {
+        const recipientReject = rejectMerchantContactApprovalWithoutRecipient({
+          existingClientState,
+          incomingClientState: patch.client_state,
+          intake: (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null,
+        });
+        if (recipientReject) {
+          return NextResponse.json(
+            { error: recipientReject, requiresMerchantContactEmail: true },
+            { status: 422 }
+          );
+        }
       }
     }
   }
