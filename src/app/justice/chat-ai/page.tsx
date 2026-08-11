@@ -261,12 +261,16 @@ import {
 } from "@/lib/justice/resolveReviewTaskDeepLink";
 import {
   buildCheckoutPriceHeadline,
+  CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE,
+  CHECKOUT_CONFIRMING_PAYMENT_MESSAGE,
   CHECKOUT_DISCLOSURE_PARAGRAPHS,
   CHECKOUT_PRICE_LOADING_MESSAGE,
   CHECKOUT_PRICE_UNAVAILABLE_MESSAGE,
   isCheckoutApprovalBlockedByPricing,
+  isCheckoutAwaitingPaymentConfirmation,
   type CheckoutPriceState,
 } from "@/lib/stripe/checkoutDisclosureCopy";
+import { checkoutConfirmationDelayForAttempt } from "@/lib/stripe/checkoutConfirmationPolling";
 import {
   isCheckoutPriceResponseStale,
   nextCheckoutPriceRequestId,
@@ -882,6 +886,7 @@ function ChatInlinePreparedPacketApprovalBlock({
   onCopyPacket,
   checkoutPriceState,
   onRetryPricing,
+  onRetryPaymentConfirmation,
   merchantContactRecipientRequired,
   merchantContactRecipientValid,
   merchantContactRecipientValue,
@@ -902,6 +907,7 @@ function ChatInlinePreparedPacketApprovalBlock({
   onCopyPacket: () => void;
   checkoutPriceState: CheckoutPriceState;
   onRetryPricing: () => void;
+  onRetryPaymentConfirmation: () => void;
   merchantContactRecipientRequired: boolean;
   merchantContactRecipientValid: boolean;
   merchantContactRecipientValue: string;
@@ -1036,6 +1042,19 @@ function ChatInlinePreparedPacketApprovalBlock({
                 Retry pricing
               </button>
             </>
+          ) : checkoutPriceState.status === "confirming" ? (
+            <p className="font-medium">{CHECKOUT_CONFIRMING_PAYMENT_MESSAGE}</p>
+          ) : checkoutPriceState.status === "confirm_timeout" ? (
+            <>
+              <p>{CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE}</p>
+              <button
+                type="button"
+                onClick={() => onRetryPaymentConfirmation()}
+                className="inline-flex rounded-lg border border-emerald-500/80 bg-white px-2.5 py-1 text-[11px] font-medium text-emerald-800 shadow-sm transition hover:bg-emerald-50 dark:border-emerald-700/60 dark:bg-neutral-950 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+              >
+                Keep checking
+              </button>
+            </>
           ) : (
             <p>{CHECKOUT_PRICE_LOADING_MESSAGE}</p>
           )}
@@ -1057,11 +1076,14 @@ function ChatInlinePreparedPacketApprovalBlock({
           ? "Saving…"
           : merchantContactRecipientBlocking
             ? "Add the company's email to approve"
-            : checkoutPriceState.status === "loading"
-              ? "Loading price…"
-              : checkoutPriceState.status === "unavailable"
-                ? "Pricing unavailable"
-                : "Approve prepared packet"}
+            : checkoutPriceState.status === "confirming" ||
+                checkoutPriceState.status === "confirm_timeout"
+              ? "Confirming your payment…"
+              : checkoutPriceState.status === "loading"
+                ? "Loading price…"
+                : checkoutPriceState.status === "unavailable"
+                  ? "Pricing unavailable"
+                  : "Approve prepared packet"}
       </button>
       {!suppressHubLink ? (
         <p className="text-xs text-emerald-800 dark:text-emerald-200">
@@ -2754,6 +2776,11 @@ export default function JusticeChatAiPage() {
    *  older attempt resolving after a retry, or after the consumer switched to a different case)
    *  can never overwrite state for a request that is no longer the one in flight. */
   const checkoutPriceRequestRef = useRef<{ caseId: string; requestId: number } | null>(null);
+  // Generation guard for the post-checkout payment-confirmation polling loop: incremented whenever a
+  // new confirmation run starts (return from checkout, or "keep checking") and on session reset, so a
+  // superseded/abandoned loop can never keep polling or write UI state for a case that is no longer
+  // active. paid_at itself always comes from the server (webhook-authoritative) — never set here.
+  const paymentConfirmationGenerationRef = useRef(0);
   const partsRef = useRef(parts);
   const savedTasksRef = useRef<JusticeCaseTaskRow[]>([]);
   const pendingChatContextRefreshRef = useRef<Promise<void> | null>(null);
@@ -3170,6 +3197,13 @@ export default function JusticeChatAiPage() {
     const returnCaseId = new URLSearchParams(search).get("case")?.trim() ?? "";
     if (!returnCaseId || !isUuid(returnCaseId)) return;
 
+    if (checkoutStatus === "success") {
+      // Claim pricing for this case synchronously (before hydration/async confirmation) so the
+      // price-fetch effect can never win a race and replace the "Confirming your payment…" state
+      // with a fresh pay prompt while the webhook confirmation is still pending.
+      checkoutPriceFetchedForCaseRef.current = returnCaseId;
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -3183,25 +3217,12 @@ export default function JusticeChatAiPage() {
         }
         if (cancelled || checkoutStatus !== "success") return;
 
-        for (let attempt = 0; attempt < 3 && !casePaidAtRef.current; attempt += 1) {
-          if (cancelled) return;
-          await new Promise((resolve) => window.setTimeout(resolve, 1500));
-          if (cancelled) return;
-          await refreshChatCaseFromServer(returnCaseId);
-        }
-        // Payment is now confirmed for this case — the price/payment disclosure no longer
-        // applies (checkout will never be triggered again for it), so stop showing stale pricing
-        // copy that would otherwise incorrectly claim "Approve" is about to open Stripe again.
-        // Also invalidates any in-flight price request for this case via the request-id ref, so
-        // a late-resolving response can never clobber "not_needed" back to "ready"/"unavailable".
-        if (!cancelled && casePaidAtRef.current) {
-          checkoutPriceFetchedForCaseRef.current = returnCaseId;
-          checkoutPriceRequestRef.current = {
-            caseId: returnCaseId,
-            requestId: nextCheckoutPriceRequestId(checkoutPriceRequestRef.current, returnCaseId),
-          };
-          setCheckoutPriceState({ status: "not_needed" });
-        }
+        // Keep the approval UI in a persistent "Confirming your payment…" state and poll the server
+        // (whose paid_at is written only by the signature-verified webhook) with bounded backoff
+        // until confirmed — instead of giving up after a fixed short window and reverting to a pay
+        // prompt that would invite a second checkout. On success it clears to "not_needed"; on an
+        // unusually long wait it shows a truthful, recoverable timeout. Never sets paid_at itself.
+        await confirmPaymentWithBackoff(returnCaseId);
       } catch (e) {
         console.warn("justice chat-ai: checkout return resolve error", e);
       }
@@ -3209,8 +3230,66 @@ export default function JusticeChatAiPage() {
 
     return () => {
       cancelled = true;
+      // Cancel any in-flight confirmation polling so it can't write UI state after unmount.
+      paymentConfirmationGenerationRef.current += 1;
     };
   }, [isLoaded, isSignedIn]);
+
+  /**
+   * Polls the server for webhook-confirmed payment (paid_at) after a successful Stripe Checkout
+   * return, with bounded backoff. paid_at is written ONLY by the signature-verified webhook — this
+   * reads the refreshed value, never sets it. Holds the approval UI in a persistent "confirming"
+   * state until confirmation lands (then "not_needed"); if the bounded budget is exhausted it shows
+   * a truthful, recoverable timeout and still never re-opens checkout. A generation + active-case
+   * guard cancels a superseded/abandoned run so it can't write state for a no-longer-active case.
+   */
+  async function confirmPaymentWithBackoff(caseId: string): Promise<void> {
+    const trimmed = caseId.trim();
+    if (!trimmed || !isUuid(trimmed)) return;
+    if (casePaidAtRef.current) return;
+    const generation = (paymentConfirmationGenerationRef.current += 1);
+    const isCurrent = () =>
+      paymentConfirmationGenerationRef.current === generation &&
+      (typeof window === "undefined" ||
+        sessionStorage.getItem(STORAGE_CASE_ID)?.trim() === trimmed);
+
+    if (isCurrent()) {
+      // Mark pricing resolved for this case so the price-fetch effect never overwrites the
+      // "Confirming your payment…" state with a fresh pay prompt while confirmation is pending.
+      checkoutPriceFetchedForCaseRef.current = trimmed;
+      setCheckoutPriceState((prev) =>
+        prev.status === "not_needed" ? prev : { status: "confirming" }
+      );
+    }
+
+    await refreshChatCaseFromServer(trimmed);
+    let attempt = 0;
+    while (isCurrent() && !casePaidAtRef.current) {
+      const delay = checkoutConfirmationDelayForAttempt(attempt);
+      if (delay === null) {
+        // Bounded budget exhausted — truthful, recoverable timeout. Still no second checkout.
+        if (isCurrent() && !casePaidAtRef.current) {
+          setCheckoutPriceState({ status: "confirm_timeout" });
+        }
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+      if (!isCurrent()) return;
+      await refreshChatCaseFromServer(trimmed);
+      attempt += 1;
+    }
+
+    if (isCurrent() && casePaidAtRef.current) {
+      // Confirmed — the price/payment disclosure no longer applies. Invalidate any in-flight price
+      // request so a late response can't clobber "not_needed" back to a pay prompt.
+      checkoutPriceFetchedForCaseRef.current = trimmed;
+      checkoutPriceRequestRef.current = {
+        caseId: trimmed,
+        requestId: nextCheckoutPriceRequestId(checkoutPriceRequestRef.current, trimmed),
+      };
+      setCheckoutPriceState({ status: "not_needed" });
+    }
+  }
 
   async function handleRestoreMostRecentArchivedCaseFromChat(): Promise<{
     ok: boolean;
@@ -3401,6 +3480,8 @@ export default function JusticeChatAiPage() {
     sessionBaselineEvidenceCountRef.current = null;
     setParts(emptyParts);
     setMerchantContactOperatorFallbackChosen(false);
+    // Cancel any in-flight payment-confirmation polling from a prior case so it can't write state.
+    paymentConfirmationGenerationRef.current += 1;
     legalConsentTrackedCaseIdRef.current = null;
     merchantContactAutopilotCaseRef.current = null;
     wasPendingHumanFulfillmentEscalationRef.current = false;
@@ -3490,6 +3571,15 @@ export default function JusticeChatAiPage() {
       // read-only client state populated from the server's own paid_at; never treated as proof by
       // itself, only used to decide whether to send the consumer to checkout first.
       if (!casePaidAtRef.current) {
+        // A completed payment is still being confirmed by the webhook — never start a SECOND
+        // checkout. Keep waiting on the persistent confirmation state (covers the fromChatConsent
+        // path too, which isn't gated by the disabled button).
+        if (isCheckoutAwaitingPaymentConfirmation(checkoutPriceState)) {
+          setTrackingSaveError(
+            "We're still confirming your payment — no need to pay again. This will continue automatically."
+          );
+          return false;
+        }
         // Never trigger checkout without a confirmed, disclosed price — covers the
         // fromChatConsent trigger path too, which isn't gated by the Approve button's disabled
         // state. The price/disclosure must already be visible before this can ever be reached
@@ -7108,6 +7198,9 @@ export default function JusticeChatAiPage() {
                 checkoutPriceState={checkoutPriceState}
                 onRetryPricing={() => {
                   if (activeUuidCaseId) fetchCheckoutPrice(activeUuidCaseId);
+                }}
+                onRetryPaymentConfirmation={() => {
+                  if (activeUuidCaseId) void confirmPaymentWithBackoff(activeUuidCaseId);
                 }}
                 merchantContactRecipientRequired={approvePreparedTargetNeedsCompanyEmail}
                 merchantContactRecipientValid={merchantContactRecipientOnFileValid}
