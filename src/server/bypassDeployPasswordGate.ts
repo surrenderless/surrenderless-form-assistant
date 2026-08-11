@@ -11,5 +11,9 @@ export function shouldBypassDeployPasswordGate(pathname: string): boolean {
   // cron uses CRON_SECRET — Stripe cannot supply DEPLOY_PASSWORD Basic credentials, so this
   // exact path must skip the gate or the middleware 401s the request before the route runs.
   if (pathname === "/api/webhooks/stripe") return true;
+  // Resend webhook authenticates via its own Svix signature (RESEND_WEBHOOK_SECRET) in-route, same
+  // as Stripe — Resend sends Svix headers, never DEPLOY_PASSWORD Basic credentials, so this exact
+  // path must skip the gate or bounce/complaint events 401 before the route can record them.
+  if (pathname === "/api/webhooks/resend") return true;
   return false;
 }

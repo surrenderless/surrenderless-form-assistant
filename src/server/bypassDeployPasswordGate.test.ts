@@ -25,9 +25,15 @@ describe("shouldBypassDeployPasswordGate", () => {
     expect(shouldBypassDeployPasswordGate("/api/webhooks/stripe")).toBe(true);
   });
 
-  it("does not bypass unrelated webhook or near-miss paths — only the exact Stripe webhook is exempt", () => {
+  it("bypasses the Resend webhook so its Svix-signature-verified POST can reach the route", () => {
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/resend")).toBe(true);
+  });
+
+  it("does not bypass unrelated webhook or near-miss paths — only the exact webhook paths are exempt", () => {
     expect(shouldBypassDeployPasswordGate("/api/webhooks")).toBe(false);
-    expect(shouldBypassDeployPasswordGate("/api/webhooks/resend")).toBe(false);
     expect(shouldBypassDeployPasswordGate("/api/webhooks/stripe/extra")).toBe(false);
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/resend/extra")).toBe(false);
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/resendx")).toBe(false);
+    expect(shouldBypassDeployPasswordGate("/api/webhooks/clerk")).toBe(false);
   });
 });
