@@ -40,6 +40,7 @@ import {
 import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merchantContactEmailDelivery";
 import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { rejectCasePatchEscalationViolations } from "@/lib/justice/rejectPrematureResolutionClientStatePatch";
+import { rejectDemandLetterApprovalWithoutRecipient } from "@/lib/justice/rejectDemandLetterApprovalWithoutRecipient";
 import { rejectMerchantContactApprovalWithoutRecipient } from "@/lib/justice/rejectMerchantContactApprovalWithoutRecipient";
 import { rejectUnpaidPreparedPacketApprovalPatch } from "@/lib/justice/rejectUnpaidPreparedPacketApprovalPatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
@@ -370,14 +371,29 @@ async function patchJusticeCase(
       // recipient is the intake this write persists (patch.intake) or, when the approval PATCH carries
       // only client_state, the intake already stored on the case.
       if (!isMockCase) {
+        const effectiveIntake =
+          (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null;
         const recipientReject = rejectMerchantContactApprovalWithoutRecipient({
           existingClientState,
           incomingClientState: patch.client_state,
-          intake: (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null,
+          intake: effectiveIntake,
         });
         if (recipientReject) {
           return NextResponse.json(
             { error: recipientReject, requiresMerchantContactEmail: true },
+            { status: 422 }
+          );
+        }
+        // Demand letters are sent to the same company_contact_email as merchant contact, so the same
+        // recipient/operator-fallback gate applies to the demand-letter approval transition.
+        const demandLetterReject = rejectDemandLetterApprovalWithoutRecipient({
+          existingClientState,
+          incomingClientState: patch.client_state,
+          intake: effectiveIntake,
+        });
+        if (demandLetterReject) {
+          return NextResponse.json(
+            { error: demandLetterReject, requiresMerchantContactEmail: true },
             { status: 422 }
           );
         }

@@ -397,6 +397,7 @@ import {
   isMerchantContactOperatorFallbackChosen,
   MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE,
 } from "@/lib/justice/merchantContactRecipient";
+import { hasValidPaymentDisputeRecipient } from "@/lib/justice/paymentDisputeRecipient";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingWithConfirmation,
@@ -706,6 +707,7 @@ const CHAT_INLINE_PREPARED_PACKET_REVIEWED_CHECKBOX_ID =
   "chat-inline-prepared-packet-reviewed-checkbox";
 const CHAT_INLINE_MERCHANT_CONTACT_EMAIL_INPUT_ID = "chat-inline-merchant-contact-email-input";
 const CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID = "chat-merchant-contact-recipient-retry-input";
+const CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID = "chat-demand-letter-recipient-retry-input";
 
 const CHAT_AI_CHECKOUT_PRICE_DISCLOSURE_ELEMENT_ID = "chat-ai-checkout-price-disclosure";
 
@@ -963,8 +965,8 @@ function ChatInlinePreparedPacketApprovalBlock({
             Company / merchant contact email
           </label>
           <p className="text-emerald-800/90 dark:text-emerald-200/90">
-            Surrenderless sends your first message to the company itself, so add a valid email address
-            to send it to — or, if you don&apos;t have one, let our operators handle first outreach.
+            Surrenderless sends this to the company for you, so add a valid email address to send it to
+            — or, if you don&apos;t have one, let our operators handle it.
           </p>
           <input
             id={CHAT_INLINE_MERCHANT_CONTACT_EMAIL_INPUT_ID}
@@ -983,7 +985,7 @@ function ChatInlinePreparedPacketApprovalBlock({
           ) : null}
           {merchantContactOperatorFallbackChosen ? (
             <p className="font-medium text-emerald-800 dark:text-emerald-200">
-              No email needed — Surrenderless operators will handle first outreach to the company.
+              No email needed — Surrenderless operators will handle company outreach for you.
             </p>
           ) : !merchantContactRecipientValid ? (
             <button
@@ -991,7 +993,7 @@ function ChatInlinePreparedPacketApprovalBlock({
               onClick={() => onChooseMerchantContactOperatorFallback()}
               className="text-[11px] font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100"
             >
-              I don&apos;t have the company&apos;s email — let operators handle outreach
+              I don&apos;t have the company&apos;s email — let operators handle it
             </button>
           ) : null}
         </div>
@@ -3445,7 +3447,7 @@ export default function JusticeChatAiPage() {
       // Enforce this BEFORE payment so the consumer is never charged and then blocked, and persist the
       // recipient to the stored intake now: the approval PATCH below sends only client_state, and both
       // the server gate and the inline delivery read the intake already stored on the case.
-      if (approvePreparedTargetIsMerchantContact) {
+      if (approvePreparedTargetNeedsCompanyEmail) {
         const intakeForRecipient = buildJusticeIntakeFromParts(parts);
         const hasRecipient = hasValidMerchantContactRecipient(intakeForRecipient);
         if (!hasRecipient && !merchantContactOperatorFallbackChosen) {
@@ -6313,7 +6315,10 @@ export default function JusticeChatAiPage() {
   /** Whether approving right now would queue Surrenderless-owned merchant contact (which Surrenderless
    *  sends itself and therefore needs a recipient email for). Mirrors the target the approve handler
    *  computes, so the card gate and the handler gate agree. */
-  const approvePreparedTargetIsMerchantContact = useMemo(() => {
+  // The action approving right now would queue. Merchant contact AND demand letter both auto-send to
+  // the case's company_contact_email, so both require a recipient (or the operator-fallback choice)
+  // before approval. Mirrors the target the approve handler computes so the card and handler agree.
+  const approvePreparedTarget = useMemo(() => {
     const intake = buildJusticeIntakeFromParts(parts);
     const manualFtc =
       typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
@@ -6329,8 +6334,11 @@ export default function JusticeChatAiPage() {
       useCompanyContactLabels,
       destinations,
     });
-    return isApprovedMerchantContactFilingAction(buildApprovedNextActionTarget(prepared));
+    return buildApprovedNextActionTarget(prepared);
   }, [parts, savedEvidenceRows]);
+  const approvePreparedTargetNeedsCompanyEmail =
+    isApprovedMerchantContactFilingAction(approvePreparedTarget) ||
+    isApprovedDemandLetterFilingAction(approvePreparedTarget);
   const merchantContactRecipientOnFileValid = useMemo(
     () => hasValidMerchantContactRecipient(buildJusticeIntakeFromParts(parts)),
     [parts]
@@ -6456,6 +6464,20 @@ export default function JusticeChatAiPage() {
     !merchantContactOperatorFallbackChosen &&
     !showMerchantContactSendingNotice &&
     !showMerchantContactSendFailedNotice;
+  // Demand letters auto-send to the same company_contact_email as merchant contact, so they reuse the
+  // same persisted-recipient-missing signal and operator-fallback choice for honest status/recovery.
+  const showDemandLetterOperatorHandlingNotice =
+    showDemandLetterQueuedNotice &&
+    merchantContactOperatorFallbackChosen &&
+    persistedMerchantContactRecipientMissing &&
+    !showDemandLetterSendingNotice &&
+    !showDemandLetterSendFailedNotice;
+  const showDemandLetterNeedsRecipientNotice =
+    showDemandLetterQueuedNotice &&
+    persistedMerchantContactRecipientMissing &&
+    !merchantContactOperatorFallbackChosen &&
+    !showDemandLetterSendingNotice &&
+    !showDemandLetterSendFailedNotice;
   const openPaymentDisputeTask = activeUuidCaseId
     ? findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId)
     : undefined;
@@ -6463,6 +6485,17 @@ export default function JusticeChatAiPage() {
     showPaymentDisputeFilingQueuedNotice && isPaymentDisputeEmailSending(openPaymentDisputeTask);
   const showPaymentDisputeSendFailedNotice =
     showPaymentDisputeFilingQueuedNotice && isPaymentDisputeEmailFailed(openPaymentDisputeTask);
+  // Payment-dispute auto-send needs a card-issuer dispute email that consumers almost never have, so
+  // delivery skips and operators handle it. When there's no recipient on file and nothing is
+  // sending/failed, tell the truth ("operators are preparing your dispute") instead of "queued".
+  const paymentDisputeRecipientMissingOnFile = !hasValidPaymentDisputeRecipient(
+    buildJusticeIntakeFromParts(sessionBaselinePartsRef.current ?? parts)
+  );
+  const showPaymentDisputeOperatorHandlingNotice =
+    showPaymentDisputeFilingQueuedNotice &&
+    paymentDisputeRecipientMissingOnFile &&
+    !showPaymentDisputeSendingNotice &&
+    !showPaymentDisputeSendFailedNotice;
   const showFtcFilingQueuedNotice =
     Boolean(activeUuidCaseId) &&
     isApprovedFtcFilingAction(approvedNextAction) &&
@@ -7076,7 +7109,7 @@ export default function JusticeChatAiPage() {
                 onRetryPricing={() => {
                   if (activeUuidCaseId) fetchCheckoutPrice(activeUuidCaseId);
                 }}
-                merchantContactRecipientRequired={approvePreparedTargetIsMerchantContact}
+                merchantContactRecipientRequired={approvePreparedTargetNeedsCompanyEmail}
                 merchantContactRecipientValid={merchantContactRecipientOnFileValid}
                 merchantContactRecipientValue={parts.company_contact_email}
                 onMerchantContactRecipientChange={(value) => {
@@ -7709,29 +7742,89 @@ export default function JusticeChatAiPage() {
                   </p>
                 ) : null}
                 {showDemandLetterQueuedNotice ? (
-                  <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
-                    {showDemandLetterSendingNotice ? (
-                      <>
-                        <span className="font-medium">Demand letter sending.</span> Surrenderless is
-                        delivering your demand letter email to the company using your case draft.
-                      </>
-                    ) : showDemandLetterSendFailedNotice ? (
-                      <>
-                        <span className="font-medium">Demand letter email failed.</span> Automated
-                        delivery did not go through. Operators will complete sending manually — nothing
-                        is marked sent until delivery succeeds.
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-medium">Demand letter queued with Surrenderless.</span>{" "}
-                        Surrenderless has queued your demand letter using your case draft. Nothing has
-                        been sent yet.
-                      </>
-                    )}
-                    <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
-                      Stay in this chat — status updates will appear here.
-                    </span>
-                  </p>
+                  showDemandLetterOperatorHandlingNotice ? (
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                      <span className="font-medium">Surrenderless operators are sending your demand
+                      letter.</span>{" "}
+                      You told us you don&apos;t have the company&apos;s email, so our operators will
+                      deliver your demand letter for you using your case draft — no automated email is
+                      sent.
+                      <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                        Stay in this chat — status updates will appear here.
+                      </span>
+                    </p>
+                  ) : showDemandLetterNeedsRecipientNotice ? (
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-amber-300/80 bg-amber-50/70 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
+                      <p>
+                        <span className="font-medium">We need the company&apos;s email to send your
+                        demand letter.</span>{" "}
+                        Surrenderless sends it to the company for you, so it can&apos;t go out until you
+                        add a valid recipient address. Nothing has been sent yet.
+                      </p>
+                      <label
+                        htmlFor={CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID}
+                        className="block font-medium"
+                      >
+                        Company / merchant contact email
+                      </label>
+                      <input
+                        id={CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID}
+                        type="email"
+                        inputMode="email"
+                        autoComplete="off"
+                        value={parts.company_contact_email}
+                        onChange={(e) =>
+                          setParts((prev) => ({ ...prev, company_contact_email: e.target.value }))
+                        }
+                        placeholder="support@company.com"
+                        className="w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-amber-500 dark:border-amber-800/60 dark:bg-neutral-950 dark:text-neutral-100"
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={
+                            !merchantContactRecipientOnFileValid || addingMerchantContactRecipient
+                          }
+                          onClick={() => void handleAddMerchantContactRecipientAndRetry()}
+                          className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
+                        >
+                          {addingMerchantContactRecipient ? "Sending…" : "Save and send demand letter"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={addingMerchantContactRecipient}
+                          onClick={() => void handleChooseMerchantContactOperatorFallback()}
+                          className="text-[11px] font-medium text-amber-800 underline underline-offset-2 hover:text-amber-950 disabled:opacity-60 dark:text-amber-200 dark:hover:text-amber-100"
+                        >
+                          I don&apos;t have it — let operators handle sending
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                      {showDemandLetterSendingNotice ? (
+                        <>
+                          <span className="font-medium">Demand letter sending.</span> Surrenderless is
+                          delivering your demand letter email to the company using your case draft.
+                        </>
+                      ) : showDemandLetterSendFailedNotice ? (
+                        <>
+                          <span className="font-medium">Demand letter email failed.</span> Automated
+                          delivery did not go through. Operators will complete sending manually —
+                          nothing is marked sent until delivery succeeds.
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium">Demand letter queued with Surrenderless.</span>{" "}
+                          Surrenderless has queued your demand letter using your case draft. Nothing has
+                          been sent yet.
+                        </>
+                      )}
+                      <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                        Stay in this chat — status updates will appear here.
+                      </span>
+                    </p>
+                  )
                 ) : null}
                 {showCfpbFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
@@ -7755,6 +7848,15 @@ export default function JusticeChatAiPage() {
                         <span className="font-medium">Payment dispute email failed.</span> Automated
                         delivery did not go through. Operators will complete the dispute filing
                         manually — nothing is marked filed until delivery succeeds.
+                      </>
+                    ) : showPaymentDisputeOperatorHandlingNotice ? (
+                      <>
+                        <span className="font-medium">Surrenderless operators are preparing your
+                        payment dispute.</span>{" "}
+                        Bank and card disputes are handled for you by our operators using your prepared
+                        dispute packet — there&apos;s no automated email to send. If your bank offers a
+                        dispute or chargeback option in its app or website, you can also start one there
+                        directly.
                       </>
                     ) : (
                       <>
