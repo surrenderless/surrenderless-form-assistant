@@ -224,6 +224,15 @@ const merchantClientState = {
   },
 };
 
+const demandLetterClientState = {
+  prepared_packet_approved: true,
+  approved_next_action: {
+    label: "Small claims / demand letter",
+    href: "/justice/demand-letter",
+    status: "approved",
+  },
+};
+
 function buildPatchRequest(body: Record<string, unknown>) {
   return new NextRequest(`http://localhost/api/justice/cases/${CASE_ID}`, {
     method: "PATCH",
@@ -435,6 +444,66 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
     const body = await res.json();
     expect(body.requiresMerchantContactEmail).toBe(true);
     expect(ensureOwnedFilingTaskAfterClientStateWrite).not.toHaveBeenCalled();
+  });
+
+  it("rejects the first demand-letter approval with 422 when the case has no company email", async () => {
+    const intakeNoRecipient = { ...intake, company_contact_email: "" };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: {},
+        archived_at: null,
+        paid_at: "2026-08-01T00:00:00.000Z",
+        intake: intakeNoRecipient,
+      },
+      error: null,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: demandLetterClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.requiresMerchantContactEmail).toBe(true);
+    expect(ensureOwnedFilingTaskAfterClientStateWrite).not.toHaveBeenCalled();
+  });
+
+  it("allows a demand-letter approval with the operator-fallback flag set (no email required)", async () => {
+    const intakeNoRecipient = { ...intake, company_contact_email: "" };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: {},
+        archived_at: null,
+        paid_at: "2026-08-01T00:00:00.000Z",
+        intake: intakeNoRecipient,
+      },
+      error: null,
+    });
+    mockCaseUpdateMaybeSingle.mockResolvedValue({
+      data: {
+        id: CASE_ID,
+        intake: intakeNoRecipient,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: demandLetterClientState,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        archived_at: null,
+        case_label: null,
+        paid_at: "2026-08-01T00:00:00.000Z",
+      },
+      error: null,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({
+        client_state: { ...demandLetterClientState, merchant_contact_operator_fallback: true },
+      }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
   });
 
   it("never blocks a case that is already approved/in-progress, even while unpaid", async () => {
