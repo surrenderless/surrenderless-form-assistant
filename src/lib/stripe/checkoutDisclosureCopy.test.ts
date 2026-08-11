@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCheckoutPriceHeadline,
+  CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE,
+  CHECKOUT_CONFIRMING_PAYMENT_MESSAGE,
   CHECKOUT_DISCLOSURE_PARAGRAPHS,
   CHECKOUT_PRICE_LOADING_MESSAGE,
   CHECKOUT_PRICE_UNAVAILABLE_MESSAGE,
   isCheckoutApprovalBlockedByPricing,
+  isCheckoutAwaitingPaymentConfirmation,
 } from "@/lib/stripe/checkoutDisclosureCopy";
 
 describe("buildCheckoutPriceHeadline", () => {
@@ -76,6 +79,43 @@ describe("isCheckoutApprovalBlockedByPricing", () => {
 
   it("never blocks an already-paid case on pricing — no checkout is needed for it at all", () => {
     expect(isCheckoutApprovalBlockedByPricing({ status: "not_needed" })).toBe(false);
+  });
+
+  it("blocks approval while a completed payment is being confirmed — must never start a 2nd checkout", () => {
+    expect(isCheckoutApprovalBlockedByPricing({ status: "confirming" })).toBe(true);
+  });
+
+  it("blocks approval when confirmation timed out — the consumer already paid; no re-checkout", () => {
+    expect(isCheckoutApprovalBlockedByPricing({ status: "confirm_timeout" })).toBe(true);
+  });
+});
+
+describe("isCheckoutAwaitingPaymentConfirmation", () => {
+  it("is true while confirming and after a confirmation timeout", () => {
+    expect(isCheckoutAwaitingPaymentConfirmation({ status: "confirming" })).toBe(true);
+    expect(isCheckoutAwaitingPaymentConfirmation({ status: "confirm_timeout" })).toBe(true);
+  });
+
+  it("is false for pre-payment and paid states", () => {
+    expect(isCheckoutAwaitingPaymentConfirmation({ status: "loading" })).toBe(false);
+    expect(isCheckoutAwaitingPaymentConfirmation({ status: "unavailable" })).toBe(false);
+    expect(
+      isCheckoutAwaitingPaymentConfirmation({ status: "ready", unitAmount: 4900, currency: "usd" })
+    ).toBe(false);
+    expect(isCheckoutAwaitingPaymentConfirmation({ status: "not_needed" })).toBe(false);
+  });
+});
+
+describe("payment confirmation messages", () => {
+  it("confirming message reassures the consumer they don't need to pay again", () => {
+    expect(CHECKOUT_CONFIRMING_PAYMENT_MESSAGE.toLowerCase()).toContain("confirming your payment");
+    expect(CHECKOUT_CONFIRMING_PAYMENT_MESSAGE.toLowerCase()).toContain("pay again");
+  });
+
+  it("timeout message is truthful (payment went through) and recoverable, not a hard failure", () => {
+    expect(CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE.toLowerCase()).toContain("longer than usual");
+    expect(CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE.toLowerCase()).toMatch(/keep checking|resume/);
+    expect(CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE.toLowerCase()).not.toContain("could not");
   });
 });
 
