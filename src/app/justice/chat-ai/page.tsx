@@ -394,6 +394,7 @@ import {
 } from "@/lib/justice/merchantContactEmailDelivery";
 import {
   hasValidMerchantContactRecipient,
+  isMerchantContactOperatorFallbackChosen,
   MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE,
 } from "@/lib/justice/merchantContactRecipient";
 import {
@@ -883,6 +884,8 @@ function ChatInlinePreparedPacketApprovalBlock({
   merchantContactRecipientValid,
   merchantContactRecipientValue,
   onMerchantContactRecipientChange,
+  merchantContactOperatorFallbackChosen,
+  onChooseMerchantContactOperatorFallback,
 }: {
   packetText: string;
   loading: boolean;
@@ -901,9 +904,13 @@ function ChatInlinePreparedPacketApprovalBlock({
   merchantContactRecipientValid: boolean;
   merchantContactRecipientValue: string;
   onMerchantContactRecipientChange: (value: string) => void;
+  merchantContactOperatorFallbackChosen: boolean;
+  onChooseMerchantContactOperatorFallback: () => void;
 }) {
   const merchantContactRecipientBlocking =
-    merchantContactRecipientRequired && !merchantContactRecipientValid;
+    merchantContactRecipientRequired &&
+    !merchantContactRecipientValid &&
+    !merchantContactOperatorFallbackChosen;
   const canTruncate = packetText.length > CHAT_DRAFT_PREVIEW_TRUNCATE;
   const displayText =
     expanded || !canTruncate ? packetText : `${packetText.slice(0, CHAT_DRAFT_PREVIEW_TRUNCATE)}…`;
@@ -956,8 +963,8 @@ function ChatInlinePreparedPacketApprovalBlock({
             Company / merchant contact email
           </label>
           <p className="text-emerald-800/90 dark:text-emerald-200/90">
-            Surrenderless sends your first message to the company itself, so we need a valid email
-            address to send it to before you approve.
+            Surrenderless sends your first message to the company itself, so add a valid email address
+            to send it to — or, if you don&apos;t have one, let our operators handle first outreach.
           </p>
           <input
             id={CHAT_INLINE_MERCHANT_CONTACT_EMAIL_INPUT_ID}
@@ -969,10 +976,23 @@ function ChatInlinePreparedPacketApprovalBlock({
             placeholder="support@company.com"
             className="w-full rounded-md border border-emerald-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-emerald-500 dark:border-emerald-800/60 dark:bg-neutral-950 dark:text-neutral-100"
           />
-          {merchantContactRecipientBlocking && merchantContactRecipientValue.trim() ? (
+          {!merchantContactRecipientValid && merchantContactRecipientValue.trim() ? (
             <p className="text-red-700 dark:text-red-300">
               Enter a valid email address (for example, support@company.com).
             </p>
+          ) : null}
+          {merchantContactOperatorFallbackChosen ? (
+            <p className="font-medium text-emerald-800 dark:text-emerald-200">
+              No email needed — Surrenderless operators will handle first outreach to the company.
+            </p>
+          ) : !merchantContactRecipientValid ? (
+            <button
+              type="button"
+              onClick={() => onChooseMerchantContactOperatorFallback()}
+              className="text-[11px] font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100"
+            >
+              I don&apos;t have the company&apos;s email — let operators handle outreach
+            </button>
           ) : null}
         </div>
       ) : null}
@@ -2654,6 +2674,10 @@ export default function JusticeChatAiPage() {
   const [approvePreparedPacketChecked, setApprovePreparedPacketChecked] = useState(false);
   const [approvingPreparedPacket, setApprovingPreparedPacket] = useState(false);
   const [addingMerchantContactRecipient, setAddingMerchantContactRecipient] = useState(false);
+  // Consumer's explicit "I have no merchant email — operators will handle outreach" choice, mirrored
+  // from the durable client_state flag so it survives the Stripe payment redirect and reloads.
+  const [merchantContactOperatorFallbackChosen, setMerchantContactOperatorFallbackChosen] =
+    useState(false);
   /** Pre-checkout price disclosure state — "loading" until the first fetch resolves for the
    *  active case, so checkout is disabled by default rather than ever appearing available before
    *  a real price has been confirmed. */
@@ -3374,6 +3398,7 @@ export default function JusticeChatAiPage() {
     sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(emptyParts);
     sessionBaselineEvidenceCountRef.current = null;
     setParts(emptyParts);
+    setMerchantContactOperatorFallbackChosen(false);
     legalConsentTrackedCaseIdRef.current = null;
     merchantContactAutopilotCaseRef.current = null;
     wasPendingHumanFulfillmentEscalationRef.current = false;
@@ -3422,25 +3447,39 @@ export default function JusticeChatAiPage() {
       // the server gate and the inline delivery read the intake already stored on the case.
       if (approvePreparedTargetIsMerchantContact) {
         const intakeForRecipient = buildJusticeIntakeFromParts(parts);
-        if (!hasValidMerchantContactRecipient(intakeForRecipient)) {
+        const hasRecipient = hasValidMerchantContactRecipient(intakeForRecipient);
+        if (!hasRecipient && !merchantContactOperatorFallbackChosen) {
           setTrackingSaveError(MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE);
           return false;
         }
         setTrackingSaveError(null);
-        try {
-          const intakeRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ intake: intakeForRecipient }),
-          });
-          if (!intakeRes.ok) {
+        if (hasRecipient) {
+          // Valid email: persist it to the stored intake so both the server gate and the inline
+          // delivery (which read the intake already stored on the case) send automatically.
+          try {
+            const intakeRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ intake: intakeForRecipient }),
+            });
+            if (!intakeRes.ok) {
+              setTrackingSaveError("Could not save the company's contact email. Try again.");
+              return false;
+            }
+          } catch (e) {
+            console.warn("justice chat-ai: save merchant recipient before approve error", e);
             setTrackingSaveError("Could not save the company's contact email. Try again.");
             return false;
           }
-        } catch (e) {
-          console.warn("justice chat-ai: save merchant recipient before approve error", e);
-          setTrackingSaveError("Could not save the company's contact email. Try again.");
-          return false;
+        } else {
+          // Operator fallback chosen (no email): persist the durable client_state flag now so it
+          // survives the Stripe payment redirect and the approval PATCH's server-side gate allows
+          // the approval. No automated email will be attempted — operators handle outreach.
+          const flagSaved = await persistMerchantContactOperatorFallbackFlag(caseId);
+          if (!flagSaved) {
+            setTrackingSaveError("Could not save your choice. Try again.");
+            return false;
+          }
         }
       }
 
@@ -3563,6 +3602,58 @@ export default function JusticeChatAiPage() {
       }
     } finally {
       approvingPreparedPacketRef.current = false;
+    }
+  }
+
+  /**
+   * Durably records the consumer's "I have no merchant email — operators will handle it" choice on
+   * the case's client_state (merged, preserving existing fields). Returns false on failure so the
+   * caller can surface an error rather than proceeding on an unsaved choice.
+   */
+  async function persistMerchantContactOperatorFallbackFlag(caseId: string): Promise<boolean> {
+    if (!caseId || !isUuid(caseId) || !isLoaded || !isSignedIn) return false;
+    try {
+      const getRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+      if (!getRes.ok) return false;
+      const existing = (await getRes.json()) as { client_state?: unknown };
+      const merged = {
+        ...parseJusticeCaseClientState(existing.client_state),
+        merchant_contact_operator_fallback: true,
+      };
+      const patchRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_state: merged }),
+      });
+      return patchRes.ok;
+    } catch (e) {
+      console.warn("justice chat-ai: persist merchant operator fallback error", e);
+      return false;
+    }
+  }
+
+  /**
+   * Consumer chose operator fallback (no merchant email). Optimistically reflects the choice so the
+   * approve gate unblocks immediately, persists it durably, and refreshes so the operator-handling
+   * status replaces any "queued"/needs-recipient copy. Never falsely shows automated delivery.
+   */
+  async function handleChooseMerchantContactOperatorFallback(): Promise<void> {
+    setMerchantContactOperatorFallbackChosen(true);
+    setTrackingSaveError(null);
+    const caseId =
+      activeUuidCaseId ||
+      (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "");
+    if (!caseId || !isUuid(caseId)) return;
+    setAddingMerchantContactRecipient(true);
+    try {
+      const saved = await persistMerchantContactOperatorFallbackFlag(caseId);
+      if (!saved) {
+        setTrackingSaveError("Could not save your choice. Try again.");
+        return;
+      }
+      requestSavedEvidencePreviewRefresh();
+    } finally {
+      setAddingMerchantContactRecipient(false);
     }
   }
 
@@ -4294,6 +4385,9 @@ export default function JusticeChatAiPage() {
             : null;
         casePaidAtRef.current =
           typeof data.paid_at === "string" && data.paid_at.trim() ? data.paid_at.trim() : null;
+        setMerchantContactOperatorFallbackChosen(
+          isMerchantContactOperatorFallbackChosen(data.client_state)
+        );
         if (Array.isArray(data.timeline)) {
           const localTimeline = readTimeline(caseId);
           replaceTimelineForCase(
@@ -6348,9 +6442,18 @@ export default function JusticeChatAiPage() {
   const persistedMerchantContactRecipientMissing = !hasValidMerchantContactRecipient(
     buildJusticeIntakeFromParts(sessionBaselinePartsRef.current ?? parts)
   );
+  // Consumer opted for operator fallback (no email): outreach is handled manually, so show honest
+  // "operators will handle it" status rather than the automated "queued" copy or a recipient prompt.
+  const showMerchantContactOperatorHandlingNotice =
+    showMerchantContactQueuedNotice &&
+    merchantContactOperatorFallbackChosen &&
+    persistedMerchantContactRecipientMissing &&
+    !showMerchantContactSendingNotice &&
+    !showMerchantContactSendFailedNotice;
   const showMerchantContactNeedsRecipientNotice =
     showMerchantContactQueuedNotice &&
     persistedMerchantContactRecipientMissing &&
+    !merchantContactOperatorFallbackChosen &&
     !showMerchantContactSendingNotice &&
     !showMerchantContactSendFailedNotice;
   const openPaymentDisputeTask = activeUuidCaseId
@@ -6976,8 +7079,15 @@ export default function JusticeChatAiPage() {
                 merchantContactRecipientRequired={approvePreparedTargetIsMerchantContact}
                 merchantContactRecipientValid={merchantContactRecipientOnFileValid}
                 merchantContactRecipientValue={parts.company_contact_email}
-                onMerchantContactRecipientChange={(value) =>
-                  setParts((prev) => ({ ...prev, company_contact_email: value }))
+                onMerchantContactRecipientChange={(value) => {
+                  if (merchantContactOperatorFallbackChosen) {
+                    setMerchantContactOperatorFallbackChosen(false);
+                  }
+                  setParts((prev) => ({ ...prev, company_contact_email: value }));
+                }}
+                merchantContactOperatorFallbackChosen={merchantContactOperatorFallbackChosen}
+                onChooseMerchantContactOperatorFallback={() =>
+                  void handleChooseMerchantContactOperatorFallback()
                 }
                 />
               </div>
@@ -7679,7 +7789,18 @@ export default function JusticeChatAiPage() {
                   </p>
                 ) : null}
                 {showMerchantContactQueuedNotice ? (
-                  showMerchantContactNeedsRecipientNotice ? (
+                  showMerchantContactOperatorHandlingNotice ? (
+                    <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
+                      <span className="font-medium">Surrenderless operators are handling first
+                      contact.</span>{" "}
+                      You told us you don&apos;t have the company&apos;s email, so our operators will
+                      reach the company for you using your case packet and draft — no automated email
+                      is sent.
+                      <span className="mt-1 block text-emerald-800/90 dark:text-emerald-200/90">
+                        Stay in this chat — status updates will appear here.
+                      </span>
+                    </p>
+                  ) : showMerchantContactNeedsRecipientNotice ? (
                     <div className="mt-2 space-y-1.5 rounded-lg border border-amber-300/80 bg-amber-50/70 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
                       <p>
                         <span className="font-medium">We need the company&apos;s email to send your
@@ -7705,14 +7826,26 @@ export default function JusticeChatAiPage() {
                         placeholder="support@company.com"
                         className="w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-amber-500 dark:border-amber-800/60 dark:bg-neutral-950 dark:text-neutral-100"
                       />
-                      <button
-                        type="button"
-                        disabled={!merchantContactRecipientOnFileValid || addingMerchantContactRecipient}
-                        onClick={() => void handleAddMerchantContactRecipientAndRetry()}
-                        className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
-                      >
-                        {addingMerchantContactRecipient ? "Sending…" : "Save and send first contact"}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={
+                            !merchantContactRecipientOnFileValid || addingMerchantContactRecipient
+                          }
+                          onClick={() => void handleAddMerchantContactRecipientAndRetry()}
+                          className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
+                        >
+                          {addingMerchantContactRecipient ? "Sending…" : "Save and send first contact"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={addingMerchantContactRecipient}
+                          onClick={() => void handleChooseMerchantContactOperatorFallback()}
+                          className="text-[11px] font-medium text-amber-800 underline underline-offset-2 hover:text-amber-950 disabled:opacity-60 dark:text-amber-200 dark:hover:text-amber-100"
+                        >
+                          I don&apos;t have it — let operators handle outreach
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">

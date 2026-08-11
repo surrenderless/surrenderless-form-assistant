@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { JusticeIntake } from "@/lib/justice/types";
 import {
   hasValidMerchantContactRecipient,
+  isMerchantContactOperatorFallbackChosen,
   MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE,
   resolveMerchantContactRecipientEmail,
 } from "@/lib/justice/merchantContactRecipient";
@@ -55,5 +56,33 @@ describe("hasValidMerchantContactRecipient", () => {
 describe("MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE", () => {
   it("names the company's contact email so the consumer knows what to add", () => {
     expect(MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE.toLowerCase()).toContain("contact email");
+  });
+});
+
+describe("isMerchantContactOperatorFallbackChosen", () => {
+  it("is true only when the client_state flag is exactly true", () => {
+    expect(isMerchantContactOperatorFallbackChosen({ merchant_contact_operator_fallback: true })).toBe(
+      true
+    );
+  });
+
+  it("is false when the flag is absent, false, or truthy-but-not-true", () => {
+    expect(isMerchantContactOperatorFallbackChosen({})).toBe(false);
+    expect(isMerchantContactOperatorFallbackChosen({ merchant_contact_operator_fallback: false })).toBe(
+      false
+    );
+    expect(
+      isMerchantContactOperatorFallbackChosen({ merchant_contact_operator_fallback: "yes" })
+    ).toBe(false);
+    expect(isMerchantContactOperatorFallbackChosen({ prepared_packet_approved: true })).toBe(false);
+  });
+
+  it("is false for null/undefined/non-object client_state", () => {
+    expect(isMerchantContactOperatorFallbackChosen(null)).toBe(false);
+    expect(isMerchantContactOperatorFallbackChosen(undefined)).toBe(false);
+    expect(isMerchantContactOperatorFallbackChosen("nope")).toBe(false);
+    expect(isMerchantContactOperatorFallbackChosen([{ merchant_contact_operator_fallback: true }])).toBe(
+      false
+    );
   });
 });

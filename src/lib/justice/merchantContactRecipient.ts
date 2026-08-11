@@ -25,3 +25,14 @@ export function hasValidMerchantContactRecipient(
 ): boolean {
   return resolveMerchantContactRecipientEmail(intake?.company_contact_email) !== null;
 }
+
+/**
+ * True when the case's client_state records the consumer's explicit "I have no merchant email —
+ * operators will handle it" choice. This is the sanctioned way to approve/pay for a merchant-contact
+ * packet without a recipient: it unblocks approval AND tells the UI to show operator handling rather
+ * than falsely implying an automated email is queued.
+ */
+export function isMerchantContactOperatorFallbackChosen(clientState: unknown): boolean {
+  if (!clientState || typeof clientState !== "object" || Array.isArray(clientState)) return false;
+  return (clientState as Record<string, unknown>).merchant_contact_operator_fallback === true;
+}

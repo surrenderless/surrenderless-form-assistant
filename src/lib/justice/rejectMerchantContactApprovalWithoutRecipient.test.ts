@@ -16,6 +16,11 @@ const MERCHANT_APPROVED = {
   },
 };
 
+const MERCHANT_APPROVED_OPERATOR_FALLBACK = {
+  ...MERCHANT_APPROVED,
+  merchant_contact_operator_fallback: true,
+};
+
 const FTC_APPROVED = {
   prepared_packet_approved: true,
   approved_next_action: {
@@ -98,5 +103,25 @@ describe("rejectMerchantContactApprovalWithoutRecipient", () => {
         intake: intakeWithEmail("none"),
       })
     ).toBe(REJECT_MERCHANT_CONTACT_APPROVAL_NO_RECIPIENT_MESSAGE);
+  });
+
+  it("allows approval with no recipient when the consumer chose the operator fallback", () => {
+    expect(
+      rejectMerchantContactApprovalWithoutRecipient({
+        existingClientState: NOT_APPROVED,
+        incomingClientState: MERCHANT_APPROVED_OPERATOR_FALLBACK,
+        intake: intakeWithEmail(null),
+      })
+    ).toBeNull();
+  });
+
+  it("still allows a valid-email approval even when the fallback flag is not set (automated path preserved)", () => {
+    expect(
+      rejectMerchantContactApprovalWithoutRecipient({
+        existingClientState: NOT_APPROVED,
+        incomingClientState: MERCHANT_APPROVED,
+        intake: intakeWithEmail("support@company.com"),
+      })
+    ).toBeNull();
   });
 });

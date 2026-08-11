@@ -1,6 +1,7 @@
 import { shouldQueueMerchantContactFilingTask } from "@/lib/justice/merchantContactFilingTask";
 import {
   hasValidMerchantContactRecipient,
+  isMerchantContactOperatorFallbackChosen,
   MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE,
 } from "@/lib/justice/merchantContactRecipient";
 import { isFirstPreparedPacketApprovalTransition } from "@/lib/justice/rejectUnpaidPreparedPacketApprovalPatch";
@@ -23,6 +24,11 @@ export { MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE as REJECT_MERCHANT_CONTACT_
  * about whether an email can be sent. Mirrors `rejectUnpaidPreparedPacketApprovalPatch`: fires only on
  * the exact labor-committing transition, so an already-approved/in-progress case is never re-blocked —
  * a later "add the email and retry" PATCH (not a first transition) is allowed straight through.
+ *
+ * Explicit operator fallback: when the consumer has recorded that they have no merchant email
+ * (client_state.merchant_contact_operator_fallback), approval is allowed WITHOUT a recipient — the
+ * outreach is handed to operators instead of auto-sent. This preserves the automated-send path for
+ * cases that do have a valid email while never dead-ending consumers who don't.
  */
 export function rejectMerchantContactApprovalWithoutRecipient(params: {
   existingClientState: unknown;
@@ -35,6 +41,7 @@ export function rejectMerchantContactApprovalWithoutRecipient(params: {
     return null;
   }
   if (!shouldQueueMerchantContactFilingTask(params.incomingClientState)) return null;
+  if (isMerchantContactOperatorFallbackChosen(params.incomingClientState)) return null;
   if (hasValidMerchantContactRecipient(params.intake)) return null;
   return MERCHANT_CONTACT_RECIPIENT_REQUIRED_MESSAGE;
 }
