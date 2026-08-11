@@ -46,4 +46,13 @@ describe("buildIntakeChatAiMessages system prompt", () => {
     const system = systemPrompt();
     expect(system).toContain("consumer_us_state");
   });
+
+  it("proactively asks for the company's contact email on merchant-first cases, without blocking", () => {
+    // When the consumer hasn't contacted the merchant, Surrenderless sends first contact itself and
+    // now requires a recipient — so the model must proactively collect company_contact_email while
+    // still accepting "I don't have it" (operators handle outreach) rather than dead-ending.
+    const system = systemPrompt();
+    expect(system).toMatch(/already_contacted is "no"[\s\S]*company's contact\/support email/i);
+    expect(system).toMatch(/operators can still handle first outreach|never block on it/i);
+  });
 });

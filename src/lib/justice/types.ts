@@ -173,6 +173,13 @@ export type JusticeApprovedNextAction = {
 export type JusticeCaseClientState = {
   prepared_packet_approved?: boolean;
   approved_next_action?: JusticeApprovedNextAction;
+  /**
+   * Consumer explicitly reported they have no merchant/company email, so Surrenderless operators
+   * will handle first outreach manually. Lets a merchant-contact packet be approved (and paid for)
+   * without a recipient, while signalling that no automated email will be attempted — so the UI
+   * must never show automated delivery as "queued" for such a case.
+   */
+  merchant_contact_operator_fallback?: boolean;
 };
 
 export const STORAGE_INTAKE = "justice_intake_v1";
