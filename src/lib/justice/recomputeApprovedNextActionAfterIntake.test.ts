@@ -3,6 +3,7 @@ import { ASSISTED_SUBMISSION_BBB_MOCK_PRACTICE_PREP_HREF } from "@/lib/justice/a
 import {
   advanceApprovedNextActionAfterCompleted,
   recomputeApprovedNextActionAfterIntake,
+  shouldRecomputeApprovedNextActionOnEvidenceChange,
 } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import { computeJusticeDestinations } from "@/lib/justice/rules";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -40,6 +41,46 @@ describe("recomputeApprovedNextActionAfterIntake", () => {
     });
     expect(action.handling_requested_at).toBe("2024-01-02T00:00:00.000Z");
     expect(action.href).toBe("/justice/merchant");
+  });
+});
+
+describe("shouldRecomputeApprovedNextActionOnEvidenceChange (evidence-upload pre-approval leak)", () => {
+  it("blocks the evidence-change recompute/persist BEFORE the packet is approved", () => {
+    // Production repro: an unapproved case, consumer uploads evidence (evidenceFileChanged=true).
+    // recompute would yield a status:"approved" action — persisting it here is the leak.
+    const wouldPersist = recomputeApprovedNextActionAfterIntake(baseIntake());
+    expect(wouldPersist.status).toBe("approved"); // why the gate is required
+
+    expect(
+      shouldRecomputeApprovedNextActionOnEvidenceChange({
+        preparedPacketApproved: false,
+        evidenceFileChanged: true,
+      })
+    ).toBe(false); // gate closed pre-approval → nothing persisted, no approved status, no narration
+  });
+
+  it("allows the recompute/persist AFTER the packet is approved when evidence actually changed", () => {
+    expect(
+      shouldRecomputeApprovedNextActionOnEvidenceChange({
+        preparedPacketApproved: true,
+        evidenceFileChanged: true,
+      })
+    ).toBe(true);
+  });
+
+  it("never fires when the evidence-file signal did not change, regardless of approval", () => {
+    expect(
+      shouldRecomputeApprovedNextActionOnEvidenceChange({
+        preparedPacketApproved: true,
+        evidenceFileChanged: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldRecomputeApprovedNextActionOnEvidenceChange({
+        preparedPacketApproved: false,
+        evidenceFileChanged: false,
+      })
+    ).toBe(false);
   });
 });
 

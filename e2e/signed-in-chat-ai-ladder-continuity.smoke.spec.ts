@@ -98,7 +98,10 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await expect(tracking.getByText("Next step:")).toContainText("Merchant contact", {
       timeout: 15_000,
     });
-    await expect(page.getByText("Merchant contact queued.")).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByText("We need the company's email to send your first contact.")
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Nothing has been sent yet.")).toBeVisible();
     await expect(tracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
     await expect(tracking.locator('a[href="/justice/packet"]')).toHaveCount(0);
     await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));

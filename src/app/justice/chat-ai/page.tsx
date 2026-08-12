@@ -229,6 +229,7 @@ import {
 } from "@/lib/justice/assistedSubmissionLane";
 import {
   recomputeApprovedNextActionAfterIntake,
+  shouldRecomputeApprovedNextActionOnEvidenceChange,
 } from "@/lib/justice/recomputeApprovedNextActionAfterIntake";
 import {
   buildPaymentDisputeDraftFromFields,
@@ -5008,7 +5009,18 @@ export default function JusticeChatAiPage() {
     const isFirstObservationForCase = !previous || previous.caseId !== caseId;
     const changed = !isFirstObservationForCase && previous.value !== hasUploadedEvidenceFile;
     hasUploadedEvidenceFileRef.current = { caseId, value: hasUploadedEvidenceFile };
-    if (!changed) return;
+    // Only recompute/persist the approved next action AFTER the packet is actually approved. The
+    // recompute yields a status:"approved" action, so persisting it pre-approval would falsely mark
+    // an unpaid, un-reviewed case "Approved" and queue its operator-fulfillment narration — the
+    // exact evidence-upload leak. (Ref above still tracks the signal across the approval boundary.)
+    if (
+      !shouldRecomputeApprovedNextActionOnEvidenceChange({
+        preparedPacketApproved,
+        evidenceFileChanged: changed,
+      })
+    ) {
+      return;
+    }
 
     const manualFtc =
       typeof window !== "undefined" && sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
@@ -5067,6 +5079,7 @@ export default function JusticeChatAiPage() {
     activeUuidCaseId,
     parts,
     approvedNextAction,
+    preparedPacketApproved,
   ]);
 
   const chatPacketPlainText = useMemo(() => {

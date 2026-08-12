@@ -21,6 +21,21 @@ export type RecomputeApprovedNextActionAfterIntakeOptions = {
   hasUploadedEvidenceFile?: boolean;
 };
 
+/**
+ * Gate for the evidence-change effect that recomputes and PERSISTS the approved next action.
+ * `recomputeApprovedNextActionAfterIntake` unconditionally yields a `status: "approved"` action
+ * (via `buildApprovedNextActionTarget`), so persisting it before the packet is actually approved
+ * would falsely mark an unpaid, un-reviewed case "Approved" (and trigger its operator-fulfillment
+ * chat narration). Recompute/persist only once the packet is approved AND the evidence-file signal
+ * actually changed — pre-approval, this must never fire.
+ */
+export function shouldRecomputeApprovedNextActionOnEvidenceChange(input: {
+  preparedPacketApproved: boolean;
+  evidenceFileChanged: boolean;
+}): boolean {
+  return input.preparedPacketApproved === true && input.evidenceFileChanged === true;
+}
+
 /** Recompute post-packet approved next action from saved intake (e.g. after contact documented). */
 export function recomputeApprovedNextActionAfterIntake(
   intake: JusticeIntake,
