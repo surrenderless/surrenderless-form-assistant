@@ -40,6 +40,46 @@ const NEGATION =
 const VAGUE_ONLY =
   /^(?:yes|yep|yeah|ok|okay|sure|fine|good|great|thanks|thank\s+you|sounds?\s+good|looks?\s+good|approve[d]?|approved)\.?$/i;
 
+// WHOLE-MESSAGE ALLOWLIST. Legal consent is recorded only when the ENTIRE message (after bounded
+// normalization) exactly matches one of a small, fixed set of consent templates. Because the
+// templates are anchored end-to-end (^...$), ANY trailing qualifier — "... if ...", "... pending
+// ...", "... however ...", "... later", or any future hedge — makes the whole string fail to match
+// and is rejected, with no blacklist of qualifier words to maintain. The set grows only when a new
+// phrasing is deliberately blessed, never in response to adversarial input.
+
+// Bounded, non-growing polite-affirmation prefix stripped before template matching, so friendly
+// openers ("Yes, I approve...", "Confirmed: I approve...") still match a template.
+const CONSENT_PREFIX = /^(?:yes|yeah|okay|ok|sure|absolutely|confirmed)[\s,:.–-]+/i;
+
+// Bounded trailing courtesy stripped before template matching ("..., thanks", "run BBB autofill please").
+const CONSENT_SUFFIX = /\s+(?:thanks|thank you|please)$/i;
+
+const SUBMISSION_DRAFT_REVIEW_TEMPLATES: readonly RegExp[] = [
+  /^i have reviewed the submission draft shown above and confirm it is ready to proceed$/,
+  /^i (?:have )?reviewed the submission draft$/,
+  /^i confirm (?:that )?i have reviewed the submission draft$/,
+  /^mark the submission draft as reviewed$/,
+];
+
+const PREPARED_PACKET_APPROVAL_TEMPLATES: readonly RegExp[] = [
+  /^i have reviewed the prepared packet and approve it for submission$/,
+  /^i approve the prepared (?:case )?packet(?: for submission)?$/,
+];
+
+const BBB_ACCURACY_TEMPLATES: readonly RegExp[] = [
+  /^i confirm the bbb complaint information is accurate(?: to the best of my knowledge)?$/,
+];
+
+const BBB_RUN_TEMPLATES: readonly RegExp[] = [
+  /^(?:please )?run bbb autofill$/,
+  /^start bbb autofill$/,
+  /^submit (?:my )?bbb complaint$/,
+];
+
+const BBB_ACCURACY_AND_RUN_TEMPLATES: readonly RegExp[] = [
+  /^i confirm the bbb complaint information is accurate(?: to the best of my knowledge)? (?:please )?run bbb autofill$/,
+];
+
 function normalizedMessage(message: string): string {
   return message.trim().replace(/\s+/g, " ");
 }
@@ -48,51 +88,62 @@ function hasNegation(message: string): boolean {
   return NEGATION.test(message);
 }
 
+/** True if the raw message contains a question mark — rejected before normalization strips it. */
+function isQuestion(message: string): boolean {
+  return message.includes("?");
+}
+
+/**
+ * Canonicalize a message for whole-message template matching: lowercase, strip a bounded polite
+ * prefix and trailing courtesy, and fold punctuation to spaces. NOTE: callers must reject questions
+ * on the RAW message first (isQuestion) — this folds the "?" away.
+ */
+function toConsentCore(message: string): string {
+  let t = normalizedMessage(message).toLowerCase();
+  t = t.replace(CONSENT_PREFIX, "");
+  t = t.replace(/[.,!;:?]+/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(CONSENT_SUFFIX, "").trim();
+  return t;
+}
+
+function matchesAnyTemplate(core: string, templates: readonly RegExp[]): boolean {
+  return templates.some((re) => re.test(core));
+}
+
+/** Shared pre-check: non-empty, not a question, no negation. */
+function isConsentEligible(message: string): boolean {
+  return Boolean(message.trim()) && !isQuestion(message) && !hasNegation(message);
+}
+
 function isVagueOnly(message: string): boolean {
   return VAGUE_ONLY.test(normalizedMessage(message));
 }
 
 function matchesSubmissionDraftReviewConsent(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
-  return (
-    /\bi\s+(?:have\s+)?reviewed\s+(?:the\s+)?submission\s+draft\b/i.test(text) ||
-    /\b(?:i\s+)?confirm\s+(?:that\s+)?i\s+(?:have\s+)?reviewed\s+(?:the\s+)?submission\s+draft\b/i.test(text) ||
-    /\bmark\s+(?:the\s+)?submission\s+draft\s+(?:as\s+)?reviewed\b/i.test(text)
-  );
+  if (!isConsentEligible(message)) return false;
+  return matchesAnyTemplate(toConsentCore(message), SUBMISSION_DRAFT_REVIEW_TEMPLATES);
 }
 
 function matchesPreparedPacketApprovalConsent(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
-  if (!/\b(?:prepared\s+packet|prepared\s+case\s+packet|justice\s+case\s+packet)\b/i.test(text)) {
-    return false;
-  }
-  return (
-    /\bi\s+approve\s+(?:the\s+)?(?:prepared\s+)?(?:case\s+)?packet\b/i.test(text) ||
-    /\bi\s+(?:have\s+)?reviewed\s+(?:the\s+)?(?:prepared\s+)?(?:case\s+)?packet\b.*\bapprove\b/i.test(text) ||
-    /\bapprove\s+(?:the\s+)?(?:prepared\s+)?(?:case\s+)?packet\s+for\s+submission\b/i.test(text)
-  );
+  if (!isConsentEligible(message)) return false;
+  return matchesAnyTemplate(toConsentCore(message), PREPARED_PACKET_APPROVAL_TEMPLATES);
 }
 
 function matchesBbbAccuracyConsent(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
+  if (!isConsentEligible(message)) return false;
+  const core = toConsentCore(message);
   return (
-    /\bi\s+confirm\b.*\baccurate\b.*\bbest\s+of\s+my\s+knowledge\b/i.test(text) ||
-    /\bi\s+confirm\b.*\b(?:bbb\s+)?(?:complaint\s+)?information\s+is\s+accurate\b/i.test(text) ||
-    /\bconfirm\s+(?:the\s+)?bbb\s+complaint\s+information\s+is\s+accurate\b/i.test(text)
+    matchesAnyTemplate(core, BBB_ACCURACY_TEMPLATES) ||
+    matchesAnyTemplate(core, BBB_ACCURACY_AND_RUN_TEMPLATES)
   );
 }
 
 function matchesBbbRunAutofill(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
+  if (!isConsentEligible(message)) return false;
+  const core = toConsentCore(message);
   return (
-    /\brun\s+bbb\s+autofill\b/i.test(text) ||
-    /\bstart\s+bbb\s+autofill\b/i.test(text) ||
-    /\bsubmit\s+(?:my\s+)?bbb\s+complaint\b/i.test(text) ||
-    /\bplease\s+run\s+bbb\b/i.test(text)
+    matchesAnyTemplate(core, BBB_RUN_TEMPLATES) ||
+    matchesAnyTemplate(core, BBB_ACCURACY_AND_RUN_TEMPLATES)
   );
 }
 
