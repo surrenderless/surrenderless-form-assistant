@@ -441,6 +441,173 @@ describe("chatLegalConsentGates", () => {
         kind: "ambiguous",
         gate: "bbb_complaint_autofill",
       })
-    ).toContain("BBB accuracy confirmation");
+    ).toContain("Run BBB autofill");
+  });
+
+  // Rejected near-consent (an approval/review phrased with a condition) must resolve to `ambiguous`,
+  // never `none` — otherwise it reaches general chat and the AI falsely acknowledges it as recorded.
+  describe("rejected near-consent is ambiguous (never forwarded to general chat)", () => {
+    it("routes conditional near-consent to ambiguous for every gate", () => {
+      expect(
+        parseChatLegalConsentMessage(
+          "I have reviewed the submission draft if that's what you need.",
+          "submission_draft_review",
+          baseContext()
+        )
+      ).toEqual({ kind: "ambiguous", gate: "submission_draft_review" });
+
+      expect(
+        parseChatLegalConsentMessage(
+          "I approve the prepared packet for submission if the case looks strong.",
+          "prepared_packet_approval",
+          baseContext({ submissionDraftReviewed: true })
+        )
+      ).toEqual({ kind: "ambiguous", gate: "prepared_packet_approval" });
+
+      expect(
+        parseChatLegalConsentMessage(
+          "I confirm the BBB complaint information is accurate if the amounts are right. Run BBB autofill.",
+          "bbb_complaint_autofill",
+          baseContext({
+            submissionDraftReviewed: true,
+            preparedPacketApproved: true,
+            bbbComplaintPrepVisible: true,
+          })
+        )
+      ).toEqual({ kind: "ambiguous", gate: "bbb_complaint_autofill" });
+    });
+
+    it("leaves genuinely unrelated messages as none (still reach normal chat)", () => {
+      expect(
+        parseChatLegalConsentMessage(
+          "Can you update my email to test@example.com?",
+          "submission_draft_review",
+          baseContext()
+        )
+      ).toEqual({ kind: "none" });
+      expect(
+        parseChatLegalConsentMessage(
+          "What's the deadline for this case?",
+          "prepared_packet_approval",
+          baseContext({ submissionDraftReviewed: true })
+        )
+      ).toEqual({ kind: "none" });
+    });
+
+    it("assistant-directed / interrogative consent-verb messages stay none (punctuated and not)", () => {
+      const bbbCtx = baseContext({
+        submissionDraftReviewed: true,
+        preparedPacketApproved: true,
+        bbbComplaintPrepVisible: true,
+        chatBbbAccuracyConsented: true,
+      });
+      const packetCtx = baseContext({ submissionDraftReviewed: true });
+      // [message, gate, ctx] — each contains a consent verb but is a question/request, not the
+      // user's own declarative consent. Tested with and without the trailing "?".
+      const cases: [string, "submission_draft_review" | "prepared_packet_approval" | "bbb_complaint_autofill", ChatLegalConsentGateContext][] = [
+        ["Have you reviewed the draft", "submission_draft_review", baseContext()],
+        ["Have you reviewed the packet yet", "prepared_packet_approval", packetCtx],
+        ["Can you confirm these numbers are accurate", "bbb_complaint_autofill", bbbCtx],
+        ["Is the information accurate. Please confirm", "bbb_complaint_autofill", bbbCtx],
+        ["Can you run the BBB autofill for me", "bbb_complaint_autofill", bbbCtx],
+        ["Should I submit the BBB complaint myself", "bbb_complaint_autofill", bbbCtx],
+      ];
+      for (const [stem, gate, ctx] of cases) {
+        for (const message of [`${stem}?`, stem]) {
+          expect(parseChatLegalConsentMessage(message, gate, ctx).kind).toBe("none");
+        }
+      }
+    });
+
+    it("keeps the user's own conditional consent / direct command as ambiguous", () => {
+      expect(
+        parseChatLegalConsentMessage(
+          "I approve the prepared packet for submission only after the fee is waived.",
+          "prepared_packet_approval",
+          baseContext({ submissionDraftReviewed: true })
+        )
+      ).toEqual({ kind: "ambiguous", gate: "prepared_packet_approval" });
+      expect(
+        parseChatLegalConsentMessage(
+          "I have reviewed the submission draft, pending your edits.",
+          "submission_draft_review",
+          baseContext()
+        )
+      ).toEqual({ kind: "ambiguous", gate: "submission_draft_review" });
+      // Direct BBB-autofill command with a trailing qualifier (not assistant-directed / a question).
+      expect(
+        parseChatLegalConsentMessage(
+          "Run BBB autofill once the draft is final.",
+          "bbb_complaint_autofill",
+          baseContext({
+            submissionDraftReviewed: true,
+            preparedPacketApproved: true,
+            bbbComplaintPrepVisible: true,
+            chatBbbAccuracyConsented: true,
+          })
+        )
+      ).toEqual({ kind: "ambiguous", gate: "bbb_complaint_autofill" });
+      // Bare first-person approval still nudges (existing behavior preserved).
+      expect(
+        parseChatLegalConsentMessage(
+          "I approve",
+          "prepared_packet_approval",
+          baseContext({ submissionDraftReviewed: true })
+        )
+      ).toEqual({ kind: "ambiguous", gate: "prepared_packet_approval" });
+    });
+
+    it("keeps first-person but unrelated statements as none (not the gate's subject)", () => {
+      const bbbCtx = baseContext({
+        submissionDraftReviewed: true,
+        preparedPacketApproved: true,
+        bbbComplaintPrepVisible: true,
+        chatBbbAccuracyConsented: true,
+      });
+      const packetCtx = baseContext({ submissionDraftReviewed: true });
+      const cases: [string, "submission_draft_review" | "prepared_packet_approval" | "bbb_complaint_autofill", ChatLegalConsentGateContext][] = [
+        // "approve of" is endorsement, not packet consent
+        ["I approve of your plan", "prepared_packet_approval", packetCtx],
+        // bare "draft", not "the submission draft" — unrelated narration
+        ["I reviewed a draft yesterday", "submission_draft_review", baseContext()],
+        // confirms "the numbers", no BBB complaint subject
+        ["I confirm the numbers are accurate", "bbb_complaint_autofill", bbbCtx],
+      ];
+      for (const [stem, gate, ctx] of cases) {
+        for (const message of [`${stem}.`, stem]) {
+          expect(parseChatLegalConsentMessage(message, gate, ctx).kind).toBe("none");
+        }
+      }
+    });
+
+    it("ambiguous replies say nothing was recorded and offer the exact phrase and the checkbox/button", () => {
+      const draft = buildChatLegalConsentAssistantResponse({
+        kind: "ambiguous",
+        gate: "submission_draft_review",
+      });
+      expect(draft).toContain("did not record that");
+      expect(draft).toContain(
+        "I have reviewed the submission draft shown above and confirm it is ready to proceed."
+      );
+      expect(draft).toContain("Mark draft reviewed");
+
+      const packet = buildChatLegalConsentAssistantResponse({
+        kind: "ambiguous",
+        gate: "prepared_packet_approval",
+      });
+      expect(packet).toContain("did not record that");
+      expect(packet).toContain("I have reviewed the prepared packet and approve it for submission.");
+      expect(packet).toContain("Approve prepared packet");
+
+      const bbb = buildChatLegalConsentAssistantResponse({
+        kind: "ambiguous",
+        gate: "bbb_complaint_autofill",
+      });
+      expect(bbb).toContain("did not record that");
+      expect(bbb).toContain(
+        "I confirm the BBB complaint information is accurate to the best of my knowledge. Please run BBB autofill."
+      );
+      expect(bbb).toContain("Run BBB autofill");
+    });
   });
 });
