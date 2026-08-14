@@ -249,6 +249,63 @@ export function clearChatBbbAccuracyConsented(caseId: string): void {
   storage.setItem(STORAGE_CHAT_BBB_ACCURACY_CONSENTED_V1, JSON.stringify(map));
 }
 
+// A message that leads with an interrogative word, or addresses the assistant ("can you…",
+// "have you…"), is a question/request — never the user's own declarative consent — so it can
+// never be a near-consent attempt.
+const NEAR_CONSENT_INTERROGATIVE_LEAD =
+  /^(?:do|does|did|should|would|could|can|shall|will|is|are|was|were|have|has|had|may|might|am|what|whats?|when|where|why|how|which|who|whom|whose)\b/i;
+const NEAR_CONSENT_ASSISTANT_DIRECTED =
+  /\b(?:can|could|would|will|do|does|did|have|has|are|is|should|may|might)\s+you\b/i;
+
+/**
+ * True when a message is the USER's OWN declarative consent attempt for the pending gate that fell
+ * just short of an exact template — so it must resolve to `ambiguous` (an honest "not recorded,
+ * here's the exact phrase / checkbox" reply) rather than `none`, which would forward it to general
+ * chat and let the AI falsely acknowledge it.
+ *
+ * Narrow by construction: questions, interrogative-lead phrasings, and assistant-directed wording
+ * ("Have you reviewed the packet?", "Can you run the BBB autofill?") are excluded, so unrelated
+ * normal-chat messages that merely contain a consent verb stay `none`. Draft/packet require
+ * first-person, gate-specific wording; BBB additionally accepts a direct BBB-autofill command.
+ */
+function isNearConsentAttempt(text: string, gate: ChatLegalConsentGate): boolean {
+  if (
+    text.includes("?") ||
+    NEAR_CONSENT_INTERROGATIVE_LEAD.test(text.trim()) ||
+    NEAR_CONSENT_ASSISTANT_DIRECTED.test(text)
+  ) {
+    return false;
+  }
+  const firstPerson = /\bi\b/i.test(text);
+  switch (gate) {
+    case "submission_draft_review":
+      // "I (have) reviewed … the submission draft" — the gate's specific subject, not a bare
+      // "draft" (which matches unrelated narration like "I reviewed a draft yesterday").
+      return (
+        firstPerson && /\breview(?:ed)?\b/i.test(text) && /\bsubmission\s+draft\b/i.test(text)
+      );
+    case "prepared_packet_approval":
+      // "I approve …" (approve is the packet gate's own action verb). Exclude the endorsement
+      // idiom "approve of …" ("I approve of your plan"), which is an opinion, not consent.
+      return firstPerson && /\bapprove\b/i.test(text) && !/\bapprove\s+of\b/i.test(text);
+    case "bbb_complaint_autofill":
+      // First-person accuracy confirmation of the BBB complaint subject (not a bare "the numbers
+      // are accurate"), OR a direct BBB-autofill command.
+      return (
+        (firstPerson &&
+          /\bconfirm\b/i.test(text) &&
+          /\baccurate\b/i.test(text) &&
+          /\b(?:bbb|complaint|information)\b/i.test(text)) ||
+        (/\b(?:run|start)\b/i.test(text) && /\bbbb\b/i.test(text) && /\bautofill\b/i.test(text)) ||
+        (/\bsubmit\b/i.test(text) && /\bbbb\b/i.test(text) && /\bcomplaint\b/i.test(text))
+      );
+    default: {
+      const _exhaustive: never = gate;
+      return _exhaustive;
+    }
+  }
+}
+
 /** Parse a user message against the currently pending gate only. Never infers across gates. */
 export function parseChatLegalConsentMessage(
   message: string,
@@ -267,7 +324,7 @@ export function parseChatLegalConsentMessage(
       if (matchesSubmissionDraftReviewConsent(text)) {
         return { kind: "submission_draft_review" };
       }
-      if (isVagueOnly(text) || /\bapprove\b/i.test(text)) {
+      if (isVagueOnly(text) || isNearConsentAttempt(text, gate)) {
         return { kind: "ambiguous", gate };
       }
       return { kind: "none" };
@@ -275,7 +332,7 @@ export function parseChatLegalConsentMessage(
       if (matchesPreparedPacketApprovalConsent(text)) {
         return { kind: "prepared_packet_approval" };
       }
-      if (isVagueOnly(text) || (/\bapprove\b/i.test(text) && !/\bpacket\b/i.test(text))) {
+      if (isVagueOnly(text) || isNearConsentAttempt(text, gate)) {
         return { kind: "ambiguous", gate };
       }
       return { kind: "none" };
@@ -294,7 +351,7 @@ export function parseChatLegalConsentMessage(
         }
         return { kind: "ambiguous", gate };
       }
-      if (isVagueOnly(text) || /\bapprove\b/i.test(text)) {
+      if (isVagueOnly(text) || isNearConsentAttempt(text, gate)) {
         return { kind: "ambiguous", gate };
       }
       return { kind: "none" };
@@ -330,12 +387,12 @@ export function buildChatLegalConsentAssistantResponse(
       return "Understood — I won't run BBB autofill without your explicit accuracy confirmation. Review the BBB summary below when you're ready.";
     case "ambiguous":
       if (result.gate === "submission_draft_review") {
-        return "I need a clear statement that you reviewed the submission draft before I can proceed. For example: \"I have reviewed the submission draft shown above and confirm it is ready to proceed.\"";
+        return "I did not record that — your message wasn't an unconditional confirmation, so nothing was saved. To record it, send exactly: \"I have reviewed the submission draft shown above and confirm it is ready to proceed.\" — or tick the box and click \"Mark draft reviewed\" above.";
       }
       if (result.gate === "prepared_packet_approval") {
-        return "I need a clear statement that you reviewed and approve the prepared packet. For example: \"I have reviewed the prepared packet and approve it for submission.\"";
+        return "I did not record that — your message wasn't an unconditional approval, so nothing was saved. To approve, send exactly: \"I have reviewed the prepared packet and approve it for submission.\" — or tick the box and click \"Approve prepared packet\" above.";
       }
-      return "I need your explicit BBB accuracy confirmation before running autofill. For example: \"I confirm the BBB complaint information is accurate to the best of my knowledge. Please run BBB autofill.\"";
+      return "I did not record that — your message wasn't an unconditional confirmation, so nothing was saved. To proceed, send exactly: \"I confirm the BBB complaint information is accurate to the best of my knowledge. Please run BBB autofill.\" — or use the \"Run BBB autofill\" control above.";
     default: {
       const _exhaustive: never = result;
       return _exhaustive;
