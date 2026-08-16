@@ -99,6 +99,65 @@ describe("chatStartNewCaseGates", () => {
     ).toEqual({ kind: "decline" });
   });
 
+  // Safety gap: start_new_case fires immediately with NO confirmation UI — it wipes the visible
+  // chat transcript and clears approval/evidence/task state for the active case. The prior
+  // substring-anywhere matcher let this fire from a mere question, conditional, deferred,
+  // hypothetical, historical, or third-person mention of "new case" — never the user's own
+  // present, unconditional instruction.
+  describe("whole-message allowlist rejects everything except an exact template", () => {
+    const activeCtx = baseContext();
+
+    const nonMutatingVariants = [
+      // interrogative / assistant-directed
+      "Can you start a new case for me?",
+      "Can you start a new case for me",
+      "Should I start a new case?",
+      // conditional
+      "I might want to start a new case if this doesn't work out.",
+      "Start a new case if the refund doesn't come through.",
+      // deferred
+      "I'll start a new case later once I hear back.",
+      "I will start a new case tomorrow.",
+      // hypothetical
+      "Suppose I start a new case for a different issue.",
+      "Imagine I start a new case right now.",
+      // historical / unrelated narration
+      "Last time I had to start a new case with another company.",
+      "I started a new case with them once before.",
+      // third-person
+      "My friend said I should start a new case.",
+      "She told me to start a new case.",
+    ];
+
+    it("never fires start_new_case for any non-exact variant", () => {
+      for (const message of nonMutatingVariants) {
+        expect(parseChatStartNewCaseMessage(message, activeCtx).kind).not.toBe("start_new_case");
+      }
+    });
+
+    it("still accepts the canonical phrase and the intentionally supported direct commands", () => {
+      for (const message of [
+        CHAT_START_NEW_CASE_MESSAGE,
+        "Start new case",
+        "Create a new case",
+        "Please create a new case",
+        "Begin a new case",
+        "begin a new case in chat",
+        "Open a new case",
+        "I want a new case",
+        "I want a brand new case",
+        "start over with a new case",
+        "start fresh with a new case",
+        "New case please",
+        "New case now",
+      ]) {
+        expect(parseChatStartNewCaseMessage(message, activeCtx)).toEqual({
+          kind: "start_new_case",
+        });
+      }
+    });
+  });
+
   it("reports no_active_case when consent arrives without a session case", () => {
     expect(
       parseChatStartNewCaseMessage(CHAT_START_NEW_CASE_MESSAGE, baseContext({ activeCaseId: "" }))
