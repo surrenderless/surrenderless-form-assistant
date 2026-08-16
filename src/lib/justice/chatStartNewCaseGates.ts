@@ -35,23 +35,61 @@ function isVagueOnly(message: string): boolean {
   return VAGUE_ONLY.test(normalizedMessage(message));
 }
 
+// WHOLE-MESSAGE ALLOWLIST. `start_new_case` fires immediately with NO confirmation UI — it wipes
+// the visible chat transcript and clears approval/evidence/task state for the active case (the
+// server case is untouched, but from the consumer's view the current case appears to vanish).
+// Recorded only when the ENTIRE message (after bounded normalization) exactly matches one of a
+// small, fixed set of templates — the canonical phrase plus a few intentionally supported direct
+// commands. Anchored end-to-end, so any conditional, deferred, hypothetical, historical, third-
+// person, interrogative, or assistant-directed wording fails to match and is rejected, with no
+// keyword blacklist to maintain.
+
+// Bounded, non-growing polite-affirmation prefix stripped before matching. "please" is included
+// here (unlike the closure gate) because it is never part of this gate's canonical phrase.
+const START_NEW_CASE_PREFIX = /^(?:yes|yeah|okay|ok|sure|absolutely|confirmed|please)[\s,:.–-]+/i;
+const START_NEW_CASE_SUFFIX = /\s+(?:thanks|thank you|please)$/i;
+
+const START_NEW_CASE_TEMPLATES: readonly RegExp[] = [
+  /^start a new case$/, // canonical
+  /^start new case$/,
+  /^create a new case$/,
+  /^create new case$/,
+  /^begin a new case$/,
+  /^begin new case$/,
+  /^begin a new case in chat$/,
+  /^open a new case$/,
+  /^open new case$/,
+  /^i want a new case$/,
+  /^i want new case$/,
+  /^i want a brand new case$/,
+  /^start over with a new case$/,
+  /^start fresh with a new case$/,
+  /^new case$/, // reached after SUFFIX strips a trailing "please"/"thanks" (e.g. "New case please")
+  /^new case now$/,
+];
+
+function toStartNewCaseCore(message: string): string {
+  let t = normalizedMessage(message).toLowerCase();
+  t = t.replace(START_NEW_CASE_PREFIX, "");
+  t = t.replace(/[.,!;:?]+/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(START_NEW_CASE_SUFFIX, "").trim();
+  return t;
+}
+
+/** Shared pre-check: non-empty, not a question, no negation. */
+function isStartNewCaseEligible(message: string): boolean {
+  return Boolean(message.trim()) && !message.includes("?") && !hasNegation(message);
+}
+
 /**
  * Explicit consent to leave the active case and begin a genuinely separate case.
- * Requires clear "new case / start over" wording — not "new company" alone.
+ * Only an exact whole-message template match — not a "new case / start over" substring anywhere
+ * in the message — may satisfy this.
  */
 function matchesStartNewCaseConsent(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
-  return (
-    /\bstart\s+(?:a\s+)?new\s+case\b/i.test(text) ||
-    /\bcreate\s+(?:a\s+)?new\s+case\b/i.test(text) ||
-    /\bbegin\s+(?:a\s+)?new\s+case\b/i.test(text) ||
-    /\bopen\s+(?:a\s+)?new\s+case\b/i.test(text) ||
-    /\bstart\s+over\s+(?:with\s+)?(?:a\s+)?(?:new\s+)?case\b/i.test(text) ||
-    /\b(?:please\s+)?start\s+fresh\s+(?:with\s+)?(?:a\s+)?(?:new\s+)?case\b/i.test(text) ||
-    /\bi\s+want\s+(?:a\s+)?(?:brand\s+)?new\s+case\b/i.test(text) ||
-    /\bnew\s+case\s+(?:please|now)\b/i.test(text)
-  );
+  if (!isStartNewCaseEligible(message)) return false;
+  const core = toStartNewCaseCore(message);
+  return START_NEW_CASE_TEMPLATES.some((re) => re.test(core));
 }
 
 function matchesStartNewCaseDecline(message: string): boolean {
