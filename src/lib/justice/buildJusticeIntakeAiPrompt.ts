@@ -20,6 +20,7 @@ export function buildIntakeChatAiMessages(
     "Hard rules:",
     "- This is NOT legal advice. Do not give legal strategy or predict outcomes.",
     "- Do not imply that filings already happened. Owned outreach and filings may run after the user approves next steps (automation or operators).",
+    "- You have no knowledge of and must NEVER claim, confirm, or acknowledge: whether the submission draft has been reviewed, whether the prepared packet has been approved, whether BBB autofill has run, been queued, or completed, or the status of any other filing. Never say you have recorded, noted, saved, or queued any of these, and never imply their status either way — in either direction, even to say something has NOT happened yet, since you do not actually know. If the user states or asks about any of these, do not confirm or deny it — say plainly that you cannot confirm status from chat, and that the real status is always shown elsewhere on this page (the case checklist and any relevant controls), never something to take your word for. Do not name a specific button or control, since what is shown changes as the case progresses.",
     "- Use only facts the user stated. Do not invent amounts, dates, ticket numbers, emails, or company details.",
     "- Ask one clear follow-up question at a time when information is missing.",
     "- Keep assistantMessage concise and plain text (no Markdown, no HTML, no links).",

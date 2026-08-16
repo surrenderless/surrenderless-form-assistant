@@ -51,26 +51,68 @@ function isVagueOnly(message: string): boolean {
   return VAGUE_ONLY.test(normalizedMessage(message));
 }
 
+// WHOLE-MESSAGE ALLOWLIST. `archive_case` and `follow_up_handled` trigger REAL, largely
+// irreversible state mutations (the case is actually archived / follow-up is actually cleared),
+// so they are recorded only when the ENTIRE message (after bounded normalization) exactly
+// matches one of a small, fixed set of templates — the canonical phrase plus a few intentionally
+// supported direct commands. Anchored end-to-end (^...$), so ANY trailing/leading qualifier —
+// conditional ("... if ..."), deferred ("I'll ... later"), hypothetical ("Suppose ..."),
+// third-person ("My lawyer said to ..."), interrogative, or assistant-directed wording — fails to
+// match and is rejected, with no keyword blacklist to maintain or grow.
+
+// Bounded, non-growing polite-affirmation prefix / trailing courtesy stripped before matching.
+const CLOSURE_PREFIX = /^(?:yes|yeah|okay|ok|sure|absolutely|confirmed)[\s,:.–-]+/i;
+const CLOSURE_SUFFIX = /\s+(?:thanks|thank you|please)$/i;
+
+const FOLLOW_UP_HANDLED_TEMPLATES: readonly RegExp[] = [
+  /^i have handled the follow-up for this case and it is complete$/, // canonical
+  /^mark the follow-up as handled$/,
+  /^i have handled the follow-up$/,
+  /^the follow-up is handled$/,
+  /^follow-up is handled$/,
+];
+
+const ARCHIVE_CASE_TEMPLATES: readonly RegExp[] = [
+  /^please archive this case now i am ready to close it$/, // canonical
+  /^archive this case$/,
+  /^archive this case now$/,
+  /^archive my case$/,
+  /^i(?:'m| am) ready to archive this case$/,
+  /^i(?:'m| am) ready to close this case$/,
+  /^close this case now$/,
+];
+
+/**
+ * Canonicalize a message for whole-message template matching: lowercase, strip a bounded polite
+ * prefix and trailing courtesy, and fold punctuation (except the hyphen in "follow-up") to
+ * spaces. NOTE: callers must reject questions on the RAW message first — this folds the "?" away,
+ * and a trailing "?" would otherwise silently disappear and let a question match a template.
+ */
+function toClosureCore(message: string): string {
+  let t = normalizedMessage(message).toLowerCase();
+  t = t.replace(CLOSURE_PREFIX, "");
+  t = t.replace(/[.,!;:?]+/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(CLOSURE_SUFFIX, "").trim();
+  return t;
+}
+
+function matchesAnyClosureTemplate(core: string, templates: readonly RegExp[]): boolean {
+  return templates.some((re) => re.test(core));
+}
+
+/** Shared pre-check: non-empty, not a question, no negation. */
+function isClosureEligible(message: string): boolean {
+  return Boolean(message.trim()) && !message.includes("?") && !hasNegation(message);
+}
+
 function matchesFollowUpHandledConsent(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
-  return (
-    /\bmark(?:\s+the)?\s+follow[- ]?up\s+(?:as\s+)?handled\b/i.test(text) ||
-    /\bfollow[- ]?up\s+(?:is\s+)?(?:handled|complete|completed|done|finished)\b/i.test(text) ||
-    /\b(?:no|not)\s+(?:any\s+)?further\s+follow[- ]?up\b/i.test(text) ||
-    /\bi(?:'ve|\s+have)\s+handled\s+(?:the\s+)?follow[- ]?up\b/i.test(text)
-  );
+  if (!isClosureEligible(message)) return false;
+  return matchesAnyClosureTemplate(toClosureCore(message), FOLLOW_UP_HANDLED_TEMPLATES);
 }
 
 function matchesArchiveCaseConsent(message: string): boolean {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return false;
-  return (
-    /\barchive\s+(?:this\s+)?case\b/i.test(text) ||
-    /\b(?:please\s+)?archive\s+my\s+case\b/i.test(text) ||
-    /\bi(?:'m|\s+am)\s+ready\s+to\s+(?:archive|close)\s+(?:this\s+)?case\b/i.test(text) ||
-    /\bclose\s+(?:this\s+)?case\s+(?:now|for\s+now)\b/i.test(text)
-  );
+  if (!isClosureEligible(message)) return false;
+  return matchesAnyClosureTemplate(toClosureCore(message), ARCHIVE_CASE_TEMPLATES);
 }
 
 function matchesDeclineForGate(message: string, gate: ChatCaseClosureGate): boolean {
