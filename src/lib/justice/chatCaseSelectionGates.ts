@@ -120,18 +120,33 @@ function matchesSelectCaseConsent(message: string): { ok: true; query: string } 
 // Broader than SELECT_VERBS on purpose: this only decides none-vs-ambiguous routing (never
 // mutation), so it also recognizes past-tense mentions ("opened", "switched") that the strict
 // grammar deliberately excludes.
-const SELECTION_VERB_WORD =
-  /\b(?:open(?:ed)?|switch(?:ed)?|select(?:ed)?|continu(?:e|ed)|resum(?:e|ed)|restor(?:e|ed))\b/i;
+const NEAR_SELECTION_VERB_WORD =
+  "open(?:ed)?|switch(?:ed)?|select(?:ed)?|continu(?:e|ed)|resum(?:e|ed)|restor(?:e|ed)";
+
+// PROXIMITY match — deliberately not two independent "verb anywhere in the message" AND "case
+// anywhere in the message" checks. Those two checks can each be individually true for ordinary
+// sentences where the verb has nothing to do with "case" (e.g. the intake-commit closure phrase
+// "...save my case and continue in chat", which contains both "continue" and "case" but with
+// "case" preceding — and no "case" following — the verb). Requiring "case" to appear within a
+// few words AFTER the verb keeps every established near-miss shape (conditional/deferred/
+// hypothetical/historical/third-person — e.g. "switch to the Acme case") matching, since in all
+// of them the verb genuinely governs a nearby "case", while ordinary sentences that merely mention
+// both words far apart or in the wrong order stay `none` and reach normal chat/other gates.
+const NEAR_SELECTION_ATTEMPT_PATTERN = new RegExp(
+  `\\b(?:${NEAR_SELECTION_VERB_WORD})\\b(?:\\s+\\S+){0,3}?\\s+case\\b`,
+  "i"
+);
 
 /**
- * True when a message clearly attempts case selection (a selection verb applied to "case") but
- * did not match the strict grammar — so it must resolve to `ambiguous` (an honest, non-mutating
- * "say it clearly" reply) rather than `none`, which would forward it to general chat instead of
- * ever confirming or denying a switch. Excludes the separate restore-most-recent gate's phrasing.
+ * True when a message clearly attempts case selection (a selection verb applied to a nearby
+ * "case") but did not match the strict grammar — so it must resolve to `ambiguous` (an honest,
+ * non-mutating "say it clearly" reply) rather than `none`, which would forward it to general chat
+ * instead of ever confirming or denying a switch. Excludes the separate restore-most-recent
+ * gate's phrasing.
  */
 function isNearSelectionAttempt(message: string): boolean {
   if (RESTORE_MOST_RECENT_PATTERN.test(message)) return false;
-  return SELECTION_VERB_WORD.test(message) && /\bcase\b/i.test(message);
+  return NEAR_SELECTION_ATTEMPT_PATTERN.test(message);
 }
 
 function matchesSelectionDecline(message: string): boolean {

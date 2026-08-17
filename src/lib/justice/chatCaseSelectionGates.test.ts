@@ -10,6 +10,7 @@ import {
   CHAT_CASE_SELECTION_OPEN_CASE_NUMBER_MESSAGE,
   parseChatCaseSelectionMessage,
 } from "@/lib/justice/chatCaseSelectionGates";
+import { CHAT_INTAKE_COMMIT_MESSAGE } from "@/lib/justice/chatIntakeCommitGates";
 
 function baseContext(
   overrides: Partial<ReturnType<typeof buildChatCaseSelectionGateContext>> = {}
@@ -148,6 +149,17 @@ describe("chatCaseSelectionGates", () => {
       expect(
         parseChatCaseSelectionMessage("I have a strong case against them.", ctx)
       ).toEqual({ kind: "none" });
+    });
+
+    // Regression: the near-miss check must be a PROXIMITY match (verb governs a nearby "case"),
+    // not two independent anywhere-in-message checks. The intake-commit closure phrase contains
+    // both a near-selection verb ("continue") and the word "case", but "case" precedes it and no
+    // "case" follows — this must stay `none` so the separate intake-commit gate can actually run,
+    // rather than being swallowed here as an ambiguous case-selection attempt.
+    it("does not treat the intake-commit closure phrase as a near-selection attempt", () => {
+      expect(parseChatCaseSelectionMessage(CHAT_INTAKE_COMMIT_MESSAGE, ctx)).toEqual({
+        kind: "none",
+      });
     });
 
     it("does not steal the separate restore-most-recent-archived phrasing, even as a near-miss", () => {
