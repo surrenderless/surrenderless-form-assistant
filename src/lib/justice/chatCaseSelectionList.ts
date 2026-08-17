@@ -84,6 +84,15 @@ export function buildChatCaseSelectionList(input: {
   return entries;
 }
 
+/**
+ * The single source of truth for a case's displayed name in chat — a custom label always wins
+ * over the company name when set. Used identically by the list message and by resolution, so the
+ * two can never drift apart (quoting exactly what the list shows must always be matchable).
+ */
+function displayedCaseTitle(entry: ChatCaseSelectionListEntry): string {
+  return entry.caseLabel || entry.companyName;
+}
+
 export function formatChatCaseSelectionListMessage(
   entries: readonly ChatCaseSelectionListEntry[]
 ): string {
@@ -92,7 +101,7 @@ export function formatChatCaseSelectionListMessage(
   }
   const lines = entries.map((entry, index) => {
     const n = index + 1;
-    const title = entry.caseLabel || entry.companyName;
+    const title = displayedCaseTitle(entry);
     const product = entry.productLabel ? ` (${entry.productLabel})` : "";
     const statusLabel = entry.status === "archived" ? "archived" : "active";
     return `${n}. ${title}${product} — ${statusLabel}`;
@@ -100,7 +109,7 @@ export function formatChatCaseSelectionListMessage(
   return [
     "Here are your cases:",
     ...lines,
-    'Reply with a number (for example, "open case 2") or the company name to continue that case in chat.',
+    'Reply with a number (for example, "open case 2") or the exact case name in quotes (for example, open "Acme Retail") to continue that case in chat.',
   ].join("\n");
 }
 
@@ -109,8 +118,12 @@ function normalizeMatchText(value: string): string {
 }
 
 /**
- * Resolve a numbered or company/label selection against an offered list.
- * Number matches are 1-based. Text matches require a unique company/label/product hit.
+ * Resolve a numbered or exact-name selection against an offered list.
+ * Number matches are 1-based. Text matches require the normalized query to EXACTLY equal one —
+ * and only one — case's DISPLAYED title (custom label if set, else company name — the same value
+ * `formatChatCaseSelectionListMessage` shows). There is no fallback to company name when a label
+ * is set, and no substring/fuzzy match: this is the final gate before a session switch or archive
+ * restore, so zero or multiple exact hits both fail closed (none / ambiguous) rather than guess.
  */
 export function resolveChatCaseSelectionChoice(
   query: string,
@@ -130,16 +143,7 @@ export function resolveChatCaseSelectionChoice(
     return { kind: "match", entry };
   }
 
-  const hits = entries.filter((entry) => {
-    const company = normalizeMatchText(entry.companyName);
-    const label = normalizeMatchText(entry.caseLabel ?? "");
-    const product = normalizeMatchText(entry.productLabel);
-    return (
-      (company && (text.includes(company) || company.includes(text))) ||
-      (label && (text.includes(label) || label.includes(text))) ||
-      (product && product.length >= 4 && (text.includes(product) || product.includes(text)))
-    );
-  });
+  const hits = entries.filter((entry) => normalizeMatchText(displayedCaseTitle(entry)) === text);
 
   if (hits.length === 1) return { kind: "match", entry: hits[0]! };
   if (hits.length > 1) return { kind: "ambiguous" };

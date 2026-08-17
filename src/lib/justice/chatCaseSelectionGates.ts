@@ -21,19 +21,12 @@ export type ChatCaseSelectionParseResult =
 const NEGATION =
   /\b(?:don't|do\s+not|doesn'?t|didn'?t|won'?t|cannot|can't|never|not\s+yet|not\s+now|without)\b/i;
 
-const VAGUE_ONLY =
-  /^(?:yes|yep|yeah|ok|okay|sure|fine|good|great|thanks|thank\s+you|sounds?\s+good|looks?\s+good)\.?$/i;
-
 function normalizedMessage(message: string): string {
   return message.trim().replace(/\s+/g, " ");
 }
 
 function hasNegation(message: string): boolean {
   return NEGATION.test(message);
-}
-
-function isVagueOnly(message: string): boolean {
-  return VAGUE_ONLY.test(normalizedMessage(message));
 }
 
 function matchesListCasesConsent(message: string): boolean {
@@ -47,39 +40,113 @@ function matchesListCasesConsent(message: string): boolean {
   );
 }
 
-function matchesSelectCaseConsent(message: string): { ok: true; query: string } | { ok: false } {
-  const text = normalizedMessage(message);
-  if (!text || hasNegation(text)) return { ok: false };
+// STRICT START-TO-END COMMAND GRAMMAR. `select_case` runs immediately with no confirmation — it
+// can restore an archived case on the server AND overwrite the consumer's active chat session
+// with a different case's data. Recorded only when the ENTIRE message (after bounded
+// normalization) matches a fixed verb + [article] + <slot> shape, anchored end-to-end.
+//
+// The name slot is QUOTE-DELIMITED, not extracted by guessing against surrounding English
+// grammar. The parser does not — and structurally cannot — judge whether the quoted text "looks
+// like" a real case name (no word list, no length rule): the user's own quote marks are the only
+// thing that makes the boundary unambiguous. Whether that quoted text actually identifies exactly
+// one real case is decided downstream by an EXACT, unique match against real company names
+// (chatCaseSelectionList.ts) — never a substring/fuzzy match. Unquoted names are not accepted at
+// all, so no leading question/conditional/hypothetical/third-person wording and no trailing
+// qualifier can ever coexist with a match.
+const SELECT_VERBS = "open|switch\\s+to|select|continue|resume|restore";
 
-  const numbered =
-    text.match(
-      /\b(?:open|switch\s+to|select|continue|resume|restore)\s+(?:case\s+)?(\d{1,3})\b/i
-    ) || text.match(/\bcase\s+(\d{1,3})\b/i);
-  if (numbered?.[1]) {
-    return { ok: true, query: numbered[1] };
+// Bounded, non-growing polite-affirmation prefix / trailing courtesy. Case is preserved (not
+// lowercased) so a matched quoted name returns its original casing.
+const SELECTION_PREFIX = /^(?:yes|yeah|okay|ok|sure|absolutely|confirmed|please)[\s,:.–-]+/i;
+const SELECTION_SUFFIX = /\s+(?:in\s+chat|thanks|thank\s+you|please)$/i;
+
+const SELECT_CASE_NUMBERED_TEMPLATES: readonly RegExp[] = [
+  new RegExp(`^(?:${SELECT_VERBS})\\s+case\\s+(\\d{1,3})$`, "i"),
+  /^case\s+(\d{1,3})$/i,
+];
+const SELECT_CASE_BARE_NUMBER = /^(\d{1,3})$/;
+
+// Straight ("...") and curly (“...”) double quotes. The trailing "case" word is optional once the
+// name is quoted, since the quotes already carry the disambiguation.
+const SELECT_CASE_QUOTED_NAME_TEMPLATE = new RegExp(
+  `^(?:${SELECT_VERBS})\\s+(?:the\\s+|my\\s+)?["“”]([^"“”]+)["“”](?:\\s+case)?$`,
+  "i"
+);
+
+// Case names may legitimately contain "restore"/"case" etc., but this exact phrase is the
+// separate "restore my most recently archived case" gate's territory — never this one's.
+const RESTORE_MOST_RECENT_PATTERN = /\bmost\s+recent(?:ly\s+archived)?\b|\blatest\s+archived\b/i;
+
+function toSelectionCore(message: string): string {
+  let t = normalizedMessage(message);
+  t = t.replace(SELECTION_PREFIX, "");
+  t = t.replace(/[.,!;:?]+/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(SELECTION_SUFFIX, "").trim();
+  return t;
+}
+
+/** Shared pre-check: non-empty, not a question, no negation. */
+function isSelectionEligible(message: string): boolean {
+  return Boolean(message.trim()) && !message.includes("?") && !hasNegation(message);
+}
+
+function matchesSelectCaseConsent(message: string): { ok: true; query: string } | { ok: false } {
+  if (!isSelectionEligible(message)) return { ok: false };
+  const core = toSelectionCore(message);
+  if (RESTORE_MOST_RECENT_PATTERN.test(core)) return { ok: false };
+
+  for (const template of SELECT_CASE_NUMBERED_TEMPLATES) {
+    const numbered = core.match(template);
+    if (numbered?.[1]) {
+      return { ok: true, query: numbered[1] };
+    }
   }
 
-  const named = text.match(
-    /\b(?:open|switch\s+to|select|continue|resume|restore)\s+(?:my\s+)?(.+?)\s+case(?:\s+in\s+chat)?\b/i
-  );
-  if (named?.[1]) {
-    const query = named[1]
-      .replace(/^(?:the\s+|my\s+)/i, "")
-      .replace(/\b(?:archived|active|most\s+recent(?:ly\s+archived)?|latest)\b/gi, "")
-      .trim();
-    // Avoid stealing "restore my most recently archived case"
-    if (!query || /^(?:most\s+recent(?:ly)?|latest)$/i.test(query)) {
-      return { ok: false };
-    }
+  const quotedName = core.match(SELECT_CASE_QUOTED_NAME_TEMPLATE);
+  if (quotedName?.[1]) {
+    const query = quotedName[1].trim();
+    if (!query) return { ok: false };
     return { ok: true, query };
   }
 
-  const bareNumber = text.match(/^(?:case\s+)?(\d{1,3})$/i);
+  const bareNumber = core.match(SELECT_CASE_BARE_NUMBER);
   if (bareNumber?.[1]) {
     return { ok: true, query: bareNumber[1] };
   }
 
   return { ok: false };
+}
+
+// Broader than SELECT_VERBS on purpose: this only decides none-vs-ambiguous routing (never
+// mutation), so it also recognizes past-tense mentions ("opened", "switched") that the strict
+// grammar deliberately excludes.
+const NEAR_SELECTION_VERB_WORD =
+  "open(?:ed)?|switch(?:ed)?|select(?:ed)?|continu(?:e|ed)|resum(?:e|ed)|restor(?:e|ed)";
+
+// PROXIMITY match — deliberately not two independent "verb anywhere in the message" AND "case
+// anywhere in the message" checks. Those two checks can each be individually true for ordinary
+// sentences where the verb has nothing to do with "case" (e.g. the intake-commit closure phrase
+// "...save my case and continue in chat", which contains both "continue" and "case" but with
+// "case" preceding — and no "case" following — the verb). Requiring "case" to appear within a
+// few words AFTER the verb keeps every established near-miss shape (conditional/deferred/
+// hypothetical/historical/third-person — e.g. "switch to the Acme case") matching, since in all
+// of them the verb genuinely governs a nearby "case", while ordinary sentences that merely mention
+// both words far apart or in the wrong order stay `none` and reach normal chat/other gates.
+const NEAR_SELECTION_ATTEMPT_PATTERN = new RegExp(
+  `\\b(?:${NEAR_SELECTION_VERB_WORD})\\b(?:\\s+\\S+){0,3}?\\s+case\\b`,
+  "i"
+);
+
+/**
+ * True when a message clearly attempts case selection (a selection verb applied to a nearby
+ * "case") but did not match the strict grammar — so it must resolve to `ambiguous` (an honest,
+ * non-mutating "say it clearly" reply) rather than `none`, which would forward it to general chat
+ * instead of ever confirming or denying a switch. Excludes the separate restore-most-recent
+ * gate's phrasing.
+ */
+function isNearSelectionAttempt(message: string): boolean {
+  if (RESTORE_MOST_RECENT_PATTERN.test(message)) return false;
+  return NEAR_SELECTION_ATTEMPT_PATTERN.test(message);
 }
 
 function matchesSelectionDecline(message: string): boolean {
@@ -130,7 +197,7 @@ export function parseChatCaseSelectionMessage(
     return { kind: "select_case", query: select.query };
   }
 
-  if (isVagueOnly(text) && /\b(?:case|cases|switch|list)\b/i.test(text)) {
+  if (isNearSelectionAttempt(text)) {
     return { kind: "ambiguous" };
   }
 
@@ -144,7 +211,7 @@ export function buildChatCaseSelectionAssistantResponse(
     case "decline":
       return "Understood — I won't switch cases unless you ask.";
     case "ambiguous":
-      return `I need a clearer case choice. First ask me to show your cases, then reply with a number or company name. For example: "${CHAT_CASE_SELECTION_LIST_MESSAGE}"`;
+      return `I need a clearer case choice. First ask me to show your cases, then reply with a number or the exact case name in quotes (for example, open "Acme Retail"). For example: "${CHAT_CASE_SELECTION_LIST_MESSAGE}"`;
     default: {
       const _exhaustive: never = result;
       return _exhaustive;
@@ -174,7 +241,7 @@ export function buildChatCaseSelectionOpenedResponse(details: {
 }
 
 export function buildChatCaseSelectionNotFoundResponse(): string {
-  return `I couldn't match that to one of your cases. Ask me to show your cases, then choose by number or company name.`;
+  return `I couldn't match that to one of your cases. Ask me to show your cases, then choose by number or the exact case name in quotes.`;
 }
 
 export function buildChatCaseSelectionAmbiguousMatchResponse(): string {

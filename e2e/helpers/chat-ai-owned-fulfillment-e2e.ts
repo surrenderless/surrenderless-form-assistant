@@ -816,7 +816,7 @@ export async function selectStaleListedAcmeCaseViaChatCompanyAfterArchive(
         res.request().postDataJSON()?.archived_at === null,
       { timeout: 30_000 }
     );
-    await sendChatClosureMessage(page, "Please open my Acme Retail case in chat.");
+    await sendChatClosureMessage(page, 'Please open "Acme Retail" case in chat.');
     const restorePatch = await restoreResponse;
     expect(restorePatch.ok()).toBeTruthy();
 
@@ -907,7 +907,7 @@ export async function selectActiveBetaCaseViaChatCompany(page: Page): Promise<vo
           res.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_SECOND_CASE_ID}`),
         { timeout: 30_000 }
       );
-      await sendChatClosureMessage(page, "Please open my Beta Corp case in chat.");
+      await sendChatClosureMessage(page, 'Please open "Beta Corp" case in chat.');
       expect((await getBetaResponse).ok()).toBeTruthy();
 
       await expect
