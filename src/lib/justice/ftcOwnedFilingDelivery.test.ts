@@ -10,6 +10,7 @@ import {
   attemptAutomatedFtcFiling,
   FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
 } from "@/lib/justice/ftcOwnedFilingDelivery";
+import { OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON } from "@/lib/justice/ownedFilingSubmitArmed";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -211,6 +212,10 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
     vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
     vi.stubEnv("BROWSERLESS_URL", "");
+    // All pre-existing tests in this suite exercise the case that IS meant to reach the harness
+    // (the pilot case), so they allowlist CASE_ID by default. The pilot-isolation tests below
+    // override this per-test to prove the opposite (a case NOT in the allowlist).
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", CASE_ID);
   });
 
   afterEach(() => {
@@ -352,6 +357,132 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
       status: "accepted",
       idempotent: true,
       confirmation: "FTC-2026-4455",
+    });
+  });
+});
+
+// Pilot isolation: enabling the harness (isRealFtcOperatorFulfillmentPrimary === false) is a
+// global switch, but only OWNED_FILING_LIVE_CASE_ALLOWLIST case ids may actually reach live
+// claim/execute (claimQueuedOwnedFiling.ts, ftcOwnedFilingExecute.ts). Before this fix, every
+// other eligible case still got delivery_state: "queued" written to its task purely because the
+// harness was on — an unwanted mutation of cases never meant to be part of the pilot, even though
+// they could never actually be claimed or submitted. This suite proves the queued-marker write
+// itself is now scoped to the allowlist, matching the claim/execute gates it reuses.
+describe("attemptAutomatedFtcFiling pilot isolation (OWNED_FILING_LIVE_CASE_ALLOWLIST)", () => {
+  beforeEach(() => {
+    vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(true);
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(false);
+    vi.mocked(ensureFtcFilingTask).mockReset();
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
+    vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
+    vi.stubEnv("BROWSERLESS_URL", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  it("keeps an unallowlisted case on the operator path and writes no queued delivery-state marker", async () => {
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", "99999999-9999-4999-8999-999999999999");
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
+    });
+    // Not just "no queued state" — no task write of any kind for the excluded case.
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("also keeps an unallowlisted case on the operator path when the allowlist is empty/unset", async () => {
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", "");
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
+    });
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("still ensures the FTC operator task exists for an unallowlisted case when missing", async () => {
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", "99999999-9999-4999-8999-999999999999");
+    vi.mocked(ensureFtcFilingTask).mockResolvedValue({
+      task: taskWithNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`),
+      timeline: null,
+      created: true,
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
+    });
+    expect(vi.mocked(ensureFtcFilingTask)).toHaveBeenCalledOnce();
+    // The task the operator path ensures must never carry an autofill delivery marker.
+    expect(noteUpdates.some((n) => n.includes("delivery_state:"))).toBe(false);
+  });
+
+  it("still reaches the queued/claimable path for the one case that is allowlisted", async () => {
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", CASE_ID);
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({ status: "queued", idempotent: false });
+    expect(noteUpdates.at(-1)).toContain("delivery_state: queued");
+  });
+
+  it("still reaches the queued/claimable path when the case is one of several allowlisted ids", async () => {
+    vi.stubEnv(
+      "OWNED_FILING_LIVE_CASE_ALLOWLIST",
+      `11111111-0000-4000-8000-000000000000, ${CASE_ID} ,22222222-0000-4000-8000-000000000000`
+    );
+    const result = await attemptAutomatedFtcFiling(makeSupabase({}), USER_ID, CASE_ID);
+    expect(result).toMatchObject({ status: "queued", idempotent: false });
+  });
+
+  it("disabled-flag (operator-primary) behavior is unchanged regardless of allowlist contents", async () => {
+    // Flag disabled takes precedence: same reason as before this fix, whether or not the case
+    // happens to be allowlisted — allowlist state must never leak into operator-primary routing.
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(true);
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", CASE_ID);
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("disabled-flag behavior is unchanged when the case is also not allowlisted", async () => {
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(true);
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", "");
+    const result = await attemptAutomatedFtcFiling(makeSupabase({}), USER_ID, CASE_ID);
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
     });
   });
 });

@@ -19,6 +19,10 @@ import {
 import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import {
+  isOwnedFilingLiveCaseAllowlisted,
+  OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
+} from "@/lib/justice/ownedFilingSubmitArmed";
+import {
   isRealFtcOperatorFulfillmentPrimary,
 } from "@/lib/justice/realFtcAutofillEnabled";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
@@ -206,9 +210,19 @@ export async function attemptAutomatedFtcFiling(
 
   let openTask = findOpenFtcFilingTask(tasks, trimmedCaseId);
 
-  // Operator primary: ensure the FTC operator task exists, surface it in the fulfillment
-  // queue, and never write autofill delivery_state (avoids autofill-failed alert noise).
-  if (isRealFtcOperatorFulfillmentPrimary()) {
+  // Operator path applies both when operator fulfillment is product-default primary AND when
+  // the harness is enabled but this specific case is not the pilot case allowlisted for live
+  // claim/execute (OWNED_FILING_LIVE_CASE_ALLOWLIST) — in both cases: ensure the FTC operator
+  // task exists, surface it in the fulfillment queue, and never write autofill delivery_state.
+  // Without this second condition, enabling the harness at all would flip EVERY eligible case's
+  // task to delivery_state: "queued" (ftcOwnedFilingDeliveryState) — even cases never meant to be
+  // part of a live pilot — despite the claim step later correctly refusing to claim/execute them.
+  // That is an unwanted mutation of an excluded case, not just an unwanted submission of it.
+  // Reuses the same allowlist helper and reason string the live claim/execute gates already use
+  // (isOwnedFilingLiveCaseAllowlisted / OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON) — never
+  // re-parses OWNED_FILING_LIVE_CASE_ALLOWLIST itself.
+  const operatorPrimary = isRealFtcOperatorFulfillmentPrimary();
+  if (operatorPrimary || !isOwnedFilingLiveCaseAllowlisted(trimmedCaseId)) {
     if (!openTask) {
       const ensured = await ensureFtcFilingTask(supabase, userId, trimmedCaseId, intake);
       openTask =
@@ -222,7 +236,9 @@ export async function attemptAutomatedFtcFiling(
     }
     return {
       status: "skipped",
-      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+      reason: operatorPrimary
+        ? FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON
+        : OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
     };
   }
 
