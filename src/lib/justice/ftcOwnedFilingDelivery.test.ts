@@ -9,8 +9,13 @@ import {
   upsertFtcOwnedFilingDeliveryNotes,
   attemptAutomatedFtcFiling,
   FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+  FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON,
 } from "@/lib/justice/ftcOwnedFilingDelivery";
 import { OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON } from "@/lib/justice/ownedFilingSubmitArmed";
+import {
+  parseFtcPilotAuthorizationRecord,
+  upsertFtcPilotAuthorizationNotes,
+} from "@/lib/justice/ftcPilotAuthorizationState";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -44,6 +49,20 @@ import { ensureFtcFilingTask } from "@/lib/justice/ftcFilingTask";
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
 const TASK_ID = "22222222-2222-4222-8222-222222222222";
+
+/**
+ * Base task notes WITH a recorded operator pilot-authorization marker. Used as the default fixture
+ * because the vast majority of tests in this file exercise a case that IS meant to be fully
+ * eligible (allowlisted, harness-enabled) — the same way they already default to allowlisted via
+ * OWNED_FILING_LIVE_CASE_ALLOWLIST in beforeEach. Tests specifically proving the pilot-authorization
+ * gate use un-authorized base notes explicitly instead.
+ */
+function authorizedBaseNotes(): string {
+  return upsertFtcPilotAuthorizationNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nFTC DRAFT`, {
+    authorized_by: "operator_1",
+    authorized_at: "2026-07-13T00:00:00.000Z",
+  });
+}
 
 function baseIntake(): JusticeIntake {
   return {
@@ -103,7 +122,7 @@ function makeSupabase(handlers: {
       case_id: CASE_ID,
       title: "FTC filing: Acme Retail",
       due_date: null,
-      notes: `ftc_filing_queue:${CASE_ID}\ndraft:\nFTC DRAFT`,
+      notes: authorizedBaseNotes(),
       completed_at: null,
       created_at: "2026-07-14T00:00:00.000Z",
       updated_at: "2026-07-14T00:00:00.000Z",
@@ -292,7 +311,7 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
   });
 
   it("does not re-enqueue when already queued (idempotent)", async () => {
-    const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+    const notes = upsertFtcOwnedFilingDeliveryNotes(authorizedBaseNotes(), {
       delivery_state: "queued",
       provider: "real_ftc_bounded_submit",
       started_at: "2026-07-14T00:00:00.000Z",
@@ -308,7 +327,7 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
   });
 
   it("skips duplicate enqueue while already submitting (worker in progress)", async () => {
-    const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+    const notes = upsertFtcOwnedFilingDeliveryNotes(authorizedBaseNotes(), {
       delivery_state: "submitting",
       provider: "real_ftc_bounded_submit",
     });
@@ -324,7 +343,7 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
   });
 
   it("short-circuits and never re-dispatches a reconciled failed delivery", async () => {
-    const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+    const notes = upsertFtcOwnedFilingDeliveryNotes(authorizedBaseNotes(), {
       delivery_state: "failed",
       provider: "real_ftc_bounded_submit",
       failure_detail: "stale reclaimed",
@@ -343,7 +362,7 @@ describe("attemptAutomatedFtcFiling (enqueue only, no Playwright on request path
   });
 
   it("returns accepted idempotently when the task already recorded a filed confirmation", async () => {
-    const notes = upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+    const notes = upsertFtcOwnedFilingDeliveryNotes(authorizedBaseNotes(), {
       delivery_state: "filed",
       provider: "real_ftc_bounded_submit",
       confirmation: "FTC-2026-4455",
@@ -483,6 +502,120 @@ describe("attemptAutomatedFtcFiling pilot isolation (OWNED_FILING_LIVE_CASE_ALLO
     expect(result).toMatchObject({
       status: "skipped",
       reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
+  });
+});
+
+// Pilot authorization is additive on top of the allowlist, not a substitute for it: an allowlisted
+// case with no recorded operator authorization marker must stay on the operator path exactly like
+// an unallowlisted one — never acquiring a queued autofill marker.
+describe("attemptAutomatedFtcFiling pilot authorization (ftcPilotAuthorizationState)", () => {
+  beforeEach(() => {
+    vi.mocked(isRealFtcComplaintAutofillEnabled).mockReturnValue(true);
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(false);
+    vi.mocked(ensureFtcFilingTask).mockReset();
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
+    vi.stubEnv("BBB_DECIDE_ACTION_INTERNAL_SECRET", "test-decide-secret");
+    vi.stubEnv("BROWSERLESS_URL", "");
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", CASE_ID);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  function unauthorizedTask(): JusticeCaseTaskRow {
+    return {
+      id: TASK_ID,
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "FTC filing: Acme Retail",
+      due_date: null,
+      notes: `ftc_filing_queue:${CASE_ID}\ndraft:\nFTC DRAFT`,
+      completed_at: null,
+      created_at: "2026-07-14T00:00:00.000Z",
+      updated_at: "2026-07-14T00:00:00.000Z",
+    };
+  }
+
+  it("allowlisted but NOT pilot-authorized: stays on the operator path, no queued marker written", async () => {
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [unauthorizedTask()], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON,
+    });
+    // Not just "no queued state" — no task write of any kind for the unauthorized case.
+    expect(noteUpdates.length).toBe(0);
+  });
+
+  it("still ensures the FTC operator task exists for an allowlisted-but-unauthorized case when missing", async () => {
+    vi.mocked(ensureFtcFilingTask).mockResolvedValue({
+      task: unauthorizedTask(),
+      timeline: null,
+      created: true,
+    });
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [], onTaskNotesUpdate: (n) => noteUpdates.push(n) }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON,
+    });
+    expect(vi.mocked(ensureFtcFilingTask)).toHaveBeenCalledOnce();
+    // The task the operator path ensures must never carry an autofill delivery marker.
+    expect(noteUpdates.some((n) => n.includes("delivery_state:"))).toBe(false);
+  });
+
+  it("allowlisted AND pilot-authorized: reaches the queued/claimable path exactly as before", async () => {
+    const noteUpdates: string[] = [];
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ onTaskNotesUpdate: (n) => noteUpdates.push(n) }), // default fixture is authorized
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({ status: "queued", idempotent: false });
+    const written = noteUpdates.at(-1);
+    expect(written).toContain("delivery_state: queued");
+    // The queue write must not have clobbered the authorization marker it depended on.
+    expect(parseFtcPilotAuthorizationRecord(written)).toEqual({
+      authorized_by: "operator_1",
+      authorized_at: "2026-07-13T00:00:00.000Z",
+    });
+  });
+
+  it("operator-primary (disabled flag) takes precedence over a missing authorization in the reported reason", async () => {
+    vi.mocked(isRealFtcOperatorFulfillmentPrimary).mockReturnValue(true);
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [unauthorizedTask()] }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON,
+    });
+  });
+
+  it("not-allowlisted takes precedence over a missing authorization in the reported reason", async () => {
+    vi.stubEnv("OWNED_FILING_LIVE_CASE_ALLOWLIST", "99999999-9999-4999-8999-999999999999");
+    const result = await attemptAutomatedFtcFiling(
+      makeSupabase({ tasks: [unauthorizedTask()] }),
+      USER_ID,
+      CASE_ID
+    );
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
     });
   });
 });

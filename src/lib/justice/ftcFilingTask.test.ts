@@ -16,6 +16,8 @@ import {
 } from "@/lib/justice/ftcFilingTask";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import { upsertFtcOwnedFilingDeliveryNotes } from "@/lib/justice/ftcOwnedFilingDeliveryState";
+import { upsertFtcPilotAuthorizationNotes } from "@/lib/justice/ftcPilotAuthorizationState";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -118,6 +120,79 @@ describe("ftcFilingTask", () => {
     const draft = parseFtcFilingTaskDraft(notes);
     expect(draft.length).toBeGreaterThan(0);
     expect(draft).toContain("Acme Retail");
+  });
+
+  // Neither the autofill delivery-state block nor the operator pilot-authorization block is part
+  // of the operator-facing complaint draft — both are internal FTC metadata appended AFTER the
+  // draft in task notes, and must never leak into what an operator is shown/asked to paste into
+  // the FTC portal.
+  describe("stops the draft at internal FTC metadata blocks, in any combination", () => {
+    it("delivery-state marker only: draft excludes it entirely", () => {
+      const base = buildFtcFilingTaskNotes(CASE_ID, baseIntake());
+      const notes = upsertFtcOwnedFilingDeliveryNotes(base, {
+        delivery_state: "queued",
+        provider: "real_ftc_bounded_submit",
+        started_at: "2026-07-14T00:00:00.000Z",
+      });
+      const draft = parseFtcFilingTaskDraft(notes);
+      expect(draft).toContain("Acme Retail");
+      expect(draft).not.toContain("---ftc_owned_autofill_delivery---");
+      expect(draft).not.toContain("delivery_state");
+      expect(draft).not.toContain("real_ftc_bounded_submit");
+    });
+
+    it("pilot-authorization marker only: draft excludes it entirely", () => {
+      const base = buildFtcFilingTaskNotes(CASE_ID, baseIntake());
+      const notes = upsertFtcPilotAuthorizationNotes(base, {
+        authorized_by: "operator_1",
+        authorized_at: "2026-07-13T00:00:00.000Z",
+      });
+      const draft = parseFtcFilingTaskDraft(notes);
+      expect(draft).toContain("Acme Retail");
+      expect(draft).not.toContain("---ftc_pilot_authorization---");
+      expect(draft).not.toContain("authorized_by");
+      expect(draft).not.toContain("operator_1");
+    });
+
+    it("both markers present: draft excludes both, regardless of which was written first", () => {
+      const base = buildFtcFilingTaskNotes(CASE_ID, baseIntake());
+
+      // Authorization written first, then delivery state (the normal pilot flow).
+      let notesAuthThenDelivery = upsertFtcPilotAuthorizationNotes(base, {
+        authorized_by: "operator_1",
+        authorized_at: "2026-07-13T00:00:00.000Z",
+      });
+      notesAuthThenDelivery = upsertFtcOwnedFilingDeliveryNotes(notesAuthThenDelivery, {
+        delivery_state: "failed",
+        provider: "real_ftc_bounded_submit",
+        failure_detail: "step cap",
+      });
+      const draft1 = parseFtcFilingTaskDraft(notesAuthThenDelivery);
+      expect(draft1).toContain("Acme Retail");
+      expect(draft1).not.toContain("---ftc_owned_autofill_delivery---");
+      expect(draft1).not.toContain("---ftc_pilot_authorization---");
+      expect(draft1).not.toContain("operator_1");
+      expect(draft1).not.toContain("step cap");
+
+      // Delivery state written first (e.g. a prior failed attempt), authorization added after —
+      // upsertFtcPilotAuthorizationNotes repositions itself before the delivery block, so the
+      // draft boundary must still exclude both no matter which block sits first in the string.
+      let notesDeliveryThenAuth = upsertFtcOwnedFilingDeliveryNotes(base, {
+        delivery_state: "failed",
+        provider: "real_ftc_bounded_submit",
+        failure_detail: "prior attempt failed",
+      });
+      notesDeliveryThenAuth = upsertFtcPilotAuthorizationNotes(notesDeliveryThenAuth, {
+        authorized_by: "operator_2",
+        authorized_at: "2026-07-15T00:00:00.000Z",
+      });
+      const draft2 = parseFtcFilingTaskDraft(notesDeliveryThenAuth);
+      expect(draft2).toContain("Acme Retail");
+      expect(draft2).not.toContain("---ftc_owned_autofill_delivery---");
+      expect(draft2).not.toContain("---ftc_pilot_authorization---");
+      expect(draft2).not.toContain("operator_2");
+      expect(draft2).not.toContain("prior attempt failed");
+    });
   });
 
   it("finds open FTC filing task", () => {

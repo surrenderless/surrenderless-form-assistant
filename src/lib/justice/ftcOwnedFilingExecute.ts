@@ -17,6 +17,8 @@ import {
   type FtcOwnedFilingDeliveryRecord,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { FTC_OFFICIAL_CONSUMER_COMPLAINT_PORTAL_URL } from "@/lib/justice/ftcOfficialPortal";
+import { FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON } from "@/lib/justice/ftcOwnedFilingDelivery";
+import { isFtcPilotAuthorized } from "@/lib/justice/ftcPilotAuthorizationState";
 import {
   canonicalFilingDestinationForApprovedActionHref,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
@@ -123,6 +125,24 @@ export async function executeClaimedFtcFiling(
       startedAt,
       OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
       { stopReason: "live_case_not_allowlisted" }
+    );
+  }
+  // Defense in depth: armed + allowlisted still requires a recorded operator pilot-authorization
+  // marker on the claimed task itself (ftcPilotAuthorizationState) — no Browserless connection is
+  // attempted, and the task is recovered to an operator-visible "failed" state (never left stuck
+  // in "submitting", which claim-time filtering would otherwise never re-surface for review) —
+  // never silently discarded or hidden. In normal operation the claim-time check
+  // (claimQueuedOwnedFiling.ts) already prevents an unauthorized case from ever reaching this
+  // point; this is a second, independent check on the SAME claimed task, not a re-derivation.
+  if (!isFtcPilotAuthorized(claimedTask)) {
+    return markFailed(
+      supabase,
+      userId,
+      trimmedCaseId,
+      claimedTask,
+      startedAt,
+      FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON,
+      { stopReason: "live_case_not_pilot_authorized" }
     );
   }
 

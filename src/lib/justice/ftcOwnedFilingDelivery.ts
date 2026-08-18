@@ -18,6 +18,7 @@ import {
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import { isFtcPilotAuthorized } from "@/lib/justice/ftcPilotAuthorizationState";
 import {
   isOwnedFilingLiveCaseAllowlisted,
   OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
@@ -56,6 +57,10 @@ export const FTC_OWNED_FILING_PROVIDER = "real_ftc_bounded_submit";
 /** Skip reason when operator fulfillment is primary (no browser worker enqueue). */
 export const FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON =
   "real FTC operator fulfillment primary — autofill harness parked";
+
+/** Skip reason when the case is allowlisted but has no recorded operator pilot authorization. */
+export const FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON =
+  "case_id has no recorded FTC live-pilot operator authorization — live claim/submit refused (fail closed)";
 
 const FILING_SELECT =
   "id, user_id, case_id, destination, filed_at, confirmation_number, filing_url, notes, created_at, updated_at" as const;
@@ -210,19 +215,25 @@ export async function attemptAutomatedFtcFiling(
 
   let openTask = findOpenFtcFilingTask(tasks, trimmedCaseId);
 
-  // Operator path applies both when operator fulfillment is product-default primary AND when
-  // the harness is enabled but this specific case is not the pilot case allowlisted for live
-  // claim/execute (OWNED_FILING_LIVE_CASE_ALLOWLIST) — in both cases: ensure the FTC operator
+  // Operator path applies when operator fulfillment is product-default primary, OR the harness is
+  // enabled but this case is not the pilot case allowlisted for live claim/execute
+  // (OWNED_FILING_LIVE_CASE_ALLOWLIST), OR the case is allowlisted but has no recorded operator
+  // pilot authorization yet (ftcPilotAuthorizationState) — in every case: ensure the FTC operator
   // task exists, surface it in the fulfillment queue, and never write autofill delivery_state.
-  // Without this second condition, enabling the harness at all would flip EVERY eligible case's
-  // task to delivery_state: "queued" (ftcOwnedFilingDeliveryState) — even cases never meant to be
-  // part of a live pilot — despite the claim step later correctly refusing to claim/execute them.
-  // That is an unwanted mutation of an excluded case, not just an unwanted submission of it.
-  // Reuses the same allowlist helper and reason string the live claim/execute gates already use
-  // (isOwnedFilingLiveCaseAllowlisted / OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON) — never
-  // re-parses OWNED_FILING_LIVE_CASE_ALLOWLIST itself.
+  // Without the allowlist/authorization conditions, enabling the harness at all would flip EVERY
+  // eligible case's task to delivery_state: "queued" (ftcOwnedFilingDeliveryState) — even cases
+  // never meant to be part of a live pilot, or a case an operator has never actually verified and
+  // signed off on — despite the claim step later correctly refusing to claim/execute them. That is
+  // an unwanted mutation of an excluded/unauthorized case, not just an unwanted submission of it.
+  // The pilot-authorization marker is a database-backed, auditable, operator-verified fact — never
+  // relying on the raw allowlist UUID alone as proof a human actually checked this specific case.
+  // Reuses the same allowlist/authorization helpers and reason strings the live claim/execute
+  // gates already use — never re-parses OWNED_FILING_LIVE_CASE_ALLOWLIST or the auth marker itself.
   const operatorPrimary = isRealFtcOperatorFulfillmentPrimary();
-  if (operatorPrimary || !isOwnedFilingLiveCaseAllowlisted(trimmedCaseId)) {
+  const notAllowlisted = !isOwnedFilingLiveCaseAllowlisted(trimmedCaseId);
+  // No open task yet means, by definition, no authorization marker can exist on it either.
+  const notPilotAuthorized = !openTask || !isFtcPilotAuthorized(openTask);
+  if (operatorPrimary || notAllowlisted || notPilotAuthorized) {
     if (!openTask) {
       const ensured = await ensureFtcFilingTask(supabase, userId, trimmedCaseId, intake);
       openTask =
@@ -238,7 +249,9 @@ export async function attemptAutomatedFtcFiling(
       status: "skipped",
       reason: operatorPrimary
         ? FTC_OPERATOR_FULFILLMENT_PRIMARY_SKIP_REASON
-        : OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON,
+        : notAllowlisted
+          ? OWNED_FILING_LIVE_CASE_NOT_ALLOWLISTED_REASON
+          : FTC_LIVE_CASE_NOT_PILOT_AUTHORIZED_REASON,
     };
   }
 
