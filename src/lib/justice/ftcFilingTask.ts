@@ -3,6 +3,8 @@ import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionSta
 import { buildFtcComplaintDraft } from "@/lib/justice/buildFtcComplaintDraft";
 import { buildPacketPlainText } from "@/lib/justice/buildPacketPlainText";
 import type { JusticeCaseEvidenceRow } from "@/lib/justice/evidence";
+import { FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER } from "@/lib/justice/ftcOwnedFilingDeliveryState";
+import { FTC_PILOT_AUTHORIZATION_BLOCK_MARKER } from "@/lib/justice/ftcPilotAuthorizationState";
 import {
   filingsForApprovedActionManualTracking,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
@@ -12,6 +14,17 @@ import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
+
+/**
+ * Task-notes blocks that follow the draft and must never leak into the parsed draft text: the
+ * autofill delivery-state marker (ftcOwnedFilingDeliveryState) and the operator pilot-authorization
+ * marker (ftcPilotAuthorizationState). Reused directly — never re-declared as literal strings —
+ * so this boundary can never silently drift from the markers that actually get written.
+ */
+const FTC_DRAFT_BOUNDARY_MARKERS = [
+  FTC_OWNED_FILING_DELIVERY_BLOCK_MARKER,
+  FTC_PILOT_AUTHORIZATION_BLOCK_MARKER,
+] as const;
 
 const MAX_TITLE = 500;
 const MAX_NOTES = 8000;
@@ -140,7 +153,14 @@ export function parseFtcFilingTaskDraft(notes: string | null | undefined): strin
   const trimmed = notes?.trim() ?? "";
   const draftIndex = trimmed.indexOf("\ndraft:\n");
   if (draftIndex < 0) return "";
-  return trimmed.slice(draftIndex + "\ndraft:\n".length).trim();
+  const afterDraft = trimmed.slice(draftIndex + "\ndraft:\n".length);
+  // Stop at whichever recognized FTC metadata block (if any) comes first — never include the
+  // delivery-state or pilot-authorization block content as part of the operator-facing draft.
+  const boundaryIndexes = FTC_DRAFT_BOUNDARY_MARKERS.map((marker) =>
+    afterDraft.indexOf(marker)
+  ).filter((idx) => idx >= 0);
+  const draftEnd = boundaryIndexes.length > 0 ? Math.min(...boundaryIndexes) : afterDraft.length;
+  return afterDraft.slice(0, draftEnd).trim();
 }
 
 /** True when client_state calls for an open FTC operator filing queue entry. */

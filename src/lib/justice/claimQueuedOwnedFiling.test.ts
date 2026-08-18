@@ -8,6 +8,7 @@ import {
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { parseBbbOwnedFilingDeliveryRecord } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 import { findAndClaimNextQueuedOwnedFiling } from "@/lib/justice/claimQueuedOwnedFiling";
+import { upsertFtcPilotAuthorizationNotes } from "@/lib/justice/ftcPilotAuthorizationState";
 
 vi.mock("@/server/justiceTimelineAppend", () => ({
   appendCaseTimelineEntry: vi.fn(async (_s, _u, _c, entry) => [entry]),
@@ -103,17 +104,28 @@ function queuedTask(
   kind: "bbb" | "ftc",
   caseId: string,
   id: string,
-  queuedAt: string
+  queuedAt: string,
+  // FTC-only: whether the task also carries a recorded operator pilot-authorization marker.
+  // Defaults to true so existing BBB-unaffected tests and pre-authorization-feature FTC tests
+  // keep exercising claim success/failure for reasons other than pilot authorization.
+  options: { ftcPilotAuthorized?: boolean } = {}
 ): JusticeCaseTaskRow {
   const marker = kind === "bbb" ? `bbb_filing_queue:${caseId}` : `ftc_filing_queue:${caseId}`;
   const upsert = kind === "bbb" ? upsertBbbOwnedFilingDeliveryNotes : upsertFtcOwnedFilingDeliveryNotes;
+  let notes = `${marker}\ndraft:\nx`;
+  if (kind === "ftc" && (options.ftcPilotAuthorized ?? true)) {
+    notes = upsertFtcPilotAuthorizationNotes(notes, {
+      authorized_by: "operator_1",
+      authorized_at: "2026-07-13T00:00:00.000Z",
+    });
+  }
   return {
     id,
     user_id: USER_ID,
     case_id: caseId,
     title: `${kind} filing`,
     due_date: null,
-    notes: upsert(`${marker}\ndraft:\nx`, {
+    notes: upsert(notes, {
       delivery_state: "queued",
       provider: kind === "bbb" ? "real_bbb_bounded_submit" : "real_ftc_bounded_submit",
       started_at: queuedAt,
@@ -243,5 +255,60 @@ describe("findAndClaimNextQueuedOwnedFiling", () => {
     });
     expect(claimed?.caseId).toBe(BBB_CASE);
     expect(parseBbbOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("submitting");
+  });
+
+  // FTC-only pilot-authorization gate: additive to the allowlist, never a substitute for it.
+  describe("FTC pilot-authorization gate at claim time (BBB unaffected)", () => {
+    it("armed + allowlisted but NOT pilot-authorized: FTC candidate is never claimed", async () => {
+      const { client, tasks } = makeStatefulSupabase([
+        queuedTask("ftc", FTC_CASE, "t-ftc", "2026-07-14T01:00:00.000Z", {
+          ftcPilotAuthorized: false,
+        }),
+      ]);
+      const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+        env: { OWNED_FILING_SUBMIT_ARMED: "true", OWNED_FILING_LIVE_CASE_ALLOWLIST: FTC_CASE },
+      });
+      expect(claimed).toBeNull();
+      expect(parseFtcOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("queued");
+    });
+
+    it("armed + allowlisted + pilot-authorized: FTC candidate is claimed as normal", async () => {
+      const { client, tasks } = makeStatefulSupabase([
+        queuedTask("ftc", FTC_CASE, "t-ftc", "2026-07-14T01:00:00.000Z", {
+          ftcPilotAuthorized: true,
+        }),
+      ]);
+      const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+        env: { OWNED_FILING_SUBMIT_ARMED: "true", OWNED_FILING_LIVE_CASE_ALLOWLIST: FTC_CASE },
+      });
+      expect(claimed?.kind).toBe("ftc");
+      expect(claimed?.caseId).toBe(FTC_CASE);
+      expect(parseFtcOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("submitting");
+    });
+
+    it("BBB candidates are unaffected by the FTC-only pilot-authorization gate", async () => {
+      const { client, tasks } = makeStatefulSupabase([
+        queuedTask("bbb", BBB_CASE, "t-bbb", "2026-07-14T01:00:00.000Z"),
+      ]);
+      const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+        env: { OWNED_FILING_SUBMIT_ARMED: "true", OWNED_FILING_LIVE_CASE_ALLOWLIST: BBB_CASE },
+      });
+      expect(claimed?.kind).toBe("bbb");
+      expect(claimed?.caseId).toBe(BBB_CASE);
+      expect(parseBbbOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("submitting");
+    });
+
+    it("unarmed: FTC candidate without pilot authorization still claims (legacy/test behavior; the real worker never claims unarmed)", async () => {
+      const { client, tasks } = makeStatefulSupabase([
+        queuedTask("ftc", FTC_CASE, "t-ftc", "2026-07-14T01:00:00.000Z", {
+          ftcPilotAuthorized: false,
+        }),
+      ]);
+      const claimed = await findAndClaimNextQueuedOwnedFiling(client, {
+        env: { OWNED_FILING_SUBMIT_ARMED: "", OWNED_FILING_LIVE_CASE_ALLOWLIST: "" },
+      });
+      expect(claimed?.caseId).toBe(FTC_CASE);
+      expect(parseFtcOwnedFilingDeliveryRecord(tasks[0].notes)?.delivery_state).toBe("submitting");
+    });
   });
 });

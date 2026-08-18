@@ -17,6 +17,7 @@ import {
   upsertFtcOwnedFilingDeliveryNotes,
 } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { FTC_OWNED_FILING_PROVIDER } from "@/lib/justice/ftcOwnedFilingDelivery";
+import { isFtcPilotAuthorized } from "@/lib/justice/ftcPilotAuthorizationState";
 import {
   isOwnedFilingLiveCaseAllowlisted,
   isOwnedFilingSubmitArmed,
@@ -127,7 +128,9 @@ async function listQueuedCandidates(
  * tasks are eligible — submitting/filed/failed/completed are never claimed.
  *
  * When OWNED_FILING_SUBMIT_ARMED is true, only case_ids in OWNED_FILING_LIVE_CASE_ALLOWLIST
- * are eligible. Empty/unset allowlist while armed → claim nothing (fail closed).
+ * are eligible. Empty/unset allowlist while armed → claim nothing (fail closed). For FTC
+ * specifically, an allowlisted case is additionally ineligible unless its task also carries a
+ * recorded operator pilot-authorization marker (ftcPilotAuthorizationState) — BBB is unaffected.
  * Unarmed callers (tests / non-worker) keep legacy claim behavior; the worker never claims unarmed.
  */
 export async function findAndClaimNextQueuedOwnedFiling(
@@ -152,9 +155,13 @@ export async function findAndClaimNextQueuedOwnedFiling(
   for (const candidate of candidates) {
     const { cfg, task } = candidate;
     const caseIdForGate = task.case_id?.trim() ?? "";
+    // FTC-only, additive: even an allowlisted case must also carry a recorded operator
+    // pilot-authorization marker (ftcPilotAuthorizationState) before it can be claimed. BBB is
+    // untouched — this never applies outside cfg.kind === "ftc".
+    const ftcMissingPilotAuthorization = cfg.kind === "ftc" && !isFtcPilotAuthorized(task);
     if (
       isOwnedFilingSubmitArmed(env) &&
-      !isOwnedFilingLiveCaseAllowlisted(caseIdForGate, env)
+      (!isOwnedFilingLiveCaseAllowlisted(caseIdForGate, env) || ftcMissingPilotAuthorization)
     ) {
       continue;
     }

@@ -4,6 +4,7 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 import { upsertFtcOwnedFilingDeliveryNotes } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { REAL_FTC_FILING_CONFIRMATION_FALLBACK } from "@/lib/justice/ftcOwnedFilingDelivery";
+import { upsertFtcPilotAuthorizationNotes } from "@/lib/justice/ftcPilotAuthorizationState";
 
 vi.mock("@/lib/justice/runRealFtcBoundedSubmit", () => ({
   runRealFtcBoundedSubmit: vi.fn(),
@@ -69,14 +70,24 @@ function makeSupabase(onTaskNotesUpdate?: (notes: string) => void): SupabaseClie
   } as unknown as SupabaseClient;
 }
 
-function claimedTask(): JusticeCaseTaskRow {
+function claimedTask(options: { pilotAuthorized?: boolean } = {}): JusticeCaseTaskRow {
+  // Defaults to authorized so the pre-existing success/failure-path tests below (which predate
+  // pilot authorization and assert on unrelated failure reasons) keep exercising exactly what
+  // they say they exercise, rather than incidentally tripping the new gate.
+  let notes = `ftc_filing_queue:${CASE_ID}\ndraft:\nx`;
+  if (options.pilotAuthorized ?? true) {
+    notes = upsertFtcPilotAuthorizationNotes(notes, {
+      authorized_by: "operator_1",
+      authorized_at: "2026-07-13T00:00:00.000Z",
+    });
+  }
   return {
     id: TASK_ID,
     user_id: USER_ID,
     case_id: CASE_ID,
     title: "FTC filing: Acme Retail",
     due_date: null,
-    notes: upsertFtcOwnedFilingDeliveryNotes(`ftc_filing_queue:${CASE_ID}\ndraft:\nx`, {
+    notes: upsertFtcOwnedFilingDeliveryNotes(notes, {
       delivery_state: "submitting",
       provider: "real_ftc_bounded_submit",
       started_at: "2026-07-14T00:00:00.000Z",
@@ -247,6 +258,23 @@ describe("executeClaimedFtcFiling (worker execution off the request path)", () =
     expect(completeFtcOperatorFiling).not.toHaveBeenCalled();
     expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
     expect(noteUpdates.at(-1)).toContain("live_case_not_allowlisted");
+  });
+
+  it("refuses when the claimed task has no recorded pilot authorization (no Playwright)", async () => {
+    const noteUpdates: string[] = [];
+    const result = await executeClaimedFtcFiling(
+      makeSupabase((n) => noteUpdates.push(n)),
+      USER_ID,
+      CASE_ID,
+      claimedTask({ pilotAuthorized: false })
+    );
+    expect(result.status).toBe("failed");
+    expect(runRealFtcBoundedSubmit).not.toHaveBeenCalled();
+    expect(completeFtcOperatorFiling).not.toHaveBeenCalled();
+    // Recovered to an operator-visible "failed" state — never left stuck in "submitting", which
+    // claim-time filtering would never re-surface for review, and never silently hidden.
+    expect(noteUpdates.at(-1)).toContain("delivery_state: failed");
+    expect(noteUpdates.at(-1)).toContain("live_case_not_pilot_authorized");
   });
 
   it("marks failed without running Playwright when production config is missing", async () => {
