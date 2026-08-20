@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import "./globals.css";
 import Providers from "./providers";
 import SiteFooter from "./components/SiteFooter";
+import AnalyticsUrlPolicy from "./components/AnalyticsUrlPolicy";
 import { getClerkPublishableKey } from "@/lib/clerkConfigured";
 
 export const metadata: Metadata = {
@@ -25,6 +26,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           {children}
           <SiteFooter />
         </Providers>
+        <AnalyticsUrlPolicy />
       </body>
     </html>
   );
