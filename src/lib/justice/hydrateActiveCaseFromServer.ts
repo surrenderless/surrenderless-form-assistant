@@ -67,15 +67,23 @@ export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeI
   return row.intake;
 }
 
-/** GET /api/justice/cases (unarchived, newest first) and hydrate session from `list[0]`. */
-export async function fetchAndHydrateLatestJusticeCase(signal?: AbortSignal): Promise<JusticeIntake | null> {
+/** GET /api/justice/cases (unarchived, newest first) and return `list[0]`, or null. */
+export async function fetchLatestActiveJusticeCaseRow(
+  signal?: AbortSignal
+): Promise<JusticeCaseListRow | null> {
   const res = await fetch("/api/justice/cases", { signal });
   if (!res.ok) return null;
   const body = (await res.json()) as unknown;
   const env = parseJusticeCasesListEnvelope(body);
   const list = env?.cases ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
-  const latest = list[0] as JusticeCaseListRow;
+  return list[0] as JusticeCaseListRow;
+}
+
+/** GET /api/justice/cases (unarchived, newest first) and hydrate session from `list[0]`. */
+export async function fetchAndHydrateLatestJusticeCase(signal?: AbortSignal): Promise<JusticeIntake | null> {
+  const latest = await fetchLatestActiveJusticeCaseRow(signal);
+  if (!latest) return null;
   return hydrateSessionFromCaseListRow(latest);
 }
 
