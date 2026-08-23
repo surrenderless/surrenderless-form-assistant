@@ -162,6 +162,83 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     expect(activeCases[0]?.id).toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
   });
 
+  test("an auto-seeded reply-email draft with no real conversation does not block resumption", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+
+    await commitAcmeCaseViaChat(page);
+    await clearJusticeSession(page);
+
+    // Hold the fallback hydration's GET /api/justice/cases so the signed-in reply-email
+    // auto-seed effect (page.tsx: seeds parts.reply_email from the verified account, touching
+    // `parts` only — never `messages`) has time to fire and autosave its own draft before the
+    // fetch resolves. That draft must not be mistaken for a real in-progress conversation.
+    let releaseCasesFetch: () => void = () => {};
+    const casesFetchHeld = new Promise<void>((resolve) => {
+      releaseCasesFetch = resolve;
+    });
+    let casesFetchIntercepted = false;
+
+    await page.route(/\/api\/justice\/cases$/, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      casesFetchIntercepted = true;
+      await casesFetchHeld;
+      await route.continue();
+    });
+
+    await page.reload();
+
+    const chatInput = page.locator("#chat-ai-input");
+    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    await waitForClerkBrowserApiSession(page);
+
+    await expect.poll(() => casesFetchIntercepted, { timeout: 30_000 }).toBe(true);
+
+    // Confirm the auto-seed draft actually lands before proceeding.
+    await expect
+      .poll(
+        async () => page.evaluate((key) => sessionStorage.getItem(key), STORAGE_INTAKE_DRAFT_V1),
+        { timeout: 15_000 }
+      )
+      .not.toBeNull();
+
+    // And that it is exactly what it claims to be: reply_email seeded, no real (non-greeting)
+    // turn in it — only the opening greeting.
+    const draftAfterSeed = await page.evaluate((key) => {
+      const raw = sessionStorage.getItem(key);
+      return raw
+        ? (JSON.parse(raw) as {
+            parts?: { reply_email?: string };
+            messages?: Array<{ role: string; text: string }>;
+          })
+        : null;
+    }, STORAGE_INTAKE_DRAFT_V1);
+    expect(draftAfterSeed?.parts?.reply_email?.trim()).toBeTruthy();
+    expect(draftAfterSeed?.messages ?? []).toHaveLength(1);
+    expect(draftAfterSeed?.messages?.[0]?.role).toBe("assistant");
+
+    releaseCasesFetch();
+
+    // The benign auto-seed draft must not have suppressed resumption.
+    await expect
+      .poll(
+        async () =>
+          page.evaluate((key) => sessionStorage.getItem(key)?.trim() ?? "", STORAGE_CASE_ID),
+        { timeout: 30_000 }
+      )
+      .toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+
+    const resumedTranscript = chatAiTranscript(page);
+    await expect(
+      resumedTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Company: Acme Retail")).toBeVisible();
+  });
+
   test("signing in via the in-page modal (no reload) still resumes the existing case", async ({
     page,
     browser,
@@ -173,8 +250,14 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
 
     // A fresh, unauthenticated context reproduces "lands signed out, signs in via the modal
     // without navigating away" — the exact scenario the latestCaseHydrationAttemptedRef guard
-    // must not foreclose by marking itself attempted before isSignedIn is known.
-    const freshContext = await browser.newContext();
+    // must not foreclose by marking itself attempted before isSignedIn is known. A bare
+    // browser.newContext() is NOT enough here: Playwright Test injects the "authenticated"
+    // project's full resolved test options — including its default `storageState` — into any
+    // browser.newContext() call, not just baseURL (confirmed via a CI trace's own
+    // context-options record showing the signed-in cookies present on a "fresh" context with no
+    // options at all). Explicitly overriding storageState to empty is the only way to get a
+    // genuinely signed-out context; baseURL inheritance is unaffected and still applies.
+    const freshContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     try {
       const freshPage = await freshContext.newPage();
       await freshPage.goto("/justice/chat-ai");

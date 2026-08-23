@@ -4412,9 +4412,17 @@ export default function JusticeChatAiPage() {
       try {
         const latest = await fetchLatestActiveJusticeCaseRow();
         if (cancelled || !latest) return;
-        // A case may have been committed, or a new pre-commit conversation started (and
-        // autosaved as a draft), while this request was in flight — never clobber either.
-        if (readValidLocalJusticeIntake() || readValidIntakeDraft()) return;
+        // A case may have been committed while this request was in flight — never clobber it.
+        if (readValidLocalJusticeIntake()) return;
+        // A draft alone isn't a reliable "user started a new conversation" signal: the signed-in
+        // reply-email auto-seed above touches `parts` only (never `messages`), but still fires the
+        // draft-autosave effect, so a draft can exist from that alone with no real turns in it.
+        // Check for an actual non-greeting message instead, so that seed can never masquerade as
+        // an in-progress conversation and permanently block resumption.
+        const hasRealConversation = messagesRef.current.some(
+          (turn) => !isEphemeralChatGreeting(turn.text)
+        );
+        if (hasRealConversation) return;
         await hydrateChatFromJusticeCaseRow(latest);
       } catch (e) {
         console.warn("justice chat-ai: latest case hydrate error", e);
