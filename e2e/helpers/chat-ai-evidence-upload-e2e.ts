@@ -9,6 +9,7 @@ import { CHAT_INTAKE_COMMIT_MESSAGE } from "@/lib/justice/chatIntakeCommitGates"
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import {
+  archivePlaywrightMockActiveCaseIfAny,
   isOperatorClerkE2eConfigured,
   OPERATOR_CLERK_STORAGE_STATE_PATH,
   operatorClerkStorageStateExists,
@@ -19,6 +20,9 @@ import { chatAiTranscript } from "./chat-ai-owned-fulfillment-e2e";
 
 /** Drive signed-in chat through intake commit so evidence file upload is available. */
 export async function driveConsumerToSavedCaseForEvidenceUpload(page: Page): Promise<void> {
+  // This intends a genuinely blank intake — detach any case a prior test left active so
+  // chat-ai's resume-on-mount fallback can't silently resume it instead.
+  await archivePlaywrightMockActiveCaseIfAny(page);
   await page.goto("/justice/chat-ai");
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();

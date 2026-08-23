@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
+import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 
 export const CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "user.json");
 export const OPERATOR_CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "operator.json");
@@ -151,4 +152,25 @@ export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
       { timeout: 30_000 }
     )
     .toBe(200);
+}
+
+/**
+ * Archive the deterministic mock Acme case (if any) before a setup that intends a genuinely
+ * blank new intake. chat-ai's resume-on-mount fallback only resumes cases where
+ * `archived_at is null`, so this uses the same production PATCH /api/justice/cases/[id] path
+ * as the real "archive case" flow (see archiveCaseViaChat) to make that precondition true —
+ * it does not touch or bypass the resume logic itself. Call this ONLY from setups that must
+ * not inherit a case left active by an earlier test; never call it where resumption is the
+ * point (e.g. the modal sign-in flow), or it will archive the very case being resumed.
+ */
+export async function archivePlaywrightMockActiveCaseIfAny(page: Page): Promise<void> {
+  const res = await page.request.patch(
+    `/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`,
+    { data: { archived_at: new Date().toISOString() } }
+  );
+  if (!res.ok()) {
+    throw new Error(
+      `archivePlaywrightMockActiveCaseIfAny: PATCH failed (${res.status()}): ${await res.text()}`
+    );
+  }
 }

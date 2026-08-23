@@ -25,7 +25,7 @@ import {
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
-import { waitForClerkBrowserApiSession } from "./clerk-e2e";
+import { archivePlaywrightMockActiveCaseIfAny, waitForClerkBrowserApiSession } from "./clerk-e2e";
 import { expectUrlStaysOnChatAi } from "./chat-ai-ladder-continuity-e2e";
 
 /** Deterministic second-case company while the primary Acme case stays active (start-new-case E2E). */
@@ -61,6 +61,9 @@ export function chatAiActionTracking(page: Page): Locator {
  * Uses production chat gates and mock pipelines only — no direct client_state patches.
  */
 export async function driveConsumerToFtcQueuedFromChat(page: Page): Promise<void> {
+  // This intends a genuinely blank intake — detach any case a prior test left active so
+  // chat-ai's resume-on-mount fallback can't silently resume it instead.
+  await archivePlaywrightMockActiveCaseIfAny(page);
   await page.route("**://www.bbb.org/**", () => {
     throw new Error("Live BBB navigation must not occur during Playwright E2E.");
   });

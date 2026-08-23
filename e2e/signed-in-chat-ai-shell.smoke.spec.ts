@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  archivePlaywrightMockActiveCaseIfAny,
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
@@ -10,6 +11,9 @@ test.beforeEach(() => {
 });
 
 test("signed-in user loads /justice/chat-ai shell with chat input", async ({ page }) => {
+  // This intends a genuinely blank intake — detach any case a prior test left active so
+  // chat-ai's resume-on-mount fallback can't silently resume it instead.
+  await archivePlaywrightMockActiveCaseIfAny(page);
   await page.goto("/justice/chat-ai");
 
   await expect(page).toHaveURL(/\/justice\/chat-ai$/);

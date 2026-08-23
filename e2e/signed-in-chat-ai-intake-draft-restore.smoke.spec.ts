@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  archivePlaywrightMockActiveCaseIfAny,
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
@@ -34,6 +35,9 @@ test.describe("signed-in chat-ai pre-commit intake draft restore", () => {
   }) => {
     test.setTimeout(120_000);
 
+    // This intends a genuinely blank intake — detach any case a prior test left active so
+    // chat-ai's resume-on-mount fallback can't silently resume it instead.
+    await archivePlaywrightMockActiveCaseIfAny(page);
     await page.goto("/justice/chat-ai");
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
@@ -93,6 +97,9 @@ test.describe("signed-in chat-ai pre-commit intake draft restore", () => {
   });
 
   test("a fresh session writes no draft until the first real message", async ({ page }) => {
+    // This intends a genuinely blank intake — detach any case a prior test left active so
+    // chat-ai's resume-on-mount fallback can't silently resume it instead.
+    await archivePlaywrightMockActiveCaseIfAny(page);
     await page.goto("/justice/chat-ai");
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
