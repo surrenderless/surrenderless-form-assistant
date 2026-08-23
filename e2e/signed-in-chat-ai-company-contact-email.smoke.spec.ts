@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
-  archivePlaywrightMockActiveCaseIfAny,
+  resetPlaywrightMockActiveCaseIfAny,
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
@@ -27,7 +27,7 @@ test("chat-first company_contact_email persists on intake commit for merchant ou
   test.setTimeout(120_000);
   // This intends a genuinely blank intake — detach any case a prior test left active so
   // chat-ai's resume-on-mount fallback can't silently resume it instead.
-  await archivePlaywrightMockActiveCaseIfAny(page);
+  await resetPlaywrightMockActiveCaseIfAny(page);
   await page.goto("/justice/chat-ai");
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
-  archivePlaywrightMockActiveCaseIfAny,
+  resetPlaywrightMockActiveCaseIfAny,
   clerkE2eSkipReason,
   clerkStorageStateExists,
   isClerkE2eConfigured,
@@ -49,7 +49,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   test.setTimeout(480_000);
   // This intends a genuinely blank intake — detach any case a prior test left active so
   // chat-ai's resume-on-mount fallback can't silently resume it instead.
-  await archivePlaywrightMockActiveCaseIfAny(page);
+  await resetPlaywrightMockActiveCaseIfAny(page);
   await page.route("**://www.bbb.org/**", () => {
     throw new Error("Live BBB navigation must not occur during Playwright E2E.");
   });
