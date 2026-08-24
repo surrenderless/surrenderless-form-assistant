@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
+import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 
 export const CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "user.json");
 export const OPERATOR_CLERK_STORAGE_STATE_PATH = path.join("playwright", ".clerk", "operator.json");
@@ -151,4 +152,48 @@ export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
       { timeout: 30_000 }
     )
     .toBe(200);
+}
+
+/**
+ * Fully remove the deterministic mock Acme case (if any) before a setup that intends a
+ * genuinely blank new intake. Archiving via PATCH /api/justice/cases/[id] was tried first, but
+ * production's own escalation-ladder rules (canArchiveCaseForEscalationLadder) reject archiving
+ * any case that hasn't already reached a fully-resolved end state — which a fresh or
+ * mid-escalation leftover case, the exact case this needs to clear, never has. This instead
+ * calls the mock-only POST /api/testing/playwright-mock-case-reset, which removes the case from
+ * every in-memory mock store it lives in (not just one), so it stops existing entirely rather
+ * than being archived. It does not touch or bypass production resume/archive logic — see that
+ * route's own doc comment. Call this ONLY from setups that must not inherit a case left active
+ * by an earlier test; never call it where resumption is the point (e.g. the modal sign-in
+ * flow), or it will remove the very case being resumed.
+ */
+export async function resetPlaywrightMockActiveCaseIfAny(page: Page): Promise<void> {
+  const res = await page.request.post("/api/testing/playwright-mock-case-reset", {
+    data: { case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `resetPlaywrightMockActiveCaseIfAny: reset POST failed (${res.status()}): ${await res.text()}`
+    );
+  }
+
+  // Assert the exact postcondition chat-ai's resume-on-mount fallback depends on:
+  // fetchLatestActiveJusticeCaseRow() reads GET /api/justice/cases (no query) and resumes
+  // list[0], so the deterministic case must be genuinely absent from that list — not merely
+  // archived — or a "blank intake" setup would silently resume it anyway.
+  const listRes = await page.request.get("/api/justice/cases");
+  if (!listRes.ok()) {
+    throw new Error(
+      `resetPlaywrightMockActiveCaseIfAny: postcondition check GET /api/justice/cases failed (${listRes.status()}): ${await listRes.text()}`
+    );
+  }
+  const listBody = (await listRes.json()) as { cases?: Array<{ id: string }> };
+  const stillResumable = (listBody.cases ?? []).some(
+    (row) => row.id === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID
+  );
+  if (stillResumable) {
+    throw new Error(
+      "resetPlaywrightMockActiveCaseIfAny: postcondition failed — the deterministic mock case is still present in GET /api/justice/cases after reset, so chat-ai would still auto-resume it."
+    );
+  }
 }

@@ -331,6 +331,7 @@ import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
 import {
   fetchJusticeCaseById,
   fetchJusticeCasesForChatSelection,
+  fetchLatestActiveJusticeCaseRow,
   fetchMostRecentlyArchivedEligibleJusticeCase,
   hydrateSessionFromCaseListRow,
   restoreArchivedJusticeCaseOnServer,
@@ -2607,6 +2608,9 @@ export default function JusticeChatAiPage() {
   /** Guards the Stripe checkout-return effect below (?case=&checkout=success|cancelled) so it
    *  resolves at most once per page load, same lifecycle as reviewDeepLinkHandledRef. */
   const checkoutReturnHandledRef = useRef(false);
+  /** Guards the "no local case, resume latest from server" fallback effect below so it runs at
+   *  most once per page load, same lifecycle as reviewDeepLinkHandledRef. */
+  const latestCaseHydrationAttemptedRef = useRef(false);
   const persistedTurnIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<UiMessage[]>([]);
   const prevApprovedActionHrefForAssistedPracticeRef = useRef<string | undefined>(undefined);
@@ -4371,6 +4375,64 @@ export default function JusticeChatAiPage() {
     }
     setStagedProofNotes(readStagedProofNotes());
   }, []);
+
+  // Signed-in, no local session and no in-progress draft — this is either a first visit or a
+  // returning consumer whose sessionStorage expired (e.g. tab closed mid multi-day workflow). Try
+  // resuming their most recent case from the server so `handleContinueToPreview` sees
+  // `isUpdatingExistingCase = true` and commits an update rather than forking a duplicate case
+  // (see commitIntakeToSessionAndServer's create/update mode). Skips entirely when a review-task
+  // or checkout-return deep link is present in the URL — those effects own case selection for
+  // this mount and must not race with a concurrent "latest case" fetch.
+  useEffect(() => {
+    if (!isLoaded || typeof window === "undefined") return;
+    if (latestCaseHydrationAttemptedRef.current) return;
+
+    // Not yet known whether this consumer is signed in — wait rather than give up, so a visitor
+    // who signs in via the in-page modal (JusticeActionResumeSignInPrompt's <SignInButton
+    // mode="modal">, no navigation/remount) still gets resumed once isSignedIn settles, instead
+    // of the guard being consumed on the earlier signed-out render (same pattern as
+    // reviewDeepLinkHandledRef below).
+    if (!isSignedIn) return;
+
+    const search = window.location.search;
+    if (parseReviewTaskDeepLinkParams(search) || parseCheckoutReturnStatus(search)) {
+      latestCaseHydrationAttemptedRef.current = true;
+      return;
+    }
+
+    if (readValidLocalJusticeIntake() || readValidIntakeDraft()) {
+      latestCaseHydrationAttemptedRef.current = true;
+      return;
+    }
+
+    latestCaseHydrationAttemptedRef.current = true;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const latest = await fetchLatestActiveJusticeCaseRow();
+        if (cancelled || !latest) return;
+        // A case may have been committed while this request was in flight — never clobber it.
+        if (readValidLocalJusticeIntake()) return;
+        // A draft alone isn't a reliable "user started a new conversation" signal: the signed-in
+        // reply-email auto-seed above touches `parts` only (never `messages`), but still fires the
+        // draft-autosave effect, so a draft can exist from that alone with no real turns in it.
+        // Check for an actual non-greeting message instead, so that seed can never masquerade as
+        // an in-progress conversation and permanently block resumption.
+        const hasRealConversation = messagesRef.current.some(
+          (turn) => !isEphemeralChatGreeting(turn.text)
+        );
+        if (hasRealConversation) return;
+        await hydrateChatFromJusticeCaseRow(latest);
+      } catch (e) {
+        console.warn("justice chat-ai: latest case hydrate error", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn]);
 
   const loadSavedEvidencePreview = useCallback(async (
     signal?: AbortSignal,
