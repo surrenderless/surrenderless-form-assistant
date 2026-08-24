@@ -119,7 +119,9 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     await expect(
       reloadedTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_SECOND_USER_MESSAGE)
     ).toBeVisible();
-    await expect(page.getByText("Company: Acme Retail")).toBeVisible();
+    await expect(
+      page.locator("li").filter({ hasText: "Company:" }).filter({ hasText: "Acme Retail" })
+    ).toBeVisible();
 
     // Continuing must PATCH the existing case (mode: "update"), never re-POST a duplicate.
     let duplicateCreatePosted = false;
@@ -240,7 +242,9 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     await expect(
       resumedTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)
     ).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Company: Acme Retail")).toBeVisible();
+    await expect(
+      page.locator("li").filter({ hasText: "Company:" }).filter({ hasText: "Acme Retail" })
+    ).toBeVisible();
   });
 
   test("signing in via the in-page modal (no reload) still resumes the existing case", async ({
@@ -266,7 +270,9 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
       const freshPage = await freshContext.newPage();
       await freshPage.goto("/justice/chat-ai");
 
-      await expect(freshPage.getByRole("button", { name: "Sign in" })).toBeVisible({
+      await expect(
+        freshPage.getByRole("main").getByRole("button", { name: "Sign in" })
+      ).toBeVisible({
         timeout: 30_000,
       });
 
