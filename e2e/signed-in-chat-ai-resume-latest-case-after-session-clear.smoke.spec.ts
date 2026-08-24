@@ -300,7 +300,9 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
       await expect(
         freshTranscript.getByText(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE)
       ).toBeVisible({ timeout: 15_000 });
-      await expect(freshPage.getByText("Company: Acme Retail")).toBeVisible();
+      await expect(
+        freshPage.locator("li").filter({ hasText: "Company:" }).filter({ hasText: "Acme Retail" })
+      ).toBeVisible();
     } finally {
       await freshContext.close();
     }
