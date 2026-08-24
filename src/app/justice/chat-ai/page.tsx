@@ -4400,7 +4400,11 @@ export default function JusticeChatAiPage() {
       return;
     }
 
-    if (readValidLocalJusticeIntake() || readValidIntakeDraft()) {
+    // A staged-but-unflushed proof note has no case_id of its own — it's pure sessionStorage,
+    // valid regardless of which case is active — so resuming an old case out from under it
+    // would attach it to the wrong dispute the moment the consumer clicks Continue. Never
+    // start the fetch while one is already staged.
+    if (readValidLocalJusticeIntake() || readValidIntakeDraft() || readStagedProofNotes().length > 0) {
       latestCaseHydrationAttemptedRef.current = true;
       return;
     }
@@ -4423,6 +4427,9 @@ export default function JusticeChatAiPage() {
           (turn) => !isEphemeralChatGreeting(turn.text)
         );
         if (hasRealConversation) return;
+        // Same reasoning as the pre-fetch check above — a note staged while this request was in
+        // flight must not get silently attached to whatever case the fetch found.
+        if (readStagedProofNotes().length > 0) return;
         await hydrateChatFromJusticeCaseRow(latest);
       } catch (e) {
         console.warn("justice chat-ai: latest case hydrate error", e);

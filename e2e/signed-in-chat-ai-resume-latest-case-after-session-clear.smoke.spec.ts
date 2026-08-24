@@ -22,6 +22,7 @@ import { CHAT_INTAKE_COMMIT_MESSAGE } from "@/lib/justice/chatIntakeCommitGates"
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { STORAGE_INTAKE_DRAFT_V1 } from "@/lib/justice/intakeDraftPersistence";
+import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
@@ -379,5 +380,84 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
       STORAGE_CASE_ID
     );
     expect(caseIdAfterRelease).toBe("");
+  });
+
+  test("a proof note staged while the latest-case fetch is pending is not attached to the resumed case", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+
+    await commitAcmeCaseViaChat(page);
+    await clearJusticeSession(page);
+
+    // Hold the fallback hydration's GET /api/justice/cases so we can stage a proof note (which
+    // has no case_id of its own — see stagedProofNotes.ts) while it is still in flight, then
+    // release it and confirm the old case was never hydrated and never received the note.
+    let releaseCasesFetch: () => void = () => {};
+    const casesFetchHeld = new Promise<void>((resolve) => {
+      releaseCasesFetch = resolve;
+    });
+    let casesFetchIntercepted = false;
+
+    await page.route(/\/api\/justice\/cases$/, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      casesFetchIntercepted = true;
+      await casesFetchHeld;
+      await route.continue();
+    });
+
+    await page.reload();
+
+    const chatInput = page.locator("#chat-ai-input");
+    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    await waitForClerkBrowserApiSession(page);
+
+    await expect.poll(() => casesFetchIntercepted, { timeout: 30_000 }).toBe(true);
+
+    // Stage a proof note about a new/unrelated problem while the old case's fetch is held —
+    // reachable immediately: canStageProofNoteInChat only requires signed-in, not a committed
+    // case or any chat turn.
+    await page.getByText("Add a proof note").click();
+    await page.locator("#chat-ai-proof-title").fill("Screenshot of a new billing error");
+    await page.getByRole("button", { name: "Stage proof note" }).click();
+    await expect(page.getByText("Proof note staged on this device.")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Confirm it's actually on disk before releasing the fetch, so the release below genuinely
+    // lands after the note exists (not merely after the success message is on screen).
+    await expect
+      .poll(
+        async () => page.evaluate((key) => sessionStorage.getItem(key), STORAGE_STAGED_PROOF_NOTES_V1),
+        { timeout: 15_000 }
+      )
+      .not.toBeNull();
+
+    releaseCasesFetch();
+
+    // Give the (correctly-aborted) hydration a moment to have clobbered state if it were going to.
+    await page.waitForTimeout(1_500);
+
+    // The old case must never have been resumed: no case id, no Recap company line.
+    const caseIdAfterRelease = await page.evaluate(
+      (key) => sessionStorage.getItem(key)?.trim() ?? "",
+      STORAGE_CASE_ID
+    );
+    expect(caseIdAfterRelease).toBe("");
+    await expect(
+      page.locator("li").filter({ hasText: "Company:" }).filter({ hasText: "Acme Retail" })
+    ).toHaveCount(0);
+
+    // The staged note itself must still be present, untouched — proving it wasn't silently
+    // flushed against the (never-hydrated) old case either.
+    const stagedAfterRelease = await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      STORAGE_STAGED_PROOF_NOTES_V1
+    );
+    expect(stagedAfterRelease).not.toBeNull();
+    expect(JSON.parse(stagedAfterRelease!)).toHaveLength(1);
   });
 });
