@@ -480,6 +480,12 @@ const OPENING_GREETING =
 const UPDATE_GREETING =
   "Your current case is loaded in the recap below. Tell me what you’d like to add or change — I’ll update the details as we go. When you’re ready, save and continue in chat.";
 
+// Staged proof notes have no case_id of their own (pure sessionStorage) — switching the active
+// case out from under one would silently attach it to the wrong dispute on next save. Shared by
+// handleSelectCaseFromChat and handleRestoreMostRecentArchivedCaseFromChat.
+const CHAT_CASE_SWITCH_STAGED_PROOF_NOTE_MESSAGE =
+  "You have a proof note staged that hasn't been saved to a case yet. Save and continue in chat to attach it to your current case before switching to a different case.";
+
 const RECAP_STORY_MAX_LEN = 120;
 const ACTIVE_CASE_PRODUCT_MAX_LEN = 80;
 const activeCaseChecklistLinkCls =
@@ -3299,8 +3305,16 @@ export default function JusticeChatAiPage() {
   async function handleRestoreMostRecentArchivedCaseFromChat(): Promise<{
     ok: boolean;
     companyName?: string;
+    blockedMessage?: string;
   }> {
     if (!isLoaded || !isSignedIn) return { ok: false };
+
+    // A staged-but-unflushed proof note has no case_id of its own (see hydrateChatFromJusticeCaseRow
+    // guards elsewhere) — restoring a different case out from under it would silently attach it to
+    // that case's evidence once the consumer next saves. Block the switch instead.
+    if (readStagedProofNotes().length > 0) {
+      return { ok: false, blockedMessage: CHAT_CASE_SWITCH_STAGED_PROOF_NOTE_MESSAGE };
+    }
 
     const activeCaseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
@@ -3346,6 +3360,13 @@ export default function JusticeChatAiPage() {
   }> {
     if (!isLoaded || !isSignedIn) {
       return { ok: false, assistantText: "Sign in to switch cases in chat." };
+    }
+
+    // A staged-but-unflushed proof note has no case_id of its own (see hydrateChatFromJusticeCaseRow
+    // guards elsewhere) — switching to a different case out from under it would silently attach it
+    // to that case's evidence once the consumer next saves. Block the switch instead.
+    if (readStagedProofNotes().length > 0) {
+      return { ok: false, assistantText: CHAT_CASE_SWITCH_STAGED_PROOF_NOTE_MESSAGE };
     }
 
     try {
@@ -5725,7 +5746,8 @@ export default function JusticeChatAiPage() {
             ? buildChatCaseRestoreAssistantResponse(parsedRestore, {
                 companyName: restoreResult.companyName,
               })
-            : "I could not restore your most recently archived case. If you still have an archived case, try again in a moment.";
+            : (restoreResult.blockedMessage ??
+              "I could not restore your most recently archived case. If you still have an archived case, try again in a moment.");
           const restoredCaseId =
             typeof window !== "undefined"
               ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? ""
