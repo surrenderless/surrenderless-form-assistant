@@ -3151,6 +3151,19 @@ export default function JusticeChatAiPage() {
 
     const sessionCaseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
 
+    // A staged-but-unflushed proof note has no case_id of its own, and a valid local
+    // intake/draft or a real in-progress conversation is unsaved work that lives only in this
+    // tab — hydrating a different case out from under any of them would silently attach or
+    // overwrite it. Leave state untouched rather than resolve the link, matching this effect's
+    // own "no active-state change" contract for every other reject path.
+    if (
+      readValidLocalJusticeIntake() ||
+      readValidIntakeDraft() ||
+      readStagedProofNotes().length > 0
+    ) {
+      return;
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -3175,6 +3188,15 @@ export default function JusticeChatAiPage() {
           tasks,
         });
         if (action.kind !== "hydrate" || !caseLookup) return;
+
+        // Re-check: local state may have changed while the lookup was in flight. A draft alone
+        // isn't checked here — the signed-in reply-email auto-seed effect can produce one with
+        // no real turns in it, so only an actual non-greeting message counts as in-progress.
+        if (readValidLocalJusticeIntake() || readStagedProofNotes().length > 0) return;
+        const hasRealConversation = messagesRef.current.some(
+          (turn) => !isEphemeralChatGreeting(turn.text)
+        );
+        if (hasRealConversation) return;
 
         await hydrateChatFromJusticeCaseRow(caseLookup);
       } catch (e) {
@@ -3220,8 +3242,32 @@ export default function JusticeChatAiPage() {
       try {
         const sessionCaseId = sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "";
         if (sessionCaseId !== returnCaseId) {
+          // A staged-but-unflushed proof note has no case_id of its own, and a valid local
+          // intake/draft or a real in-progress conversation is unsaved work that lives only in
+          // this tab — hydrating a different case out from under any of them would silently
+          // attach or overwrite it. Leave state untouched; the payment itself is already
+          // recorded server-side by the webhook regardless of whether this tab reflects it.
+          if (
+            readValidLocalJusticeIntake() ||
+            readValidIntakeDraft() ||
+            readStagedProofNotes().length > 0
+          ) {
+            return;
+          }
+
           const caseRow = await fetchJusticeCaseById(returnCaseId);
           if (cancelled || !caseRow?.id) return;
+
+          // Re-check: local state may have changed while the lookup was in flight. A draft
+          // alone isn't checked here — the signed-in reply-email auto-seed effect can produce
+          // one with no real turns in it, so only an actual non-greeting message counts as
+          // in-progress.
+          if (readValidLocalJusticeIntake() || readStagedProofNotes().length > 0) return;
+          const hasRealConversation = messagesRef.current.some(
+            (turn) => !isEphemeralChatGreeting(turn.text)
+          );
+          if (hasRealConversation) return;
+
           await hydrateChatFromJusticeCaseRow(caseRow);
         } else {
           await refreshChatCaseFromServer(returnCaseId);
