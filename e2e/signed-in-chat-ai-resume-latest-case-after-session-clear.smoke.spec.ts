@@ -460,4 +460,67 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     expect(stagedAfterRelease).not.toBeNull();
     expect(JSON.parse(stagedAfterRelease!)).toHaveLength(1);
   });
+
+  test("a chat case-switch request is blocked while a proof note is staged, and the active case is unchanged", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+
+    // Fresh, uncommitted session — no case is ever committed here. Staging a proof note requires
+    // canStageProofNoteInChat (!isUpdatingExistingCase), which committing a case would immediately
+    // flip to false (page.tsx sets isUpdatingExistingCase true right after a successful create),
+    // switching "Add a proof note" into its direct-save-to-server mode instead. Mirrors
+    // commitAcmeCaseViaChat's own bootstrap, minus the commit itself.
+    await resetPlaywrightMockActiveCaseIfAny(page);
+    await page.goto("/justice/chat-ai");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.reload();
+
+    const chatInput = page.locator("#chat-ai-input");
+    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    await waitForClerkBrowserApiSession(page);
+
+    // Stage a proof note with no case committed yet — it has no case_id of its own (see
+    // stagedProofNotes.ts), so switching to a different case out from under it would silently
+    // attach it to whatever case the consumer switches to next.
+    await page.getByText("Add a proof note").click();
+    await page.locator("#chat-ai-proof-title").fill("Screenshot of a new billing error");
+    await page.getByRole("button", { name: "Stage proof note" }).click();
+    await expect(page.getByText("Proof note staged on this device.")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect
+      .poll(
+        async () => page.evaluate((key) => sessionStorage.getItem(key), STORAGE_STAGED_PROOF_NOTES_V1),
+        { timeout: 15_000 }
+      )
+      .not.toBeNull();
+
+    const chatTranscript = chatAiTranscript(page);
+
+    // handleSelectCaseFromChat's staged-note guard fires before any case lookup, so a
+    // never-offered, nonexistent quoted case name is enough to exercise it — the quoted-name
+    // grammar doesn't require a prior "list cases" offer the way bare numeric selection does.
+    await chatInput.fill('Please open "Beta Corp" case in chat.');
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(
+      chatTranscript.getByText(
+        "You have a proof note staged that hasn't been saved to a case yet. Save and continue in chat to attach it to your current case before switching to a different case."
+      )
+    ).toBeVisible({ timeout: 15_000 });
+
+    // No case must have been switched to, and the staged note must survive untouched.
+    const caseIdAfterBlockedSwitch = await page.evaluate(
+      (key) => sessionStorage.getItem(key)?.trim() ?? "",
+      STORAGE_CASE_ID
+    );
+    expect(caseIdAfterBlockedSwitch).toBe("");
+
+    const stagedAfterBlockedSwitch = await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      STORAGE_STAGED_PROOF_NOTES_V1
+    );
+    expect(stagedAfterBlockedSwitch).not.toBeNull();
+    expect(JSON.parse(stagedAfterBlockedSwitch!)).toHaveLength(1);
+  });
 });
