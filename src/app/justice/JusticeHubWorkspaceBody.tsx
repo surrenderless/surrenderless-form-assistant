@@ -191,6 +191,7 @@ function deriveHubHandlingTrackingLine(input: {
       handlingAcknowledgedAt: input.next.handling_acknowledged_at,
       followUpNeeded: input.next.follow_up_needed === true,
     }),
+    next: input.next,
   });
 }
 

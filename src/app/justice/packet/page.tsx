@@ -70,6 +70,7 @@ import {
   chatOutcomeTrackingSaveAllowed,
   handlingWorkbenchClosureAcknowledgmentVisible,
   handlingWorkbenchOutcomeTrackingFormVisible,
+  MERCHANT_RESOLVED_TERMINAL_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
 import {
@@ -1353,7 +1354,10 @@ export default function JusticePacketPage() {
                     ) : null}
                   </>
                 ) : null}
-                {!approvedNextActionStarted &&
+                {/* Consumer-owned terminal (merchant/company already resolved it): no real
+                    destination page exists for this href, so never render it as an "Open"
+                    affordance — there is nothing left to open, and this is not a routable page. */}
+                {approvedNextAction?.href === MERCHANT_RESOLVED_TERMINAL_HREF ? null : !approvedNextActionStarted &&
                 !approvedNextActionCompleted &&
                 approvedNextAction?.href &&
                 approvedNextAction.label ? (

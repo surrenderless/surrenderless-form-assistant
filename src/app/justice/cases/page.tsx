@@ -416,6 +416,7 @@ function deriveCasesHandlingTrackingLine(
       handlingAcknowledgedAt: next.handling_acknowledged_at,
       followUpNeeded: next.follow_up_needed === true,
     }),
+    next,
   });
 }
 

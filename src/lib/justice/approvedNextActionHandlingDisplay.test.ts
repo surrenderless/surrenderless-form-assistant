@@ -4,6 +4,7 @@ import {
   HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
   HANDLING_TRACKING_STEP_ADD_FILING,
   HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
+  HANDLING_TRACKING_STEP_COMPLETE,
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_OPEN_APPROVED,
   HANDLING_TRACKING_STEP_RECORD_OUTCOME,
@@ -510,5 +511,20 @@ describe("resolveHandlingTrackingContextualLink", () => {
         markAcknowledgedOnScreen: true,
       })
     ).toBeNull();
+  });
+
+  it("exposes no navigation link for the merchant-resolved terminal state, on any surface", () => {
+    // MERCHANT_RESOLVED_TERMINAL_HREF has no real page — proving null here (not just that the
+    // derivedStep constant matches) is what rules out a clickable dead link on every surface
+    // that renders this component.
+    for (const surface of ["chat-ai", "hub", "cases", "packet", "plan"] as const) {
+      expect(
+        resolveHandlingTrackingContextualLink({
+          derivedStep: HANDLING_TRACKING_STEP_COMPLETE,
+          approvedNextAction: { href: "/justice/merchant-resolved" },
+          surface,
+        })
+      ).toBeNull();
+    }
   });
 });

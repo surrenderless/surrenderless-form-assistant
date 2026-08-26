@@ -7,6 +7,11 @@
  */
 
 import { ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP } from "@/lib/justice/escalationLadderResolution";
+import {
+  HANDLING_TRACKING_STEP_COMPLETE,
+} from "@/lib/justice/approvedNextActionHandlingDisplay";
+import { isMerchantResolvedTerminalAction } from "@/lib/justice/handlingTrackingProgress";
+import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 /**
  * Merchant-contact confirm is intake documentation, not DIY external filing.
@@ -69,11 +74,21 @@ export function shouldShowChatConsumerArchiveControl(_input: {
  * Hub / Saved Cases handling-tracking: always owned/awaiting copy — never DIY
  * "prepare the manual action" / "after external submission".
  * `suppressOwnedManualUi` is ignored (fail-closed).
+ *
+ * The one exception is the consumer-owned merchant-resolved terminal state: there is no
+ * operator step to await — nothing was ever queued, and none ever will be — so defaulting to
+ * "awaiting Surrenderless operator fulfillment" here would be actively wrong, not just
+ * DIY-permissive. Checked via the same isMerchantResolvedTerminalAction predicate chat-ai uses,
+ * so Hub, Saved Cases, and chat can never drift on what counts as this terminal state.
  */
 export function resolveHubOrCasesHandlingTrackingStep(input: {
   suppressOwnedManualUi?: boolean;
   manualDerivedStep: string;
+  next?: Pick<JusticeApprovedNextAction, "href" | "status">;
 }): string {
+  if (input.next && isMerchantResolvedTerminalAction(input.next)) {
+    return HANDLING_TRACKING_STEP_COMPLETE;
+  }
   void input.suppressOwnedManualUi;
   void input.manualDerivedStep;
   return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
@@ -100,13 +115,24 @@ export const OWNED_ENDGAME_HANDLING_TRACKING_STEP =
 /**
  * Chat handling-tracking: always owned/awaiting copy — never DIY "prepare the manual action".
  * `suppressOwnedManualUi` is ignored (fail-closed).
+ *
+ * The one exception is the consumer-owned merchant-resolved terminal state: there is no
+ * Surrenderless follow-up being tracked and nothing left for Surrenderless to close — the
+ * consumer's own report already is the resolution — so OWNED_ENDGAME_HANDLING_TRACKING_STEP's
+ * "tracking follow-up and will close this case when resolved" would be actively wrong here, not
+ * just DIY-permissive. Checked via the same isMerchantResolvedTerminalAction predicate Hub/
+ * Saved Cases use, so no surface can drift on what counts as this terminal state.
  */
 export function resolveChatOwnedHandlingTrackingStep(input: {
   suppressOwnedManualUi?: boolean;
   resolutionFlowExposed: boolean;
   manualDerivedStep: string | null;
+  next?: Pick<JusticeApprovedNextAction, "href" | "status">;
 }): string | null {
   if (!input.manualDerivedStep) return null;
+  if (input.next && isMerchantResolvedTerminalAction(input.next)) {
+    return HANDLING_TRACKING_STEP_COMPLETE;
+  }
   if (input.resolutionFlowExposed) {
     return OWNED_ENDGAME_HANDLING_TRACKING_STEP;
   }

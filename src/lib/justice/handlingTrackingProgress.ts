@@ -1,13 +1,24 @@
 import {
+  HANDLING_TRACKING_STEP_ADD_CONFIRMATION,
+  HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
+  HANDLING_TRACKING_STEP_ADD_FILING,
+  HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
+  HANDLING_TRACKING_STEP_COMPLETE,
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_RECORD_OUTCOME,
+  HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   BBB_PRACTICE_FILING_DESTINATION,
   FTC_PRACTICE_FILING_DESTINATION,
 } from "@/lib/justice/submissionAttempt";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
-import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
+import {
+  ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
+  hasPendingHumanFulfillmentEscalation,
+  shouldExposeCaseResolutionFlow,
+} from "@/lib/justice/escalationLadderResolution";
+import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 
 export type ManualActionTrackingFiling = {
@@ -70,6 +81,27 @@ export const MANUAL_ACTION_TRACKING_REAL_PAYMENT_DISPUTE_PREP_HREF = "/justice/p
 
 /** Approved-action href for merchant-contact manual filing tracking. */
 export const MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF = "/justice/merchant";
+
+/**
+ * Consumer-owned terminal href for "the merchant/company already fixed it" — distinct from
+ * both a real escalation destination href and the generic "nothing routable" fallback href
+ * used for every other reason a case has no next destination (e.g. a genuinely exhausted
+ * ladder). Deliberately absent from MANUAL_ACTION_TRACKING_FILING_DESTINATIONS_BY_HREF below:
+ * no filing destination is ever expected or created for it.
+ */
+export const MERCHANT_RESOLVED_TERMINAL_HREF = "/justice/merchant-resolved";
+export const MERCHANT_RESOLVED_TERMINAL_LABEL = "Merchant issue resolved";
+
+/**
+ * True for the one recognized consumer-owned terminal state — shared by every surface
+ * (chat-ai, Hub, Saved Cases) that derives a handling-tracking step, so none of them can drift
+ * on what counts as "the merchant already resolved it, nothing further to track."
+ */
+export function isMerchantResolvedTerminalAction(
+  action: Pick<JusticeApprovedNextAction, "href" | "status">
+): boolean {
+  return action.href === MERCHANT_RESOLVED_TERMINAL_HREF && action.status === "completed";
+}
 
 /** Approved-action href for Surrenderless-owned FTC consumer-complaint filing. */
 export const MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF = "/justice/ftc";
@@ -412,4 +444,159 @@ export function chatOutcomeTrackingSaveAllowed(
 ): boolean {
   if (action.status === "completed") return true;
   return Boolean(action.handling_requested_at?.trim());
+}
+
+export function chatReadyForManualReview(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+}): boolean {
+  return input.basicsReady && input.draftReviewed && input.preparedPacketApproved;
+}
+
+/**
+ * Derives the chat-ai handling-tracking step line from already-resolved manual-action-readiness
+ * flags. Pure and directly testable — extracted here (rather than kept local to the chat-ai
+ * page component) specifically so callers/tests can verify the real production decision for a
+ * given approved-action shape without re-deriving or hardcoding the expected step string.
+ */
+export function deriveChatManualActionNextStep(input: {
+  readyForExternalManualAction: boolean;
+  actionOpened: boolean;
+  hasFilingRecord: boolean;
+  hasConfirmationOnFile: boolean;
+  href?: string;
+  status: JusticeApprovedNextAction["status"];
+  outcomeNote?: string;
+  handlingRequestedAt?: string;
+  handlingAcknowledgedAt?: string;
+  followUpNeeded?: boolean;
+  canCaptureFilingInline?: boolean;
+  /** Signed-in chat-ai may show in-chat filing copy before UUID hydration completes. */
+  canCaptureFilingInChat?: boolean;
+  pendingHumanFulfillmentEscalation?: boolean;
+  resolutionFlowExposed?: boolean;
+}): string {
+  if (input.pendingHumanFulfillmentEscalation) {
+    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+  }
+  // Consumer-owned terminal (merchant/company already resolved it): no external manual action
+  // was ever required, so the ordinary "review packet/evidence, open the step, add a
+  // filing+confirmation" manual-action checks below don't apply — this href has no filing kind
+  // and never will. Scoped strictly to this one href so it can never affect the generic
+  // "nothing routable" fallback or a genuinely exhausted escalation ladder, which must keep
+  // their existing behavior unchanged.
+  if (isMerchantResolvedTerminalAction({ href: input.href, status: input.status })) {
+    return HANDLING_TRACKING_STEP_COMPLETE;
+  }
+  const handlingRequested = Boolean(input.handlingRequestedAt?.trim());
+  if (handlingRequested) {
+    const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+      status: input.status,
+      outcomeNote: input.outcomeNote,
+      handlingRequestedAt: input.handlingRequestedAt,
+      handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+    });
+    if (closureStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
+      return closureStep;
+    }
+    if (closureStep === HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
+      return closureStep;
+    }
+    if (input.handlingAcknowledgedAt?.trim()) {
+      if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
+        return HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP;
+      }
+      if (input.resolutionFlowExposed === false) {
+        return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
+      }
+      return HANDLING_TRACKING_STEP_COMPLETE;
+    }
+  }
+
+  if (!input.readyForExternalManualAction) {
+    return "Review packet and saved proof before external manual action.";
+  }
+  if (!input.actionOpened) {
+    return "Open the approved step and prepare the manual action.";
+  }
+  const useChatInlineFilingCopy =
+    input.canCaptureFilingInChat ?? input.canCaptureFilingInline;
+  if (!input.hasFilingRecord) {
+    return useChatInlineFilingCopy
+      ? HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE
+      : HANDLING_TRACKING_STEP_ADD_FILING;
+  }
+  if (!input.hasConfirmationOnFile) {
+    return useChatInlineFilingCopy
+      ? HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE
+      : HANDLING_TRACKING_STEP_ADD_CONFIRMATION;
+  }
+  const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
+    status: input.status,
+    outcomeNote: input.outcomeNote,
+    handlingRequestedAt: input.handlingRequestedAt,
+    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
+  });
+  if (closureStep) return closureStep;
+  if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
+    return "Review follow-up timing and mark follow-up handled when complete.";
+  }
+  // Mid-ladder manual steps (filing+confirmation done, not yet terminal) stay on
+  // "tracking complete" so consumers can mark the step handled — do not reuse the
+  // owned-operator awaiting copy (pendingHumanFulfillmentEscalation is checked above).
+  return HANDLING_TRACKING_STEP_COMPLETE;
+}
+
+export function deriveChatHandlingTrackingLine(input: {
+  basicsReady: boolean;
+  draftReviewed: boolean;
+  preparedPacketApproved: boolean;
+  evidenceCount: number;
+  filings: JusticeCaseFilingRow[];
+  next: JusticeApprovedNextAction;
+  canCaptureFilingInline?: boolean;
+  canCaptureFilingInChat?: boolean;
+  caseId?: string;
+  tasks?: JusticeCaseTaskRow[];
+}): string {
+  const readyForManualReview = chatReadyForManualReview({
+    basicsReady: input.basicsReady,
+    draftReviewed: input.draftReviewed,
+    preparedPacketApproved: input.preparedPacketApproved,
+  });
+  const readyForExternalManualAction =
+    readyForManualReview && input.evidenceCount > 0;
+  const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
+  const { hasFilingRecord, hasConfirmationOnFile } =
+    deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
+  const caseId = input.caseId?.trim() ?? "";
+  const tasks = input.tasks ?? [];
+  const pendingHumanFulfillmentEscalation = hasPendingHumanFulfillmentEscalation({
+    approvedAction: input.next,
+    caseId,
+    tasks,
+  });
+  const resolutionFlowExposed = shouldExposeCaseResolutionFlow({
+    approvedAction: input.next,
+    caseId,
+    tasks,
+    filings: input.filings,
+  });
+  return deriveChatManualActionNextStep({
+    readyForExternalManualAction,
+    actionOpened,
+    hasFilingRecord,
+    hasConfirmationOnFile,
+    href: input.next.href,
+    status: input.next.status,
+    outcomeNote: input.next.outcome_note,
+    handlingRequestedAt: input.next.handling_requested_at,
+    handlingAcknowledgedAt: input.next.handling_acknowledged_at,
+    followUpNeeded: input.next.follow_up_needed === true,
+    canCaptureFilingInline: input.canCaptureFilingInline,
+    canCaptureFilingInChat: input.canCaptureFilingInChat,
+    pendingHumanFulfillmentEscalation,
+    resolutionFlowExposed,
+  });
 }

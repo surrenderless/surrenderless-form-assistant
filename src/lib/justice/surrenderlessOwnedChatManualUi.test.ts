@@ -14,6 +14,11 @@ import {
   shouldShowHubOrCasesConsumerManualHandlingControls,
 } from "@/lib/justice/surrenderlessOwnedChatManualUi";
 import { ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP } from "@/lib/justice/escalationLadderResolution";
+import { HANDLING_TRACKING_STEP_COMPLETE } from "@/lib/justice/approvedNextActionHandlingDisplay";
+import {
+  MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+  MERCHANT_RESOLVED_TERMINAL_HREF,
+} from "@/lib/justice/handlingTrackingProgress";
 
 describe("surrenderlessOwnedChatManualUi", () => {
   it("hides merchant-contact confirm while owned suppress is active", () => {
@@ -63,6 +68,43 @@ describe("surrenderlessOwnedChatManualUi", () => {
         manualDerivedStep: "Add filing records from the case packet after external submission.",
       })
     ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
+    expect(
+      resolveHubOrCasesHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        manualDerivedStep: "Tracking complete for now.",
+      })
+    ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
+  });
+
+  it("shows the real completed state for the merchant-resolved terminal action instead of awaiting-operator copy", () => {
+    expect(
+      resolveHubOrCasesHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        manualDerivedStep: "Continue in chat to finish packet review and saved proof.",
+        next: { href: MERCHANT_RESOLVED_TERMINAL_HREF, status: "completed" },
+      })
+    ).toBe(HANDLING_TRACKING_STEP_COMPLETE);
+    // suppressOwnedManualUi must not matter for this terminal state either way.
+    expect(
+      resolveHubOrCasesHandlingTrackingStep({
+        suppressOwnedManualUi: true,
+        manualDerivedStep: "Continue in chat to finish packet review and saved proof.",
+        next: { href: MERCHANT_RESOLVED_TERMINAL_HREF, status: "completed" },
+      })
+    ).toBe(HANDLING_TRACKING_STEP_COMPLETE);
+  });
+
+  it("keeps awaiting-operator copy for a real destination even when completed", () => {
+    expect(
+      resolveHubOrCasesHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        manualDerivedStep: "Tracking complete for now.",
+        next: { href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF, status: "completed" },
+      })
+    ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
+  });
+
+  it("keeps awaiting-operator copy when next is omitted (existing callers unaffected)", () => {
     expect(
       resolveHubOrCasesHandlingTrackingStep({
         suppressOwnedManualUi: false,
@@ -137,6 +179,40 @@ describe("surrenderlessOwnedChatManualUi", () => {
         manualDerivedStep: "Open the approved step and prepare the manual action.",
       })
     ).toBe(ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP);
+  });
+
+  it("shows the real completed state for the merchant-resolved terminal action instead of 'tracking follow-up and will close'", () => {
+    // resolutionFlowExposed is true for this terminal action in real use, which is exactly the
+    // case that previously mapped to OWNED_ENDGAME_HANDLING_TRACKING_STEP ("Surrenderless is
+    // tracking follow-up and will close this case when resolved") — wrong here, since there is
+    // no Surrenderless follow-up and nothing left for Surrenderless to close.
+    expect(
+      resolveChatOwnedHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        resolutionFlowExposed: true,
+        manualDerivedStep: HANDLING_TRACKING_STEP_COMPLETE,
+        next: { href: MERCHANT_RESOLVED_TERMINAL_HREF, status: "completed" },
+      })
+    ).toBe(HANDLING_TRACKING_STEP_COMPLETE);
+    expect(
+      resolveChatOwnedHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        resolutionFlowExposed: true,
+        manualDerivedStep: HANDLING_TRACKING_STEP_COMPLETE,
+        next: { href: MERCHANT_RESOLVED_TERMINAL_HREF, status: "completed" },
+      })
+    ).not.toBe(OWNED_ENDGAME_HANDLING_TRACKING_STEP);
+  });
+
+  it("keeps owned endgame copy for a real destination's resolution flow even when completed", () => {
+    expect(
+      resolveChatOwnedHandlingTrackingStep({
+        suppressOwnedManualUi: false,
+        resolutionFlowExposed: true,
+        manualDerivedStep: "Tracking complete for now.",
+        next: { href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF, status: "completed" },
+      })
+    ).toBe(OWNED_ENDGAME_HANDLING_TRACKING_STEP);
   });
 
   it("provides owned endgame wait copy without consumer DIY form CTA", () => {

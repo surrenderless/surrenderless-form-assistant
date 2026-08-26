@@ -252,6 +252,23 @@ describe("resolveRequiredOwnedFilingTaskKind", () => {
       })
     ).toBeNull();
   });
+
+  it("never resolves an owned-filing kind for the consumer-owned merchant-resolved terminal action — real resolver, not a mock", () => {
+    // Real function under test (not vi.mock'd here) — this is the source-of-truth proof that no
+    // owned/operator filing task is ever expected for this href, which the route-level PATCH
+    // test (route.test.ts) then confirms the route itself correctly acts on when its own
+    // ensureOwnedFilingTaskAfterClientStateWrite mock is configured to match this real result.
+    expect(
+      resolveRequiredOwnedFilingTaskKind({
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant issue resolved",
+          href: "/justice/merchant-resolved",
+          status: "completed",
+        },
+      })
+    ).toBeNull();
+  });
 });
 
 describe("ensureOwnedFilingTaskAfterClientStateWrite", () => {

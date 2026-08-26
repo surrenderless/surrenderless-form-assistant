@@ -45,7 +45,11 @@ import { rejectMerchantContactApprovalWithoutRecipient } from "@/lib/justice/rej
 import { rejectUnpaidPreparedPacketApprovalPatch } from "@/lib/justice/rejectUnpaidPreparedPacketApprovalPatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import { CLIENT_STATE_UPDATE_CONFLICT_ERROR } from "@/lib/justice/updateClientStateIfUnchanged";
-import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
+import {
+  isMerchantResolvedTerminalAction,
+  type ManualActionTrackingFiling,
+} from "@/lib/justice/handlingTrackingProgress";
+import { completeMerchantContactFilingTaskIfOpen } from "@/lib/justice/merchantContactFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
@@ -336,6 +340,14 @@ async function patchJusticeCase(
       }
     }
 
+    // The intake this write persists (patch.intake) or, when the PATCH carries only client_state,
+    // the intake already stored on the case — the SERVER's own authoritative record, never the
+    // client's claim. Used both below (recipient gates) and by rejectCasePatchEscalationViolations'
+    // narrow merchant-resolved terminal exception, which must independently verify the resolved
+    // outcome rather than trust whatever approved_next_action the client sends.
+    const effectiveIntake: JusticeIntake | null =
+      (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null;
+
     const escalationReject = rejectCasePatchEscalationViolations({
       caseId: id,
       existingClientState,
@@ -343,6 +355,7 @@ async function patchJusticeCase(
       patch,
       tasks: validationTasks,
       filings: validationFilings,
+      intake: effectiveIntake,
     });
     if (escalationReject) {
       return NextResponse.json({ error: escalationReject }, { status: 409 });
@@ -367,12 +380,8 @@ async function patchJusticeCase(
 
       // Merchant-contact outreach is sent by Surrenderless itself, so the exact approval transition
       // that queues it must have a valid recipient email — otherwise delivery silently skips and the
-      // action is stuck showing "queued". Mock/E2E cases are exempt (no real outreach). The effective
-      // recipient is the intake this write persists (patch.intake) or, when the approval PATCH carries
-      // only client_state, the intake already stored on the case.
+      // action is stuck showing "queued". Mock/E2E cases are exempt (no real outreach).
       if (!isMockCase) {
-        const effectiveIntake =
-          (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null;
         const recipientReject = rejectMerchantContactApprovalWithoutRecipient({
           existingClientState,
           incomingClientState: patch.client_state,
@@ -520,6 +529,20 @@ async function patchJusticeCase(
       });
       if (timeline) {
         responseData = { ...responseData, timeline };
+      }
+    }
+
+    // A case can reach the merchant-resolved terminal action from an existing owned
+    // merchant-contact step (approved while already_contacted was "no", later documented as
+    // resolved) — that prior task must be reconciled via the same auditable completion path
+    // operators use, never deleted, so it cannot sit open and block
+    // hasPendingHumanFulfillmentEscalation / canArchiveCaseViaChat. Idempotent: no-op when no
+    // open merchant-contact task exists for this case (the more common fallback-only path) or
+    // it is already completed.
+    if (incomingNext && isMerchantResolvedTerminalAction(incomingNext)) {
+      const taskReconcile = await completeMerchantContactFilingTaskIfOpen(supabase, userId, id);
+      if (taskReconcile.timeline) {
+        responseData = { ...responseData, timeline: taskReconcile.timeline };
       }
     }
   }

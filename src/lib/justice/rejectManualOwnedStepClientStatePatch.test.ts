@@ -1,20 +1,60 @@
 import { describe, expect, it } from "vitest";
 import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  MERCHANT_RESOLVED_TERMINAL_HREF,
+  MERCHANT_RESOLVED_TERMINAL_LABEL,
 } from "@/lib/justice/handlingTrackingProgress";
+import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
 import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
 import {
+  isAllowedMerchantResolvedTerminalClientStatePatch,
   isManualOwnedHumanFulfillmentStepProgression,
   rejectManualOwnedStepClientStatePatch,
   REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE,
 } from "@/lib/justice/rejectManualOwnedStepClientStatePatch";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import type { JusticeIntake } from "@/lib/justice/types";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+function baseIntake(overrides: Partial<JusticeIntake> = {}): JusticeIntake {
+  return {
+    problem_category: "online_purchase",
+    company_name: "Acme Retail",
+    company_website: "",
+    purchase_or_signup: "widget",
+    story: "Never arrived.",
+    money_involved: "$50",
+    pay_or_order_date: "2026-01-01",
+    order_confirmation_details: "",
+    user_display_name: "Jordan Lee",
+    reply_email: "jordan@example.com",
+    already_contacted: "no",
+    ...overrides,
+  };
+}
+
+const resolvedIntake = baseIntake({
+  already_contacted: "yes",
+  contact_method: "email",
+  contact_date: "2026-01-15",
+  merchant_response_type: "resolved",
+  contact_proof_type: "paste",
+  contact_proof_text: "Refund confirmed by email",
+});
+
+const merchantResolvedTerminalCompleted = {
+  label: MERCHANT_RESOLVED_TERMINAL_LABEL,
+  href: MERCHANT_RESOLVED_TERMINAL_HREF,
+  status: "completed" as const,
+  approved_at: "2026-01-16T00:00:00.000Z",
+  completed_at: "2026-01-16T00:00:00.000Z",
+};
 
 const stateAgApproved = {
   label: "State Attorney General (consumer)",
@@ -355,5 +395,157 @@ describe("rejectManualOwnedStepClientStatePatch", () => {
         started_at: "2026-01-02T00:00:00.000Z",
       })
     ).toBe(true);
+  });
+});
+
+describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
+  it("allows the verified /justice/merchant -> merchant-resolved transition when intake confirms resolved", () => {
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        resolvedIntake
+      )
+    ).toBe(true);
+  });
+
+  it("rejects when the authoritative intake does not actually confirm the resolved outcome (spoofed client_state)", () => {
+    const notResolvedIntake = baseIntake({
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      merchant_response_type: "refused_help",
+      contact_proof_type: "paste",
+      contact_proof_text: "No refund offered",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        notResolvedIntake
+      )
+    ).toBe(false);
+  });
+
+  it("rejects when no intake is available at all", () => {
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        null
+      )
+    ).toBe(false);
+  });
+
+  it("rejects for an unrelated owned existing action (CFPB) even when incoming looks like the terminal action and intake confirms resolved — no other owned step can borrow this exception", () => {
+    const cfpbApproved = {
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      status: "approved" as const,
+    };
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        cfpbApproved,
+        merchantResolvedTerminalCompleted,
+        resolvedIntake
+      )
+    ).toBe(false);
+  });
+
+  it("rejects when the incoming action isn't exactly the terminal href", () => {
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        { ...merchantContactApproved, status: "completed", completed_at: "2026-01-16T00:00:00.000Z" },
+        resolvedIntake
+      )
+    ).toBe(false);
+  });
+
+  it("rejects when the incoming terminal action isn't status completed", () => {
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        { ...merchantResolvedTerminalCompleted, status: "approved" },
+        resolvedIntake
+      )
+    ).toBe(false);
+  });
+});
+
+describe("rejectManualOwnedStepClientStatePatch — merchant-resolved terminal exception", () => {
+  it("permits the transition from an OPEN owned merchant-contact task straight to the merchant-resolved terminal action when intake confirms resolved", () => {
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+        intake: resolvedIntake,
+      })
+    ).toBeNull();
+  });
+
+  it("permits the same transition when the owned merchant-contact task is already completed (idempotent replay)", () => {
+    const completedMerchantContactTask: JusticeCaseTaskRow = {
+      ...openMerchantContactTask(),
+      completed_at: "2026-01-16T00:00:00.000Z",
+    };
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [completedMerchantContactTask],
+        filings: [],
+        intake: resolvedIntake,
+      })
+    ).toBeNull();
+  });
+
+  it("still rejects the transition when intake does not confirm the resolved outcome, even with the exact terminal client_state and no intake passed", () => {
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+        // intake omitted — server could not load an authoritative intake, so the exception must
+        // not fire and the ordinary owned-step guard (open task owns the step) still applies.
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("does not let an unrelated owned action (CFPB, with an open task) use this exception, even if intake happens to confirm merchant-resolved", () => {
+    const cfpbApproved = {
+      label: "CFPB",
+      href: MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+      status: "approved" as const,
+    };
+    const openCfpbTask: JusticeCaseTaskRow = {
+      id: "task-cfpb",
+      user_id: "user",
+      case_id: CASE_ID,
+      title: "CFPB filing: Acme Retail",
+      due_date: null,
+      notes: cfpbFilingTaskNotesMarker(CASE_ID),
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: cfpbApproved },
+        incomingClientState: {
+          approved_next_action: { ...cfpbApproved, status: "completed", completed_at: "2026-01-16T00:00:00.000Z" },
+        },
+        tasks: [openCfpbTask],
+        filings: [],
+        intake: resolvedIntake,
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
   });
 });

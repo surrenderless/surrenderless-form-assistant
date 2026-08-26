@@ -11,20 +11,25 @@ import {
   findApprovedActionFilingMissingConfirmation,
   handlingWorkbenchOutcomeTrackingFormVisible,
   handlingClosureAcknowledgmentVisible,
+  deriveChatHandlingTrackingLine,
+  deriveChatManualActionNextStep,
   isApprovedActionOpenedForHandlingTracking,
   isAssistedMockPracticeFilingDestination,
   isFilingDestinationValidForApprovedAction,
   isHandlingWorkbenchPostExternalConfirmationFollowUp,
+  isMerchantResolvedTerminalAction,
   MANUAL_ACTION_TRACKING_REAL_BBB_FILING_DESTINATIONS,
   MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_DOT_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_FTC_PREP_HREF,
   MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF,
+  MERCHANT_RESOLVED_TERMINAL_HREF,
   shouldSuppressChatInlineFilingCaptureForAssistedRealBbb,
   canonicalFilingDestinationForApprovedActionHref,
 } from "@/lib/justice/handlingTrackingProgress";
 import {
+  HANDLING_TRACKING_STEP_COMPLETE,
   HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
   HANDLING_TRACKING_STEP_RECORD_OUTCOME,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
@@ -1059,5 +1064,76 @@ describe("shouldSuppressChatInlineFilingCaptureForAssistedRealBbb", () => {
         ],
       })
     ).toBe(false);
+  });
+});
+
+describe("isMerchantResolvedTerminalAction", () => {
+  it("is true only for the exact terminal href with status completed", () => {
+    expect(
+      isMerchantResolvedTerminalAction({ href: MERCHANT_RESOLVED_TERMINAL_HREF, status: "completed" })
+    ).toBe(true);
+  });
+
+  it("is false for the terminal href with any other status", () => {
+    expect(
+      isMerchantResolvedTerminalAction({ href: MERCHANT_RESOLVED_TERMINAL_HREF, status: "approved" })
+    ).toBe(false);
+    expect(
+      isMerchantResolvedTerminalAction({ href: MERCHANT_RESOLVED_TERMINAL_HREF, status: undefined })
+    ).toBe(false);
+  });
+
+  it("is false for a different, real destination even when completed", () => {
+    expect(
+      isMerchantResolvedTerminalAction({ href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF, status: "completed" })
+    ).toBe(false);
+  });
+});
+
+describe("deriveChatManualActionNextStep — merchant-resolved terminal branch", () => {
+  it("returns HANDLING_TRACKING_STEP_COMPLETE regardless of readiness state", () => {
+    expect(
+      deriveChatManualActionNextStep({
+        readyForExternalManualAction: false,
+        actionOpened: false,
+        hasFilingRecord: false,
+        hasConfirmationOnFile: false,
+        href: MERCHANT_RESOLVED_TERMINAL_HREF,
+        status: "completed",
+      })
+    ).toBe(HANDLING_TRACKING_STEP_COMPLETE);
+  });
+
+  it("does not affect a different href with status completed", () => {
+    expect(
+      deriveChatManualActionNextStep({
+        readyForExternalManualAction: false,
+        actionOpened: true,
+        hasFilingRecord: false,
+        hasConfirmationOnFile: false,
+        href: MANUAL_ACTION_TRACKING_REAL_BBB_PREP_HREF,
+        status: "completed",
+      })
+    ).not.toBe(HANDLING_TRACKING_STEP_COMPLETE);
+  });
+});
+
+describe("deriveChatHandlingTrackingLine — merchant-resolved terminal action end to end", () => {
+  it("reaches HANDLING_TRACKING_STEP_COMPLETE from the full wrapper with worst-case readiness inputs", () => {
+    const step = deriveChatHandlingTrackingLine({
+      basicsReady: false,
+      draftReviewed: false,
+      preparedPacketApproved: false,
+      evidenceCount: 0,
+      filings: [],
+      next: {
+        label: "Merchant issue resolved",
+        href: MERCHANT_RESOLVED_TERMINAL_HREF,
+        status: "completed",
+      },
+      caseId: "11111111-1111-4111-8111-111111111111",
+      tasks: [],
+    });
+    expect(step).toBe(HANDLING_TRACKING_STEP_COMPLETE);
   });
 });

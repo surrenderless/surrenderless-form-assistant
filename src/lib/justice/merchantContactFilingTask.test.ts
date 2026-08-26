@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
 import {
+  completeMerchantContactFilingTaskIfOpen,
   merchantContactFilingTaskCompletedTimelineId,
   merchantContactFilingTaskNotesMarker,
   buildMerchantContactEvidenceInventory,
@@ -354,6 +355,129 @@ describe("reopenMerchantContactFilingTaskForBounce", () => {
     );
 
     expect(result).toEqual({ task: null, timeline: null, reopened: false });
+  });
+});
+
+describe("completeMerchantContactFilingTaskIfOpen", () => {
+  const USER_ID = "user-mc-complete";
+
+  function makeOpenTask(): JusticeCaseTaskRow {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    return {
+      id: "task-mc-complete",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Merchant contact: Acme Retail",
+      due_date: null,
+      notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nDear Acme Retail...`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  function makeSupabase(task: JusticeCaseTaskRow | null) {
+    const store = { task: task ? { ...task } : null, timeline: [] as unknown[] };
+    return {
+      supabase: {
+        from(table: string) {
+          if (table === "justice_case_tasks") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    like: () => ({
+                      limit: async () => ({
+                        data: store.task ? [store.task] : [],
+                        error: null,
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+              update: (payload: Record<string, unknown>) => ({
+                eq: () => ({
+                  eq: () => ({
+                    select: () => ({
+                      maybeSingle: async () => {
+                        if (!store.task) return { data: null, error: null };
+                        store.task = { ...store.task, ...payload } as JusticeCaseTaskRow;
+                        return { data: store.task, error: null };
+                      },
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === "justice_cases") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({ data: { timeline: store.timeline }, error: null }),
+                  }),
+                }),
+              }),
+              update: (payload: Record<string, unknown>) => ({
+                eq: () => ({
+                  eq: () => {
+                    store.timeline = payload.timeline as unknown[];
+                    return { data: null, error: null };
+                  },
+                }),
+              }),
+            };
+          }
+          throw new Error(`unexpected table ${table}`);
+        },
+      } as unknown as SupabaseClient,
+      store,
+    };
+  }
+
+  it("completes an open task, sets completed_at, and appends an auditable timeline entry (never deletes the task)", async () => {
+    const { supabase, store } = makeSupabase(makeOpenTask());
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result.completed).toBe(true);
+    expect(result.task?.id).toBe("task-mc-complete");
+    expect(result.task?.completed_at?.trim()).toBeTruthy();
+    expect(result.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: merchantContactFilingTaskCompletedTimelineId("task-mc-complete"),
+          type: "task_completed",
+        }),
+      ])
+    );
+    // The row itself is preserved (updated, not removed) — the store still holds it.
+    expect(store.task?.id).toBe("task-mc-complete");
+    expect(store.task?.completed_at?.trim()).toBeTruthy();
+  });
+
+  it("is idempotent/safe when the task is already completed — no-op, no duplicate timeline entry, task left as-is", async () => {
+    const alreadyCompleted: JusticeCaseTaskRow = {
+      ...makeOpenTask(),
+      completed_at: "2026-01-05T00:00:00.000Z",
+    };
+    const { supabase, store } = makeSupabase(alreadyCompleted);
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result.completed).toBe(false);
+    expect(result.timeline).toBeNull();
+    expect(result.task?.completed_at).toBe("2026-01-05T00:00:00.000Z");
+    expect(store.task?.completed_at).toBe("2026-01-05T00:00:00.000Z");
+  });
+
+  it("is a safe no-op when no matching merchant-contact task exists for the case", async () => {
+    const { supabase } = makeSupabase(null);
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result).toEqual({ task: null, timeline: null, completed: false });
   });
 });
 
