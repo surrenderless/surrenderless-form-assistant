@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { buildJusticeIntakeFromParts } from "@/lib/justice/buildJusticeIntake";
 import {
+  completeMerchantContactFilingTaskIfOpen,
   merchantContactFilingTaskCompletedTimelineId,
   merchantContactFilingTaskNotesMarker,
   buildMerchantContactEvidenceInventory,
@@ -354,6 +355,257 @@ describe("reopenMerchantContactFilingTaskForBounce", () => {
     );
 
     expect(result).toEqual({ task: null, timeline: null, reopened: false });
+  });
+});
+
+describe("completeMerchantContactFilingTaskIfOpen", () => {
+  const USER_ID = "user-mc-complete";
+
+  function makeOpenTask(): JusticeCaseTaskRow {
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    return {
+      id: "task-mc-complete",
+      user_id: USER_ID,
+      case_id: CASE_ID,
+      title: "Merchant contact: Acme Retail",
+      due_date: null,
+      notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nDear Acme Retail...`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  type MakeSupabaseOptions = {
+    selectError?: string;
+    updateError?: string;
+    timelineFails?: boolean;
+    initialTimeline?: unknown[];
+  };
+
+  function makeSupabase(task: JusticeCaseTaskRow | null, options: MakeSupabaseOptions = {}) {
+    const store = {
+      task: task ? { ...task } : null,
+      timeline: options.initialTimeline ? [...options.initialTimeline] : ([] as unknown[]),
+    };
+    return {
+      supabase: {
+        from(table: string) {
+          if (table === "justice_case_tasks") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    like: () => ({
+                      limit: async () => {
+                        if (options.selectError) {
+                          return { data: null, error: { message: options.selectError } };
+                        }
+                        return {
+                          data: store.task ? [store.task] : [],
+                          error: null,
+                        };
+                      },
+                    }),
+                  }),
+                }),
+              }),
+              update: (payload: Record<string, unknown>) => ({
+                eq: () => ({
+                  eq: () => ({
+                    select: () => ({
+                      maybeSingle: async () => {
+                        if (options.updateError) {
+                          return { data: null, error: { message: options.updateError } };
+                        }
+                        if (!store.task) return { data: null, error: null };
+                        store.task = { ...store.task, ...payload } as JusticeCaseTaskRow;
+                        return { data: store.task, error: null };
+                      },
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === "justice_cases") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => {
+                      if (options.timelineFails) {
+                        return { data: null, error: { message: "load case failed" } };
+                      }
+                      return { data: { timeline: store.timeline }, error: null };
+                    },
+                  }),
+                }),
+              }),
+              update: (payload: Record<string, unknown>) => ({
+                eq: () => ({
+                  eq: () => {
+                    store.timeline = payload.timeline as unknown[];
+                    return { data: null, error: null };
+                  },
+                }),
+              }),
+            };
+          }
+          throw new Error(`unexpected table ${table}`);
+        },
+      } as unknown as SupabaseClient,
+      store,
+    };
+  }
+
+  it("completes an open task, sets completed_at, and appends an auditable timeline entry (never deletes the task)", async () => {
+    const { supabase, store } = makeSupabase(makeOpenTask());
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result.completed).toBe(true);
+    expect(result.failed).toBe(false);
+    expect(result.task?.id).toBe("task-mc-complete");
+    expect(result.task?.completed_at?.trim()).toBeTruthy();
+    expect(result.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: merchantContactFilingTaskCompletedTimelineId("task-mc-complete"),
+          type: "task_completed",
+        }),
+      ])
+    );
+    // The row itself is preserved (updated, not removed) — the store still holds it.
+    expect(store.task?.id).toBe("task-mc-complete");
+    expect(store.task?.completed_at?.trim()).toBeTruthy();
+  });
+
+  it("is a true no-write no-op when the task is already completed AND its audit entry already exists — not failed, entry not duplicated, task left as-is", async () => {
+    const alreadyCompleted: JusticeCaseTaskRow = {
+      ...makeOpenTask(),
+      completed_at: "2026-01-05T00:00:00.000Z",
+    };
+    const existingEntry = {
+      id: merchantContactFilingTaskCompletedTimelineId("task-mc-complete"),
+      case_id: CASE_ID,
+      type: "task_completed",
+      label: "Merchant contact completed",
+      ts: "2026-01-05T00:00:00.000Z",
+    };
+    const { supabase, store } = makeSupabase(alreadyCompleted, { initialTimeline: [existingEntry] });
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result.completed).toBe(false);
+    expect(result.failed).toBe(false);
+    // appendCaseTimelineEntry's dedupe path returns the existing (unchanged) timeline rather than
+    // null — this is the real, correct behavior; it does not indicate a fresh write happened.
+    expect(result.timeline).toEqual([existingEntry]);
+    expect(result.task?.completed_at).toBe("2026-01-05T00:00:00.000Z");
+    expect(store.task?.completed_at).toBe("2026-01-05T00:00:00.000Z");
+    expect(store.timeline).toEqual([existingEntry]);
+  });
+
+  it("repairs the missing audit entry when the task is already completed but no matching entry exists yet (e.g. an earlier attempt completed the task but failed to append it)", async () => {
+    const alreadyCompleted: JusticeCaseTaskRow = {
+      ...makeOpenTask(),
+      completed_at: "2026-01-05T00:00:00.000Z",
+    };
+    const { supabase, store } = makeSupabase(alreadyCompleted); // initialTimeline omitted — empty
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    // Not "just completed" (the task was already completed on entry) — but the repair itself
+    // must still succeed and must not be reported as a failure.
+    expect(result.completed).toBe(false);
+    expect(result.failed).toBe(false);
+    expect(result.timeline).toEqual([
+      expect.objectContaining({
+        id: merchantContactFilingTaskCompletedTimelineId("task-mc-complete"),
+        type: "task_completed",
+      }),
+    ]);
+    expect(store.timeline).toHaveLength(1);
+  });
+
+  it("two-attempt retry: a timeline-append failure on first completion is fully repaired on retry, with exactly one audit entry — never duplicated", async () => {
+    const options: MakeSupabaseOptions = { timelineFails: true };
+    const { supabase, store } = makeSupabase(makeOpenTask(), options);
+
+    const first = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+    expect(first.completed).toBe(true);
+    expect(first.failed).toBe(true);
+    expect(first.timeline).toBeNull();
+    // The task itself is durably completed despite the timeline failure — never rolled back.
+    expect(store.task?.completed_at?.trim()).toBeTruthy();
+    expect(store.timeline).toHaveLength(0);
+
+    // Simulate the transient failure clearing before the caller retries the whole request.
+    options.timelineFails = false;
+
+    const second = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+    // The task was already completed before this call — this call's job is only to repair the
+    // audit trail, so `completed` correctly stays false (it did not just transition the task).
+    expect(second.completed).toBe(false);
+    expect(second.failed).toBe(false);
+    expect(second.timeline).toHaveLength(1);
+    expect(second.timeline?.[0]).toEqual(
+      expect.objectContaining({
+        id: merchantContactFilingTaskCompletedTimelineId("task-mc-complete"),
+        type: "task_completed",
+      })
+    );
+    // Exactly one entry in the store — the repair did not duplicate it.
+    expect(store.timeline).toHaveLength(1);
+
+    // A third call (idempotent replay) must not duplicate it either.
+    const third = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+    expect(third.failed).toBe(false);
+    expect(store.timeline).toHaveLength(1);
+  });
+
+  it("is a safe, non-failed no-op when no matching merchant-contact task exists for the case", async () => {
+    const { supabase } = makeSupabase(null);
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result).toEqual({ task: null, timeline: null, completed: false, failed: false });
+  });
+
+  it("is distinguishably failed (not merely 'no task') on a genuine select error, with the still-open task never touched", async () => {
+    const { supabase, store } = makeSupabase(makeOpenTask(), { selectError: "connection reset" });
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result).toEqual({ task: null, timeline: null, completed: false, failed: true });
+    expect(store.task?.completed_at).toBeNull();
+  });
+
+  it("is distinguishably failed (not merely 'already completed') on a genuine update error, with the task left open for retry", async () => {
+    const { supabase, store } = makeSupabase(makeOpenTask(), { updateError: "constraint violation" });
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result.completed).toBe(false);
+    expect(result.failed).toBe(true);
+    expect(result.timeline).toBeNull();
+    // The task row was never updated — still open, so a retry will find it open again (not
+    // silently masked as "already completed").
+    expect(store.task?.completed_at).toBeNull();
+  });
+
+  it("is distinguishably failed when the task update itself succeeds but the timeline audit entry fails to append — the task stays durably completed either way", async () => {
+    const { supabase, store } = makeSupabase(makeOpenTask(), { timelineFails: true });
+
+    const result = await completeMerchantContactFilingTaskIfOpen(supabase, USER_ID, CASE_ID);
+
+    expect(result.completed).toBe(true);
+    expect(result.failed).toBe(true);
+    expect(result.timeline).toBeNull();
+    // The task itself was durably completed even though the timeline audit entry failed — never
+    // rolled back.
+    expect(store.task?.completed_at?.trim()).toBeTruthy();
   });
 });
 

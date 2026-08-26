@@ -8,6 +8,7 @@ import { shouldSuppressConsumerArchiveForOperatorOwnedClosure } from "@/lib/just
 import { rejectManualOwnedStepClientStatePatch } from "@/lib/justice/rejectManualOwnedStepClientStatePatch";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
+import type { JusticeIntake } from "@/lib/justice/types";
 
 export const REJECT_PREMATURE_RESOLUTION_CLIENT_STATE_PATCH_MESSAGE =
   "Outcome, follow-up, and resolution tracking cannot be updated until Surrenderless completes the current escalation step.";
@@ -175,6 +176,11 @@ export type RejectCasePatchEscalationViolationsParams = {
   patch: Record<string, unknown>;
   tasks: readonly JusticeCaseTaskRow[];
   filings: readonly ManualActionTrackingFiling[];
+  /** Intake for this case — a consumer-authored report, threaded only to the merchant-resolved
+   * terminal exception, which additionally validates it via validateMerchantContactDocumentation. */
+  intake?: JusticeIntake | null;
+  /** Real uploaded evidence file on the case — threaded only to the same exception. */
+  hasUploadedEvidenceFile?: boolean;
 };
 
 /** Combined server-side rejects for escalation-ladder sequencing on case PATCH. */
@@ -188,6 +194,8 @@ export function rejectCasePatchEscalationViolations(
       incomingClientState: params.patch.client_state,
       tasks: params.tasks,
       filings: params.filings,
+      intake: params.intake,
+      hasUploadedEvidenceFile: params.hasUploadedEvidenceFile,
     });
     if (ownedStepReject) return ownedStepReject;
 

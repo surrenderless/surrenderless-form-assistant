@@ -23,14 +23,7 @@ import {
   ApprovedNextActionHandlingRequestBlock,
   ApprovedNextActionHandlingRequestedReadOnly,
   formatApprovedNextActionHandlingTimestamp,
-  HANDLING_TRACKING_STEP_ADD_CONFIRMATION,
-  HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE,
-  HANDLING_TRACKING_STEP_ADD_FILING,
-  HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE,
   HANDLING_TRACKING_STEP_COMPLETE,
-  HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED,
-  HANDLING_TRACKING_STEP_RECORD_OUTCOME,
-  HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP,
 } from "@/lib/justice/approvedNextActionHandlingDisplay";
 import {
   acknowledgeHandlingRequestInApprovedNextAction,
@@ -50,9 +43,7 @@ import {
 import {
   canonicalFilingDestinationForApprovedActionHref,
   chatResolutionTrackingFormOpen,
-  deriveHandlingClosureStepAfterFilingConfirmation,
-  deriveManualActionTrackingFilingsStateForApprovedAction,
-  isApprovedActionOpenedForHandlingTracking,
+  deriveChatHandlingTrackingLine,
   handlingClosureAcknowledgmentVisible,
 } from "@/lib/justice/handlingTrackingProgress";
 import { buildChatConfirmedFilingSummaryLines } from "@/lib/justice/chatConfirmedFilingsSummary";
@@ -155,7 +146,6 @@ import {
   CHAT_CONTINUE_HANDOFF_PREVIEW_STEP,
 } from "@/lib/justice/chatContinueHandoffCopy";
 import {
-  ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP,
   hasPendingHumanFulfillmentEscalation,
   shouldExposeCaseResolutionFlow,
 } from "@/lib/justice/escalationLadderResolution";
@@ -1854,143 +1844,10 @@ function showChatApprovedPacketActionHandlingTracking(input: {
   return status === "approved" || status === "started" || status === "completed";
 }
 
-function chatReadyForManualReview(input: {
-  basicsReady: boolean;
-  draftReviewed: boolean;
-  preparedPacketApproved: boolean;
-}): boolean {
-  return input.basicsReady && input.draftReviewed && input.preparedPacketApproved;
-}
-
-function deriveChatManualActionNextStep(input: {
-  readyForExternalManualAction: boolean;
-  actionOpened: boolean;
-  hasFilingRecord: boolean;
-  hasConfirmationOnFile: boolean;
-  status: JusticeApprovedNextAction["status"];
-  outcomeNote?: string;
-  handlingRequestedAt?: string;
-  handlingAcknowledgedAt?: string;
-  followUpNeeded?: boolean;
-  canCaptureFilingInline?: boolean;
-  /** Signed-in chat-ai may show in-chat filing copy before UUID hydration completes. */
-  canCaptureFilingInChat?: boolean;
-  pendingHumanFulfillmentEscalation?: boolean;
-  resolutionFlowExposed?: boolean;
-}): string {
-  if (input.pendingHumanFulfillmentEscalation) {
-    return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
-  }
-  const handlingRequested = Boolean(input.handlingRequestedAt?.trim());
-  if (handlingRequested) {
-    const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
-      status: input.status,
-      outcomeNote: input.outcomeNote,
-      handlingRequestedAt: input.handlingRequestedAt,
-      handlingAcknowledgedAt: input.handlingAcknowledgedAt,
-    });
-    if (closureStep === HANDLING_TRACKING_STEP_MARK_ACKNOWLEDGED) {
-      return closureStep;
-    }
-    if (closureStep === HANDLING_TRACKING_STEP_RECORD_OUTCOME) {
-      return closureStep;
-    }
-    if (input.handlingAcknowledgedAt?.trim()) {
-      if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
-        return HANDLING_TRACKING_STEP_REVIEW_FOLLOW_UP;
-      }
-      if (input.resolutionFlowExposed === false) {
-        return ESCALATION_AWAITING_OPERATOR_FULFILLMENT_STEP;
-      }
-      return HANDLING_TRACKING_STEP_COMPLETE;
-    }
-  }
-
-  if (!input.readyForExternalManualAction) {
-    return "Review packet and saved proof before external manual action.";
-  }
-  if (!input.actionOpened) {
-    return "Open the approved step and prepare the manual action.";
-  }
-  const useChatInlineFilingCopy =
-    input.canCaptureFilingInChat ?? input.canCaptureFilingInline;
-  if (!input.hasFilingRecord) {
-    return useChatInlineFilingCopy
-      ? HANDLING_TRACKING_STEP_ADD_FILING_CHAT_INLINE
-      : HANDLING_TRACKING_STEP_ADD_FILING;
-  }
-  if (!input.hasConfirmationOnFile) {
-    return useChatInlineFilingCopy
-      ? HANDLING_TRACKING_STEP_ADD_CONFIRMATION_CHAT_INLINE
-      : HANDLING_TRACKING_STEP_ADD_CONFIRMATION;
-  }
-  const closureStep = deriveHandlingClosureStepAfterFilingConfirmation({
-    status: input.status,
-    outcomeNote: input.outcomeNote,
-    handlingRequestedAt: input.handlingRequestedAt,
-    handlingAcknowledgedAt: input.handlingAcknowledgedAt,
-  });
-  if (closureStep) return closureStep;
-  if (input.followUpNeeded === true && input.resolutionFlowExposed !== false) {
-    return "Review follow-up timing and mark follow-up handled when complete.";
-  }
-  // Mid-ladder manual steps (filing+confirmation done, not yet terminal) stay on
-  // "tracking complete" so consumers can mark the step handled — do not reuse the
-  // owned-operator awaiting copy (pendingHumanFulfillmentEscalation is checked above).
-  return HANDLING_TRACKING_STEP_COMPLETE;
-}
-
-function deriveChatHandlingTrackingLine(input: {
-  basicsReady: boolean;
-  draftReviewed: boolean;
-  preparedPacketApproved: boolean;
-  evidenceCount: number;
-  filings: JusticeCaseFilingRow[];
-  next: JusticeApprovedNextAction;
-  canCaptureFilingInline?: boolean;
-  canCaptureFilingInChat?: boolean;
-  caseId?: string;
-  tasks?: JusticeCaseTaskRow[];
-}): string {
-  const readyForManualReview = chatReadyForManualReview({
-    basicsReady: input.basicsReady,
-    draftReviewed: input.draftReviewed,
-    preparedPacketApproved: input.preparedPacketApproved,
-  });
-  const readyForExternalManualAction =
-    readyForManualReview && input.evidenceCount > 0;
-  const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
-  const { hasFilingRecord, hasConfirmationOnFile } =
-    deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
-  const caseId = input.caseId?.trim() ?? "";
-  const tasks = input.tasks ?? [];
-  const pendingHumanFulfillmentEscalation = hasPendingHumanFulfillmentEscalation({
-    approvedAction: input.next,
-    caseId,
-    tasks,
-  });
-  const resolutionFlowExposed = shouldExposeCaseResolutionFlow({
-    approvedAction: input.next,
-    caseId,
-    tasks,
-    filings: input.filings,
-  });
-  return deriveChatManualActionNextStep({
-    readyForExternalManualAction,
-    actionOpened,
-    hasFilingRecord,
-    hasConfirmationOnFile,
-    status: input.next.status,
-    outcomeNote: input.next.outcome_note,
-    handlingRequestedAt: input.next.handling_requested_at,
-    handlingAcknowledgedAt: input.next.handling_acknowledged_at,
-    followUpNeeded: input.next.follow_up_needed === true,
-    canCaptureFilingInline: input.canCaptureFilingInline,
-    canCaptureFilingInChat: input.canCaptureFilingInChat,
-    pendingHumanFulfillmentEscalation,
-    resolutionFlowExposed,
-  });
-}
+// chatReadyForManualReview, deriveChatManualActionNextStep, and deriveChatHandlingTrackingLine
+// moved to handlingTrackingProgress.ts — pure derivation logic, extracted so it's directly
+// unit-testable (verifying the real production decision, not a hardcoded stand-in) without
+// needing this page component.
 
 function formatChatPersistedTaskLine(
   task: JusticeCaseTaskRow | undefined,
@@ -2348,10 +2205,17 @@ function ChatHandlingTrackingStatusReadOnly({
     tasks,
     filings,
   });
+  const pendingHumanFulfillmentEscalationForDisplay = hasPendingHumanFulfillmentEscalation({
+    approvedAction: approvedNextAction,
+    caseId,
+    tasks,
+  });
   const derivedStep = resolveChatOwnedHandlingTrackingStep({
     suppressOwnedManualUi: suppressOwnedStepManualNavigation,
     resolutionFlowExposed,
     manualDerivedStep: rawDerivedStep,
+    next: approvedNextAction,
+    pendingHumanFulfillmentEscalation: pendingHumanFulfillmentEscalationForDisplay,
   });
   const showArchiveWhenComplete =
     !readinessLoading &&

@@ -4,6 +4,7 @@ import { handlingWorkbenchOutcomeTrackingFormVisible } from "@/lib/justice/handl
 import { derivePacketHandlingTrackingLine } from "@/lib/justice/packetHandlingTracking";
 import {
   MANUAL_ACTION_TRACKING_REAL_DEMAND_LETTER_PREP_HREF,
+  MERCHANT_RESOLVED_TERMINAL_HREF,
 } from "@/lib/justice/handlingTrackingProgress";
 
 describe("derivePacketHandlingTrackingLine", () => {
@@ -149,6 +150,56 @@ describe("derivePacketHandlingTrackingLine", () => {
         },
       })
     ).toBe("Add filing records from the case packet after external submission.");
+  });
+
+  it("returns the completed state for the merchant-resolved terminal action even with realistic ready/evidence inputs and no filing on file — never 'Add filing records...' (no filing destination exists for this href)", () => {
+    // This is the exact realistic, common-case combination that previously fell through to the
+    // "add filing records" branch: readiness satisfied (basics/draft/packet approved), real
+    // evidence already on the case (evidenceCount > 0), and — deliberately — no filings at all,
+    // since MERCHANT_RESOLVED_TERMINAL_HREF is absent from the filing-destination map by design.
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        evidenceCount: 3,
+        filings: [],
+        next: {
+          href: MERCHANT_RESOLVED_TERMINAL_HREF,
+          label: "Merchant issue resolved",
+          status: "completed",
+        },
+      })
+    ).toBe("Tracking complete for now.");
+  });
+
+  it("returns the completed state for the merchant-resolved terminal action even with worst-case (not-ready, no-evidence) readiness inputs", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        basicsReady: false,
+        draftReviewed: false,
+        preparedPacketApproved: false,
+        evidenceCount: 0,
+        filings: [],
+        next: {
+          href: MERCHANT_RESOLVED_TERMINAL_HREF,
+          label: "Merchant issue resolved",
+          status: "completed",
+        },
+      })
+    ).toBe("Tracking complete for now.");
+  });
+
+  it("does not affect a different href with status completed and no filing (regression guard for the generic 'unknown href' path)", () => {
+    expect(
+      derivePacketHandlingTrackingLine({
+        ...readyPacketInput,
+        filings: [],
+        next: {
+          href: "/justice/unknown-lane",
+          label: "Unknown prep",
+          status: "completed",
+        },
+      })
+    ).not.toBe("Tracking complete for now.");
   });
 
   it("uses practice-filtered global filings for unknown hrefs", () => {

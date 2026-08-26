@@ -2,6 +2,7 @@ import {
   deriveHandlingClosureStepAfterFilingConfirmation,
   deriveManualActionTrackingFilingsStateForApprovedAction,
   isApprovedActionOpenedForHandlingTracking,
+  isMerchantResolvedTerminalAction,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
@@ -21,12 +22,22 @@ function derivePacketManualActionNextStep(input: {
   actionOpened: boolean;
   hasFilingRecord: boolean;
   hasConfirmationOnFile: boolean;
+  href?: string;
   status: JusticeApprovedNextAction["status"];
   outcomeNote?: string;
   handlingRequestedAt?: string;
   handlingAcknowledgedAt?: string;
   followUpNeeded?: boolean;
 }): string {
+  // Consumer-owned terminal (merchant/company already resolved it): no external manual action
+  // was ever required and no filing destination exists for this href — the ordinary
+  // readiness/open-step/filing/confirmation checks below don't apply (and would otherwise
+  // incorrectly land on "Add filing records..." since this href is deliberately absent from the
+  // filing-destination map). Scoped strictly to this one href so it can never affect the generic
+  // "nothing routable" fallback or a genuinely exhausted escalation ladder.
+  if (isMerchantResolvedTerminalAction({ href: input.href, status: input.status })) {
+    return PACKET_HANDLING_TRACKING_COMPLETE;
+  }
   if (!input.readyForExternalManualAction) {
     return "Review packet and saved proof before external manual action.";
   }
@@ -76,6 +87,7 @@ export function derivePacketHandlingTrackingLine(input: {
     actionOpened,
     hasFilingRecord,
     hasConfirmationOnFile,
+    href: input.next.href,
     status: input.next.status,
     outcomeNote: input.next.outcome_note,
     handlingRequestedAt: input.next.handling_requested_at,

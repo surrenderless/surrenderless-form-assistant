@@ -1,5 +1,9 @@
 import { mergeApprovedNextActionTrackingFields } from "@/lib/justice/approvedNextActionState";
-import { MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import {
+  MANUAL_ACTION_TRACKING_REAL_CFPB_PREP_HREF,
+  MERCHANT_RESOLVED_TERMINAL_HREF,
+  MERCHANT_RESOLVED_TERMINAL_LABEL,
+} from "@/lib/justice/handlingTrackingProgress";
 import {
   buildApprovedNextActionTarget,
   pickNextPreparedActionAfterCompleted,
@@ -11,6 +15,7 @@ import {
   computeJusticeDestinations,
   dotLikelyRelevant,
   fccLikelyRelevant,
+  isMerchantResolved,
 } from "@/lib/justice/rules";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -65,6 +70,35 @@ export function recomputeApprovedNextActionAfterIntake(
       proof_required: !cfpbProofReady,
     };
     return mergeApprovedNextActionTrackingFields(options.existing, preserved);
+  }
+
+  // Consumer-owned terminal: the merchant/company already fixed it, so no escalation
+  // destination is or ever will be routable (computeJusticeDestinations downgrades every one
+  // to "later" once isMerchantResolved is true). Persist an already-completed action directly
+  // rather than falling through to pickPreparedNextAction's generic "nothing routable"
+  // fallback, which lands on CHAT_INLINE_PACKET_FALLBACK_PREP_HREF with status "approved" and
+  // has no owned/operator filing kind, no follow-up-review task, and therefore no path to ever
+  // reach "completed" — permanently blocking the consumer's own archive gate. Built with a
+  // clean (undefined) base rather than options.existing so this can never inherit a stale
+  // handling_requested_at/outcome_note from a different, unrelated in-flight destination.
+  if (isMerchantResolved(intake)) {
+    // Idempotent: recomputation fires repeatedly (unrelated intake edits, the evidence-change
+    // effect re-firing) — if the existing action is ALREADY this same terminal state, keep its
+    // original approved_at/completed_at rather than drifting them forward on every call. Any
+    // other existing state (a different href, or this href not yet completed) is a genuine
+    // transition, so it gets fresh timestamps.
+    const alreadyTerminal =
+      options.existing?.href === MERCHANT_RESOLVED_TERMINAL_HREF &&
+      options.existing?.status === "completed";
+    const nowIso = new Date().toISOString();
+    const terminal: JusticeApprovedNextAction = {
+      label: MERCHANT_RESOLVED_TERMINAL_LABEL,
+      href: MERCHANT_RESOLVED_TERMINAL_HREF,
+      status: "completed",
+      approved_at: (alreadyTerminal && options.existing?.approved_at?.trim()) || nowIso,
+      completed_at: (alreadyTerminal && options.existing?.completed_at?.trim()) || nowIso,
+    };
+    return mergeApprovedNextActionTrackingFields(undefined, terminal);
   }
 
   const destinations = computeJusticeDestinations(intake, {

@@ -45,7 +45,12 @@ import { rejectMerchantContactApprovalWithoutRecipient } from "@/lib/justice/rej
 import { rejectUnpaidPreparedPacketApprovalPatch } from "@/lib/justice/rejectUnpaidPreparedPacketApprovalPatch";
 import { sanitizeClientStateForEscalationLadder } from "@/lib/justice/escalationLadderResolution";
 import { CLIENT_STATE_UPDATE_CONFLICT_ERROR } from "@/lib/justice/updateClientStateIfUnchanged";
-import type { ManualActionTrackingFiling } from "@/lib/justice/handlingTrackingProgress";
+import {
+  isMerchantResolvedTerminalAction,
+  type ManualActionTrackingFiling,
+} from "@/lib/justice/handlingTrackingProgress";
+import { completeMerchantContactFilingTaskIfOpen } from "@/lib/justice/merchantContactFilingTask";
+import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
@@ -255,6 +260,11 @@ async function patchJusticeCase(
   let existingPaidAt: string | null | undefined = isMockCase ? new Date(0).toISOString() : undefined;
   let validationTasks: JusticeCaseTaskRow[] = [];
   let validationFilings: ManualActionTrackingFiling[] = [];
+  // Only populated (real, non-mock cases) when the incoming client_state is attempting the
+  // merchant-resolved terminal transition — resolveHasUploadedEvidenceFile does a real query, so
+  // it's skipped for every other PATCH. Consumed only by isAllowedMerchantResolvedTerminalClientStatePatch,
+  // which requires it when the consumer's declared proof type is "upload"/"screenshot".
+  let hasUploadedEvidenceFileForMerchantResolved = false;
 
   if (needsEscalationValidation) {
     if (isMockCase) {
@@ -318,6 +328,15 @@ async function patchJusticeCase(
 
         validationTasks = (taskRows ?? []) as JusticeCaseTaskRow[];
         validationFilings = filingRows ?? [];
+
+        const incomingActionPreview = parseApprovedNextActionFromClientState(patch.client_state);
+        if (incomingActionPreview && isMerchantResolvedTerminalAction(incomingActionPreview)) {
+          hasUploadedEvidenceFileForMerchantResolved = await resolveHasUploadedEvidenceFile(
+            supabaseForValidation,
+            id,
+            userId
+          );
+        }
       } else {
         const { data: taskRows, error: tasksErr } = await supabaseForValidation
           .from("justice_case_tasks")
@@ -336,6 +355,18 @@ async function patchJusticeCase(
       }
     }
 
+    // The intake this write persists (patch.intake) or, when the PATCH carries only client_state,
+    // the intake already stored on the case. Either way this is a CONSUMER-authored record, not
+    // independent server verification — used below (recipient gates) and by
+    // rejectCasePatchEscalationViolations' narrow merchant-resolved terminal exception, which
+    // additionally re-validates it (contact date, proof content, uploaded-evidence requirement)
+    // via the same shared documentation validator the consumer-facing form itself uses, rather
+    // than trusting the bare already_contacted/merchant_response_type enum values alone. That
+    // validation re-runs against whatever intake is effective at the moment of THIS transition,
+    // regardless of whether it arrived in this same PATCH body or was persisted earlier.
+    const effectiveIntake: JusticeIntake | null =
+      (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null;
+
     const escalationReject = rejectCasePatchEscalationViolations({
       caseId: id,
       existingClientState,
@@ -343,6 +374,8 @@ async function patchJusticeCase(
       patch,
       tasks: validationTasks,
       filings: validationFilings,
+      intake: effectiveIntake,
+      hasUploadedEvidenceFile: hasUploadedEvidenceFileForMerchantResolved,
     });
     if (escalationReject) {
       return NextResponse.json({ error: escalationReject }, { status: 409 });
@@ -367,12 +400,8 @@ async function patchJusticeCase(
 
       // Merchant-contact outreach is sent by Surrenderless itself, so the exact approval transition
       // that queues it must have a valid recipient email — otherwise delivery silently skips and the
-      // action is stuck showing "queued". Mock/E2E cases are exempt (no real outreach). The effective
-      // recipient is the intake this write persists (patch.intake) or, when the approval PATCH carries
-      // only client_state, the intake already stored on the case.
+      // action is stuck showing "queued". Mock/E2E cases are exempt (no real outreach).
       if (!isMockCase) {
-        const effectiveIntake =
-          (patch.intake as JusticeIntake | undefined) ?? existingIntake ?? null;
         const recipientReject = rejectMerchantContactApprovalWithoutRecipient({
           existingClientState,
           incomingClientState: patch.client_state,
@@ -413,6 +442,65 @@ async function patchJusticeCase(
     existingArchivedAt = undefined;
   }
 
+  // Task reconciliation happens BEFORE the terminal client_state is persisted, not after: if
+  // reconciliation fails, the write must not proceed at all — a persisted terminal action with a
+  // still-open (or unconfirmed-completion) task is exactly the dead end this exists to prevent,
+  // and there is no later step that would ever revisit it. If reconciliation succeeds and the
+  // WRITE below then fails (e.g. a concurrent-update conflict), the already-completed task stays
+  // completed — completeMerchantContactFilingTaskIfOpen is idempotent — so the client can simply
+  // retry the whole PATCH; the retry will find the task already done (not "failed") and proceed
+  // straight to the write.
+  let preWriteReconcileTimeline: TimelineEntry[] | null = null;
+  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+    const incomingNextForReconcile = parseApprovedNextActionFromClientState(patch.client_state);
+    if (incomingNextForReconcile && isMerchantResolvedTerminalAction(incomingNextForReconcile)) {
+      const taskReconcile = await completeMerchantContactFilingTaskIfOpen(supabase, userId, id);
+      if (taskReconcile.failed) {
+        return NextResponse.json(
+          { error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR },
+          { status: 500 }
+        );
+      }
+      preWriteReconcileTimeline = taskReconcile.timeline;
+
+      // Reconciliation's own writes (completing the task; appending the audit timeline entry to
+      // justice_cases.timeline) can themselves advance justice_cases.updated_at via the
+      // set_justice_cases_updated_at trigger (BEFORE UPDATE ... FOR EACH ROW, unconditional on
+      // which columns changed). The updated_at captured before reconciliation ran is now stale
+      // by construction — not because of any concurrent writer — so the CAS-guarded write below
+      // would self-invalidate every single time a real open task gets reconciled. Re-read the row
+      // and compare the fields the CAS exists to protect (client_state, archived_at, intake):
+      // identical means the only intervening write was our own reconciliation, so it's safe to
+      // adopt the fresh updated_at; different means a genuine concurrent writer intervened while
+      // we were reconciling, and this must still fail exactly as the CAS was designed to — never
+      // silently clobber a real concurrent change.
+      if (existingRowUpdatedAt) {
+        const { data: freshRow, error: freshErr } = await supabase
+          .from("justice_cases")
+          .select("client_state, archived_at, updated_at, intake")
+          .eq("id", id)
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (freshErr || !freshRow) {
+          return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
+        }
+
+        const unchangedSinceReconciliation =
+          JSON.stringify(freshRow.client_state ?? null) ===
+            JSON.stringify(existingClientState ?? null) &&
+          (freshRow.archived_at as string | null) === (existingArchivedAt ?? null) &&
+          JSON.stringify(freshRow.intake ?? null) === JSON.stringify(existingIntake ?? null);
+
+        if (!unchangedSinceReconciliation) {
+          return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
+        }
+
+        existingRowUpdatedAt = freshRow.updated_at as string;
+      }
+    }
+  }
+
   // When we read the row above for escalation validation, guard the write with a
   // compare-and-swap on updated_at (stamped on every row write by a DB trigger) so a
   // concurrent writer — an operator completing a filing at the same time — can't have its
@@ -437,6 +525,13 @@ async function patchJusticeCase(
   }
 
   let responseData = data as CaseResponse;
+  if (preWriteReconcileTimeline) {
+    // Defensive merge — the write above already reflects this via the justice_cases.timeline
+    // column (reconciliation committed it before this .update ran, and patch never carries an
+    // explicit stale `timeline` for these client_state-only requests), but this guards against
+    // exactly that case if a caller ever does combine client_state with a stale timeline field.
+    responseData = { ...responseData, timeline: preWriteReconcileTimeline };
+  }
 
   if (
     Object.prototype.hasOwnProperty.call(patch, "client_state") &&
