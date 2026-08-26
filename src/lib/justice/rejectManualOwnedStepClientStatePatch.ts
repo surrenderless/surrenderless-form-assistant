@@ -12,6 +12,10 @@ import {
   MERCHANT_RESOLVED_TERMINAL_HREF,
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
+import {
+  buildMerchantContactDocumentationInputFromIntake,
+  validateMerchantContactDocumentation,
+} from "@/lib/justice/documentMerchantContact";
 import { isAllowedOperatorEvidenceTerminalResolutionClientStatePatch } from "@/lib/justice/escalationLadderResolution";
 import { isMerchantResolved } from "@/lib/justice/rules";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
@@ -68,25 +72,36 @@ export function isManualOwnedHumanFulfillmentStepProgression(
 }
 
 /**
- * Narrow exception: permits the verified consumer-owned transition directly from the
- * Surrenderless-owned merchant-contact step to the merchant-resolved terminal action — the
- * reachable path where a consumer approves while already_contacted is "no" (queuing owned
- * merchant contact), then later documents contact with merchant_response_type "resolved" via
- * the merchant-contact documentation form, whose visibility gate does not require any
- * particular approved-action href.
+ * Narrow exception: permits the transition directly from the Surrenderless-owned
+ * merchant-contact step to the merchant-resolved terminal action — the reachable path where a
+ * consumer approves while already_contacted is "no" (queuing owned merchant contact), then later
+ * documents contact with merchant_response_type "resolved" via the merchant-contact
+ * documentation form, whose visibility gate does not require any particular approved-action href.
+ *
+ * A consumer's documented resolution is, and can only ever be, a consumer report — this
+ * function does not independently verify it against reality, and neither `intake` nor a
+ * previously persisted intake should be described as doing so. What this function DOES enforce,
+ * server-side, is that the report is *complete and well-formed* to the same standard the
+ * documentation UI itself requires: a valid contact date and proof content appropriate to the
+ * declared proof type, via the shared validateMerchantContactDocumentation validator — not just
+ * the bare isMerchantResolved(already_contacted/merchant_response_type) check. This closes the
+ * gap where an empty/garbage claim (no contact date, no proof) could reach the terminal action
+ * merely by setting two enum fields. It applies identically regardless of whether the intake
+ * carrying the claim arrived in this same PATCH body or was persisted by an earlier request —
+ * the validation re-runs against whatever intake is effective at the moment of THIS transition.
  *
  * Scoped tightly so no other owned step can borrow it:
  * - existingAction.href must be exactly the merchant-contact href (not CFPB, BBB, state AG, etc.)
  * - incomingAction must be exactly the merchant-resolved terminal href with status "completed"
- * - the SERVER's own authoritative intake (never the client's claim) must independently confirm
- *   isMerchantResolved — the same predicate recomputeApprovedNextActionAfterIntake uses to reach
- *   this terminal action in the first place, so this exception can never fire for a spoofed
- *   client_state that a real intake wouldn't itself produce.
+ * - the intake must independently satisfy isMerchantResolved AND pass full documentation
+ *   validation (contact date, proof-type-appropriate proof content, and a real uploaded evidence
+ *   file when the declared proof type requires one)
  */
 export function isAllowedMerchantResolvedTerminalClientStatePatch(
   existingAction: JusticeApprovedNextAction | undefined,
   incomingAction: JusticeApprovedNextAction | undefined,
-  intake: JusticeIntake | null | undefined
+  intake: JusticeIntake | null | undefined,
+  hasUploadedEvidenceFile: boolean
 ): boolean {
   if (normalizedHref(existingAction) !== MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF) {
     return false;
@@ -98,7 +113,10 @@ export function isAllowedMerchantResolvedTerminalClientStatePatch(
     return false;
   }
   if (!intake) return false;
-  return isMerchantResolved(intake);
+  if (!isMerchantResolved(intake)) return false;
+  const documentation = buildMerchantContactDocumentationInputFromIntake(intake);
+  if (!documentation) return false;
+  return validateMerchantContactDocumentation(documentation, hasUploadedEvidenceFile).ok;
 }
 
 export type RejectManualOwnedStepClientStatePatchParams = {
@@ -107,8 +125,12 @@ export type RejectManualOwnedStepClientStatePatchParams = {
   incomingClientState: unknown;
   tasks: readonly JusticeCaseTaskRow[];
   filings: readonly ManualActionTrackingFiling[];
-  /** Authoritative intake for this case, used only by isAllowedMerchantResolvedTerminalClientStatePatch. */
+  /** Intake for this case, used only by isAllowedMerchantResolvedTerminalClientStatePatch — a
+   * consumer-authored report, not independent verification (see that function's docstring). */
   intake?: JusticeIntake | null;
+  /** Real uploaded evidence file present on the case, used only by
+   * isAllowedMerchantResolvedTerminalClientStatePatch when the declared proof type requires one. */
+  hasUploadedEvidenceFile?: boolean;
 };
 
 export function rejectManualOwnedStepClientStatePatch(
@@ -131,7 +153,14 @@ export function rejectManualOwnedStepClientStatePatch(
     return null;
   }
 
-  if (isAllowedMerchantResolvedTerminalClientStatePatch(existingAction, incomingAction, params.intake)) {
+  if (
+    isAllowedMerchantResolvedTerminalClientStatePatch(
+      existingAction,
+      incomingAction,
+      params.intake,
+      params.hasUploadedEvidenceFile ?? false
+    )
+  ) {
     return null;
   }
 

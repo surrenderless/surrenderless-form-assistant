@@ -145,7 +145,10 @@ import {
   CHAT_CONTINUE_HANDOFF_POST_PREVIEW_STEP,
   CHAT_CONTINUE_HANDOFF_PREVIEW_STEP,
 } from "@/lib/justice/chatContinueHandoffCopy";
-import { shouldExposeCaseResolutionFlow } from "@/lib/justice/escalationLadderResolution";
+import {
+  hasPendingHumanFulfillmentEscalation,
+  shouldExposeCaseResolutionFlow,
+} from "@/lib/justice/escalationLadderResolution";
 import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operatorOwnedCaseArchive";
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
@@ -2202,11 +2205,17 @@ function ChatHandlingTrackingStatusReadOnly({
     tasks,
     filings,
   });
+  const pendingHumanFulfillmentEscalationForDisplay = hasPendingHumanFulfillmentEscalation({
+    approvedAction: approvedNextAction,
+    caseId,
+    tasks,
+  });
   const derivedStep = resolveChatOwnedHandlingTrackingStep({
     suppressOwnedManualUi: suppressOwnedStepManualNavigation,
     resolutionFlowExposed,
     manualDerivedStep: rawDerivedStep,
     next: approvedNextAction,
+    pendingHumanFulfillmentEscalation: pendingHumanFulfillmentEscalationForDisplay,
   });
   const showArchiveWhenComplete =
     !readinessLoading &&

@@ -399,17 +399,18 @@ describe("rejectManualOwnedStepClientStatePatch", () => {
 });
 
 describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
-  it("allows the verified /justice/merchant -> merchant-resolved transition when intake confirms resolved", () => {
+  it("allows the verified /justice/merchant -> merchant-resolved transition when intake confirms resolved with complete documentation", () => {
     expect(
       isAllowedMerchantResolvedTerminalClientStatePatch(
         merchantContactApproved,
         merchantResolvedTerminalCompleted,
-        resolvedIntake
+        resolvedIntake,
+        false
       )
     ).toBe(true);
   });
 
-  it("rejects when the authoritative intake does not actually confirm the resolved outcome (spoofed client_state)", () => {
+  it("rejects when the intake does not actually confirm the resolved outcome (wrong merchant_response_type)", () => {
     const notResolvedIntake = baseIntake({
       already_contacted: "yes",
       contact_method: "email",
@@ -422,7 +423,27 @@ describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
       isAllowedMerchantResolvedTerminalClientStatePatch(
         merchantContactApproved,
         merchantResolvedTerminalCompleted,
-        notResolvedIntake
+        notResolvedIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects when already_contacted is not yes, even if merchant_response_type says resolved", () => {
+    const notActuallyContactedIntake = baseIntake({
+      already_contacted: "no",
+      merchant_response_type: "resolved",
+      contact_date: "2026-01-15",
+      contact_method: "email",
+      contact_proof_type: "paste",
+      contact_proof_text: "Refund confirmed",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        notActuallyContactedIntake,
+        false
       )
     ).toBe(false);
   });
@@ -432,9 +453,121 @@ describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
       isAllowedMerchantResolvedTerminalClientStatePatch(
         merchantContactApproved,
         merchantResolvedTerminalCompleted,
-        null
+        null,
+        false
       )
     ).toBe(false);
+  });
+
+  it("rejects incomplete documentation: missing contact date", () => {
+    const missingDateIntake = baseIntake({
+      already_contacted: "yes",
+      merchant_response_type: "resolved",
+      contact_method: "email",
+      contact_date: "",
+      contact_proof_type: "paste",
+      contact_proof_text: "Refund confirmed by email",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        missingDateIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects incomplete documentation: missing contact_method (required field absent)", () => {
+    const missingMethodIntake = baseIntake({
+      already_contacted: "yes",
+      merchant_response_type: "resolved",
+      contact_date: "2026-01-15",
+      contact_proof_type: "paste",
+      contact_proof_text: "Refund confirmed by email",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        missingMethodIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects invalid/empty proof text for a 'paste' proof type", () => {
+    const emptyProofIntake = baseIntake({
+      already_contacted: "yes",
+      merchant_response_type: "resolved",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      contact_proof_type: "paste",
+      contact_proof_text: "",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        emptyProofIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects invalid/empty proof text for a 'ticket' proof type", () => {
+    const emptyTicketIntake = baseIntake({
+      already_contacted: "yes",
+      merchant_response_type: "resolved",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      contact_proof_type: "ticket",
+      contact_proof_text: "  ",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        emptyTicketIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects an 'upload' proof type when no real evidence file is on the case", () => {
+    const uploadProofIntake = baseIntake({
+      already_contacted: "yes",
+      merchant_response_type: "resolved",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      contact_proof_type: "upload",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        uploadProofIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("allows an 'upload' proof type once a real evidence file is confirmed on the case", () => {
+    const uploadProofIntake = baseIntake({
+      already_contacted: "yes",
+      merchant_response_type: "resolved",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      contact_proof_type: "upload",
+    });
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        merchantContactApproved,
+        merchantResolvedTerminalCompleted,
+        uploadProofIntake,
+        true
+      )
+    ).toBe(true);
   });
 
   it("rejects for an unrelated owned existing action (CFPB) even when incoming looks like the terminal action and intake confirms resolved — no other owned step can borrow this exception", () => {
@@ -447,7 +580,35 @@ describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
       isAllowedMerchantResolvedTerminalClientStatePatch(
         cfpbApproved,
         merchantResolvedTerminalCompleted,
-        resolvedIntake
+        resolvedIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects for an unrelated owned existing action (BBB)", () => {
+    const bbbApproved = {
+      label: "Better Business Bureau",
+      href: "/justice/bbb",
+      status: "approved" as const,
+    };
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        bbbApproved,
+        merchantResolvedTerminalCompleted,
+        resolvedIntake,
+        false
+      )
+    ).toBe(false);
+  });
+
+  it("rejects for an unrelated owned existing action (State AG)", () => {
+    expect(
+      isAllowedMerchantResolvedTerminalClientStatePatch(
+        stateAgApproved,
+        merchantResolvedTerminalCompleted,
+        resolvedIntake,
+        false
       )
     ).toBe(false);
   });
@@ -457,7 +618,8 @@ describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
       isAllowedMerchantResolvedTerminalClientStatePatch(
         merchantContactApproved,
         { ...merchantContactApproved, status: "completed", completed_at: "2026-01-16T00:00:00.000Z" },
-        resolvedIntake
+        resolvedIntake,
+        false
       )
     ).toBe(false);
   });
@@ -467,7 +629,8 @@ describe("isAllowedMerchantResolvedTerminalClientStatePatch", () => {
       isAllowedMerchantResolvedTerminalClientStatePatch(
         merchantContactApproved,
         { ...merchantResolvedTerminalCompleted, status: "approved" },
-        resolvedIntake
+        resolvedIntake,
+        false
       )
     ).toBe(false);
   });
@@ -516,6 +679,90 @@ describe("rejectManualOwnedStepClientStatePatch — merchant-resolved terminal e
         // not fire and the ordinary owned-step guard (open task owns the step) still applies.
       })
     ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("still rejects (open task owns the step) when intake's merchant_response_type is wrong, even with an otherwise well-formed report", () => {
+    const wrongOutcomeIntake = baseIntake({
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      merchant_response_type: "partial_help",
+      contact_proof_type: "paste",
+      contact_proof_text: "Partial refund only",
+    });
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+        intake: wrongOutcomeIntake,
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("still rejects (open task owns the step) when documentation is incomplete (no contact proof text for a 'paste' proof type)", () => {
+    const incompleteIntake = baseIntake({
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      merchant_response_type: "resolved",
+      contact_proof_type: "paste",
+      contact_proof_text: "",
+    });
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+        intake: incompleteIntake,
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("still rejects (open task owns the step) when the declared proof type is 'upload' but no real evidence file is on the case", () => {
+    const unverifiedUploadIntake = baseIntake({
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      merchant_response_type: "resolved",
+      contact_proof_type: "upload",
+    });
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+        intake: unverifiedUploadIntake,
+        hasUploadedEvidenceFile: false,
+      })
+    ).toBe(REJECT_MANUAL_OWNED_STEP_CLIENT_STATE_PATCH_MESSAGE);
+  });
+
+  it("permits the transition for an 'upload' proof type once hasUploadedEvidenceFile is true", () => {
+    const verifiedUploadIntake = baseIntake({
+      already_contacted: "yes",
+      contact_method: "email",
+      contact_date: "2026-01-15",
+      merchant_response_type: "resolved",
+      contact_proof_type: "upload",
+    });
+    expect(
+      rejectManualOwnedStepClientStatePatch({
+        caseId: CASE_ID,
+        existingClientState: { approved_next_action: merchantContactApproved },
+        incomingClientState: { approved_next_action: merchantResolvedTerminalCompleted },
+        tasks: [openMerchantContactTask()],
+        filings: [],
+        intake: verifiedUploadIntake,
+        hasUploadedEvidenceFile: true,
+      })
+    ).toBeNull();
   });
 
   it("does not let an unrelated owned action (CFPB, with an open task) use this exception, even if intake happens to confirm merchant-resolved", () => {

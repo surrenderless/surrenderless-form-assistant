@@ -80,13 +80,24 @@ export function shouldShowChatConsumerArchiveControl(_input: {
  * "awaiting Surrenderless operator fulfillment" here would be actively wrong, not just
  * DIY-permissive. Checked via the same isMerchantResolvedTerminalAction predicate chat-ai uses,
  * so Hub, Saved Cases, and chat can never drift on what counts as this terminal state.
+ *
+ * That exception is itself gated on `pendingHumanFulfillmentEscalation` (the caller must pass
+ * the same hasPendingHumanFulfillmentEscalation signal used everywhere else): href/status alone
+ * are never sufficient to claim "Complete" — a matching merchant-contact task can still be open
+ * (reconciliation failed, raced, or has not yet run), and while it is, this must fall through to
+ * the honest awaiting-fulfillment copy below rather than claim the case is done.
  */
 export function resolveHubOrCasesHandlingTrackingStep(input: {
   suppressOwnedManualUi?: boolean;
   manualDerivedStep: string;
   next?: Pick<JusticeApprovedNextAction, "href" | "status">;
+  pendingHumanFulfillmentEscalation?: boolean;
 }): string {
-  if (input.next && isMerchantResolvedTerminalAction(input.next)) {
+  if (
+    !input.pendingHumanFulfillmentEscalation &&
+    input.next &&
+    isMerchantResolvedTerminalAction(input.next)
+  ) {
     return HANDLING_TRACKING_STEP_COMPLETE;
   }
   void input.suppressOwnedManualUi;
@@ -122,15 +133,27 @@ export const OWNED_ENDGAME_HANDLING_TRACKING_STEP =
  * "tracking follow-up and will close this case when resolved" would be actively wrong here, not
  * just DIY-permissive. Checked via the same isMerchantResolvedTerminalAction predicate Hub/
  * Saved Cases use, so no surface can drift on what counts as this terminal state.
+ *
+ * That exception is itself gated on `pendingHumanFulfillmentEscalation` (pass the same
+ * hasPendingHumanFulfillmentEscalation signal used everywhere else): href/status alone are never
+ * sufficient to claim "Complete" — a matching merchant-contact task can still be open
+ * (reconciliation failed, raced, or has not yet run), and while it is, this must fall through
+ * (via resolutionFlowExposed, which itself already accounts for the same pending check) to the
+ * honest awaiting-fulfillment copy rather than claim the case is done.
  */
 export function resolveChatOwnedHandlingTrackingStep(input: {
   suppressOwnedManualUi?: boolean;
   resolutionFlowExposed: boolean;
   manualDerivedStep: string | null;
   next?: Pick<JusticeApprovedNextAction, "href" | "status">;
+  pendingHumanFulfillmentEscalation?: boolean;
 }): string | null {
   if (!input.manualDerivedStep) return null;
-  if (input.next && isMerchantResolvedTerminalAction(input.next)) {
+  if (
+    !input.pendingHumanFulfillmentEscalation &&
+    input.next &&
+    isMerchantResolvedTerminalAction(input.next)
+  ) {
     return HANDLING_TRACKING_STEP_COMPLETE;
   }
   if (input.resolutionFlowExposed) {

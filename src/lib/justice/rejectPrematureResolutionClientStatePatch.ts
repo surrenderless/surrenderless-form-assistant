@@ -176,8 +176,11 @@ export type RejectCasePatchEscalationViolationsParams = {
   patch: Record<string, unknown>;
   tasks: readonly JusticeCaseTaskRow[];
   filings: readonly ManualActionTrackingFiling[];
-  /** Authoritative intake for this case — threaded only to the merchant-resolved terminal exception. */
+  /** Intake for this case — a consumer-authored report, threaded only to the merchant-resolved
+   * terminal exception, which additionally validates it via validateMerchantContactDocumentation. */
   intake?: JusticeIntake | null;
+  /** Real uploaded evidence file on the case — threaded only to the same exception. */
+  hasUploadedEvidenceFile?: boolean;
 };
 
 /** Combined server-side rejects for escalation-ladder sequencing on case PATCH. */
@@ -192,6 +195,7 @@ export function rejectCasePatchEscalationViolations(
       tasks: params.tasks,
       filings: params.filings,
       intake: params.intake,
+      hasUploadedEvidenceFile: params.hasUploadedEvidenceFile,
     });
     if (ownedStepReject) return ownedStepReject;
 

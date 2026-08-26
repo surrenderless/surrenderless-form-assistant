@@ -57,6 +57,30 @@ export function validateMerchantContactDocumentation(
   return { ok: true };
 }
 
+/**
+ * Builds documentation-validator input directly from a persisted/incoming JusticeIntake — the
+ * server-side counterpart to buildMerchantContactDocumentationInputFromIntakeParts (which works
+ * off client-side BuildJusticeIntakeParts). Returns null when the intake is missing any of the
+ * fields the documentation form requires, so callers never partially validate.
+ */
+export function buildMerchantContactDocumentationInputFromIntake(
+  intake: JusticeIntake
+): MerchantContactDocumentationInput | null {
+  if (intake.already_contacted !== "yes") return null;
+  if (!intake.contact_method) return null;
+  if (!intake.merchant_response_type) return null;
+  if (!intake.contact_proof_type) return null;
+  const contactDate = intake.contact_date?.trim() ?? "";
+  if (!contactDate) return null;
+  return {
+    contactMethod: intake.contact_method,
+    contactDate,
+    merchantResponseType: intake.merchant_response_type,
+    contactProofType: intake.contact_proof_type,
+    contactProofText: intake.contact_proof_text?.trim() ?? "",
+  };
+}
+
 export function buildUpdatedIntakeAfterMerchantContact(
   intake: JusticeIntake,
   input: MerchantContactDocumentationInput

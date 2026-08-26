@@ -39,6 +39,7 @@ import {
   handlingClosureAcknowledgmentVisible,
   isApprovedActionOpenedForHandlingTracking,
 } from "@/lib/justice/handlingTrackingProgress";
+import { hasPendingHumanFulfillmentEscalation } from "@/lib/justice/escalationLadderResolution";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
 import {
   CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
@@ -178,6 +179,11 @@ function deriveHubHandlingTrackingLine(input: {
   const actionOpened = isApprovedActionOpenedForHandlingTracking(input.next);
   const { hasFilingRecord, hasConfirmationOnFile } =
     deriveManualActionTrackingFilingsStateForApprovedAction(input.filings, input.next);
+  const pendingHumanFulfillmentEscalation = hasPendingHumanFulfillmentEscalation({
+    approvedAction: input.next,
+    caseId: input.caseId,
+    tasks: input.tasks,
+  });
   return resolveHubOrCasesHandlingTrackingStep({
     suppressOwnedManualUi: suppressOwned,
     manualDerivedStep: deriveHubManualActionNextStep({
@@ -192,6 +198,7 @@ function deriveHubHandlingTrackingLine(input: {
       followUpNeeded: input.next.follow_up_needed === true,
     }),
     next: input.next,
+    pendingHumanFulfillmentEscalation,
   });
 }
 

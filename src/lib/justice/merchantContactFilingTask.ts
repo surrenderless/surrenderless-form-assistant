@@ -318,11 +318,23 @@ export type CompleteMerchantContactFilingTaskResult = {
   task: JusticeCaseTaskRow | null;
   timeline: TimelineEntry[] | null;
   completed: boolean;
+  /**
+   * True only for a genuine select/update/timeline failure — distinct from the normal,
+   * successful no-op outcomes "no matching task exists" and "task already completed" (both of
+   * which also carry `completed: false`). Callers that need to retry-or-block on failure must
+   * check this flag rather than inferring failure from `completed`/`task` alone.
+   */
+  failed: boolean;
 };
 
 /**
- * Completes the merchant-contact operator task when outreach is recorded.
- * Idempotent: no-op when task is missing or already completed.
+ * Completes the merchant-contact operator task when outreach is recorded, and ensures its
+ * completion audit timeline entry exists — including on a retry that finds the task already
+ * completed (e.g. because an earlier attempt completed the task but then failed to append the
+ * timeline entry). Idempotent: the task update is skipped when already completed, and the
+ * timeline entry is only ever appended once — appendCaseTimelineEntry dedupes by this entry's
+ * stable id (merchantContactFilingTaskCompletedTimelineId), so calling it again when the entry
+ * already exists is always a safe, no-write no-op.
  */
 export async function completeMerchantContactFilingTaskIfOpen(
   supabase: SupabaseClient,
@@ -354,41 +366,55 @@ export async function completeMerchantContactFilingTaskIfOpen(
 
   if (existingErr) {
     console.warn("justice merchant contact task: select for complete", existingErr.message);
-    return { task: null, timeline: null, completed: false };
+    return { task: null, timeline: null, completed: false, failed: true };
   }
 
   const task = existingRows?.[0] as JusticeCaseTaskRow | undefined;
   if (!task || !taskNotesMatchMerchantContactFilingMarker(task.notes, caseId)) {
-    return { task: null, timeline: null, completed: false };
-  }
-  if (task.completed_at?.trim()) {
-    return { task, timeline: null, completed: false };
+    return { task: null, timeline: null, completed: false, failed: false };
   }
 
-  const completedAt = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("justice_case_tasks")
-    .update({ completed_at: completedAt })
-    .eq("id", task.id)
-    .eq("user_id", userId)
-    .select(TASK_SELECT)
-    .maybeSingle();
+  let completedTask = task;
+  let justCompleted = false;
 
-  if (error || !data) {
-    console.warn("justice merchant contact task: complete update", error?.message ?? "not found");
-    return { task, timeline: null, completed: false };
+  if (!task.completed_at?.trim()) {
+    const completedAt = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("justice_case_tasks")
+      .update({ completed_at: completedAt })
+      .eq("id", task.id)
+      .eq("user_id", userId)
+      .select(TASK_SELECT)
+      .maybeSingle();
+
+    if (error || !data) {
+      console.warn("justice merchant contact task: complete update", error?.message ?? "not found");
+      return { task, timeline: null, completed: false, failed: true };
+    }
+
+    completedTask = data as JusticeCaseTaskRow;
+    justCompleted = true;
   }
 
-  const updated = data as JusticeCaseTaskRow;
+  // Ensure exactly one completion audit entry exists — runs whether the task was just completed
+  // above OR was already completed on entry (the repair path). No-op (no write) when the entry
+  // is already present.
   const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
-    id: merchantContactFilingTaskCompletedTimelineId(task.id),
+    id: merchantContactFilingTaskCompletedTimelineId(completedTask.id),
     type: "task_completed",
     label: "Merchant contact completed",
-    detail: updated.title.trim(),
-    ts: completedAt,
+    detail: completedTask.title.trim(),
+    ts: completedTask.completed_at ?? new Date().toISOString(),
   });
 
-  return { task: updated, timeline, completed: true };
+  // The task row itself is durably completed at this point (never rolled back — idempotent on
+  // retry) even if the timeline audit entry failed to append or repair; surface that as a
+  // failure so the caller can retry the request, distinct from the task update itself failing.
+  if (!timeline) {
+    return { task: completedTask, timeline: null, completed: justCompleted, failed: true };
+  }
+
+  return { task: completedTask, timeline, completed: justCompleted, failed: false };
 }
 
 export type EnsureMerchantContactFilingTaskResult = {

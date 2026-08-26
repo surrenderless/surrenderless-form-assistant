@@ -19,6 +19,13 @@ const mockCaseUpdateMaybeSingle = vi.fn();
 const mockCaseUpdatePatch = vi.fn();
 const mockTasksSelect = vi.fn();
 const mockFilingsSelect = vi.fn();
+/** Backs resolveHasUploadedEvidenceFile's justice_case_evidence query — only ever invoked when
+ * the incoming client_state attempts the merchant-resolved terminal transition. Defaults to no
+ * evidence rows; individual tests override for "upload"/"screenshot" proof-type scenarios. */
+const mockEvidenceSelect = vi.fn();
+/** Armed only by tests that need faithful CAS-rejection simulation on the justice_cases update's
+ * .eq("updated_at", X) filter — see the update() mock below. Reset to null in every afterEach. */
+let mockCaseUpdateCasGate: { expectedUpdatedAt: string } | null = null;
 
 type FollowUpTaskRow = {
   id: string;
@@ -110,6 +117,7 @@ vi.mock("@/lib/justice/merchantContactFilingTask", async (importOriginal) => {
       task: null,
       timeline: null,
       completed: false,
+      failed: false,
     })),
   };
 });
@@ -132,20 +140,31 @@ vi.mock("@supabase/supabase-js", () => ({
           }),
           update: (patch: Record<string, unknown>) => {
             mockCaseUpdatePatch(patch);
-            return {
-              eq: () => ({
-                eq: () => ({
-                  eq: () => ({
-                    select: () => ({
-                      maybeSingle: mockCaseUpdateMaybeSingle,
-                    }),
-                  }),
-                  select: () => ({
-                    maybeSingle: mockCaseUpdateMaybeSingle,
-                  }),
-                }),
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
+              },
+              select: () => ({
+                maybeSingle: async () => {
+                  // Faithful CAS simulation: when a test arms mockCaseUpdateCasGate, an
+                  // .eq("updated_at", X) filter only "matches a row" (like real PostgREST) when
+                  // X equals the gate's expected value — modeling the set_justice_cases_updated_at
+                  // trigger having advanced the row's real updated_at since the value the route
+                  // captured before reconciliation ran.
+                  if (
+                    mockCaseUpdateCasGate &&
+                    Object.prototype.hasOwnProperty.call(filters, "updated_at") &&
+                    filters.updated_at !== mockCaseUpdateCasGate.expectedUpdatedAt
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  return mockCaseUpdateMaybeSingle();
+                },
               }),
             };
+            return chain;
           },
         };
       }
@@ -203,6 +222,19 @@ vi.mock("@supabase/supabase-js", () => ({
           select: () => ({
             eq: () => ({
               eq: () => mockFilingsSelect(),
+            }),
+          }),
+        };
+      }
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => mockEvidenceSelect(),
+                }),
+              }),
             }),
           }),
         };
@@ -325,6 +357,7 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
     });
     mockTasksSelect.mockResolvedValue({ data: [], error: null });
     mockFilingsSelect.mockResolvedValue({ data: [], error: null });
+    mockEvidenceSelect.mockResolvedValue({ data: [], error: null });
     mockCaseUpdateMaybeSingle.mockResolvedValue({
       data: {
         id: CASE_ID,
@@ -598,6 +631,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       error: null,
     });
     mockFilingsSelect.mockResolvedValue({ data: [], error: null });
+    mockEvidenceSelect.mockResolvedValue({ data: [], error: null });
     mockCaseUpdateMaybeSingle.mockResolvedValue({
       data: {
         id: CASE_ID,
@@ -625,6 +659,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
+    mockCaseUpdateCasGate = null;
   });
 
   it("permits the transition and reconciles an OPEN owned merchant-contact task via the auditable completion path (never deletes it), writing the terminal action in the actual update payload", async () => {
@@ -641,6 +676,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
         },
       ],
       completed: true,
+      failed: false,
     });
 
     const res = await PATCH(
@@ -700,6 +736,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       task: completedTask,
       timeline: null,
       completed: false,
+      failed: false,
     });
 
     const res = await PATCH(
@@ -823,6 +860,509 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
     // Never reached the write or task reconciliation — rejected before any of it.
     expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
     expect(completeMerchantContactFilingTaskIfOpen).not.toHaveBeenCalled();
+  });
+
+  it("does NOT permit an unrelated owned action (State AG) to use this exception", async () => {
+    const stateAgApprovedClientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "State Attorney General (consumer)",
+        href: "/justice/state-ag",
+        status: "approved",
+      },
+    };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: stateAgApprovedClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: resolvedIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({
+      data: [
+        {
+          id: "task-state-ag-1",
+          user_id: USER_ID,
+          case_id: CASE_ID,
+          title: "State AG filing: Acme Retail",
+          due_date: null,
+          notes: `state_ag_filing_queue:${CASE_ID}`,
+          completed_at: null,
+          created_at: "2026-01-05T00:00:00.000Z",
+          updated_at: "2026-01-05T00:00:00.000Z",
+        },
+      ],
+      error: null,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({
+        client_state: {
+          prepared_packet_approved: true,
+          approved_next_action: {
+            ...stateAgApprovedClientState.approved_next_action,
+            href: MERCHANT_RESOLVED_TERMINAL_HREF,
+            status: "completed",
+            completed_at: "2026-01-20T00:00:00.000Z",
+          },
+        },
+      }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+    expect(completeMerchantContactFilingTaskIfOpen).not.toHaveBeenCalled();
+  });
+
+  it("rejects a wrong-outcome intake (merchant_response_type is not 'resolved') even with otherwise complete documentation", async () => {
+    const wrongOutcomeIntake = { ...resolvedIntake, merchant_response_type: "partial_help" as const };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: wrongOutcomeIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/owned by Surrenderless operator fulfillment/i);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+    expect(completeMerchantContactFilingTaskIfOpen).not.toHaveBeenCalled();
+  });
+
+  it("rejects incomplete documentation (missing contact_date) even when merchant_response_type says resolved", async () => {
+    const incompleteIntake = { ...resolvedIntake, contact_date: "" };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: incompleteIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+    expect(completeMerchantContactFilingTaskIfOpen).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid/empty proof text for the declared proof type", async () => {
+    const emptyProofIntake = { ...resolvedIntake, contact_proof_text: "" };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: emptyProofIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an 'upload' proof type when no real uploaded evidence file is on the case (real resolveHasUploadedEvidenceFile query, not skipped)", async () => {
+    const uploadProofIntake = {
+      ...resolvedIntake,
+      contact_proof_type: "upload" as const,
+      contact_proof_text: "",
+    };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: uploadProofIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    mockEvidenceSelect.mockResolvedValue({ data: [], error: null });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+  });
+
+  it("permits an 'upload' proof type once resolveHasUploadedEvidenceFile confirms a real uploaded file on the case", async () => {
+    const uploadProofIntake = {
+      ...resolvedIntake,
+      contact_proof_type: "upload" as const,
+      contact_proof_text: "",
+    };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: uploadProofIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    mockEvidenceSelect.mockResolvedValue({
+      data: [{ file_name: "refund-screenshot.png", mime_type: "image/png", file_size_bytes: 2048 }],
+      error: null,
+    });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: { ...openMerchantContactTask(), completed_at: "2026-01-20T00:00:00.000Z" },
+      timeline: null,
+      completed: true,
+      failed: false,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({
+        intake: uploadProofIntake,
+        client_state: merchantResolvedTerminalClientState,
+      }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockCaseUpdatePatch).toHaveBeenCalled();
+  });
+
+  it("rejects even when the incomplete/wrong-outcome intake arrives combined in the SAME PATCH body as client_state (not just previously persisted)", async () => {
+    // The existing stored intake (read fresh from the DB) is complete and correct here — proving
+    // the rejection below comes from patch.intake (which takes precedence), not existingIntake.
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: resolvedIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    const spoofedIncompleteIntake = { ...resolvedIntake, contact_proof_text: "" };
+
+    const res = await PATCH(
+      buildPatchRequest({
+        intake: spoofedIncompleteIntake,
+        client_state: merchantResolvedTerminalClientState,
+      }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+  });
+
+  it("permits the transition when a complete, valid intake arrives combined in the SAME PATCH body as client_state", async () => {
+    // Existing stored intake does NOT yet say resolved — the consumer is documenting contact and
+    // approving the terminal transition in one combined request.
+    const priorIntake = { ...resolvedIntake, merchant_response_type: "no_response" as const };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: priorIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: { ...openMerchantContactTask(), completed_at: "2026-01-20T00:00:00.000Z" },
+      timeline: null,
+      completed: true,
+      failed: false,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({
+        intake: resolvedIntake,
+        client_state: merchantResolvedTerminalClientState,
+      }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockCaseUpdatePatch).toHaveBeenCalled();
+  });
+
+  it("still enforces documentation validation for a client_state-only PATCH after an EARLIER, separate intake-only PATCH persisted incomplete documentation", async () => {
+    const incompleteIntake = { ...resolvedIntake, contact_date: "" };
+
+    // First request: intake-only PATCH — never gated (needsEscalationValidation requires
+    // client_state or archived_at) — persists incomplete documentation for real.
+    mockCaseUpdateMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: CASE_ID,
+        intake: incompleteIntake,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: merchantClientState,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-02T00:00:00.000Z",
+        archived_at: null,
+        case_label: null,
+        paid_at: "2026-01-01T00:00:00.000Z",
+      },
+      error: null,
+    });
+    const firstRes = await PATCH(buildPatchRequest({ intake: incompleteIntake }), routeContext());
+    expect(firstRes.status).toBe(200);
+
+    // Second request: client_state-only PATCH attempting the terminal transition. The server
+    // re-reads intake fresh from the DB — now reflecting the incomplete documentation the first
+    // request just persisted — and must still reject it.
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: {
+        client_state: merchantClientState,
+        archived_at: null,
+        updated_at: "2026-01-02T00:00:00.000Z",
+        paid_at: "2026-01-01T00:00:00.000Z",
+        intake: incompleteIntake,
+      },
+      error: null,
+    });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+
+    const secondRes = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(secondRes.status).toBe(409);
+    expect(mockCaseUpdatePatch).toHaveBeenCalledTimes(1); // only the first (intake-only) write happened
+  });
+
+  it("does not persist the terminal client_state, and returns the established retryable error, when task reconciliation fails on the select step", async () => {
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: null,
+      timeline: null,
+      completed: false,
+      failed: true,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR });
+    // The write must never happen — a persisted terminal action with an unreconciled task is
+    // exactly the dead end this ordering exists to prevent.
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+    expect(ensureOwnedFilingTaskAfterClientStateWrite).not.toHaveBeenCalled();
+  });
+
+  it("does not persist the terminal client_state, and returns the established retryable error, when task reconciliation fails on the completion-update step", async () => {
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: openMerchantContactTask(),
+      timeline: null,
+      completed: false,
+      failed: true,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR });
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+  });
+
+  it("proceeds to the write once reconciliation succeeds after a task was already completed by a prior attempt — idempotent retry", async () => {
+    // Simulates: an earlier PATCH successfully reconciled the task but then failed the write
+    // (e.g. a CAS conflict). The client retries the whole PATCH; reconciliation now finds the
+    // task already completed (completed: false, failed: false — a no-op, not a failure) and the
+    // write proceeds normally.
+    const alreadyReconciledTask = {
+      ...openMerchantContactTask(),
+      completed_at: "2026-01-20T00:00:00.000Z",
+    };
+    mockTasksSelect.mockResolvedValue({ data: [alreadyReconciledTask], error: null });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: alreadyReconciledTask,
+      timeline: null,
+      completed: false,
+      failed: false,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockCaseUpdatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client_state: expect.objectContaining({
+          approved_next_action: expect.objectContaining({
+            href: MERCHANT_RESOLVED_TERMINAL_HREF,
+            status: "completed",
+          }),
+        }),
+      })
+    );
+  });
+
+  it("does not self-invalidate the CAS when reconciliation's own timeline write advances justice_cases.updated_at (set_justice_cases_updated_at trigger fires on ANY row update, including a timeline-only write) — re-reads and adopts the fresh updated_at instead of failing on the stale one", async () => {
+    const CAS_BEFORE_RECONCILE = "2026-01-20T10:00:00.000Z";
+    // The set_justice_cases_updated_at trigger (before update ... for each row, unconditional on
+    // which columns changed) bumps this on appendCaseTimelineEntry's own justice_cases.update()
+    // call inside reconciliation — real, not hypothetical: confirmed against
+    // supabase/migrations/20260508120000_justice_cases.sql.
+    const CAS_AFTER_RECONCILE = "2026-01-20T10:00:05.123Z";
+
+    mockCaseSelectMaybeSingle
+      .mockResolvedValueOnce({
+        // Initial escalation-validation read, before reconciliation runs.
+        data: {
+          client_state: merchantClientState,
+          archived_at: null,
+          updated_at: CAS_BEFORE_RECONCILE,
+          paid_at: "2026-01-01T00:00:00.000Z",
+          intake: resolvedIntake,
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        // Route's own post-reconciliation re-read: same client_state/archived_at/intake — the
+        // ONLY thing that changed is updated_at, exactly as reconciliation's own writes alone
+        // would produce with no concurrent writer involved.
+        data: {
+          client_state: merchantClientState,
+          archived_at: null,
+          updated_at: CAS_AFTER_RECONCILE,
+          intake: resolvedIntake,
+        },
+        error: null,
+      });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: { ...openMerchantContactTask(), completed_at: "2026-01-20T10:00:05.000Z" },
+      timeline: [
+        {
+          id: "merchant_contact_task_done:task-merchant-contact-1",
+          case_id: CASE_ID,
+          type: "task_completed",
+          label: "Merchant contact completed",
+          ts: "2026-01-20T10:00:05.000Z",
+        },
+      ],
+      completed: true,
+      failed: false,
+    });
+    // Faithful CAS simulation: the write only "matches a row" when the route's
+    // .eq("updated_at", X) uses the FRESH value. If the route (bug) still used the stale
+    // pre-reconciliation value, this test would correctly fail with a 409 below.
+    mockCaseUpdateCasGate = { expectedUpdatedAt: CAS_AFTER_RECONCILE };
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.client_state.approved_next_action).toEqual(
+      merchantResolvedTerminalClientState.approved_next_action
+    );
+    // Proves the re-read genuinely happened (not just a hardcoded pass): validation read + the
+    // route's own post-reconciliation re-read, exactly twice.
+    expect(mockCaseSelectMaybeSingle).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails the CAS (409, no write attempted with any value) when a genuine concurrent writer changes client_state between the initial read and reconciliation — never silently overwrites a real concurrent change", async () => {
+    const CAS_BEFORE_RECONCILE = "2026-01-20T10:00:00.000Z";
+    const CAS_AFTER_CONCURRENT_WRITE = "2026-01-20T10:00:03.000Z";
+    const concurrentlyChangedClientState = {
+      prepared_packet_approved: true,
+      approved_next_action: {
+        label: "Merchant contact",
+        href: MANUAL_ACTION_TRACKING_REAL_MERCHANT_PREP_HREF,
+        status: "started",
+        started_at: "2026-01-20T10:00:02.000Z",
+      },
+    };
+
+    mockCaseSelectMaybeSingle
+      .mockResolvedValueOnce({
+        data: {
+          client_state: merchantClientState,
+          archived_at: null,
+          updated_at: CAS_BEFORE_RECONCILE,
+          paid_at: "2026-01-01T00:00:00.000Z",
+          intake: resolvedIntake,
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        // A real concurrent writer (e.g. an operator) changed client_state in the window between
+        // the initial read and this re-read — must never be silently clobbered.
+        data: {
+          client_state: concurrentlyChangedClientState,
+          archived_at: null,
+          updated_at: CAS_AFTER_CONCURRENT_WRITE,
+          intake: resolvedIntake,
+        },
+        error: null,
+      });
+    mockTasksSelect.mockResolvedValue({ data: [openMerchantContactTask()], error: null });
+    vi.mocked(completeMerchantContactFilingTaskIfOpen).mockResolvedValue({
+      task: { ...openMerchantContactTask(), completed_at: "2026-01-20T10:00:02.500Z" },
+      timeline: null,
+      completed: true,
+      failed: false,
+    });
+
+    const res = await PATCH(
+      buildPatchRequest({ client_state: merchantResolvedTerminalClientState }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    // Never attempted the actual terminal-state write — the conflict is caught by the re-read
+    // comparison, before the CAS-guarded update is even issued.
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
   });
 });
 

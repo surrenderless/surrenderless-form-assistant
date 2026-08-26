@@ -513,10 +513,17 @@ describe("resolveHandlingTrackingContextualLink", () => {
     ).toBeNull();
   });
 
-  it("exposes no navigation link for the merchant-resolved terminal state, on any surface", () => {
-    // MERCHANT_RESOLVED_TERMINAL_HREF has no real page — proving null here (not just that the
-    // derivedStep constant matches) is what rules out a clickable dead link on every surface
-    // that renders this component.
+  it("exposes no navigation link for the merchant-resolved terminal state, on any surface, GIVEN derivedStep is already HANDLING_TRACKING_STEP_COMPLETE", () => {
+    // NOTE: resolveHandlingTrackingContextualLink short-circuits to null for ANY derivedStep
+    // equal to HANDLING_TRACKING_STEP_COMPLETE, regardless of href — so this test alone proves
+    // nothing about MERCHANT_RESOLVED_TERMINAL_HREF specifically, and must not be relied on as
+    // proof that a given derivation function actually PRODUCES HANDLING_TRACKING_STEP_COMPLETE
+    // for this href. That is proven separately and directly against the real derivation
+    // functions: deriveChatManualActionNextStep / deriveChatHandlingTrackingLine
+    // (handlingTrackingProgress.test.ts) and derivePacketHandlingTrackingLine
+    // (packetHandlingTracking.test.ts) — the packet one previously did NOT produce
+    // HANDLING_TRACKING_STEP_COMPLETE for this href (it fell through to "Add filing records...",
+    // a real bug that test now catches).
     for (const surface of ["chat-ai", "hub", "cases", "packet", "plan"] as const) {
       expect(
         resolveHandlingTrackingContextualLink({
