@@ -44,6 +44,19 @@ describe("chat-ai page UX polish batch", () => {
     );
   });
 
+  it("keeps the literal word \"yes\" as a leading substring of the done state, not preceded by the checkmark", () => {
+    // Existing e2e specs assert on substrings like getByText("Evidence: yes") without exact:
+    // true; the decorative checkmark must render AFTER the word "yes", never before it, or every
+    // one of those (non-exact, substring) locators stops matching.
+    const doneBranchMatch = pageSource.match(
+      /function ActiveCaseChecklistStatus[\s\S]*?return done \? \(([\s\S]*?)\) : \(/
+    );
+    expect(doneBranchMatch).not.toBeNull();
+    const doneBranch = doneBranchMatch![1]!;
+    expect(doneBranch.indexOf("yes")).toBeGreaterThanOrEqual(0);
+    expect(doneBranch.indexOf("yes")).toBeLessThan(doneBranch.indexOf('aria-hidden="true">✓'));
+  });
+
   it("announces the primary chat-send error to assistive tech", () => {
     const errorParagraphMatch = pageSource.match(
       /\{apiError \? \(([\s\S]{0,200}?)\) : null\}/

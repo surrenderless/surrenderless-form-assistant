@@ -2456,8 +2456,8 @@ function ApprovedNextActionOutcomeTrackingForm({
 function ActiveCaseChecklistStatus({ done }: { done: boolean }) {
   return done ? (
     <span className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-400">
-      <span aria-hidden="true">✓</span>
       yes
+      <span aria-hidden="true">✓</span>
     </span>
   ) : (
     <span className="text-neutral-500 dark:text-neutral-400">not yet</span>
