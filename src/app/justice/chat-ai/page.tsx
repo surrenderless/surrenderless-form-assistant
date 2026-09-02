@@ -7001,7 +7001,7 @@ export default function JusticeChatAiPage() {
   return (
     <>
       <Header />
-      <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-lg flex-col bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
+      <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl flex-col bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {chatFirstActiveCaseBreadcrumbContinuity ? (
             <>

@@ -13,6 +13,8 @@ import path from "node:path";
  *  - the Active Case checklist visually differentiates a completed row from a pending one, not
  *    just via the word "yes" vs "not yet"
  *  - the primary chat-send error is announced to assistive tech via role="alert"
+ *  - the main container is widened from max-w-lg to max-w-2xl (desktop-only effect: both are
+ *    wider than any mobile viewport, so mobile layout/padding is unaffected either way)
  */
 
 const pageSource = fs.readFileSync(
@@ -55,6 +57,20 @@ describe("chat-ai page UX polish batch", () => {
     const doneBranch = doneBranchMatch![1]!;
     expect(doneBranch.indexOf("yes")).toBeGreaterThanOrEqual(0);
     expect(doneBranch.indexOf("yes")).toBeLessThan(doneBranch.indexOf('aria-hidden="true">✓'));
+  });
+
+  it("widens the main container to max-w-2xl and preserves the existing mobile-safe padding", () => {
+    const mainMatch = pageSource.match(
+      /<main className="(mx-auto flex min-h-\[calc\(100vh-4rem\)\][^"]*)">/
+    );
+    expect(mainMatch).not.toBeNull();
+    const mainClassName = mainMatch![1]!;
+    expect(mainClassName).toMatch(/\bmax-w-2xl\b/);
+    expect(mainClassName).not.toMatch(/\bmax-w-lg\b/);
+    expect(mainClassName).toMatch(/\bpx-4\b/);
+    expect(mainClassName).toMatch(/\bsm:px-6\b/);
+    expect(mainClassName).toMatch(/\bpy-8\b/);
+    expect(mainClassName).toMatch(/\bpb-16\b/);
   });
 
   it("announces the primary chat-send error to assistive tech", () => {
