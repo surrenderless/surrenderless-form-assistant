@@ -2451,6 +2451,19 @@ function ApprovedNextActionOutcomeTrackingForm({
   );
 }
 
+/** Visually differentiates a completed Active Case checklist row from a pending one, instead of
+ * relying on a skimming user to read "yes" vs "not yet" as plain text. */
+function ActiveCaseChecklistStatus({ done }: { done: boolean }) {
+  return done ? (
+    <span className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-400">
+      yes
+      <span aria-hidden="true">✓</span>
+    </span>
+  ) : (
+    <span className="text-neutral-500 dark:text-neutral-400">not yet</span>
+  );
+}
+
 export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
@@ -5512,7 +5525,7 @@ export default function JusticeChatAiPage() {
   }, [isUpdatingExistingCase, isLoaded, isSignedIn, refreshFullChatCaseContextFromServer]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, loading]);
 
   useEffect(() => {
@@ -6988,7 +7001,7 @@ export default function JusticeChatAiPage() {
   return (
     <>
       <Header />
-      <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-lg flex-col bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
+      <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl flex-col bg-gradient-to-b from-neutral-50 to-neutral-100/80 px-4 py-8 pb-16 dark:from-neutral-950 dark:to-neutral-900 sm:px-6">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {chatFirstActiveCaseBreadcrumbContinuity ? (
             <>
@@ -7037,7 +7050,7 @@ export default function JusticeChatAiPage() {
             ) : null}
             <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
               <li>
-                Basic case info: {activeCaseBasicsReady ? "yes" : "not yet"}
+                Basic case info: <ActiveCaseChecklistStatus done={activeCaseBasicsReady} />
                 {!activeCaseBasicsReady ? (
                   <>
                     {" · "}
@@ -7056,7 +7069,7 @@ export default function JusticeChatAiPage() {
                   "Evidence: loading..."
                 ) : (
                   <>
-                    Evidence: {activeCaseEvidenceReady ? "yes" : "not yet"}
+                    Evidence: <ActiveCaseChecklistStatus done={activeCaseEvidenceReady} />
                     {!activeCaseEvidenceReady ? (
                       <>
                         {" · "}
@@ -7078,7 +7091,7 @@ export default function JusticeChatAiPage() {
                 )}
               </li>
               <li>
-                Submission draft reviewed: {activeCaseDraftReviewed ? "yes" : "not yet"}
+                Submission draft reviewed: <ActiveCaseChecklistStatus done={activeCaseDraftReviewed} />
                 {!activeCaseDraftReviewed ? (
                   chatAiChecklistDraftReviewAction.kind === "scroll" ? (
                     <>
@@ -7107,7 +7120,7 @@ export default function JusticeChatAiPage() {
               </li>
               {activeCaseDraftReviewed ? (
                 <li>
-                  Prepared case packet reviewed: {preparedPacketApproved ? "yes" : "not yet"}
+                  Prepared case packet reviewed: <ActiveCaseChecklistStatus done={preparedPacketApproved} />
                   {!preparedPacketApproved ? (
                     chatAiChecklistPacketApprovalAction.kind === "scroll" ? (
                       <>
@@ -7704,7 +7717,7 @@ export default function JusticeChatAiPage() {
         ) : null}
 
         <div className={`mt-6 flex min-h-[280px] flex-1 flex-col ${cardCls}`}>
-          <div ref={scrollRef} className="max-h-[min(420px,50vh)] flex-1 space-y-3 overflow-y-auto pr-1">
+          <div ref={scrollRef} className="flex-1 space-y-3 pr-1">
             {messages.map((m) => (
               <div
                 key={m.id}
@@ -7742,7 +7755,11 @@ export default function JusticeChatAiPage() {
                 }
               }}
             />
-            {apiError ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{apiError}</p> : null}
+            {apiError ? (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                {apiError}
+              </p>
+            ) : null}
             <button
               type="button"
               disabled={loading || !inputValue.trim()}
