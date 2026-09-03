@@ -819,7 +819,7 @@ function ChatInlineSubmissionDraftReviewBlock({
               type="button"
               disabled={aiLoading || !draftText}
               onClick={() => void onGenerateAiDraft()}
-              className="inline-flex rounded-lg border border-blue-500/80 bg-blue-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-600 dark:hover:bg-blue-500"
+              className="inline-flex rounded-lg border border-blue-400/80 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
             >
               {aiLoading
                 ? "Generating…"
@@ -925,8 +925,7 @@ function ChatInlinePreparedPacketApprovalBlock({
     <div className="mt-3 space-y-2 rounded-lg border border-emerald-300/80 bg-emerald-50/60 px-3 py-2.5 dark:border-emerald-700/60 dark:bg-emerald-950/30">
       <p className="text-xs font-medium text-emerald-950 dark:text-emerald-100">Approve prepared packet</p>
       <p className="text-[11px] leading-relaxed text-emerald-800/90 dark:text-emerald-200/90">
-        Review your prepared case packet below. Approving records review inside Surrenderless — it does
-        not submit, file, or contact anyone.
+        Review your prepared case packet below, then approve to continue to payment and next steps.
       </p>
       {loading ? (
         <p className="text-[11px] text-emerald-900/90 dark:text-emerald-100/90">Loading packet preview…</p>
@@ -949,7 +948,7 @@ function ChatInlinePreparedPacketApprovalBlock({
               type="button"
               disabled={!packetText}
               onClick={() => onCopyPacket()}
-              className="inline-flex rounded-lg border border-emerald-500/80 bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+              className="inline-flex rounded-lg border border-emerald-400/80 bg-white px-3 py-1.5 text-xs font-medium text-emerald-900 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-700 dark:bg-neutral-900 dark:text-emerald-100 dark:hover:bg-neutral-800"
             >
               Copy packet
             </button>
