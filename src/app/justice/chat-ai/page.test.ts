@@ -81,3 +81,75 @@ describe("chat-ai page UX polish batch", () => {
     expect(errorParagraphMatch?.[1]).toMatch(/role="alert"/);
   });
 });
+
+/**
+ * Second UX polish batch, addressing findings from the second-pass audit:
+ *  - "Generate/Regenerate AI-assisted draft" and "Copy packet" are optional utility actions that
+ *    previously shared the exact same solid-filled button style as the actual required next
+ *    action in their card ("Mark draft reviewed" / "Approve prepared packet"), leaving no visual
+ *    signal for which button progresses the case. Only the primary action should be solid-filled.
+ *  - the packet-approval card no longer restates the draft-review card's "doesn't send anything
+ *    yet" reassurance in different words.
+ *
+ * A sticky-positioned compose input was tried and reverted: on mobile visual QA it overlapped
+ * chat bubbles and left a large blank gap before the Recap section. The compose input stays in
+ * normal document flow; the test below guards against sticky positioning being reintroduced here.
+ */
+describe("chat-ai page UX polish batch 2", () => {
+  function extractFunctionBody(functionName: string): string {
+    // Top-level functions in this file all start at column 0; bound extraction at the next one
+    // rather than counting braces, since a naive brace-match stops at the first nested `}` line.
+    const match = pageSource.match(
+      new RegExp(`\\nfunction ${functionName}\\([\\s\\S]*?(?=\\nfunction |\\nexport default function )`)
+    );
+    expect(match, `could not locate function ${functionName}`).not.toBeNull();
+    return match![0]!;
+  }
+
+  it("styles the optional 'Generate/Regenerate AI-assisted draft' button as secondary, not the same as the required 'Mark draft reviewed' action", () => {
+    const draftBlock = extractFunctionBody("ChatInlineSubmissionDraftReviewBlock");
+    const generateButtonMatch = draftBlock.match(
+      /onClick=\{\(\) => void onGenerateAiDraft\(\)\}[\s\S]{0,20}className="([^"]*)"/
+    );
+    expect(generateButtonMatch).not.toBeNull();
+    expect(generateButtonMatch![1]).not.toMatch(/\bbg-blue-700\b/);
+    expect(generateButtonMatch![1]).toMatch(/\bbg-white\b/);
+
+    const markReviewedButtonMatch = draftBlock.match(
+      /onClick=\{\(\) => void onSubmit\(\)\}[\s\S]{0,20}className="([^"]*)"/
+    );
+    expect(markReviewedButtonMatch).not.toBeNull();
+    expect(markReviewedButtonMatch![1]).toMatch(/\bbg-blue-700\b/);
+  });
+
+  it("styles the optional 'Copy packet' button as secondary, not the same as the required 'Approve prepared packet' action", () => {
+    const packetBlock = extractFunctionBody("ChatInlinePreparedPacketApprovalBlock");
+    const copyButtonMatch = packetBlock.match(
+      /onClick=\{\(\) => onCopyPacket\(\)\}[\s\S]{0,20}className="([^"]*)"/
+    );
+    expect(copyButtonMatch).not.toBeNull();
+    expect(copyButtonMatch![1]).not.toMatch(/\bbg-emerald-700\b/);
+    expect(copyButtonMatch![1]).toMatch(/\bbg-white\b/);
+
+    const approveButtonMatch = packetBlock.match(
+      /onClick=\{\(\) => void onSubmit\(\)\}[\s\S]{0,20}className="([^"]*)"/
+    );
+    expect(approveButtonMatch).not.toBeNull();
+    expect(approveButtonMatch![1]).toMatch(/\bbg-emerald-700\b/);
+  });
+
+  it("no longer restates the draft-review card's reassurance copy in the packet-approval card", () => {
+    const packetBlock = extractFunctionBody("ChatInlinePreparedPacketApprovalBlock");
+    expect(packetBlock).not.toMatch(/does not submit, file, or contact anyone/);
+  });
+
+  it("keeps the compose input in normal document flow — not sticky/bottom-0 (reverted: overlapped chat bubbles and left a blank gap before Recap on mobile)", () => {
+    const composeContainerMatch = pageSource.match(
+      /className="(mt-4 border-t border-neutral-100[^"]*)"/
+    );
+    expect(composeContainerMatch).not.toBeNull();
+    const composeClassName = composeContainerMatch![1]!;
+    expect(composeClassName).not.toMatch(/\bsticky\b/);
+    expect(composeClassName).not.toMatch(/\bbottom-0\b/);
+  });
+});
