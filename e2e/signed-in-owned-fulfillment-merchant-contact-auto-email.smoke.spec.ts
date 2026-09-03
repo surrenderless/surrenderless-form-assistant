@@ -12,7 +12,7 @@ import {
   expectUrlStaysOnChatAi,
   seedActiveCaseMerchantFilingStepWithCompanyEmail,
 } from "./helpers/chat-ai-ladder-continuity-e2e";
-import { chatAiTranscript } from "./helpers/chat-ai-owned-fulfillment-e2e";
+import { chatAiTranscript, expandChatAiDetailedTracking } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 
 test.beforeEach(() => {
@@ -27,12 +27,13 @@ test("owned merchant contact auto email delivery completes in chat without DIY c
   await seedActiveCaseMerchantFilingStepWithCompanyEmail(page);
   await waitForClerkBrowserApiSession(page);
 
-  await expect(activeCaseChecklist(page).getByText("Evidence: yes")).toBeVisible({
+  await expect(activeCaseChecklist(page).getByText("Evidence (optional): Added")).toBeVisible({
     timeout: 30_000,
   });
 
   const tracking = page.locator("#chat-ai-approved-action-tracking");
   await tracking.scrollIntoViewIfNeeded();
+  await expandChatAiDetailedTracking(tracking);
   await expect(tracking).toBeVisible({ timeout: 30_000 });
   await expect(tracking.getByRole("form", { name: "Record manual filing" })).toHaveCount(0);
   await expectNoOptionalDestinationPrepOrEvidenceHubLinks(page.locator("main"));

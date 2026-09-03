@@ -2463,6 +2463,101 @@ function ActiveCaseChecklistStatus({ done }: { done: boolean }) {
   );
 }
 
+/** Evidence is optional and never a required gate — "Added ✓" / "None added" avoids the "not
+ * yet" wording used for actually-required checklist rows, which implies blocking progress. */
+function EvidenceChecklistStatus({ added }: { added: boolean }) {
+  return added ? (
+    <span className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-400">
+      Added
+      <span aria-hidden="true">✓</span>
+    </span>
+  ) : (
+    <span className="text-neutral-500 dark:text-neutral-400">None added</span>
+  );
+}
+
+/**
+ * The single required-recipient-email form for tracking-phase demand-letter/merchant-contact
+ * outreach. Rendered exactly once (in the compact tracking summary near the top) — the detailed
+ * tracker below must never render its own copy of this form, only status/history text, or the
+ * same action would be duplicated on the page.
+ */
+function ChatTrackingRecipientEmailForm({
+  kind,
+  value,
+  onChange,
+  onSubmit,
+  submitting,
+  canSubmit,
+  onOperatorFallback,
+}: {
+  kind: "demand_letter" | "merchant_contact";
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  submitting: boolean;
+  canSubmit: boolean;
+  onOperatorFallback: () => void;
+}) {
+  const copy =
+    kind === "demand_letter"
+      ? {
+          intro: "We need the company's email to send your demand letter.",
+          detail:
+            "Surrenderless sends it to the company for you, so it can't go out until you add a valid recipient address. Nothing has been sent yet.",
+          submitLabel: "Save and send demand letter",
+          fallbackLabel: "I don't have it — let operators handle sending",
+          inputId: CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID,
+        }
+      : {
+          intro: "We need the company's email to send your first contact.",
+          detail:
+            "Surrenderless sends this message to the company itself, so it can't go out until you add a valid recipient address. Nothing has been sent yet.",
+          submitLabel: "Save and send first contact",
+          fallbackLabel: "I don't have it — let operators handle outreach",
+          inputId: CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID,
+        };
+
+  return (
+    <div className="mt-2 space-y-1.5 rounded-lg border border-amber-300/80 bg-amber-50/70 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
+      <p>
+        <span className="font-medium">{copy.intro}</span> {copy.detail}
+      </p>
+      <label htmlFor={copy.inputId} className="block font-medium">
+        Company / merchant contact email
+      </label>
+      <input
+        id={copy.inputId}
+        type="email"
+        inputMode="email"
+        autoComplete="off"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="support@company.com"
+        className="w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-amber-500 dark:border-amber-800/60 dark:bg-neutral-950 dark:text-neutral-100"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={!canSubmit || submitting}
+          onClick={() => onSubmit()}
+          className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
+        >
+          {submitting ? "Sending…" : copy.submitLabel}
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => onOperatorFallback()}
+          className="text-[11px] font-medium text-amber-800 underline underline-offset-2 hover:text-amber-950 disabled:opacity-60 dark:text-amber-200 dark:hover:text-amber-100"
+        >
+          {copy.fallbackLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function JusticeChatAiPage() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
@@ -2571,6 +2666,15 @@ export default function JusticeChatAiPage() {
   const [recentEvidenceDeleteSuccess, setRecentEvidenceDeleteSuccess] = useState<string | null>(null);
   const [showProofKeywordNudge, setShowProofKeywordNudge] = useState(false);
   const [proofNoteDetailsOpen, setProofNoteDetailsOpen] = useState(false);
+  /** Explicit user toggle for the chat composer disclosure; null means "not yet touched, use the
+   * state-driven default" (expanded before any dedicated action exists, collapsed once one does —
+   * see `dedicatedActionActive`). Never resets messages/input: <details> keeps its children
+   * mounted while collapsed, it only hides them visually. */
+  const [chatDisclosureUserOverride, setChatDisclosureUserOverride] = useState<boolean | null>(null);
+  /** Detailed per-destination tracking history — collapsed by default so the compact summary is
+   * the only thing shown without extra interaction; e2e specs that need this content expand it
+   * first (see chatAiExpandDetailedTracking in e2e/helpers). */
+  const [detailedTrackingOpen, setDetailedTrackingOpen] = useState(false);
   const [stagedProofNotes, setStagedProofNotes] = useState<StagedProofNote[]>([]);
   const [stagedProofFlushError, setStagedProofFlushError] = useState<string | null>(null);
   const [evidenceUploadFileName, setEvidenceUploadFileName] = useState<string | null>(null);
@@ -6594,6 +6698,44 @@ export default function JusticeChatAiPage() {
     !merchantContactOperatorFallbackChosen &&
     !showDemandLetterSendingNotice &&
     !showDemandLetterSendFailedNotice;
+  // State precedence for "what is the one primary action right now": draft review, then packet
+  // approval, then a required tracking input (a recipient email demand-letter/merchant-contact
+  // outreach can't send without), then passive tracking status, then ordinary chat/intake. Only
+  // one recipient-email lane can be pending at a time in practice, but this stays defensive if
+  // that ever changes.
+  const trackingRecipientEmailKind: "demand_letter" | "merchant_contact" | null =
+    showDemandLetterNeedsRecipientNotice
+      ? "demand_letter"
+      : showMerchantContactNeedsRecipientNotice
+        ? "merchant_contact"
+        : null;
+  const trackingNeedsRecipient = Boolean(approvedNextAction) && trackingRecipientEmailKind !== null;
+  // True whenever a dedicated banner-level action (draft review, packet approval, any lane's
+  // prep/practice/documentation step, or tracking) is showing, so a stressed user's single next
+  // action always lives up there — the chat composer and the standalone bottom Save button both
+  // demote to secondary the moment this is true, rather than staying always-prominent.
+  const dedicatedActionActive =
+    showInlineSubmissionDraftReview || showInlinePreparedPacketApproval || Boolean(approvedNextAction);
+  // Identifies *which* dedicated action is current, not just whether one exists — so moving from
+  // draft review to packet approval to a new tracked lane each counts as a fresh "first
+  // appearance" for the auto-collapse effect below, not just the very first one of the session.
+  const dedicatedActionKey = showInlineSubmissionDraftReview
+    ? "draft_review"
+    : showInlinePreparedPacketApproval
+      ? "packet_approval"
+      : approvedNextAction
+        ? `tracking:${approvedNextAction.href ?? ""}`
+        : "none";
+  // Expanded by default until a dedicated action exists, then collapsed by default — but an
+  // explicit user toggle (via the disclosure's own summary) always wins over that default.
+  const chatDisclosureOpen = chatDisclosureUserOverride ?? !dedicatedActionActive;
+  useEffect(() => {
+    // A manual toggle must only override the default for the dedicated action it was made
+    // during — otherwise one manual expand early in the session would permanently suppress
+    // auto-collapse for every later, unrelated dedicated action (draft review, packet approval,
+    // then tracking), which is exactly the "chat never collapses again" bug this guards against.
+    setChatDisclosureUserOverride(null);
+  }, [dedicatedActionKey]);
   const openPaymentDisputeTask = activeUuidCaseId
     ? findOpenPaymentDisputeFilingTask(savedTasks, activeUuidCaseId)
     : undefined;
@@ -7065,10 +7207,10 @@ export default function JusticeChatAiPage() {
               </li>
               <li>
                 {!showSavedEvidenceCount ? (
-                  "Evidence: loading..."
+                  "Evidence (optional): loading..."
                 ) : (
                   <>
-                    Evidence: <ActiveCaseChecklistStatus done={activeCaseEvidenceReady} />
+                    Evidence (optional): <EvidenceChecklistStatus added={activeCaseEvidenceReady} />
                     {!activeCaseEvidenceReady ? (
                       <>
                         {" · "}
@@ -7655,7 +7797,7 @@ export default function JusticeChatAiPage() {
               )
             ) : null}
             {approvedNextAction ? (
-              <>
+              <div>
                 {approvedNextAction.label?.trim() ? (
                   <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">
                     Next step:{" "}
@@ -7671,6 +7813,22 @@ export default function JusticeChatAiPage() {
                     </span>{" "}
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
+                ) : null}
+                {trackingNeedsRecipient && trackingRecipientEmailKind ? (
+                  <ChatTrackingRecipientEmailForm
+                    kind={trackingRecipientEmailKind}
+                    value={parts.company_contact_email}
+                    onChange={(value) => {
+                      if (merchantContactOperatorFallbackChosen) {
+                        setMerchantContactOperatorFallbackChosen(false);
+                      }
+                      setParts((prev) => ({ ...prev, company_contact_email: value }));
+                    }}
+                    onSubmit={() => void handleAddMerchantContactRecipientAndRetry()}
+                    submitting={addingMerchantContactRecipient}
+                    canSubmit={merchantContactRecipientOnFileValid}
+                    onOperatorFallback={() => void handleChooseMerchantContactOperatorFallback()}
+                  />
                 ) : null}
                 {chatResolutionFlowExposed && approvedNextAction.outcome_note?.trim() ? (
                   <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
@@ -7688,7 +7846,7 @@ export default function JusticeChatAiPage() {
                     className="mt-0.5 text-xs text-neutral-600 dark:text-neutral-400"
                   />
                 ) : null}
-              </>
+              </div>
             ) : null}
             <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
             {!chatFirstWorkLinkContinuity ? (
@@ -7715,8 +7873,15 @@ export default function JusticeChatAiPage() {
           </div>
         ) : null}
 
-        <div className={`mt-6 flex min-h-[280px] flex-1 flex-col ${cardCls}`}>
-          <div ref={scrollRef} className="flex-1 space-y-3 pr-1">
+        <details
+          className={`mt-6 flex min-h-[280px] flex-1 flex-col ${cardCls}`}
+          open={chatDisclosureOpen}
+          onToggle={(e) => setChatDisclosureUserOverride(e.currentTarget.open)}
+        >
+          <summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+            Need to change something? Continue in chat
+          </summary>
+          <div ref={scrollRef} className="mt-4 flex-1 space-y-3 pr-1">
             {messages.map((m) => (
               <div
                 key={m.id}
@@ -7763,14 +7928,29 @@ export default function JusticeChatAiPage() {
               type="button"
               disabled={loading || !inputValue.trim()}
               onClick={() => void handleSend()}
-              className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+              className={
+                !dedicatedActionActive && basicsMissing.length > 0
+                  ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                  : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+              }
             >
               {loading ? "Sending…" : "Send"}
             </button>
+            {dedicatedActionActive && showSessionChangesPanel ? (
+              <button
+                type="button"
+                disabled={submitting || loading}
+                onClick={() => void handleContinueToPreview()}
+                className="mt-2 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+              >
+                {submitting ? "Saving…" : "Save changes"}
+              </button>
+            ) : null}
           </div>
+        </details>
 
-          <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
-            <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Recap</p>
+        <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
+          <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Recap</p>
             <ul className="mt-2 space-y-1 text-xs text-neutral-700 dark:text-neutral-300">
               {parts.company_name.trim() ? (
                 <li>
@@ -7854,6 +8034,15 @@ export default function JusticeChatAiPage() {
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
                   </p>
                 ) : null}
+                <details
+                  className="group mt-2"
+                  open={detailedTrackingOpen}
+                  onToggle={(e) => setDetailedTrackingOpen(e.currentTarget.open)}
+                >
+                  <summary className="cursor-pointer text-xs font-semibold text-emerald-950 dark:text-emerald-100">
+                    Detailed status &amp; history
+                  </summary>
+                  <div className="mt-2">
                 {showStateAgFilingQueuedNotice ? (
                   <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                     <span className="font-medium">State AG filing queued.</span> Surrenderless has
@@ -7877,52 +8066,14 @@ export default function JusticeChatAiPage() {
                       </span>
                     </p>
                   ) : showDemandLetterNeedsRecipientNotice ? (
-                    <div className="mt-2 space-y-1.5 rounded-lg border border-amber-300/80 bg-amber-50/70 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
-                      <p>
-                        <span className="font-medium">We need the company&apos;s email to send your
-                        demand letter.</span>{" "}
-                        Surrenderless sends it to the company for you, so it can&apos;t go out until you
-                        add a valid recipient address. Nothing has been sent yet.
-                      </p>
-                      <label
-                        htmlFor={CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID}
-                        className="block font-medium"
-                      >
-                        Company / merchant contact email
-                      </label>
-                      <input
-                        id={CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID}
-                        type="email"
-                        inputMode="email"
-                        autoComplete="off"
-                        value={parts.company_contact_email}
-                        onChange={(e) =>
-                          setParts((prev) => ({ ...prev, company_contact_email: e.target.value }))
-                        }
-                        placeholder="support@company.com"
-                        className="w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-amber-500 dark:border-amber-800/60 dark:bg-neutral-950 dark:text-neutral-100"
-                      />
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={
-                            !merchantContactRecipientOnFileValid || addingMerchantContactRecipient
-                          }
-                          onClick={() => void handleAddMerchantContactRecipientAndRetry()}
-                          className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
-                        >
-                          {addingMerchantContactRecipient ? "Sending…" : "Save and send demand letter"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={addingMerchantContactRecipient}
-                          onClick={() => void handleChooseMerchantContactOperatorFallback()}
-                          className="text-[11px] font-medium text-amber-800 underline underline-offset-2 hover:text-amber-950 disabled:opacity-60 dark:text-amber-200 dark:hover:text-amber-100"
-                        >
-                          I don&apos;t have it — let operators handle sending
-                        </button>
-                      </div>
-                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
+                      <span className="font-medium">We need the company&apos;s email to send your
+                      demand letter.</span>{" "}
+                      Nothing has been sent yet.
+                      <span className="mt-1 block text-amber-800/90 dark:text-amber-200/90">
+                        Add it in the required-action box above to continue.
+                      </span>
+                    </p>
                   ) : (
                     <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                       {showDemandLetterSendingNotice ? (
@@ -8026,52 +8177,14 @@ export default function JusticeChatAiPage() {
                       </span>
                     </p>
                   ) : showMerchantContactNeedsRecipientNotice ? (
-                    <div className="mt-2 space-y-1.5 rounded-lg border border-amber-300/80 bg-amber-50/70 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">
-                      <p>
-                        <span className="font-medium">We need the company&apos;s email to send your
-                        first contact.</span>{" "}
-                        Surrenderless sends this message to the company itself, so it can&apos;t go out
-                        until you add a valid recipient address. Nothing has been sent yet.
-                      </p>
-                      <label
-                        htmlFor={CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID}
-                        className="block font-medium"
-                      >
-                        Company / merchant contact email
-                      </label>
-                      <input
-                        id={CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID}
-                        type="email"
-                        inputMode="email"
-                        autoComplete="off"
-                        value={parts.company_contact_email}
-                        onChange={(e) =>
-                          setParts((prev) => ({ ...prev, company_contact_email: e.target.value }))
-                        }
-                        placeholder="support@company.com"
-                        className="w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-[12px] text-neutral-900 outline-none focus:border-amber-500 dark:border-amber-800/60 dark:bg-neutral-950 dark:text-neutral-100"
-                      />
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={
-                            !merchantContactRecipientOnFileValid || addingMerchantContactRecipient
-                          }
-                          onClick={() => void handleAddMerchantContactRecipientAndRetry()}
-                          className="inline-flex rounded-lg border border-amber-500/80 bg-amber-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-600 dark:hover:bg-amber-500"
-                        >
-                          {addingMerchantContactRecipient ? "Sending…" : "Save and send first contact"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={addingMerchantContactRecipient}
-                          onClick={() => void handleChooseMerchantContactOperatorFallback()}
-                          className="text-[11px] font-medium text-amber-800 underline underline-offset-2 hover:text-amber-950 disabled:opacity-60 dark:text-amber-200 dark:hover:text-amber-100"
-                        >
-                          I don&apos;t have it — let operators handle outreach
-                        </button>
-                      </div>
-                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
+                      <span className="font-medium">We need the company&apos;s email to send your
+                      first contact.</span>{" "}
+                      Nothing has been sent yet.
+                      <span className="mt-1 block text-amber-800/90 dark:text-amber-200/90">
+                        Add it in the required-action box above to continue.
+                      </span>
+                    </p>
                   ) : (
                     <p className="mt-2 text-xs leading-relaxed text-emerald-900 dark:text-emerald-100">
                       {showMerchantContactSendingNotice ? (
@@ -8622,6 +8735,8 @@ export default function JusticeChatAiPage() {
                     ) : null}
                   </p>
                 ) : null}
+                  </div>
+                </details>
               </div>
             ) : null}
 
@@ -9141,16 +9256,21 @@ export default function JusticeChatAiPage() {
                 </ul>
               </div>
             ) : null}
-            <button
-              type="button"
-              disabled={submitting || loading || basicsMissing.length > 0}
-              onClick={() => void handleContinueToPreview()}
-              className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
-            >
-              {submitting ? "Saving…" : "Save and continue in chat"}
-            </button>
+            {!dedicatedActionActive ? (
+              <button
+                type="button"
+                disabled={submitting || loading || basicsMissing.length > 0}
+                onClick={() => void handleContinueToPreview()}
+                className={
+                  basicsMissing.length === 0
+                    ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                    : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                }
+              >
+                {submitting ? "Saving…" : "Save and continue in chat"}
+              </button>
+            ) : null}
           </div>
-        </div>
       </main>
     </>
   );

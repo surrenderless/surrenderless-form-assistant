@@ -34,10 +34,11 @@ describe("chat-ai page UX polish batch", () => {
 
   it("visually differentiates completed vs pending Active Case checklist rows", () => {
     expect(pageSource).toMatch(/function ActiveCaseChecklistStatus/);
+    // Evidence uses its own EvidenceChecklistStatus component (see the next-action precedence
+    // suite below) — the other three required-info rows use ActiveCaseChecklistStatus.
     const usages = pageSource.match(/<ActiveCaseChecklistStatus done=\{/g) ?? [];
-    expect(usages.length).toBe(4);
+    expect(usages.length).toBe(3);
     expect(pageSource).toMatch(/Basic case info: <ActiveCaseChecklistStatus done=\{activeCaseBasicsReady\}/);
-    expect(pageSource).toMatch(/Evidence: <ActiveCaseChecklistStatus done=\{activeCaseEvidenceReady\}/);
     expect(pageSource).toMatch(
       /Submission draft reviewed: <ActiveCaseChecklistStatus done=\{activeCaseDraftReviewed\}/
     );
@@ -151,5 +152,206 @@ describe("chat-ai page UX polish batch 2", () => {
     const composeClassName = composeContainerMatch![1]!;
     expect(composeClassName).not.toMatch(/\bsticky\b/);
     expect(composeClassName).not.toMatch(/\bbottom-0\b/);
+  });
+});
+
+/**
+ * Corrected state-precedence redesign. Priority order for "the one primary action right now":
+ *   1. draft review (showInlineSubmissionDraftReview)
+ *   2. packet approval (showInlinePreparedPacketApproval)
+ *   3. required tracking input (trackingNeedsRecipient — a recipient email a lane can't send
+ *      without)
+ *   4. passive tracking status (approvedNextAction exists, no input required)
+ *   5. ordinary chat/intake (none of the above — ordinary Send-driven conversation)
+ *
+ * Evidence is explicitly excluded from this precedence — it is optional/recommended and must
+ * never be the reason chat expands, collapses, or blocks any of the above.
+ */
+describe("chat-ai page next-action precedence redesign", () => {
+  function extractFunctionBody(functionName: string): string {
+    const match = pageSource.match(
+      new RegExp(`\\nfunction ${functionName}\\([\\s\\S]*?(?=\\nfunction |\\nexport default function )`)
+    );
+    expect(match, `could not locate function ${functionName}`).not.toBeNull();
+    return match![0]!;
+  }
+
+  it("derives trackingNeedsRecipient only from an existing approvedNextAction plus exactly one of the two recipient-needed flags", () => {
+    const match = pageSource.match(
+      /const trackingNeedsRecipient = Boolean\(approvedNextAction\) && trackingRecipientEmailKind !== null;/
+    );
+    expect(match).not.toBeNull();
+    const kindMatch = pageSource.match(
+      /const trackingRecipientEmailKind: "demand_letter" \| "merchant_contact" \| null =\s*\n\s*showDemandLetterNeedsRecipientNotice\s*\n\s*\? "demand_letter"\s*\n\s*: showMerchantContactNeedsRecipientNotice\s*\n\s*\? "merchant_contact"\s*\n\s*: null;/
+    );
+    expect(kindMatch).not.toBeNull();
+  });
+
+  it("derives dedicatedActionActive from exactly draft review, packet approval, or an existing approvedNextAction — nothing else, evidence never included", () => {
+    const match = pageSource.match(
+      /const dedicatedActionActive =\s*\n\s*showInlineSubmissionDraftReview \|\| showInlinePreparedPacketApproval \|\| Boolean\(approvedNextAction\);/
+    );
+    expect(match).not.toBeNull();
+  });
+
+  it("impossible/overlapping combinations: draft review and packet approval can never both be the active gate, by construction of showInlinePreparedPacketApproval", () => {
+    // showInlinePreparedPacketApproval already requires activeCaseDraftReviewed (draft review
+    // done), and showInlineSubmissionDraftReview requires !activeCaseDraftReviewed — mutually
+    // exclusive by the existing gates this redesign builds on top of, not new logic.
+    const packetGate = pageSource.match(
+      /const showInlinePreparedPacketApproval =\s*([\s\S]*?);\r?\n/
+    );
+    expect(packetGate).not.toBeNull();
+    expect(packetGate![1]).toMatch(/activeCaseDraftReviewed/);
+    expect(packetGate![1]).toMatch(/!preparedPacketApproved/);
+    const draftGate = pageSource.match(/const showInlineSubmissionDraftReview =\s*([\s\S]*?);\r?\n/);
+    expect(draftGate).not.toBeNull();
+    expect(draftGate![1]).toMatch(/!activeCaseDraftReviewed/);
+  });
+
+  it("renders the recipient-email form exactly once (in the compact tracking summary), never in the detailed tracker", () => {
+    const usages = pageSource.match(/<ChatTrackingRecipientEmailForm/g) ?? [];
+    expect(usages.length).toBe(1);
+    // The detailed tracker's two former recipient-form branches must now be status-only text
+    // pointing back up to the one real form, not a second copy of the label/input/buttons.
+    const detailedTrackerBody = pageSource.match(
+      /<details\s+className="group mt-2"[\s\S]*?<\/details>/
+    );
+    expect(detailedTrackerBody).not.toBeNull();
+    expect(detailedTrackerBody![0]).not.toMatch(/<input/);
+    expect(detailedTrackerBody![0]).toMatch(/Add it in the required-action box above to continue\./);
+  });
+
+  it("defines the shared recipient-email form component with both lane copy variants and no duplicated markup between them", () => {
+    const formBody = extractFunctionBody("ChatTrackingRecipientEmailForm");
+    expect(formBody).toMatch(/"Save and send demand letter"/);
+    expect(formBody).toMatch(/"Save and send first contact"/);
+    // Exactly one <input> and one submit <button> definition — proof the two lanes share markup
+    // via the `copy` object rather than each rendering their own copy of the form.
+    expect((formBody.match(/<input/g) ?? []).length).toBe(1);
+    expect((formBody.match(/type="submit"|Sending…/g) ?? []).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("labels evidence as optional and uses Added/None added, never the blocking-sounding 'not yet'", () => {
+    expect(pageSource).toMatch(/"Evidence \(optional\): loading\.\.\."/);
+    expect(pageSource).toMatch(
+      /Evidence \(optional\): <EvidenceChecklistStatus added=\{activeCaseEvidenceReady\}/
+    );
+    const evidenceComponent = extractFunctionBody("EvidenceChecklistStatus");
+    expect(evidenceComponent).toMatch(/>None added</);
+    expect(evidenceComponent).not.toMatch(/not yet/);
+    // Same lesson as the ActiveCaseChecklistStatus fix: the checkmark must render AFTER the word
+    // "Added", or non-exact e2e substring locators like getByText("Evidence (optional): Added")
+    // stop matching.
+    const addedBranch = evidenceComponent.match(/return added \? \(([\s\S]*?)\) : \(/);
+    expect(addedBranch).not.toBeNull();
+    expect(addedBranch![1]!.indexOf("Added")).toBeGreaterThanOrEqual(0);
+    expect(addedBranch![1]!.indexOf("Added")).toBeLessThan(addedBranch![1]!.indexOf('aria-hidden="true">✓'));
+  });
+
+  it("never makes evidence a gate: it appears nowhere in the dedicatedActionActive, showInline*, or trackingNeedsRecipient formulas", () => {
+    for (const formulaName of [
+      "dedicatedActionActive",
+      "showInlineSubmissionDraftReview",
+      "showInlinePreparedPacketApproval",
+      "trackingNeedsRecipient",
+    ]) {
+      const match = pageSource.match(new RegExp(`const ${formulaName} =\\s*([\\s\\S]*?);\\r?\\n`));
+      expect(match, `could not locate formula ${formulaName}`).not.toBeNull();
+      expect(match![1]).not.toMatch(/evidence/i);
+    }
+  });
+
+  it("wraps the chat composer in an accessible native <details> disclosure with a summary, not a custom widget", () => {
+    const detailsMatch = pageSource.match(
+      /<details\s+className=\{`mt-6 flex min-h-\[280px\][\s\S]*?<summary[\s\S]*?<\/summary>/
+    );
+    expect(detailsMatch).not.toBeNull();
+    expect(detailsMatch![0]).toMatch(/open=\{chatDisclosureOpen\}/);
+    expect(detailsMatch![0]).toMatch(/onToggle=\{\(e\) => setChatDisclosureUserOverride\(e\.currentTarget\.open\)\}/);
+    expect(detailsMatch![0]).toMatch(/cursor-pointer/);
+  });
+
+  it("computes chatDisclosureOpen as expanded-by-default before a dedicated action, collapsed-by-default once one exists, with an explicit user override always winning", () => {
+    const match = pageSource.match(
+      /const chatDisclosureOpen = chatDisclosureUserOverride \?\? !dedicatedActionActive;/
+    );
+    expect(match).not.toBeNull();
+  });
+
+  it("keeps Recap outside (a sibling after) the collapsible chat disclosure, so it never hides when chat collapses", () => {
+    const afterDetails = pageSource.split(
+      '<summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">'
+    )[1];
+    expect(afterDetails).toBeDefined();
+    const closesBeforeRecap = afterDetails!.indexOf("</details>");
+    const recapIndex = afterDetails!.indexOf(">Recap<");
+    expect(closesBeforeRecap).toBeGreaterThan(0);
+    expect(recapIndex).toBeGreaterThan(closesBeforeRecap);
+  });
+
+  it("preserves messages and unsaved input across open/close by using native <details> (children stay mounted, not conditionally rendered)", () => {
+    // messages.map and the textarea must be direct descendants of the <details> we just verified
+    // above, not behind a separate {open ? ... : null} conditional that would unmount them.
+    const chatSectionMatch = pageSource.match(
+      /<details\s+className=\{`mt-6 flex min-h-\[280px\][\s\S]*?<\/details>/
+    );
+    expect(chatSectionMatch).not.toBeNull();
+    expect(chatSectionMatch![0]).toMatch(/\{messages\.map\(/);
+    expect(chatSectionMatch![0]).toMatch(/id="chat-ai-input"/);
+    expect(chatSectionMatch![0]).not.toMatch(/\{chatDisclosureOpen \? /);
+  });
+
+  it("Send is the only filled/primary control before a dedicated action while basics are incomplete; Save and continue takes over once ready, and both this is never in a dedicated-action state at the same time as the standalone bottom Save button existing", () => {
+    const sendButtonMatch = pageSource.match(
+      /onClick=\{\(\) => void handleSend\(\)\}[\s\S]{0,40}className=\{([\s\S]*?)\}\s*\n\s*>/
+    );
+    expect(sendButtonMatch).not.toBeNull();
+    expect(sendButtonMatch![1]).toMatch(/!dedicatedActionActive && basicsMissing\.length > 0/);
+    expect(sendButtonMatch![1]).toMatch(/bg-blue-600/);
+
+    const bottomSaveMatch = pageSource.match(
+      /\{!dedicatedActionActive \? \(\s*\n\s*<button[\s\S]{0,1200}?"Save and continue in chat"/
+    );
+    expect(bottomSaveMatch).not.toBeNull();
+    expect(bottomSaveMatch![0]).toMatch(/basicsMissing\.length === 0/);
+  });
+
+  it("hides the standalone bottom Save button once any dedicated review/approval/tracking state exists", () => {
+    const match = pageSource.match(
+      /\{!dedicatedActionActive \? \(\s*\n\s*<button\s*\n\s*type="button"\s*\n\s*disabled=\{submitting \|\| loading \|\| basicsMissing\.length > 0\}\s*\n\s*onClick=\{\(\) => void handleContinueToPreview\(\)\}/
+    );
+    expect(match).not.toBeNull();
+  });
+
+  it("exposes a save-changes action inside the expanded chat disclosure when edits are pending, instead of only via the (now-hidden) bottom button", () => {
+    const chatSectionMatch = pageSource.match(
+      /<details\s+className=\{`mt-6 flex min-h-\[280px\][\s\S]*?<\/details>/
+    );
+    expect(chatSectionMatch).not.toBeNull();
+    expect(chatSectionMatch![0]).toMatch(/\{dedicatedActionActive && showSessionChangesPanel \? \(/);
+    expect(chatSectionMatch![0]).toMatch(/"Save changes"/);
+  });
+
+  it("keeps the detailed tracking panel below the compact summary and collapsed by default", () => {
+    const match = pageSource.match(
+      /<details\s*\n\s*className="group mt-2"\s*\n\s*open=\{detailedTrackingOpen\}\s*\n\s*onToggle=\{\(e\) => setDetailedTrackingOpen\(e\.currentTarget\.open\)\}\s*\n\s*>/
+    );
+    expect(match).not.toBeNull();
+    expect(pageSource).toMatch(/const \[detailedTrackingOpen, setDetailedTrackingOpen\] = useState\(false\);/);
+  });
+
+  it("resets the chat disclosure's manual override whenever the specific dedicated action changes, so auto-collapse works for every new action, not just the session's first one", () => {
+    // Regression: chatDisclosureUserOverride previously never reset, so one manual expand during
+    // any dedicated action permanently suppressed auto-collapse for every later, unrelated one
+    // (draft review -> packet approval -> tracking).
+    expect(pageSource).toMatch(
+      /const dedicatedActionKey = showInlineSubmissionDraftReview\s*\n\s*\? "draft_review"\s*\n\s*: showInlinePreparedPacketApproval\s*\n\s*\? "packet_approval"\s*\n\s*: approvedNextAction\s*\n\s*\? `tracking:\$\{approvedNextAction\.href \?\? ""\}`\s*\n\s*: "none";/
+    );
+    const effectMatch = pageSource.match(
+      /useEffect\(\(\) => \{\s*\n([\s\S]*?)\}, \[dedicatedActionKey\]\);/
+    );
+    expect(effectMatch).not.toBeNull();
+    expect(effectMatch![1]).toMatch(/setChatDisclosureUserOverride\(null\);/);
   });
 });

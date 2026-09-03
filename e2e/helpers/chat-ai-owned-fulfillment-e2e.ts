@@ -57,6 +57,18 @@ export function chatAiActionTracking(page: Page): Locator {
 }
 
 /**
+ * The per-destination status/history inside the tracking card is collapsed by default (a
+ * <details> disclosure) — expand it before asserting on anything inside, since collapsed content
+ * is not in the accessibility tree and getByText/getByRole positive assertions won't find it.
+ * Safe to call more than once (native <details> stays open once expanded). Takes the `tracking`
+ * locator already in scope at every call site rather than `page`, so it works the same whether
+ * the caller's page variable is named `page` or `consumerPage`.
+ */
+export async function expandChatAiDetailedTracking(tracking: Locator): Promise<void> {
+  await tracking.getByText("Detailed status & history").click();
+}
+
+/**
  * Drive a signed-in consumer through chat-ai UI until FTC is queued for operator fulfillment.
  * Uses production chat gates and mock pipelines only — no direct client_state patches.
  */
