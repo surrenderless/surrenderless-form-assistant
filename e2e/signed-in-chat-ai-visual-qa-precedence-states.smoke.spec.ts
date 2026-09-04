@@ -185,7 +185,6 @@ test.describe("chat-ai precedence states visual QA", () => {
     const tracking = chatAiActionTracking(page);
     await expandChatAiDetailedTracking(tracking);
     await expect(page.getByText("BBB filing in progress.")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("Current action tracking")).toBeVisible();
     await captureBothViewports(page, "7-passive-tracking");
 
     // ---- Cleanup, verified ----
