@@ -10,6 +10,7 @@ import {
 } from "./helpers/clerk-e2e";
 import {
   chatAiTranscript,
+  expandChatAiComposer,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_USER_MESSAGE,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import {
@@ -128,7 +129,11 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
       page.locator("li").filter({ hasText: "Company:" }).filter({ hasText: "Acme Retail" })
     ).toBeVisible();
 
-    // Continuing must PATCH the existing case (mode: "update"), never re-POST a duplicate.
+    // Continuing must PATCH the existing case (mode: "update"), never re-POST a duplicate. The
+    // resumed case has a submission draft review pending immediately after commit, so the
+    // composer's "Save and continue in chat" recap button is collapsed behind the composer
+    // disclosure by design (exactly-one-primary-action precedence) — continue through chat instead,
+    // which drives the same handleContinueToPreview update-mode PATCH.
     let duplicateCreatePosted = false;
     const onRequest = (req: import("@playwright/test").Request) => {
       if (req.method() === "POST" && /\/api\/justice\/cases(?:\?|$)/.test(req.url())) {
@@ -137,7 +142,6 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     };
     page.on("request", onRequest);
 
-    const continueButton = page.getByRole("button", { name: "Save and continue in chat" });
     try {
       const updateCaseResponse = page.waitForResponse(
         (res) =>
@@ -145,8 +149,9 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
           res.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`),
         { timeout: 30_000 }
       );
-      await expect(continueButton).toBeEnabled({ timeout: 15_000 });
-      await continueButton.click();
+      await expandChatAiComposer(page);
+      await chatInput.fill(CHAT_INTAKE_COMMIT_MESSAGE);
+      await page.getByRole("button", { name: "Send" }).click();
       const updated = await updateCaseResponse;
       expect(updated.ok()).toBeTruthy();
     } finally {
