@@ -8073,8 +8073,7 @@ export default function JusticeChatAiPage() {
                     </p>
                   ) : showDemandLetterNeedsRecipientNotice ? (
                     <p className="mt-2 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
-                      <span className="font-medium">Still waiting on the company&apos;s email.</span>{" "}
-                      Nothing has been sent yet.
+                      <span className="font-medium">Still waiting on the company&apos;s email.</span>
                       <span className="mt-1 block text-amber-800/90 dark:text-amber-200/90">
                         Add it in the required-action box above to continue.
                       </span>
@@ -8183,8 +8182,7 @@ export default function JusticeChatAiPage() {
                     </p>
                   ) : showMerchantContactNeedsRecipientNotice ? (
                     <p className="mt-2 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
-                      <span className="font-medium">Still waiting on the company&apos;s email.</span>{" "}
-                      Nothing has been sent yet.
+                      <span className="font-medium">Still waiting on the company&apos;s email.</span>
                       <span className="mt-1 block text-amber-800/90 dark:text-amber-200/90">
                         Add it in the required-action box above to continue.
                       </span>

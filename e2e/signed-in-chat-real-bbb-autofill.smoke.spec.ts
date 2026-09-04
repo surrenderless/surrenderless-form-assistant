@@ -9,6 +9,10 @@ import {
   hydrateChatAiSessionForRealBbbAutofill,
   seedPlaywrightMockCaseForRealBbbChatAutofill,
 } from "./helpers/real-bbb-chat-autofill-e2e";
+import {
+  chatAiActionTracking,
+  expandChatAiDetailedTracking,
+} from "./helpers/chat-ai-owned-fulfillment-e2e";
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
@@ -32,6 +36,8 @@ test("signed-in chat suppresses Run BBB autofill when Surrenderless owns BBB ful
   // signal here.
   await expect(page.locator("#chat-ai-transcript")).toBeVisible({ timeout: 30_000 });
 
+  const tracking = chatAiActionTracking(page);
+  await expandChatAiDetailedTracking(tracking);
   await expect(page.getByText("BBB filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByText(buildChatCaseProgressNarrationMessage("bbb_queued"))

@@ -35,10 +35,14 @@ test.describe("signed-in chat-ai pre-commit intake draft restore", () => {
   }) => {
     test.setTimeout(120_000);
 
+    // Establish a real, hydrated Clerk browser session before the first authenticated API call —
+    // storageState alone (no prior navigation) is not sufficient for server-side auth checks to
+    // reliably see the session yet.
+    await page.goto("/justice/chat-ai");
+    await waitForClerkBrowserApiSession(page);
     // This intends a genuinely blank intake — detach any case a prior test left active so
     // chat-ai's resume-on-mount fallback can't silently resume it instead.
     await resetPlaywrightMockActiveCaseIfAny(page);
-    await page.goto("/justice/chat-ai");
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
 
@@ -97,10 +101,14 @@ test.describe("signed-in chat-ai pre-commit intake draft restore", () => {
   });
 
   test("a fresh session writes no draft until the first real message", async ({ page }) => {
+    // Establish a real, hydrated Clerk browser session before the first authenticated API call —
+    // storageState alone (no prior navigation) is not sufficient for server-side auth checks to
+    // reliably see the session yet.
+    await page.goto("/justice/chat-ai");
+    await waitForClerkBrowserApiSession(page);
     // This intends a genuinely blank intake — detach any case a prior test left active so
     // chat-ai's resume-on-mount fallback can't silently resume it instead.
     await resetPlaywrightMockActiveCaseIfAny(page);
-    await page.goto("/justice/chat-ai");
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
 

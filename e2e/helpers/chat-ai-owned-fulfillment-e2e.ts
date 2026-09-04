@@ -67,6 +67,20 @@ export async function expandChatAiDetailedTracking(tracking: Locator): Promise<v
 }
 
 /**
+ * The composer (textarea/Send/Save changes) is collapsed by default behind a <details> disclosure
+ * once a dedicated draft-review/packet-approval/tracking action exists — expand it before typing
+ * into #chat-ai-input in any test that needs to send a chat message during one of those states.
+ * A no-op if it's already expanded (e.g. before any dedicated action exists, where it's expanded
+ * by default) — clicking the summary toggles, so this only clicks when actually collapsed.
+ */
+export async function expandChatAiComposer(page: Page): Promise<void> {
+  const composerInput = page.locator("#chat-ai-input");
+  if (await composerInput.isVisible()) return;
+  await page.getByText("Need to change something? Continue in chat").click();
+  await composerInput.waitFor({ state: "visible", timeout: 10_000 });
+}
+
+/**
  * Drive a signed-in consumer through chat-ai UI until FTC is queued for operator fulfillment.
  * Uses production chat gates and mock pipelines only — no direct client_state patches.
  */
