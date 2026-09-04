@@ -305,22 +305,44 @@ describe("chat-ai page next-action precedence redesign", () => {
   });
 
   it("preserves the transcript and unsaved composer input across open/close by using native <details> for the composer only (children stay mounted, not conditionally rendered)", () => {
-    // The transcript (messages.map) is never inside the composer's <details> — it can't be
-    // hidden by the composer collapsing. The textarea/Send/Save-changes controls ARE inside it,
-    // and must not be behind a separate {open ? ... : null} conditional that would unmount them.
-    const composerDetailsMatch = pageSource.match(
-      /<details\s+className="mt-4 border-t border-neutral-100[^"]*"\s*\n\s*open=\{chatDisclosureOpen\}[\s\S]*?<\/details>/
-    );
-    expect(composerDetailsMatch).not.toBeNull();
-    expect(composerDetailsMatch![0]).not.toMatch(/\{messages\.map\(/);
-    expect(composerDetailsMatch![0]).toMatch(/id="chat-ai-input"/);
-    expect(composerDetailsMatch![0]).not.toMatch(/\{chatDisclosureOpen \? /);
+    // The transcript (messages.map) is never inside the composer IIFE — it can't be hidden by
+    // the composer collapsing. The textarea/Send/Save-changes controls (composerFields) ARE
+    // defined inside it and referenced (not conditionally re-rendered) by both branches, so they
+    // stay mounted whether or not a dedicated action currently wraps them in a <details>.
+    const composerIifeMatch = pageSource.match(/\{\(\(\) => \{([\s\S]*?)\}\)\(\)\}/);
+    expect(composerIifeMatch).not.toBeNull();
+    const composerIife = composerIifeMatch![0]!;
+    expect(composerIife).not.toMatch(/\{messages\.map\(/);
+    expect(composerIife).toMatch(/id="chat-ai-input"/);
+    expect(composerIife).toMatch(/const composerFields = \(/);
+    expect(composerIife).toMatch(/return dedicatedActionActive \? \(/);
+    // Both branches reference the same composerFields — not two separate copies of the JSX.
+    expect((composerIife.match(/\{composerFields\}/g) ?? []).length).toBe(2);
 
     const transcriptDivMatch = pageSource.match(
-      /<div ref=\{scrollRef\} id="chat-ai-transcript" className="[^"]*">([\s\S]*?)<\/div>\s*\n\s*<details/
+      /<div ref=\{scrollRef\} id="chat-ai-transcript" className="[^"]*">([\s\S]*?)<\/div>\s*\n\s*\{\(\(\) => \{/
     );
     expect(transcriptDivMatch).not.toBeNull();
     expect(transcriptDivMatch![1]).toMatch(/\{messages\.map\(/);
+  });
+
+  it("collapses the composer behind a 'Continue in chat' disclosure only when a dedicated action exists — ordinary intake chat shows it as a plain, always-visible section", () => {
+    const composerIifeMatch = pageSource.match(/\{\(\(\) => \{([\s\S]*?)\}\)\(\)\}/);
+    expect(composerIifeMatch).not.toBeNull();
+    const composerIife = composerIifeMatch![0]!;
+    // The dedicated-action branch is the only place "Continue in chat" wording appears.
+    expect((composerIife.match(/Need to change something\? Continue in chat/g) ?? []).length).toBe(1);
+    const detailsBranchMatch = composerIife.match(
+      /return dedicatedActionActive \? \(([\s\S]*?)\) : \(([\s\S]*)\);\s*\n\s*\}\)\(\)/
+    );
+    expect(detailsBranchMatch).not.toBeNull();
+    const [, dedicatedBranch, plainBranch] = detailsBranchMatch!;
+    expect(dedicatedBranch).toMatch(/<details/);
+    expect(dedicatedBranch).toMatch(/Need to change something\? Continue in chat/);
+    // The non-dedicated branch is a plain div — no <details>/<summary> wrapper, no disclosure text.
+    expect(plainBranch).not.toMatch(/<details/);
+    expect(plainBranch).not.toMatch(/<summary/);
+    expect(plainBranch).not.toMatch(/Continue in chat/);
   });
 
   it("Send is the only filled/primary control before a dedicated action while basics are incomplete; Save and continue takes over once ready, and both this is never in a dedicated-action state at the same time as the standalone bottom Save button existing", () => {
@@ -346,12 +368,10 @@ describe("chat-ai page next-action precedence redesign", () => {
   });
 
   it("exposes a save-changes action inside the expanded chat disclosure when edits are pending, instead of only via the (now-hidden) bottom button", () => {
-    const chatSectionMatch = pageSource.match(
-      /<details\s+className="mt-4 border-t border-neutral-100[^"]*"\s*\n\s*open=\{chatDisclosureOpen\}[\s\S]*?<\/details>/
-    );
-    expect(chatSectionMatch).not.toBeNull();
-    expect(chatSectionMatch![0]).toMatch(/\{dedicatedActionActive && showSessionChangesPanel \? \(/);
-    expect(chatSectionMatch![0]).toMatch(/"Save changes"/);
+    const composerIifeMatch = pageSource.match(/\{\(\(\) => \{([\s\S]*?)\}\)\(\)\}/);
+    expect(composerIifeMatch).not.toBeNull();
+    expect(composerIifeMatch![0]).toMatch(/\{dedicatedActionActive && showSessionChangesPanel \? \(/);
+    expect(composerIifeMatch![0]).toMatch(/"Save changes"/);
   });
 
   it("keeps the detailed tracking panel below the compact summary and collapsed by default", () => {
@@ -374,5 +394,105 @@ describe("chat-ai page next-action precedence redesign", () => {
     );
     expect(effectMatch).not.toBeNull();
     expect(effectMatch![1]).toMatch(/setChatDisclosureUserOverride\(null\);/);
+  });
+});
+
+/**
+ * Bounded UX correction batch driven by the 14 authenticated visual-QA screenshots. Each fix
+ * below guards one concrete, wrong-or-absent piece of copy or layout found in a specific
+ * precedence state, not a hypothetical.
+ */
+describe("chat-ai page precedence UX correction batch", () => {
+  it("places 'Save and continue in chat' right after the composer, before Recap/Evidence/What happens next — not buried beneath them", () => {
+    const composerIifeEnd = pageSource.indexOf("})()}");
+    expect(composerIifeEnd).toBeGreaterThan(0);
+    const saveContinueIndex = pageSource.indexOf('"Save and continue in chat"', composerIifeEnd);
+    const recapIndex = pageSource.indexOf(">Recap<", composerIifeEnd);
+    const whatHappensNextIndex = pageSource.indexOf("What happens next", composerIifeEnd);
+    expect(saveContinueIndex).toBeGreaterThan(composerIifeEnd);
+    expect(recapIndex).toBeGreaterThan(saveContinueIndex);
+    expect(whatHappensNextIndex).toBeGreaterThan(saveContinueIndex);
+  });
+
+  it("never shows the redundant 'below in this chat' hint once the draft-review or packet-approval panel is already showing above it", () => {
+    const focusLineMatch = pageSource.match(/const activeCaseFocusLine =\s*([\s\S]*?);\r?\n\s*const chatAiChecklistDraftReviewAction/);
+    expect(focusLineMatch).not.toBeNull();
+    const focusLineBody = focusLineMatch![1]!;
+    expect(focusLineBody).toMatch(/showInlineSubmissionDraftReview \|\| showInlinePreparedPacketApproval/);
+    // The redundant/misdirected "below in this chat" text for these two states is gone — the
+    // panel already renders above this hint with its own heading and primary action.
+    const branchMatch = focusLineBody.match(
+      /showInlineSubmissionDraftReview \|\| showInlinePreparedPacketApproval\s*\n\s*\?([\s\S]*?):/
+    );
+    expect(branchMatch).not.toBeNull();
+    expect(branchMatch![1]).toMatch(/null/);
+  });
+
+  it("renders 'Next step' / 'Approved next action' status exactly once (in Current action tracking), not duplicated in the Active Case panel above it", () => {
+    expect((pageSource.match(/Next step: <strong>/g) ?? []).length).toBe(1);
+    expect((pageSource.match(/Approved next action:\s*\n/g) ?? []).length).toBe(1);
+  });
+
+  it("distinguishes plan-approved from execution-blocked: the tracking card says execution is blocked while a recipient email is missing, never a bare 'Approved'", () => {
+    const trackingCardMatch = pageSource.match(
+      /id=\{CHAT_AI_APPROVED_ACTION_TRACKING_ELEMENT_ID\}[\s\S]*?<details/
+    );
+    expect(trackingCardMatch).not.toBeNull();
+    expect(trackingCardMatch![0]).toMatch(/trackingNeedsRecipient \? \(/);
+    expect(trackingCardMatch![0]).toMatch(/Execution blocked: waiting for the company&apos;s email\./);
+  });
+
+  it("makes 'What happens next' state-aware: never lists draft review, packet approval, or tracking as future work once each is already done", () => {
+    const fnMatch = pageSource.match(
+      /function getContinueHandoffSteps\(input: ContinueHandoffStepsInput\): string\[\] \{([\s\S]*?)\n\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const fnBody = fnMatch![1]!;
+    expect(fnBody).toMatch(/input\.draftReviewed \? null : chatFirstDraftStep/);
+    expect(fnBody).toMatch(/input\.packetApproved \? null : chatFirstPacketStep/);
+    expect(fnBody).toMatch(/input\.hasApprovedNextAction \? null : chatFirstTrackingStep/);
+
+    const typeMatch = pageSource.match(/type ContinueHandoffStepsInput = \{([\s\S]*?)\};/);
+    expect(typeMatch).not.toBeNull();
+    expect(typeMatch![1]).toMatch(/draftReviewed\?: boolean;/);
+    expect(typeMatch![1]).toMatch(/packetApproved\?: boolean;/);
+    expect(typeMatch![1]).toMatch(/hasApprovedNextAction\?: boolean;/);
+
+    const callSiteMatch = pageSource.match(/getContinueHandoffSteps\(\{([\s\S]*?)\}\)/);
+    expect(callSiteMatch).not.toBeNull();
+    expect(callSiteMatch![1]).toMatch(/draftReviewed: activeCaseDraftReviewed,/);
+    expect(callSiteMatch![1]).toMatch(/packetApproved: preparedPacketApproved,/);
+    expect(callSiteMatch![1]).toMatch(/hasApprovedNextAction: Boolean\(approvedNextAction\),/);
+  });
+
+  it("keeps optional proof/evidence secondary and compact during fulfillment: collapsed behind a disclosure once a dedicated action is active", () => {
+    const evidenceIntroMatch = pageSource.match(
+      /\{dedicatedActionActive \? \(\s*\n\s*<details className="mt-2">([\s\S]*?)\) : \(/
+    );
+    expect(evidenceIntroMatch).not.toBeNull();
+    expect(evidenceIntroMatch![1]).toMatch(/About proof &amp; evidence \(optional\)/);
+    expect(evidenceIntroMatch![1]).toMatch(/As we build your case in this chat/);
+  });
+
+  it("keeps the contact-proof validation error beside the composer's Send control, only after an attempt sets it — never floating, unattached, in the Recap section", () => {
+    const composerIifeMatch = pageSource.match(/\{\(\(\) => \{([\s\S]*?)\}\)\(\)\}/);
+    expect(composerIifeMatch).not.toBeNull();
+    expect(composerIifeMatch![0]).toMatch(
+      /\{contactProofError && contactProofError !== stillNeededHint \? \(/
+    );
+
+    const recapSectionMatch = pageSource.match(
+      /<p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Recap<\/p>([\s\S]*?)\{isUpdatingExistingCase && approvedNextAction/
+    );
+    expect(recapSectionMatch).not.toBeNull();
+    expect(recapSectionMatch![1]).not.toMatch(/contactProofError/);
+  });
+
+  it("truthfully narrates merchant-contact/demand-letter progress: never claims queued/sending/submitted while the recipient email is missing", () => {
+    expect(pageSource).toMatch(
+      /recipientMissingForQueuedOutreach: !hasValidMerchantContactRecipient\(\s*\n\s*buildJusticeIntakeFromParts\(partsRef\.current\)\s*\n\s*\),/
+    );
+    const callSites = pageSource.match(/recipientMissingForQueuedOutreach: !hasValidMerchantContactRecipient\(/g) ?? [];
+    expect(callSites.length).toBe(2);
   });
 });

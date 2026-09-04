@@ -72,6 +72,7 @@ import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction } from "@/lib/justice/types";
 
 export type ChatCaseProgressMilestone =
+  | "merchant_contact_needs_recipient"
   | "merchant_contact_queued"
   | "merchant_contact_queued_stale"
   | "merchant_contact_sending"
@@ -105,6 +106,7 @@ export type ChatCaseProgressMilestone =
   | "state_ag_queued"
   | "state_ag_queued_stale"
   | "state_ag_confirmed"
+  | "demand_letter_needs_recipient"
   | "demand_letter_queued"
   | "demand_letter_queued_stale"
   | "demand_letter_sending"
@@ -115,6 +117,7 @@ export type ChatCaseProgressMilestone =
   | "operator_case_closed";
 
 export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilestone[] = [
+  "merchant_contact_needs_recipient",
   "merchant_contact_queued",
   "merchant_contact_queued_stale",
   "merchant_contact_sending",
@@ -148,6 +151,7 @@ export const CHAT_CASE_PROGRESS_MILESTONE_ORDER: readonly ChatCaseProgressMilest
   "state_ag_queued",
   "state_ag_queued_stale",
   "state_ag_confirmed",
+  "demand_letter_needs_recipient",
   "demand_letter_queued",
   "demand_letter_queued_stale",
   "demand_letter_sending",
@@ -252,6 +256,13 @@ export type ChatCaseProgressObservation = {
   filings: readonly ManualActionTrackingFiling[];
   /** Server archived_at when known (from case refresh). */
   archivedAt?: string | null;
+  /**
+   * True when merchant-contact/demand-letter outreach has no valid recipient email on file yet.
+   * Both destinations auto-send to the same company_contact_email, so a single flag covers both —
+   * while true, "queued"/"sending" milestones must not fire (nothing can actually go out), and a
+   * truthful "needs_recipient" milestone is narrated once instead.
+   */
+  recipientMissingForQueuedOutreach?: boolean;
 };
 
 /** @deprecated Prefer hasBbbFilingWithConfirmation from bbbFilingTask — re-exported for older imports. */
@@ -277,13 +288,17 @@ export function deriveSatisfiedChatCaseProgressMilestones(
       filings: input.filings,
     })
   ) {
-    satisfied.push("merchant_contact_queued");
-    const openMerchantTask = findOpenMerchantContactFilingTask(input.tasks, caseId);
-    if (isMerchantContactEmailSending(openMerchantTask)) {
-      satisfied.push("merchant_contact_sending");
-    }
-    if (isMerchantContactEmailFailed(openMerchantTask)) {
-      satisfied.push("merchant_contact_send_failed");
+    if (input.recipientMissingForQueuedOutreach) {
+      satisfied.push("merchant_contact_needs_recipient");
+    } else {
+      satisfied.push("merchant_contact_queued");
+      const openMerchantTask = findOpenMerchantContactFilingTask(input.tasks, caseId);
+      if (isMerchantContactEmailSending(openMerchantTask)) {
+        satisfied.push("merchant_contact_sending");
+      }
+      if (isMerchantContactEmailFailed(openMerchantTask)) {
+        satisfied.push("merchant_contact_send_failed");
+      }
     }
   }
 
@@ -441,13 +456,17 @@ export function deriveSatisfiedChatCaseProgressMilestones(
       filings: input.filings,
     })
   ) {
-    satisfied.push("demand_letter_queued");
-    const openDemandLetterTask = findOpenDemandLetterFilingTask(input.tasks, caseId);
-    if (isDemandLetterEmailSending(openDemandLetterTask)) {
-      satisfied.push("demand_letter_sending");
-    }
-    if (isDemandLetterEmailFailed(openDemandLetterTask)) {
-      satisfied.push("demand_letter_send_failed");
+    if (input.recipientMissingForQueuedOutreach) {
+      satisfied.push("demand_letter_needs_recipient");
+    } else {
+      satisfied.push("demand_letter_queued");
+      const openDemandLetterTask = findOpenDemandLetterFilingTask(input.tasks, caseId);
+      if (isDemandLetterEmailSending(openDemandLetterTask)) {
+        satisfied.push("demand_letter_sending");
+      }
+      if (isDemandLetterEmailFailed(openDemandLetterTask)) {
+        satisfied.push("demand_letter_send_failed");
+      }
     }
   }
 
@@ -503,6 +522,8 @@ export function buildChatCaseProgressNarrationMessage(
   milestone: ChatCaseProgressMilestone
 ): string {
   switch (milestone) {
+    case "merchant_contact_needs_recipient":
+      return "Merchant or company contact is approved, but I still need the company's email before Surrenderless can send anything. Add it above to continue.";
     case "merchant_contact_queued":
       return "I've queued merchant or company contact with Surrenderless. Stay here in chat — I'll update you when outreach is sending or sent.";
     case "merchant_contact_queued_stale":
@@ -569,6 +590,8 @@ export function buildChatCaseProgressNarrationMessage(
       return stalePhraseMessage(QUEUED_MILESTONE_STALE_CONFIG.state_ag_queued!.destinationPhrase);
     case "state_ag_confirmed":
       return "Your State Attorney General filing is confirmed on file. Surrenderless is advancing your case to the next step.";
+    case "demand_letter_needs_recipient":
+      return "Your demand letter is approved, but I still need the company's email before Surrenderless can send it. Add it above to continue.";
     case "demand_letter_queued":
       return "Your demand letter is queued with Surrenderless. Stay here in chat — I'll update you when it's sending or sent.";
     case "demand_letter_queued_stale":

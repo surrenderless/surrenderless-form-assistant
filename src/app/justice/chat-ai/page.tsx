@@ -576,6 +576,10 @@ type ContinueHandoffStepsInput = {
   savedEvidenceCount: number;
   sessionChangeLines?: string[];
   chatFirstContinuity?: boolean;
+  /** Already-completed milestones are never listed as future work below. */
+  draftReviewed?: boolean;
+  packetApproved?: boolean;
+  hasApprovedNextAction?: boolean;
 };
 
 function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
@@ -585,7 +589,11 @@ function getContinueHandoffSteps(input: ContinueHandoffStepsInput): string[] {
   const chatFirstPacketStep = CHAT_CONTINUE_HANDOFF_CHAT_FIRST_PACKET_STEP;
   const chatFirstTrackingStep = CHAT_CONTINUE_HANDOFF_CHAT_FIRST_TRACKING_STEP;
   const funnelSteps = input.chatFirstContinuity
-    ? [chatFirstDraftStep, chatFirstPacketStep, chatFirstTrackingStep]
+    ? [
+        input.draftReviewed ? null : chatFirstDraftStep,
+        input.packetApproved ? null : chatFirstPacketStep,
+        input.hasApprovedNextAction ? null : chatFirstTrackingStep,
+      ].filter((step): step is string => step !== null)
     : [previewStep, postPreviewFunnelStep];
 
   if (input.isStagedFlushRetry) {
@@ -4541,6 +4549,9 @@ export default function JusticeChatAiPage() {
           tasks,
           filings,
           archivedAt: caseArchivedAtRef.current,
+          recipientMissingForQueuedOutreach: !hasValidMerchantContactRecipient(
+            buildJusticeIntakeFromParts(partsRef.current)
+          ),
         });
       }
       return { tasks, filings };
@@ -4756,6 +4767,9 @@ export default function JusticeChatAiPage() {
             tasks: preview.tasks,
             filings: preview.filings,
             archivedAt: caseArchivedAtRef.current,
+            recipientMissingForQueuedOutreach: !hasValidMerchantContactRecipient(
+              buildJusticeIntakeFromParts(partsRef.current)
+            ),
           });
         }
         if (
@@ -6384,6 +6398,13 @@ export default function JusticeChatAiPage() {
   const showContinueHandoff = basicsMissing.length === 0 && contactProofCheck.ok;
   const showSessionChangesPanel =
     sessionChangeLines.length > 0 && !showContinueHandoff;
+  const activeCaseSessionCaseId =
+    typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+  const activeCaseDraftReviewed = activeCaseSessionCaseId
+    ? submissionDraftReviewOverride ||
+      readSessionSubmissionDraftReviewed(activeCaseSessionCaseId) ||
+      submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
+    : false;
   const continueHandoffSteps = showContinueHandoff
     ? getContinueHandoffSteps({
         isUpdatingExistingCase,
@@ -6392,16 +6413,12 @@ export default function JusticeChatAiPage() {
         savedEvidenceCount: savedEvidenceCount ?? 0,
         sessionChangeLines: isUpdatingExistingCase ? sessionChangeLines : [],
         chatFirstContinuity: Boolean(isSignedIn),
+        draftReviewed: activeCaseDraftReviewed,
+        packetApproved: preparedPacketApproved,
+        hasApprovedNextAction: Boolean(approvedNextAction),
       })
     : [];
 
-  const activeCaseSessionCaseId =
-    typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-  const activeCaseDraftReviewed = activeCaseSessionCaseId
-    ? submissionDraftReviewOverride ||
-      readSessionSubmissionDraftReviewed(activeCaseSessionCaseId) ||
-      submissionDraftReviewedInTimeline(activeCaseSessionCaseId)
-    : false;
   const showInlineSubmissionDraftReview =
     isUpdatingExistingCase &&
     isLoaded &&
@@ -7070,15 +7087,16 @@ export default function JusticeChatAiPage() {
   const activeCaseFocusLine =
     basicsMissing.length > 0
       ? stillNeededBeforePreviewMessage(basicsMissing)
-      : showInlineSubmissionDraftReview
-        ? "Review your submission draft below in this chat."
-        : showInlinePreparedPacketApproval
-          ? "Approve your prepared packet below in this chat."
-          : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
-            ? chatAiKeepInChatLadder
-              ? "Review your submission draft below in this chat."
-              : "Review your submission draft before continuing."
-            : "Describe what to add or change, then save in chat.";
+      : showInlineSubmissionDraftReview || showInlinePreparedPacketApproval
+        ? // The draft-review / packet-approval panel already renders above this line with its
+          // own heading and primary action — repeating "below in this chat" here was both
+          // redundant and pointed the wrong direction, since the panel is actually above it.
+          null
+        : activeCaseBasicsReady && activeCaseEvidenceReady && !activeCaseDraftReviewed
+          ? chatAiKeepInChatLadder
+            ? "Review your submission draft below in this chat."
+            : "Review your submission draft before continuing."
+          : "Describe what to add or change, then save in chat.";
   const chatAiChecklistDraftReviewAction = resolveChatAiChecklistDraftReviewAction({
     draftReviewed: activeCaseDraftReviewed,
     keepInChat: chatAiKeepInChatLadder,
@@ -7798,22 +7816,9 @@ export default function JusticeChatAiPage() {
             ) : null}
             {approvedNextAction ? (
               <div>
-                {approvedNextAction.label?.trim() ? (
-                  <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">
-                    Next step:{" "}
-                    <strong className="text-neutral-800 dark:text-neutral-200">
-                      {approvedNextAction.label.trim()}
-                    </strong>
-                  </p>
-                ) : null}
-                {approvedNextActionStatusLabel(approvedNextAction.status) ? (
-                  <p className="mt-1 text-xs text-neutral-700 dark:text-neutral-300">
-                    <span className="font-medium text-neutral-700 dark:text-neutral-300">
-                      Approved next action:
-                    </span>{" "}
-                    {approvedNextActionStatusLabel(approvedNextAction.status)}
-                  </p>
-                ) : null}
+                {/* "Next step" / "Approved next action" status lives only in the Current action
+                    tracking card below — this block keeps just the actionable recipient-email
+                    input and resolution-specific detail, so status has exactly one home. */}
                 {trackingNeedsRecipient && trackingRecipientEmailKind ? (
                   <ChatTrackingRecipientEmailForm
                     kind={trackingRecipientEmailKind}
@@ -7848,7 +7853,9 @@ export default function JusticeChatAiPage() {
                 ) : null}
               </div>
             ) : null}
-            <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
+            {activeCaseFocusLine ? (
+              <p className="mt-2 text-xs text-neutral-700 dark:text-neutral-300">{activeCaseFocusLine}</p>
+            ) : null}
             {!chatFirstWorkLinkContinuity ? (
               <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
                 <Link
@@ -7896,63 +7903,96 @@ export default function JusticeChatAiPage() {
             ) : null}
           </div>
 
-          <details
-            className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80"
-            open={chatDisclosureOpen}
-            onToggle={(e) => setChatDisclosureUserOverride(e.currentTarget.open)}
-          >
-            <summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-              Need to change something? Continue in chat
-            </summary>
-            <div className="mt-4">
-              <label className={labelCls} htmlFor="chat-ai-input">
-                Your message
-              </label>
-              <textarea
-                id="chat-ai-input"
-                className={`${inputCls} min-h-[88px] resize-y`}
-                value={inputValue}
-                onChange={(e) => {
-                  setInputValue(e.target.value);
-                  setApiError(null);
-                }}
-                disabled={loading}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && !loading && !sendInFlightRef.current) {
-                    e.preventDefault();
-                    void handleSend();
-                  }
-                }}
-              />
-              {apiError ? (
-                <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
-                  {apiError}
-                </p>
-              ) : null}
-              <button
-                type="button"
-                disabled={loading || !inputValue.trim()}
-                onClick={() => void handleSend()}
-                className={
-                  !dedicatedActionActive && basicsMissing.length > 0
-                    ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
-                    : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
-                }
-              >
-                {loading ? "Sending…" : "Send"}
-              </button>
-              {dedicatedActionActive && showSessionChangesPanel ? (
+          {(() => {
+            const composerFields = (
+              <div className="mt-4">
+                <label className={labelCls} htmlFor="chat-ai-input">
+                  Your message
+                </label>
+                <textarea
+                  id="chat-ai-input"
+                  className={`${inputCls} min-h-[88px] resize-y`}
+                  value={inputValue}
+                  onChange={(e) => {
+                    setInputValue(e.target.value);
+                    setApiError(null);
+                  }}
+                  disabled={loading}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !loading && !sendInFlightRef.current) {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                />
+                {apiError ? (
+                  <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                    {apiError}
+                  </p>
+                ) : null}
+                {contactProofError && contactProofError !== stillNeededHint ? (
+                  <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                    {contactProofError}
+                  </p>
+                ) : null}
                 <button
                   type="button"
-                  disabled={submitting || loading}
-                  onClick={() => void handleContinueToPreview()}
-                  className="mt-2 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                  disabled={loading || !inputValue.trim()}
+                  onClick={() => void handleSend()}
+                  className={
+                    !dedicatedActionActive && basicsMissing.length > 0
+                      ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                      : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                  }
                 >
-                  {submitting ? "Saving…" : "Save changes"}
+                  {loading ? "Sending…" : "Send"}
                 </button>
-              ) : null}
-            </div>
-          </details>
+                {dedicatedActionActive && showSessionChangesPanel ? (
+                  <button
+                    type="button"
+                    disabled={submitting || loading}
+                    onClick={() => void handleContinueToPreview()}
+                    className="mt-2 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                  >
+                    {submitting ? "Saving…" : "Save changes"}
+                  </button>
+                ) : null}
+              </div>
+            );
+            // Only a dedicated action (draft review, packet approval, tracking) collapses the
+            // composer behind a disclosure — ordinary intake chat is never behind "Continue in
+            // chat" wording, since there is nothing else on the page competing for attention.
+            return dedicatedActionActive ? (
+              <details
+                className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80"
+                open={chatDisclosureOpen}
+                onToggle={(e) => setChatDisclosureUserOverride(e.currentTarget.open)}
+              >
+                <summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                  Need to change something? Continue in chat
+                </summary>
+                {composerFields}
+              </details>
+            ) : (
+              <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
+                {composerFields}
+              </div>
+            );
+          })()}
+          {!dedicatedActionActive ? (
+            <button
+              type="button"
+              disabled={submitting || loading || basicsMissing.length > 0}
+              onClick={() => void handleContinueToPreview()}
+              className={
+                basicsMissing.length === 0
+                  ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                  : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+              }
+            >
+              {submitting ? "Saving…" : "Save and continue in chat"}
+            </button>
+          ) : null}
         </div>
 
         <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
@@ -8010,9 +8050,6 @@ export default function JusticeChatAiPage() {
             {stillNeededHint ? (
               <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{stillNeededHint}</p>
             ) : null}
-            {contactProofError && contactProofError !== stillNeededHint ? (
-              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{contactProofError}</p>
-            ) : null}
 
             {isUpdatingExistingCase && approvedNextAction ? (
               <div
@@ -8038,6 +8075,14 @@ export default function JusticeChatAiPage() {
                       Approved next action:
                     </span>{" "}
                     {approvedNextActionStatusLabel(approvedNextAction.status)}
+                  </p>
+                ) : null}
+                {trackingNeedsRecipient ? (
+                  // A plan being approved is not the same as fulfillment being able to proceed —
+                  // say so explicitly rather than letting a bare "Approved" imply nothing is
+                  // blocking outreach.
+                  <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+                    Execution blocked: waiting for the company&apos;s email.
                   </p>
                 ) : null}
                 <details
@@ -9017,14 +9062,32 @@ export default function JusticeChatAiPage() {
                   </ul>
                 </details>
               ) : null}
-              <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
-                As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
-                screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
-                transcripts. Attach image or PDF files here, or add short proof notes for what you already have on file.
-              </p>
-              <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
-                {CHAT_AI_EVIDENCE_ESCALATION_HINT}
-              </p>
+              {dedicatedActionActive ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                    About proof &amp; evidence (optional)
+                  </summary>
+                  <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                    As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
+                    screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
+                    transcripts. Attach image or PDF files here, or add short proof notes for what you already have on file.
+                  </p>
+                  <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+                    {CHAT_AI_EVIDENCE_ESCALATION_HINT}
+                  </p>
+                </details>
+              ) : (
+                <>
+                  <p className="mt-2 text-xs leading-relaxed text-neutral-700 dark:text-neutral-300">
+                    As we build your case in this chat, Surrenderless can organize proof that strengthens it — for example
+                    screenshots, receipts, order confirmations, emails, account pages, tracking pages, call notes, or chat
+                    transcripts. Attach image or PDF files here, or add short proof notes for what you already have on file.
+                  </p>
+                  <p className="mt-2 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">
+                    {CHAT_AI_EVIDENCE_ESCALATION_HINT}
+                  </p>
+                </>
+              )}
               {canAddProofNoteInChat ? (
                 <div className="mt-3 rounded-lg border border-neutral-200/80 bg-white/60 px-3 py-2 dark:border-neutral-600/80 dark:bg-neutral-900/40">
                   <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
@@ -9257,20 +9320,6 @@ export default function JusticeChatAiPage() {
                   ))}
                 </ul>
               </div>
-            ) : null}
-            {!dedicatedActionActive ? (
-              <button
-                type="button"
-                disabled={submitting || loading || basicsMissing.length > 0}
-                onClick={() => void handleContinueToPreview()}
-                className={
-                  basicsMissing.length === 0
-                    ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
-                    : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
-                }
-              >
-                {submitting ? "Saving…" : "Save and continue in chat"}
-              </button>
             ) : null}
           </div>
       </main>
