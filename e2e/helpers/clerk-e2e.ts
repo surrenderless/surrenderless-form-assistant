@@ -168,32 +168,52 @@ export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
  * flow), or it will remove the very case being resumed.
  */
 export async function resetPlaywrightMockActiveCaseIfAny(page: Page): Promise<void> {
-  const res = await page.request.post("/api/testing/playwright-mock-case-reset", {
-    data: { case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID },
-  });
-  if (!res.ok()) {
-    throw new Error(
-      `resetPlaywrightMockActiveCaseIfAny: reset POST failed (${res.status()}): ${await res.text()}`
-    );
-  }
+  // The caller has typically just navigated to an authenticated page to establish the Clerk
+  // session (page.request calls need a real page load first — storageState cookies alone are not
+  // reliably usable by page.request before one). That same navigation can trigger chat-ai's own
+  // resume-on-mount effect against the very case this is about to remove, which is a one-time,
+  // bounded async chain (transcript + case-context refresh) that can still be in flight when the
+  // reset POST and postcondition GET below run — occasionally re-writing the case back in between
+  // them. Retrying the full reset+check a few times lets that one-time chain finish and lose the
+  // race deterministically, instead of failing the caller on a transient overlap.
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const res = await page.request.post("/api/testing/playwright-mock-case-reset", {
+        data: { case_id: PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID },
+      });
+      if (!res.ok()) {
+        throw new Error(
+          `resetPlaywrightMockActiveCaseIfAny: reset POST failed (${res.status()}): ${await res.text()}`
+        );
+      }
 
-  // Assert the exact postcondition chat-ai's resume-on-mount fallback depends on:
-  // fetchLatestActiveJusticeCaseRow() reads GET /api/justice/cases (no query) and resumes
-  // list[0], so the deterministic case must be genuinely absent from that list — not merely
-  // archived — or a "blank intake" setup would silently resume it anyway.
-  const listRes = await page.request.get("/api/justice/cases");
-  if (!listRes.ok()) {
-    throw new Error(
-      `resetPlaywrightMockActiveCaseIfAny: postcondition check GET /api/justice/cases failed (${listRes.status()}): ${await listRes.text()}`
-    );
+      // Assert the exact postcondition chat-ai's resume-on-mount fallback depends on:
+      // fetchLatestActiveJusticeCaseRow() reads GET /api/justice/cases (no query) and resumes
+      // list[0], so the deterministic case must be genuinely absent from that list — not merely
+      // archived — or a "blank intake" setup would silently resume it anyway.
+      const listRes = await page.request.get("/api/justice/cases");
+      if (!listRes.ok()) {
+        throw new Error(
+          `resetPlaywrightMockActiveCaseIfAny: postcondition check GET /api/justice/cases failed (${listRes.status()}): ${await listRes.text()}`
+        );
+      }
+      const listBody = (await listRes.json()) as { cases?: Array<{ id: string }> };
+      const stillResumable = (listBody.cases ?? []).some(
+        (row) => row.id === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID
+      );
+      if (stillResumable) {
+        throw new Error(
+          "resetPlaywrightMockActiveCaseIfAny: postcondition failed — the deterministic mock case is still present in GET /api/justice/cases after reset, so chat-ai would still auto-resume it."
+        );
+      }
+      return;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      if (attempt < 4) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
   }
-  const listBody = (await listRes.json()) as { cases?: Array<{ id: string }> };
-  const stillResumable = (listBody.cases ?? []).some(
-    (row) => row.id === PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID
-  );
-  if (stillResumable) {
-    throw new Error(
-      "resetPlaywrightMockActiveCaseIfAny: postcondition failed — the deterministic mock case is still present in GET /api/justice/cases after reset, so chat-ai would still auto-resume it."
-    );
-  }
+  throw lastError ?? new Error("resetPlaywrightMockActiveCaseIfAny: reset failed after retries");
 }

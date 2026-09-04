@@ -475,8 +475,13 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     // flip to false (page.tsx sets isUpdatingExistingCase true right after a successful create),
     // switching "Add a proof note" into its direct-save-to-server mode instead. Mirrors
     // commitAcmeCaseViaChat's own bootstrap, minus the commit itself.
-    await resetPlaywrightMockActiveCaseIfAny(page);
+    //
+    // Establish a real, hydrated Clerk browser session before the first authenticated API call —
+    // storageState alone (no prior navigation) is not sufficient for server-side auth checks to
+    // reliably see the session yet.
     await page.goto("/justice/chat-ai");
+    await waitForClerkBrowserApiSession(page);
+    await resetPlaywrightMockActiveCaseIfAny(page);
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
 
