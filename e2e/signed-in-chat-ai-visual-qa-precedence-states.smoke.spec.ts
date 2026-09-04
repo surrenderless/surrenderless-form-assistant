@@ -188,6 +188,12 @@ test.describe("chat-ai precedence states visual QA", () => {
     await captureBothViewports(page, "7-passive-tracking");
 
     // ---- Cleanup, verified ----
+    // State 7's "pending human fulfillment" tracking mounts a live 2s window.setInterval
+    // (CHAT_PENDING_HUMAN_FULFILLMENT_POLL_MS, page.tsx) that keeps re-syncing the case from the
+    // server for as long as chat-ai stays mounted on this case — racing against reset below and
+    // recreating the very snapshot it's trying to remove. Navigate off chat-ai first so that
+    // effect unmounts (its own cleanup clears the interval) before resetting.
+    await page.goto("/justice");
     // resetPlaywrightMockActiveCaseIfAny already throws if the deterministic case is still
     // resumable afterward; the explicit GET below additionally surfaces that confirmation in the
     // test report itself rather than only in a passing/failing assertion inside the helper.
