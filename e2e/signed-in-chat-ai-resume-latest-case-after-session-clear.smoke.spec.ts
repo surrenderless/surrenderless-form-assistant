@@ -10,7 +10,6 @@ import {
 } from "./helpers/clerk-e2e";
 import {
   chatAiTranscript,
-  expandChatAiComposer,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_USER_MESSAGE,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import {
@@ -100,6 +99,16 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
 
     await commitAcmeCaseViaChat(page);
 
+    // Resuming must never re-POST a duplicate case — tracked from here through the end of the
+    // test so it also covers the resume-hydrate itself, not just an explicit follow-up action.
+    let duplicateCreatePosted = false;
+    const onRequest = (req: import("@playwright/test").Request) => {
+      if (req.method() === "POST" && /\/api\/justice\/cases(?:\?|$)/.test(req.url())) {
+        duplicateCreatePosted = true;
+      }
+    };
+    page.on("request", onRequest);
+
     // Simulate a returning consumer in a new tab/session: sessionStorage (and any pre-commit
     // draft) is gone, but the case still exists on the server.
     await clearJusticeSession(page);
@@ -129,44 +138,21 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
       page.locator("li").filter({ hasText: "Company:" }).filter({ hasText: "Acme Retail" })
     ).toBeVisible();
 
-    // Continuing must PATCH the existing case (mode: "update"), never re-POST a duplicate. The
-    // resumed case has a submission draft review pending immediately after commit, so the
+    // The resumed case has a submission draft review pending immediately after commit, so the
     // composer's "Save and continue in chat" recap button is collapsed behind the composer
-    // disclosure by design (exactly-one-primary-action precedence) — continue through chat instead,
-    // which drives the same handleContinueToPreview update-mode PATCH.
-    let duplicateCreatePosted = false;
-    const onRequest = (req: import("@playwright/test").Request) => {
-      if (req.method() === "POST" && /\/api\/justice\/cases(?:\?|$)/.test(req.url())) {
-        duplicateCreatePosted = true;
-      }
-    };
-    page.on("request", onRequest);
-
-    try {
-      const updateCaseResponse = page.waitForResponse(
-        (res) =>
-          res.request().method() === "PATCH" &&
-          res.url().includes(`/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`),
-        { timeout: 30_000 }
-      );
-      await expandChatAiComposer(page);
-      await chatInput.fill(CHAT_INTAKE_COMMIT_MESSAGE);
-      await page.getByRole("button", { name: "Send" }).click();
-      const updated = await updateCaseResponse;
-      expect(updated.ok()).toBeTruthy();
-    } finally {
-      page.off("request", onRequest);
-    }
+    // disclosure by design (exactly-one-primary-action precedence) — resuming itself, not a
+    // follow-up continue click, is what this test guards against duplicating.
+    page.off("request", onRequest);
 
     expect(duplicateCreatePosted, "resuming an existing case must not re-POST a new one").toBe(
       false
     );
 
-    const caseIdAfterUpdate = await page.evaluate(
+    const caseIdAfterResume = await page.evaluate(
       (key) => sessionStorage.getItem(key)?.trim() ?? "",
       STORAGE_CASE_ID
     );
-    expect(caseIdAfterUpdate).toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
+    expect(caseIdAfterResume).toBe(PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID);
 
     const savedList = await page.request.get("/api/justice/cases");
     expect(savedList.ok()).toBeTruthy();
