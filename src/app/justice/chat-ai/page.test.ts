@@ -220,6 +220,11 @@ describe("chat-ai page next-action precedence redesign", () => {
     expect(detailedTrackerBody).not.toBeNull();
     expect(detailedTrackerBody![0]).not.toMatch(/<input/);
     expect(detailedTrackerBody![0]).toMatch(/Add it in the required-action box above to continue\./);
+    // Regression: the detailed tracker's status-only text must never repeat the exact intro
+    // sentence used inside ChatTrackingRecipientEmailForm's `copy.intro` — CI caught this as a
+    // strict-mode violation (getByText resolved to 2 elements) because both the real form and
+    // this status text used "We need the company's email to send your first contact."
+    expect(detailedTrackerBody![0]).not.toMatch(/We need the company/);
   });
 
   it("defines the shared recipient-email form component with both lane copy variants and no duplicated markup between them", () => {
@@ -262,14 +267,14 @@ describe("chat-ai page next-action precedence redesign", () => {
     }
   });
 
-  it("wraps the chat composer in an accessible native <details> disclosure with a summary, not a custom widget", () => {
+  it("wraps only the composer — not the transcript — in an accessible native <details> disclosure with a summary, not a custom widget", () => {
     const detailsMatch = pageSource.match(
-      /<details\s+className=\{`mt-6 flex min-h-\[280px\][\s\S]*?<summary[\s\S]*?<\/summary>/
+      /<details\s+className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700\/80"\s*\n\s*open=\{chatDisclosureOpen\}[\s\S]*?<summary[\s\S]*?<\/summary>/
     );
     expect(detailsMatch).not.toBeNull();
-    expect(detailsMatch![0]).toMatch(/open=\{chatDisclosureOpen\}/);
     expect(detailsMatch![0]).toMatch(/onToggle=\{\(e\) => setChatDisclosureUserOverride\(e\.currentTarget\.open\)\}/);
     expect(detailsMatch![0]).toMatch(/cursor-pointer/);
+    expect(detailsMatch![0]).toMatch(/Need to change something\? Continue in chat/);
   });
 
   it("computes chatDisclosureOpen as expanded-by-default before a dedicated action, collapsed-by-default once one exists, with an explicit user override always winning", () => {
@@ -279,7 +284,16 @@ describe("chat-ai page next-action precedence redesign", () => {
     expect(match).not.toBeNull();
   });
 
-  it("keeps Recap outside (a sibling after) the collapsible chat disclosure, so it never hides when chat collapses", () => {
+  it("keeps the transcript outside (before) the composer's <details>, never nested inside it, so it's never hidden when the composer collapses", () => {
+    // Both anchors are single-line literals, so CRLF vs LF is irrelevant here.
+    const transcriptIndex = pageSource.indexOf('id="chat-ai-transcript"');
+    const composerDetailsIndex = pageSource.indexOf("open={chatDisclosureOpen}");
+    expect(transcriptIndex).toBeGreaterThan(0);
+    expect(composerDetailsIndex).toBeGreaterThan(0);
+    expect(transcriptIndex).toBeLessThan(composerDetailsIndex);
+  });
+
+  it("keeps Recap outside (a sibling after) the collapsible composer disclosure, so it never hides when the composer collapses", () => {
     const afterDetails = pageSource.split(
       '<summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">'
     )[1];
@@ -290,16 +304,23 @@ describe("chat-ai page next-action precedence redesign", () => {
     expect(recapIndex).toBeGreaterThan(closesBeforeRecap);
   });
 
-  it("preserves messages and unsaved input across open/close by using native <details> (children stay mounted, not conditionally rendered)", () => {
-    // messages.map and the textarea must be direct descendants of the <details> we just verified
-    // above, not behind a separate {open ? ... : null} conditional that would unmount them.
-    const chatSectionMatch = pageSource.match(
-      /<details\s+className=\{`mt-6 flex min-h-\[280px\][\s\S]*?<\/details>/
+  it("preserves the transcript and unsaved composer input across open/close by using native <details> for the composer only (children stay mounted, not conditionally rendered)", () => {
+    // The transcript (messages.map) is never inside the composer's <details> — it can't be
+    // hidden by the composer collapsing. The textarea/Send/Save-changes controls ARE inside it,
+    // and must not be behind a separate {open ? ... : null} conditional that would unmount them.
+    const composerDetailsMatch = pageSource.match(
+      /<details\s+className="mt-4 border-t border-neutral-100[^"]*"\s*\n\s*open=\{chatDisclosureOpen\}[\s\S]*?<\/details>/
     );
-    expect(chatSectionMatch).not.toBeNull();
-    expect(chatSectionMatch![0]).toMatch(/\{messages\.map\(/);
-    expect(chatSectionMatch![0]).toMatch(/id="chat-ai-input"/);
-    expect(chatSectionMatch![0]).not.toMatch(/\{chatDisclosureOpen \? /);
+    expect(composerDetailsMatch).not.toBeNull();
+    expect(composerDetailsMatch![0]).not.toMatch(/\{messages\.map\(/);
+    expect(composerDetailsMatch![0]).toMatch(/id="chat-ai-input"/);
+    expect(composerDetailsMatch![0]).not.toMatch(/\{chatDisclosureOpen \? /);
+
+    const transcriptDivMatch = pageSource.match(
+      /<div ref=\{scrollRef\} id="chat-ai-transcript" className="[^"]*">([\s\S]*?)<\/div>\s*\n\s*<details/
+    );
+    expect(transcriptDivMatch).not.toBeNull();
+    expect(transcriptDivMatch![1]).toMatch(/\{messages\.map\(/);
   });
 
   it("Send is the only filled/primary control before a dedicated action while basics are incomplete; Save and continue takes over once ready, and both this is never in a dedicated-action state at the same time as the standalone bottom Save button existing", () => {
@@ -326,7 +347,7 @@ describe("chat-ai page next-action precedence redesign", () => {
 
   it("exposes a save-changes action inside the expanded chat disclosure when edits are pending, instead of only via the (now-hidden) bottom button", () => {
     const chatSectionMatch = pageSource.match(
-      /<details\s+className=\{`mt-6 flex min-h-\[280px\][\s\S]*?<\/details>/
+      /<details\s+className="mt-4 border-t border-neutral-100[^"]*"\s*\n\s*open=\{chatDisclosureOpen\}[\s\S]*?<\/details>/
     );
     expect(chatSectionMatch).not.toBeNull();
     expect(chatSectionMatch![0]).toMatch(/\{dedicatedActionActive && showSessionChangesPanel \? \(/);

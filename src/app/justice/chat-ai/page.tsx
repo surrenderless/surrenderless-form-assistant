@@ -7873,15 +7873,12 @@ export default function JusticeChatAiPage() {
           </div>
         ) : null}
 
-        <details
-          className={`mt-6 flex min-h-[280px] flex-1 flex-col ${cardCls}`}
-          open={chatDisclosureOpen}
-          onToggle={(e) => setChatDisclosureUserOverride(e.currentTarget.open)}
-        >
-          <summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-            Need to change something? Continue in chat
-          </summary>
-          <div ref={scrollRef} className="mt-4 flex-1 space-y-3 pr-1">
+        <div className={`mt-6 flex min-h-[280px] flex-1 flex-col ${cardCls}`}>
+          {/* The transcript — every message and progress/confirmation narration — always stays
+              visible, in every state. Only the editable composer below (textarea/Send/Save
+              changes) collapses behind the disclosure once a dedicated action exists; the
+              transcript is never inside that <details>, so it's never hidden by it. */}
+          <div ref={scrollRef} id="chat-ai-transcript" className="flex-1 space-y-3 pr-1">
             {messages.map((m) => (
               <div
                 key={m.id}
@@ -7899,55 +7896,64 @@ export default function JusticeChatAiPage() {
             ) : null}
           </div>
 
-          <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
-            <label className={labelCls} htmlFor="chat-ai-input">
-              Your message
-            </label>
-            <textarea
-              id="chat-ai-input"
-              className={`${inputCls} min-h-[88px] resize-y`}
-              value={inputValue}
-              onChange={(e) => {
-                setInputValue(e.target.value);
-                setApiError(null);
-              }}
-              disabled={loading}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !loading && !sendInFlightRef.current) {
-                  e.preventDefault();
-                  void handleSend();
-                }
-              }}
-            />
-            {apiError ? (
-              <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
-                {apiError}
-              </p>
-            ) : null}
-            <button
-              type="button"
-              disabled={loading || !inputValue.trim()}
-              onClick={() => void handleSend()}
-              className={
-                !dedicatedActionActive && basicsMissing.length > 0
-                  ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
-                  : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
-              }
-            >
-              {loading ? "Sending…" : "Send"}
-            </button>
-            {dedicatedActionActive && showSessionChangesPanel ? (
+          <details
+            className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80"
+            open={chatDisclosureOpen}
+            onToggle={(e) => setChatDisclosureUserOverride(e.currentTarget.open)}
+          >
+            <summary className="cursor-pointer text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+              Need to change something? Continue in chat
+            </summary>
+            <div className="mt-4">
+              <label className={labelCls} htmlFor="chat-ai-input">
+                Your message
+              </label>
+              <textarea
+                id="chat-ai-input"
+                className={`${inputCls} min-h-[88px] resize-y`}
+                value={inputValue}
+                onChange={(e) => {
+                  setInputValue(e.target.value);
+                  setApiError(null);
+                }}
+                disabled={loading}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !loading && !sendInFlightRef.current) {
+                    e.preventDefault();
+                    void handleSend();
+                  }
+                }}
+              />
+              {apiError ? (
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                  {apiError}
+                </p>
+              ) : null}
               <button
                 type="button"
-                disabled={submitting || loading}
-                onClick={() => void handleContinueToPreview()}
-                className="mt-2 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                disabled={loading || !inputValue.trim()}
+                onClick={() => void handleSend()}
+                className={
+                  !dedicatedActionActive && basicsMissing.length > 0
+                    ? "mt-4 w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-900/20 transition hover:bg-blue-700 disabled:opacity-50"
+                    : "mt-4 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                }
               >
-                {submitting ? "Saving…" : "Save changes"}
+                {loading ? "Sending…" : "Send"}
               </button>
-            ) : null}
-          </div>
-        </details>
+              {dedicatedActionActive && showSessionChangesPanel ? (
+                <button
+                  type="button"
+                  disabled={submitting || loading}
+                  onClick={() => void handleContinueToPreview()}
+                  className="mt-2 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
+                >
+                  {submitting ? "Saving…" : "Save changes"}
+                </button>
+              ) : null}
+            </div>
+          </details>
+        </div>
 
         <div className="mt-4 border-t border-neutral-100 pt-4 dark:border-neutral-700/80">
           <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400">Recap</p>
@@ -8067,8 +8073,7 @@ export default function JusticeChatAiPage() {
                     </p>
                   ) : showDemandLetterNeedsRecipientNotice ? (
                     <p className="mt-2 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
-                      <span className="font-medium">We need the company&apos;s email to send your
-                      demand letter.</span>{" "}
+                      <span className="font-medium">Still waiting on the company&apos;s email.</span>{" "}
                       Nothing has been sent yet.
                       <span className="mt-1 block text-amber-800/90 dark:text-amber-200/90">
                         Add it in the required-action box above to continue.
@@ -8178,8 +8183,7 @@ export default function JusticeChatAiPage() {
                     </p>
                   ) : showMerchantContactNeedsRecipientNotice ? (
                     <p className="mt-2 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
-                      <span className="font-medium">We need the company&apos;s email to send your
-                      first contact.</span>{" "}
+                      <span className="font-medium">Still waiting on the company&apos;s email.</span>{" "}
                       Nothing has been sent yet.
                       <span className="mt-1 block text-amber-800/90 dark:text-amber-200/90">
                         Add it in the required-action box above to continue.

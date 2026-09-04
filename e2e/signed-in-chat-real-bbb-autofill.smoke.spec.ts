@@ -27,7 +27,10 @@ test("signed-in chat suppresses Run BBB autofill when Surrenderless owns BBB ful
   await hydrateChatAiSessionForRealBbbAutofill(page, { caseId, intake });
 
   await expect(page).toHaveURL(/\/justice\/chat-ai/);
-  await expect(page.locator("#chat-ai-input")).toBeVisible({ timeout: 30_000 });
+  // The composer collapses by design once a dedicated tracking action exists (this case is
+  // seeded already BBB-queued) — the transcript, not the composer, is the correct "page loaded"
+  // signal here.
+  await expect(page.locator("#chat-ai-transcript")).toBeVisible({ timeout: 30_000 });
 
   await expect(page.getByText("BBB filing in progress.")).toBeVisible({ timeout: 30_000 });
   await expect(

@@ -47,9 +47,7 @@ export const OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE =
   "Escalation complete for Acme Retail (widget order). BBB, State AG, and demand letter steps recorded. Awaiting responses.";
 
 export function chatAiTranscript(page: Page): Locator {
-  return page
-    .locator("div:has(> textarea#chat-ai-input)")
-    .locator("xpath=preceding-sibling::div[1]");
+  return page.locator("#chat-ai-transcript");
 }
 
 export function chatAiActionTracking(page: Page): Locator {
