@@ -486,6 +486,14 @@ describe("chat-ai page precedence UX correction batch", () => {
     );
     expect(recapSectionMatch).not.toBeNull();
     expect(recapSectionMatch![1]).not.toMatch(/contactProofError/);
+
+    // Regression: a *second*, always-computed (not attempt-gated) proactive rendering of the
+    // same validation — {contactProofCheck.message} right after the evidence section — was found
+    // via visual QA floating unattached to any control whenever already_contacted is "yes" with
+    // no proof type/text on file, regardless of dedicatedActionActive or any user attempt.
+    // contactProofCheck itself is still used (for showContinueHandoff's .ok check) — only its
+    // .message must never be rendered proactively.
+    expect(pageSource).not.toMatch(/\{contactProofCheck\.message\}/);
   });
 
   it("truthfully narrates merchant-contact/demand-letter progress: never claims queued/sending/submitted while the recipient email is missing", () => {

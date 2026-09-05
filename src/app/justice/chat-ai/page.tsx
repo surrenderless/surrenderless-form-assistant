@@ -9285,11 +9285,6 @@ export default function JusticeChatAiPage() {
               ) : null}
             </div>
 
-            {basicsMissing.length === 0 && !contactProofCheck.ok ? (
-              <p className="mt-4 text-sm text-amber-800 dark:text-amber-300">
-                {contactProofCheck.message}
-              </p>
-            ) : null}
             {showSessionChangesPanel ? (
               <div
                 className="mt-4 rounded-xl border border-blue-200/90 bg-blue-50/50 px-3 py-2.5 ring-1 ring-blue-950/[0.04] dark:border-blue-900/50 dark:bg-blue-950/20 dark:ring-blue-500/10"
