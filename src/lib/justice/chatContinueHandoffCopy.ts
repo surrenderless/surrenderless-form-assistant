@@ -6,7 +6,7 @@ export const CHAT_CONTINUE_HANDOFF_POST_PREVIEW_STEP =
   "After preview, review your prepared case packet, then continue in chat when ready. Owned next steps can be fulfilled automatically or by operators after you approve.";
 
 export const CHAT_CONTINUE_HANDOFF_CHAT_FIRST_DRAFT_STEP =
-  "Review your submission draft in the Active case checklist below. After you approve next steps, Surrenderless can fulfill owned outreach and filings in chat (automation or operators).";
+  "Review your submission draft in the Active case checklist above. After you approve next steps, Surrenderless can fulfill owned outreach and filings in chat (automation or operators).";
 
 export const CHAT_CONTINUE_HANDOFF_CHAT_FIRST_PACKET_STEP =
   "Approve your prepared packet in chat when ready.";

@@ -153,7 +153,6 @@ import { hasOperatorTerminalResponseReviewOutcome } from "@/lib/justice/operator
 import { shouldSuppressChatManualActionForSurrenderlessOwnedStep } from "@/lib/justice/surrenderlessOwnedStep";
 import {
   OWNED_ENDGAME_WAIT_COPY,
-  OWNED_STEP_CHAT_STATUS_COPY,
   OWNED_STEP_HANDLING_TRACKING_COPY,
   resolveChatOwnedHandlingTrackingStep,
   shouldShowChatConsumerArchiveControl,
@@ -1833,14 +1832,6 @@ const CHAT_TRACKING_SAVE_ERROR_MESSAGE =
 const CHAT_ARCHIVE_ERROR_MESSAGE =
   "This case could not be archived on the server. Try again.";
 
-function ChatHandlingWorkbenchInChatNotice() {
-  return (
-    <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/65 dark:text-emerald-200/65">
-      Operator queue updates continue here in chat.
-    </p>
-  );
-}
-
 function showChatApprovedPacketActionHandlingTracking(input: {
   preparedPacketApproved: boolean;
   approvedNextAction: JusticeApprovedNextAction;
@@ -2512,7 +2503,7 @@ function ChatTrackingRecipientEmailForm({
       ? {
           intro: "We need the company's email to send your demand letter.",
           detail:
-            "Surrenderless sends it to the company for you, so it can't go out until you add a valid recipient address. Nothing has been sent yet.",
+            "Automated sending needs a valid recipient address — add it below and Surrenderless emails it for you. Don't have it? Operators can still send it another way. Nothing has been sent yet.",
           submitLabel: "Save and send demand letter",
           fallbackLabel: "I don't have it — let operators handle sending",
           inputId: CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID,
@@ -2520,7 +2511,7 @@ function ChatTrackingRecipientEmailForm({
       : {
           intro: "We need the company's email to send your first contact.",
           detail:
-            "Surrenderless sends this message to the company itself, so it can't go out until you add a valid recipient address. Nothing has been sent yet.",
+            "Automated sending needs a valid recipient address — add it below and Surrenderless emails it for you. Don't have it? Operators can still handle outreach another way. Nothing has been sent yet.",
           submitLabel: "Save and send first contact",
           fallbackLabel: "I don't have it — let operators handle outreach",
           inputId: CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID,
@@ -6395,7 +6386,11 @@ export default function JusticeChatAiPage() {
   const hasValidLocalIntake = Boolean(readValidLocalJusticeIntake());
   const isStagedFlushRetry =
     stagedProofNotes.length > 0 && hasValidLocalIntake && Boolean(activeUuidCaseId);
-  const showContinueHandoff = basicsMissing.length === 0 && contactProofCheck.ok;
+  // Once an approved next action exists, Current action tracking is the single authoritative
+  // place describing status, what Surrenderless is doing, and what happens next — this generic
+  // "save updates" handoff has nothing left to add and duplicated that same information.
+  const showContinueHandoff =
+    basicsMissing.length === 0 && contactProofCheck.ok && !approvedNextAction;
   const showSessionChangesPanel =
     sessionChangeLines.length > 0 && !showContinueHandoff;
   const activeCaseSessionCaseId =
@@ -7096,7 +7091,12 @@ export default function JusticeChatAiPage() {
           ? chatAiKeepInChatLadder
             ? "Review your submission draft below in this chat."
             : "Review your submission draft before continuing."
-          : "Describe what to add or change, then save in chat.";
+          : approvedNextAction
+            ? // Recipient-required and passive-tracking states have their own focus (the
+              // recipient-email input, or Current action tracking) — this generic intake-chat
+              // line is irrelevant and was appearing regardless of what is actually going on.
+              null
+            : "Describe what to add or change, then save in chat.";
   const chatAiChecklistDraftReviewAction = resolveChatAiChecklistDraftReviewAction({
     draftReviewed: activeCaseDraftReviewed,
     keepInChat: chatAiKeepInChatLadder,
@@ -8513,19 +8513,10 @@ export default function JusticeChatAiPage() {
                   approvedNextAction,
                 }) ? (
                   <>
-                    {suppressSurrenderlessOwnedManualUi ? (
-                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                        Surrenderless is carrying this approved step. Queued, in-progress, and
-                        completed updates appear above — stay in chat while operator fulfillment
-                        runs.
-                      </p>
-                    ) : (
-                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                        Approved case packet and next in-app step — stay in chat. Surrenderless
-                        carries preparation and fulfillment; consumer DIY handling is not available
-                        here.
-                      </p>
-                    )}
+                    {/* The destination-specific status notice above (e.g. "BBB filing in
+                        progress...") and the Handling tracking line below already cover current
+                        status, what Surrenderless is doing, and what happens next — this used to
+                        add a third, purely reassuring "stay in chat" paragraph on top of both. */}
                     <ChatHandlingTrackingStatusReadOnly
                       readinessLoading={chatHandlingTrackingContextLoading}
                       approvedNextAction={approvedNextAction}
@@ -8733,15 +8724,6 @@ export default function JusticeChatAiPage() {
                     />
                   </>
                 ) : null}
-                {showChatApprovedPacketActionHandlingTracking({
-                  preparedPacketApproved,
-                  approvedNextAction,
-                }) || approvedNextAction.handling_requested_at?.trim() ? (
-                  <ChatHandlingWorkbenchInChatNotice />
-                ) : null}
-                <p className="mt-2 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-                  {OWNED_STEP_CHAT_STATUS_COPY}
-                </p>
                 {shouldShowChatConsumerEndgameDiyControls(
                   suppressSurrenderlessOwnedManualUi
                 ) &&

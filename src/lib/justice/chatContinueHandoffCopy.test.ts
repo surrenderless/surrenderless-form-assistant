@@ -27,4 +27,9 @@ describe("chatContinueHandoffCopy", () => {
       expect(text).toMatch(/operators?|automat/i);
     }
   });
+
+  it("points to the Active case checklist as above, not below — the checklist renders at the top of the page while this copy shows in What happens next near the bottom", () => {
+    expect(CHAT_CONTINUE_HANDOFF_CHAT_FIRST_DRAFT_STEP).toMatch(/Active case checklist above/);
+    expect(CHAT_CONTINUE_HANDOFF_CHAT_FIRST_DRAFT_STEP).not.toMatch(/Active case checklist below/);
+  });
 });

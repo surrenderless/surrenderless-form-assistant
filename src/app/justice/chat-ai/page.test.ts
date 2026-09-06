@@ -504,3 +504,56 @@ describe("chat-ai page precedence UX correction batch", () => {
     expect(callSites.length).toBe(2);
   });
 });
+
+/**
+ * Third UX correction pass, from a fresh round of visual QA on the recipient-required and
+ * passive-tracking states specifically.
+ */
+describe("chat-ai page precedence UX correction batch 3", () => {
+  it("never shows the generic 'Describe what to add or change' line once an approved next action exists — recipient-required and passive-tracking states have their own focus", () => {
+    const focusLineMatch = pageSource.match(
+      /const activeCaseFocusLine =\s*([\s\S]*?);\r?\n\s*const chatAiChecklistDraftReviewAction/
+    );
+    expect(focusLineMatch).not.toBeNull();
+    const focusLineBody = focusLineMatch![1]!;
+    const finalBranchMatch = focusLineBody.match(/: approvedNextAction\s*\n\s*\?([\s\S]*?):/);
+    expect(finalBranchMatch).not.toBeNull();
+    expect(finalBranchMatch![1]).toMatch(/null/);
+    expect(focusLineBody).toMatch(/"Describe what to add or change, then save in chat\."/);
+  });
+
+  it("hides 'What happens next' once Current action tracking exists instead of showing generic save-updates filler on top of it", () => {
+    const match = pageSource.match(
+      /const showContinueHandoff =\s*\n\s*basicsMissing\.length === 0 && contactProofCheck\.ok && !approvedNextAction;/
+    );
+    expect(match).not.toBeNull();
+  });
+
+  it("clarifies in recipient-required notices that automated sending needs the email while operator handling remains available, instead of implying nothing can proceed", () => {
+    // The old wording ("...so it can't go out until you add a valid recipient address") read as
+    // if nothing could proceed at all, directly beside a button offering operator handling —
+    // a live contradiction. Both lanes (demand letter, merchant contact) must say automated
+    // sending needs the address while clearly naming the operator alternative as still available.
+    expect(pageSource).not.toMatch(/can't go out until you add/);
+    expect((pageSource.match(/Automated sending needs a valid recipient address/g) ?? []).length).toBe(2);
+    expect((pageSource.match(/Operators can still/g) ?? []).length).toBe(2);
+  });
+
+  it("condenses the owned/queued tracking status to one current-status notice and one Handling tracking line — no extra unconditional 'stay in chat' filler paragraphs", () => {
+    // These three were pure reassurance filler layered on top of the destination-specific notice
+    // (e.g. "BBB filing in progress...") and the tested Handling tracking line, with no test
+    // dependency and no information not already stated by one of those two.
+    expect(pageSource).not.toMatch(/Surrenderless is carrying this approved step\. Queued, in-progress/);
+    expect(pageSource).not.toMatch(/Approved case packet and next in-app step — stay in chat/);
+    expect(pageSource).not.toMatch(/function ChatHandlingWorkbenchInChatNotice/);
+    expect(pageSource).not.toMatch(/Operator queue updates continue here in chat\./);
+    expect(pageSource).not.toMatch(/\{OWNED_STEP_CHAT_STATUS_COPY\}/);
+    // The tested, evolving-across-lifecycle Handling tracking line stays exactly as it was.
+    expect(pageSource).toMatch(/Handling tracking:/);
+    expect(pageSource).toMatch(/OWNED_STEP_HANDLING_TRACKING_COPY/);
+  });
+
+  it("points to the Active case checklist as above, not below, in the chat-first draft-review handoff step used inside What happens next", () => {
+    expect(pageSource).not.toMatch(/Active case checklist below/);
+  });
+});
