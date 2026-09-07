@@ -47,13 +47,37 @@ export const OWNED_FULFILLMENT_RESOLUTION_OUTCOME_NOTE =
   "Escalation complete for Acme Retail (widget order). BBB, State AG, and demand letter steps recorded. Awaiting responses.";
 
 export function chatAiTranscript(page: Page): Locator {
-  return page
-    .locator("div:has(> textarea#chat-ai-input)")
-    .locator("xpath=preceding-sibling::div[1]");
+  return page.locator("#chat-ai-transcript");
 }
 
 export function chatAiActionTracking(page: Page): Locator {
   return page.locator("#chat-ai-approved-action-tracking");
+}
+
+/**
+ * The per-destination status/history inside the tracking card is collapsed by default (a
+ * <details> disclosure) — expand it before asserting on anything inside, since collapsed content
+ * is not in the accessibility tree and getByText/getByRole positive assertions won't find it.
+ * Safe to call more than once (native <details> stays open once expanded). Takes the `tracking`
+ * locator already in scope at every call site rather than `page`, so it works the same whether
+ * the caller's page variable is named `page` or `consumerPage`.
+ */
+export async function expandChatAiDetailedTracking(tracking: Locator): Promise<void> {
+  await tracking.getByText("Detailed status & history").click();
+}
+
+/**
+ * The composer (textarea/Send/Save changes) is collapsed by default behind a <details> disclosure
+ * once a dedicated draft-review/packet-approval/tracking action exists — expand it before typing
+ * into #chat-ai-input in any test that needs to send a chat message during one of those states.
+ * A no-op if it's already expanded (e.g. before any dedicated action exists, where it's expanded
+ * by default) — clicking the summary toggles, so this only clicks when actually collapsed.
+ */
+export async function expandChatAiComposer(page: Page): Promise<void> {
+  const composerInput = page.locator("#chat-ai-input");
+  if (await composerInput.isVisible()) return;
+  await page.getByText("Need to change something? Continue in chat").click();
+  await composerInput.waitFor({ state: "visible", timeout: 10_000 });
 }
 
 /**

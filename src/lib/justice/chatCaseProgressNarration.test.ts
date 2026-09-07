@@ -400,6 +400,61 @@ describe("chatCaseProgressNarration", () => {
     ).toEqual(["merchant_contact_confirmed"]);
   });
 
+  it("narrates merchant contact as needs-recipient (never queued/sending) when recipient email is missing", () => {
+    const observation: ChatCaseProgressObservation = {
+      caseId: CASE_ID,
+      approvedAction: { label: "Merchant contact", href: "/justice/merchant", status: "approved" },
+      tasks: [],
+      filings: [],
+      recipientMissingForQueuedOutreach: true,
+    };
+    expect(deriveSatisfiedChatCaseProgressMilestones(observation)).toEqual([
+      "merchant_contact_needs_recipient",
+    ]);
+    const message = buildChatCaseProgressNarrationMessage("merchant_contact_needs_recipient");
+    expect(message).not.toMatch(/queued/i);
+    expect(message).not.toMatch(/sending/i);
+    expect(message).not.toMatch(/submitted/i);
+    expect(message).toMatch(/approved/i);
+    expect(message).toMatch(/company's email/i);
+  });
+
+  it("narrates demand letter as needs-recipient (never queued/sending) when recipient email is missing", () => {
+    const observation: ChatCaseProgressObservation = {
+      caseId: CASE_ID,
+      approvedAction: {
+        label: "Small claims / demand letter",
+        href: "/justice/demand-letter",
+        status: "approved",
+      },
+      tasks: [],
+      filings: [],
+      recipientMissingForQueuedOutreach: true,
+    };
+    expect(deriveSatisfiedChatCaseProgressMilestones(observation)).toEqual([
+      "demand_letter_needs_recipient",
+    ]);
+    const message = buildChatCaseProgressNarrationMessage("demand_letter_needs_recipient");
+    expect(message).not.toMatch(/queued/i);
+    expect(message).not.toMatch(/sending/i);
+    expect(message).not.toMatch(/submitted/i);
+    expect(message).toMatch(/approved/i);
+    expect(message).toMatch(/company's email/i);
+  });
+
+  it("narrates the normal queued milestone once a recipient email is on file, not needs-recipient", () => {
+    const observation: ChatCaseProgressObservation = {
+      caseId: CASE_ID,
+      approvedAction: { label: "Merchant contact", href: "/justice/merchant", status: "approved" },
+      tasks: [],
+      filings: [],
+      recipientMissingForQueuedOutreach: false,
+    };
+    expect(deriveSatisfiedChatCaseProgressMilestones(observation)).toEqual([
+      "merchant_contact_queued",
+    ]);
+  });
+
   it("collects narration once and dedupes across repeated observations", () => {
     const observation = {
       caseId: CASE_ID,

@@ -21,6 +21,7 @@ import {
   closeOwnedFulfillmentCaseViaOperatorUi,
   expectConsumerChatCaseArchivedClosed,
   expectConsumerChatStaysArchivedAfterReload,
+  expandChatAiDetailedTracking,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 
@@ -45,12 +46,13 @@ test("owned merchant contact → operator completes → resolution endgame stays
   await seedActiveCaseMerchantFilingStep(consumerPage);
   await waitForClerkBrowserApiSession(consumerPage);
 
-  await expect(activeCaseChecklist(consumerPage).getByText("Evidence: yes")).toBeVisible({
+  await expect(activeCaseChecklist(consumerPage).getByText("Evidence (optional): Added")).toBeVisible({
     timeout: 30_000,
   });
 
   const tracking = consumerPage.locator("#chat-ai-approved-action-tracking");
   await tracking.scrollIntoViewIfNeeded();
+  await expandChatAiDetailedTracking(tracking);
   await expect(tracking).toBeVisible({ timeout: 30_000 });
   await expect(tracking.getByText("Next step:")).toContainText("Merchant contact", {
     timeout: 15_000,

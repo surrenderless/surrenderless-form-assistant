@@ -21,6 +21,7 @@ import {
   closeOwnedFulfillmentCaseViaOperatorUi,
   expectConsumerChatCaseArchivedClosed,
   expectConsumerChatStaysArchivedAfterReload,
+  expandChatAiDetailedTracking,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { buildChatCaseProgressNarrationMessage } from "@/lib/justice/chatCaseProgressNarration";
 
@@ -45,12 +46,13 @@ test("owned FCC queue → operator completes → resolution endgame stays in cha
   await seedActiveCaseFccFilingStep(consumerPage);
   await waitForClerkBrowserApiSession(consumerPage);
 
-  await expect(activeCaseChecklist(consumerPage).getByText("Evidence: yes")).toBeVisible({
+  await expect(activeCaseChecklist(consumerPage).getByText("Evidence (optional): Added")).toBeVisible({
     timeout: 30_000,
   });
 
   const tracking = consumerPage.locator("#chat-ai-approved-action-tracking");
   await tracking.scrollIntoViewIfNeeded();
+  await expandChatAiDetailedTracking(tracking);
   await expect(tracking).toBeVisible({ timeout: 30_000 });
   await expect(tracking.getByText("Next step:")).toContainText("FCC", { timeout: 15_000 });
   await expect(consumerPage.getByText("FCC filing queued.")).toBeVisible({ timeout: 30_000 });

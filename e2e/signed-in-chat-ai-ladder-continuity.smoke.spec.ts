@@ -17,6 +17,7 @@ import {
   seedActiveCasePacketNotApproved,
   seedActiveCaseStateAgQueued,
 } from "./helpers/chat-ai-ladder-continuity-e2e";
+import { expandChatAiDetailedTracking } from "./helpers/chat-ai-owned-fulfillment-e2e";
 
 test.beforeEach(() => {
   test.skip(!isClerkE2eConfigured() || !clerkStorageStateExists(), clerkE2eSkipReason());
@@ -74,6 +75,7 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     const tracking = page.locator("#chat-ai-approved-action-tracking");
     await tracking.scrollIntoViewIfNeeded();
     await expect(tracking).toBeVisible({ timeout: 30_000 });
+    await expandChatAiDetailedTracking(tracking);
     await expect(tracking.getByText("State AG filing queued.")).toBeVisible({ timeout: 30_000 });
     await expect(
       tracking.getByText("Stay in this chat — operator updates will appear here.")
@@ -88,7 +90,7 @@ test.describe("signed-in chat-ai main ladder continuity", () => {
     await seedActiveCaseMerchantFilingStep(page);
     await waitForClerkBrowserApiSession(page);
 
-    await expect(activeCaseChecklist(page).getByText("Evidence: yes")).toBeVisible({
+    await expect(activeCaseChecklist(page).getByText("Evidence (optional): Added")).toBeVisible({
       timeout: 30_000,
     });
 

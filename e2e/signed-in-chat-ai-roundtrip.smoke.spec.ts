@@ -61,9 +61,7 @@ test("signed-in user completes intake through FTC, BBB, human-fulfillment ladder
   await expect(chatInput).toBeVisible({ timeout: 30_000 });
   await waitForClerkBrowserApiSession(page);
 
-  const chatTranscript = page
-    .locator("div:has(> textarea#chat-ai-input)")
-    .locator("xpath=preceding-sibling::div[1]");
+  const chatTranscript = page.locator("#chat-ai-transcript");
 
   await chatInput.fill(PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_USER_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();

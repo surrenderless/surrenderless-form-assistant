@@ -14,7 +14,7 @@ import {
   driveConsumerToSavedCaseForEvidenceUpload,
   uploadEvidenceFileViaChat,
 } from "./helpers/chat-ai-evidence-upload-e2e";
-import { chatAiTranscript } from "./helpers/chat-ai-owned-fulfillment-e2e";
+import { chatAiTranscript, expandChatAiComposer } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import {
   CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE,
   CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE,
@@ -235,6 +235,7 @@ test("after evidence upload, consumer reviews draft and approves packet without 
       res.url().includes("/api/justice/submission-draft-reviewed"),
     { timeout: 30_000 }
   );
+  await expandChatAiComposer(page);
   await chatInput.fill(CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
   expect((await draftReviewedResponse).ok()).toBeTruthy();
@@ -267,6 +268,7 @@ test("after evidence upload, consumer reviews draft and approves packet without 
       (res.request().postData() ?? "").includes('"prepared_packet_approved":true'),
     { timeout: 30_000 }
   );
+  await expandChatAiComposer(page);
   await chatInput.fill(CHAT_LEGAL_CONSENT_PREPARED_PACKET_APPROVAL_MESSAGE);
   await page.getByRole("button", { name: "Send" }).click();
   expect((await packetApprovalPatchResponse).ok()).toBeTruthy();
