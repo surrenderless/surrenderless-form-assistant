@@ -10,7 +10,7 @@ vi.mock("@/lib/justice/reconcileRecipientRequiredConsumerReminders", () => ({
 }));
 
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: (...args: unknown[]) => createClient(...args),
+  createClient: () => createClient(),
 }));
 
 import { GET, POST, maxDuration } from "@/app/api/cron/notify-recipient-required-consumers/route";
