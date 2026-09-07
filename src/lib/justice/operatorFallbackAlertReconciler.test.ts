@@ -3,12 +3,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmailSendRequest, EmailSendResult } from "@/lib/email/emailProvider";
 import { bbbFilingTaskNotesMarker } from "@/lib/justice/bbbFilingTask";
 import { upsertBbbOwnedFilingDeliveryNotes } from "@/lib/justice/bbbOwnedFilingDeliveryState";
+import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { ftcFilingTaskNotesMarker } from "@/lib/justice/ftcFilingTask";
 import { upsertFtcOwnedFilingDeliveryNotes } from "@/lib/justice/ftcOwnedFilingDeliveryState";
 import { hasOperatorAlertBeenSent, operatorFallbackAlertKey } from "@/lib/justice/operatorFallbackAlertState";
 import { bbbOwnedFilingIdempotencyKey } from "@/lib/justice/bbbOwnedFilingDeliveryState";
 import { ftcOwnedFilingIdempotencyKey } from "@/lib/justice/ftcOwnedFilingDeliveryState";
-import { merchantContactFilingTaskNotesMarker } from "@/lib/justice/merchantContactFilingTask";
+import {
+  buildMerchantContactFilingTaskNotes,
+  buildMerchantContactFilingTaskTitle,
+  merchantContactFilingTaskNotesMarker,
+} from "@/lib/justice/merchantContactFilingTask";
+import { hasValidMerchantContactRecipient } from "@/lib/justice/merchantContactRecipient";
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
 import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
@@ -1000,5 +1006,76 @@ describe("reconcileOperatorFallbackAlerts — FCC parity scaffold wiring", () =>
 
     expect(summary.sent).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Locks in that this reconciler's existing default-mode queue-alert tiers (immediate/24h/72h,
+ * proven generically above) are *already* the "existing operator-alert path" for the specific
+ * recipient-required scenario: an approved merchant-contact/demand-letter action whose company
+ * recipient email is missing. reconcileRecipientRequiredConsumerReminders (the new 24h consumer
+ * reminder) deliberately does not add any operator-alerting logic of its own — it relies on this
+ * behavior continuing to hold. Uses the real production task-notes builder (not a synthetic
+ * marker string) so a change to that builder that broke marker matching would be caught here too.
+ */
+describe("reconcileOperatorFallbackAlerts — recipient-required merchant-contact/demand-letter coverage", () => {
+  const T0 = Date.parse("2026-07-01T00:00:00.000Z");
+  const HOUR = 3_600_000;
+
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("alerts the operator for a real merchant-contact queue task stuck open with no company recipient, escalating 24h then 72h", async () => {
+    const intake = buildJusticeIntakeFromParts({
+      ...defaultBuildJusticeIntakeParts(),
+      problem_category: "online_purchase",
+      company_name: "Acme Retail",
+      reply_email: "consumer@example.com",
+      company_contact_email: "",
+    });
+    expect(hasValidMerchantContactRecipient(intake)).toBe(false);
+
+    const notes = buildMerchantContactFilingTaskNotes("case-recipient-missing", intake);
+    const store: Store = {
+      tasks: [
+        {
+          id: "task-recipient-missing",
+          user_id: "user-recipient-missing",
+          case_id: "case-recipient-missing",
+          title: buildMerchantContactFilingTaskTitle(intake),
+          notes,
+          completed_at: null,
+          created_at: new Date(T0).toISOString(),
+          updated_at: new Date(T0).toISOString(),
+        },
+      ],
+    };
+    const supabase = makeSupabase(store);
+
+    const immediate = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    expect(immediate.sent).toBe(1);
+
+    const at24h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    expect(at24h.sent).toBe(1);
+    expect(send.mock.calls[1][0].subject).toContain("ESCALATION (24h)");
+
+    const at72h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR });
+    expect(at72h.sent).toBe(1);
+    expect(send.mock.calls[2][0].subject).toContain("ESCALATION (72h)");
+
+    for (const call of send.mock.calls) {
+      expect(call[0].to).toBe("alerts@surrenderless.test");
+    }
   });
 });
