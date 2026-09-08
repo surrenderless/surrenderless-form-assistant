@@ -30,6 +30,16 @@ function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** Stripe webhook fields carry either a plain id string or an expanded object with `.id`. */
+function extractIdFromStringOrObject(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const id = (value as { id?: unknown }).id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+  return null;
+}
+
 /**
  * Grants durable one-time-payment entitlement for a case from a signature-verified Stripe
  * webhook event. Trusts nothing from the redirect/client — the case id and user id come only
@@ -60,6 +70,7 @@ export async function processStripeCheckoutCompletedEvent(
     metadata?: Record<string, unknown> | null;
     amount_total?: unknown;
     currency?: unknown;
+    payment_intent?: unknown;
   };
 
   const sessionId = readString(session.id);
@@ -69,6 +80,11 @@ export async function processStripeCheckoutCompletedEvent(
   const userId = readString(metadata.user_id);
   const amountTotal = typeof session.amount_total === "number" ? session.amount_total : null;
   const currency = readString(session.currency) || null;
+  // Not present on Checkout's default webhook payload for async_payment_succeeded in every
+  // integration path, and Stripe's own `expand` param is not honored on webhook event payloads
+  // — so this is best-effort: null here just means the later refund/dispute matching fallback
+  // (via Checkout Sessions lookup) is used instead, never a hard failure.
+  const paymentIntentId = extractIdFromStringOrObject(session.payment_intent);
 
   if (!sessionId || !caseId || !userId) {
     return { status: "malformed" };
@@ -85,6 +101,7 @@ export async function processStripeCheckoutCompletedEvent(
     stripe_checkout_session_id: sessionId,
     amount_total: amountTotal,
     currency,
+    stripe_payment_intent_id: paymentIntentId,
   });
 
   if (insertError && insertError.code !== "23505") {
