@@ -41,6 +41,7 @@ type EventRow = {
   evidence_due_by: string | null;
   alert_status: "pending" | "sending" | "sent";
   alert_message_id: string | null;
+  updated_at: string;
 };
 
 type CaseRow = { id: string; user_id: string; paid_at: string | null };
@@ -182,6 +183,7 @@ function makeSupabase(store: Store): SupabaseClient {
           evidence_due_by: (payload.evidence_due_by as string | null) ?? null,
           alert_status: "pending",
           alert_message_id: null,
+          updated_at: new Date().toISOString(),
         };
         store.events.push(row);
         return { data: row, error: null };
@@ -192,7 +194,13 @@ function makeSupabase(store: Store): SupabaseClient {
           Object.entries(state.filters).every(([k, v]) => (e as unknown as Record<string, unknown>)[k] === v)
         );
         if (idx < 0) return { data: null, error: null };
-        store.events[idx] = { ...store.events[idx], ...(state.payload as Partial<EventRow>) };
+        // set_updated_at() fires unconditionally on every UPDATE, even a same-value
+        // reassignment (the reclaim CAS's "sending" -> "sending").
+        store.events[idx] = {
+          ...store.events[idx],
+          ...(state.payload as Partial<EventRow>),
+          updated_at: new Date().toISOString(),
+        };
         return { data: store.events[idx], error: null };
       }
 
@@ -507,5 +515,43 @@ describe("POST /api/webhooks/stripe — real signature verification, signed payl
 
     expect(res.status).toBe(500);
     expect((await res.json()).ok).toBe(false);
+  });
+
+  it("reclaims a stale 'sending' row (simulating a crashed prior delivery) through the real signed route and sends exactly once", async () => {
+    currentStore = baseStore({
+      cases: [{ id: CASE_ID, user_id: USER_ID, paid_at: new Date().toISOString() }],
+      payments: [matchedPaymentRow()],
+      events: [
+        {
+          id: "evrow_stuck_signed_1",
+          stripe_event_id: "evt_signed_refund_1",
+          event_category: "refund",
+          stripe_object_id: "re_signed_1",
+          stripe_payment_intent_id: "pi_signed_1",
+          stripe_charge_id: "ch_signed_1",
+          case_id: CASE_ID,
+          user_id: USER_ID,
+          matched: true,
+          amount: 4900,
+          currency: "usd",
+          stripe_status: "succeeded",
+          dispute_reason: null,
+          evidence_due_by: null,
+          alert_status: "sending",
+          alert_message_id: null,
+          // Comfortably older than STALE_SENDING_RECLAIM_THRESHOLD_MS (60s); the route uses the
+          // real wall clock (no nowMs override), so this must be real-time-anchored.
+          updated_at: new Date(Date.now() - 90_000).toISOString(),
+        },
+      ],
+    });
+
+    const res = await postSigned(refundPayload());
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, status: "recorded", matched: true, case_id: CASE_ID, alert: "sent" });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(currentStore.events[0].alert_status).toBe("sent");
   });
 });

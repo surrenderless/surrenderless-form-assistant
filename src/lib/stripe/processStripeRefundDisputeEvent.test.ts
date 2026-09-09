@@ -22,7 +22,10 @@ vi.mock("@/lib/email/resolveMerchantOutreachEmailProvider", () => ({
   resolveMerchantOutreachEmailProvider: () => providerResolution,
 }));
 
-import { processStripeRefundDisputeEvent } from "@/lib/stripe/processStripeRefundDisputeEvent";
+import {
+  processStripeRefundDisputeEvent,
+  STALE_SENDING_RECLAIM_THRESHOLD_MS,
+} from "@/lib/stripe/processStripeRefundDisputeEvent";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_owner_1";
@@ -52,6 +55,7 @@ type EventRow = {
   evidence_due_by: string | null;
   alert_status: "pending" | "sending" | "sent";
   alert_message_id: string | null;
+  updated_at: string;
 };
 
 type Store = {
@@ -62,6 +66,8 @@ type Store = {
   failClaimUpdate?: boolean;
   failMarkSentUpdate?: boolean;
   sessionsForPaymentIntent?: Record<string, string>;
+  /** Clock the mock's set_updated_at()-equivalent trigger stamps onto every insert/update. */
+  clockMs?: number;
 };
 
 function makeSupabase(store: Store): SupabaseClient {
@@ -156,12 +162,15 @@ function makeSupabase(store: Store): SupabaseClient {
           evidence_due_by: (payload.evidence_due_by as string | null) ?? null,
           alert_status: "pending",
           alert_message_id: null,
+          updated_at: new Date(store.clockMs ?? Date.now()).toISOString(),
         };
         store.events.push(row);
         return { data: row, error: null };
       }
 
       function resolveUpdate() {
+        // Mirrors the real WHERE clause exactly: every .eq() filter (including updated_at, when
+        // the reclaim CAS supplies it) must match the row's CURRENT value, not just id.
         const idx = store.events.findIndex((e) =>
           Object.entries(state.filters).every(
             ([k, v]) => (e as unknown as Record<string, unknown>)[k] === v
@@ -175,7 +184,13 @@ function makeSupabase(store: Store): SupabaseClient {
           (state.updatePayload as Record<string, unknown>).alert_status === "sent";
         if (isClaim && store.failClaimUpdate) return { data: null, error: { message: "claim update down" } };
         if (isMarkSent && store.failMarkSentUpdate) return { data: null, error: { message: "mark sent down" } };
-        store.events[idx] = { ...store.events[idx], ...(state.updatePayload as Partial<EventRow>) };
+        // set_updated_at() fires unconditionally on every UPDATE, even a same-value reassignment
+        // (the reclaim CAS's "sending" -> "sending") — see the real trigger's own definition.
+        store.events[idx] = {
+          ...store.events[idx],
+          ...(state.updatePayload as Partial<EventRow>),
+          updated_at: new Date(store.clockMs ?? Date.now()).toISOString(),
+        };
         return { data: store.events[idx], error: null };
       }
 
@@ -532,5 +547,125 @@ describe("processStripeRefundDisputeEvent", () => {
     expect(result).toEqual({ status: "recorded", matched: true, case_id: CASE_ID, alert: "skipped_no_recipient" });
     expect(store.events[0].alert_status).toBe("pending");
     expect(send).not.toHaveBeenCalled();
+  });
+
+  describe("stale 'sending' claim reclaim", () => {
+    const T0 = Date.parse("2026-09-10T00:00:00.000Z");
+
+    /** Simulates a prior invocation that claimed the row and then crashed before completing. */
+    function stuckSendingEventRow(overrides: Partial<EventRow> = {}): EventRow {
+      return {
+        id: "evrow_stuck_1",
+        stripe_event_id: "evt_refund_1",
+        event_category: "refund",
+        stripe_object_id: "re_1",
+        stripe_payment_intent_id: "pi_123",
+        stripe_charge_id: "ch_signed_1",
+        case_id: CASE_ID,
+        user_id: USER_ID,
+        matched: true,
+        amount: 4900,
+        currency: "usd",
+        stripe_status: "succeeded",
+        dispute_reason: null,
+        evidence_due_by: null,
+        alert_status: "sending",
+        alert_message_id: null,
+        updated_at: new Date(T0 - STALE_SENDING_RECLAIM_THRESHOLD_MS - 1_000).toISOString(),
+        ...overrides,
+      };
+    }
+
+    it("does not reclaim a 'sending' row younger than the threshold — same retryable error as before", async () => {
+      const store = baseStore({
+        payments: [matchedPaymentRow()],
+        events: [
+          stuckSendingEventRow({
+            updated_at: new Date(T0 - STALE_SENDING_RECLAIM_THRESHOLD_MS + 1_000).toISOString(),
+          }),
+        ],
+        clockMs: T0,
+      });
+
+      const result = await processStripeRefundDisputeEvent(
+        makeSupabase(store),
+        makeSessionsLookup(store),
+        refundEvent(),
+        { nowMs: T0 }
+      );
+
+      expect(result).toEqual({ status: "error", error: "Alert claim is in flight (alert_status: sending) — retry" });
+      expect(store.events[0].alert_status).toBe("sending");
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("reclaims a 'sending' row older than the threshold and sends the alert exactly once", async () => {
+      const store = baseStore({
+        payments: [matchedPaymentRow()],
+        events: [stuckSendingEventRow()],
+        clockMs: T0,
+      });
+
+      const result = await processStripeRefundDisputeEvent(
+        makeSupabase(store),
+        makeSessionsLookup(store),
+        refundEvent(),
+        { nowMs: T0 }
+      );
+
+      expect(result).toEqual({ status: "recorded", matched: true, case_id: CASE_ID, alert: "sent" });
+      expect(store.events[0].alert_status).toBe("sent");
+      expect(send).toHaveBeenCalledTimes(1);
+      // Same deterministic idempotency key the original (abandoned) attempt would have used —
+      // Resend's own 24h dedup is the real safety net if that attempt secretly reached Resend
+      // before the process died.
+      expect(send.mock.calls[0][0].idempotencyKey).toBe("stripe-payment-event-alert:refund:re_1");
+    });
+
+    it("two concurrent requests racing the same stale claim: only one reclaims and sends", async () => {
+      const store = baseStore({
+        payments: [matchedPaymentRow()],
+        events: [stuckSendingEventRow()],
+        clockMs: T0,
+      });
+      const supabase = makeSupabase(store);
+      const sessions = makeSessionsLookup(store);
+
+      const [a, b] = await Promise.all([
+        processStripeRefundDisputeEvent(supabase, sessions, refundEvent(), { nowMs: T0 }),
+        processStripeRefundDisputeEvent(supabase, sessions, refundEvent(), { nowMs: T0 }),
+      ]);
+
+      const results = [a, b];
+      const sentCount = results.filter((r) => r.status === "recorded" && r.alert === "sent").length;
+      const errorCount = results.filter((r) => r.status === "error").length;
+      expect(sentCount).toBe(1);
+      expect(errorCount).toBe(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(store.events[0].alert_status).toBe("sent");
+    });
+
+    it("does not reclaim (and does not resend) a row that is already 'sent'", async () => {
+      const store = baseStore({
+        payments: [matchedPaymentRow()],
+        events: [
+          stuckSendingEventRow({
+            alert_status: "sent",
+            alert_message_id: "msg_original",
+          }),
+        ],
+        clockMs: T0,
+      });
+
+      const result = await processStripeRefundDisputeEvent(
+        makeSupabase(store),
+        makeSessionsLookup(store),
+        refundEvent(),
+        { nowMs: T0 }
+      );
+
+      expect(result).toEqual({ status: "recorded", matched: true, case_id: CASE_ID, alert: "already_sent" });
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 });

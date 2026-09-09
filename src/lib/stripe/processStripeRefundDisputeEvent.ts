@@ -73,7 +73,21 @@ type PaymentEventRow = {
   evidence_due_by: string | null;
   alert_status: "pending" | "sending" | "sent";
   alert_message_id: string | null;
+  updated_at: string;
 };
+
+/**
+ * A claim stuck at 'sending' longer than this is guaranteed abandoned, not merely slow: this
+ * route's own `maxDuration` (see route.ts) hard-caps a single invocation at 30 seconds, so
+ * nothing can still be legitimately mid-send past that point — the process was killed. 60
+ * seconds (2x that cap) leaves margin for clock/latency skew while staying 1,440x smaller than
+ * Resend's own 24h idempotency-key retention window (confirmed against the Resend API docs and
+ * the resend SDK's compiled source, which sets `Idempotency-Key` from this same deterministic,
+ * per-event key on every send attempt) — the actual safety net if the abandoned claim's send
+ * secretly reached Resend before the process died: a reclaim's resend inside that 24h window
+ * gets Resend's own cached response back, never a second physical email.
+ */
+export const STALE_SENDING_RECLAIM_THRESHOLD_MS = 60_000;
 
 type MatchedPayment = { case_id: string; user_id: string; amount_total: number | null };
 
@@ -234,8 +248,10 @@ function timelineEntryId(category: PaymentEventCategory, objectId: string): stri
 export async function processStripeRefundDisputeEvent(
   supabase: SupabaseClient,
   sessionsLookup: StripeSessionsLookup,
-  event: StripeWebhookEventLike
+  event: StripeWebhookEventLike,
+  options: { nowMs?: number } = {}
 ): Promise<ProcessStripeRefundDisputeEventResult> {
+  const nowMs = options.nowMs ?? Date.now();
   const category = categoryForEventType(event.type);
   if (!category) {
     return { status: "ignored_unhandled_type" };
@@ -343,13 +359,14 @@ export async function processStripeRefundDisputeEvent(
   }
   if (!claimed) {
     // Lost the pending -> sending race. Re-read to find out why: a row already 'sent' is a
-    // genuine, confirmed duplicate — ack success. A row still 'sending' is ambiguous (a
+    // genuine, confirmed duplicate — ack success. A row still 'sending' is ambiguous — a
     // concurrent request actively completing right now, or one that crashed before completing
-    // or reverting) — return a retryable error rather than a false "already_sent" ack, so
-    // Stripe's own redelivery eventually converges once the in-flight claim settles one way or
-    // the other. This does not fully close a hard-crash-mid-send window (that would need a
-    // staleness-timeout sweep — a materially larger change than this webhook handler) but it
-    // never silently reports an alert as sent when it might not have been.
+    // or reverting — UNLESS it has been 'sending' longer than STALE_SENDING_RECLAIM_THRESHOLD_MS,
+    // in which case the claimant is guaranteed dead (see that constant's own comment) and this
+    // request may reclaim it via a second CAS keyed on the exact updated_at just observed, so a
+    // genuine concurrent reclaimer can win at most once. A too-fresh 'sending' row still just
+    // returns a retryable error, unchanged from before, so a genuinely in-flight request is
+    // never disturbed.
     const { data: recheck, error: recheckErr } = await supabase
       .from("justice_case_payment_events")
       .select("*")
@@ -367,9 +384,32 @@ export async function processStripeRefundDisputeEvent(
         alert: "already_sent",
       };
     }
-    return { status: "error", error: "Alert claim is in flight (alert_status: sending) — retry" };
+
+    const claimedAtMs = Date.parse(current.updated_at);
+    const ageMs = Number.isFinite(claimedAtMs) ? nowMs - claimedAtMs : 0;
+    if (ageMs < STALE_SENDING_RECLAIM_THRESHOLD_MS) {
+      return { status: "error", error: "Alert claim is in flight (alert_status: sending) — retry" };
+    }
+
+    const { data: reclaimed, error: reclaimErr } = await supabase
+      .from("justice_case_payment_events")
+      .update({ alert_status: "sending" })
+      .eq("id", row.id)
+      .eq("alert_status", "sending")
+      .eq("updated_at", current.updated_at)
+      .select()
+      .maybeSingle();
+    if (reclaimErr) {
+      return { status: "error", error: reclaimErr.message };
+    }
+    if (!reclaimed) {
+      // Someone else reclaimed it first (or, implausibly, the original owner is still alive).
+      return { status: "error", error: "Alert claim is in flight (alert_status: sending) — retry" };
+    }
+    row = reclaimed as PaymentEventRow;
+  } else {
+    row = claimed as PaymentEventRow;
   }
-  row = claimed as PaymentEventRow;
 
   const recipient = resolveOperatorAlertEmail();
   if (!recipient) {
