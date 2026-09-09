@@ -10,6 +10,7 @@ import {
 } from "./helpers/clerk-e2e";
 import {
   chatAiTranscript,
+  expandChatAiComposer,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_USER_MESSAGE,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import {
@@ -114,8 +115,14 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     await clearJusticeSession(page);
     await page.reload();
 
+    // The resumed case has a submission draft review pending, so the composer may come back
+    // collapsed behind its disclosure (exactly-one-primary-action precedence) — wait for
+    // whichever state the page settles into, then expand if needed.
     const chatInput = page.locator("#chat-ai-input");
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    await expect(
+      chatInput.or(page.getByText("Need to change something? Continue in chat"))
+    ).toBeVisible({ timeout: 30_000 });
+    await expandChatAiComposer(page);
     await waitForClerkBrowserApiSession(page);
 
     // The fallback hydration effect resumes the existing case instead of starting fresh.
