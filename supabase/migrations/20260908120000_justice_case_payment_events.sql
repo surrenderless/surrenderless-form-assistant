@@ -22,11 +22,13 @@ create unique index if not exists idx_justice_case_payments_stripe_payment_inten
 -- refund/dispute. Both unique constraints below guard idempotency independently; the
 -- application code treats a conflict on either as "already claimed" and looks up the existing
 -- row by (event_category, stripe_object_id), which is stable regardless of which constraint
--- fired. alert_status is the durable claim/outbox state for the operator email: a row is
--- inserted with 'pending' BEFORE the alert is sent, and only flipped to 'sent' after a
--- confirmed provider acceptance — so a crash between insert and send leaves the row retryable
--- rather than silently losing the alert, and a concurrent retry can only ever win the row via
--- the 'pending' -> 'sent' compare-and-swap update.
+-- fired. alert_status is the durable claim/outbox state for the operator email, a three-state
+-- lifecycle: a row is inserted 'pending', a concurrent-safe compare-and-swap update claims it
+-- to 'sending' before the alert is actually sent (only the winner of that CAS proceeds to
+-- send), and it is only flipped to 'sent' after a confirmed provider acceptance — so a crash
+-- between claim and send leaves the row retryable (via 'sending', not silently lost as 'sent'),
+-- and a concurrent duplicate delivery that loses the 'pending' -> 'sending' claim never sends
+-- a second alert.
 create table if not exists public.justice_case_payment_events (
   id uuid primary key default gen_random_uuid(),
   stripe_event_id text not null,
@@ -43,7 +45,7 @@ create table if not exists public.justice_case_payment_events (
   stripe_status text null,
   dispute_reason text null,
   evidence_due_by timestamptz null,
-  alert_status text not null default 'pending' check (alert_status in ('pending', 'sent')),
+  alert_status text not null default 'pending' check (alert_status in ('pending', 'sending', 'sent')),
   alert_message_id text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
