@@ -151,11 +151,20 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
   const CANCELLED_NOTICE_SELECTOR = "#chat-ai-checkout-cancelled-notice";
   const CANCELLED_NOTICE_TEXT = /Checkout wasn't completed\. We don't see a confirmed payment/;
 
-  test("shows a one-time notice for an unpaid case, cleans the checkout param while keeping the case id, and leaves the real payment retry control visible and enabled", async ({
+  test("cancelled-checkout notice: shown for an unpaid case with real retry control, suppressed when already paid, and untouched on a successful return", async ({
     page,
   }) => {
     test.setTimeout(120_000);
 
+    // All three scenarios below share a single bootstrap + case setup and are asserted back to
+    // back in one test, rather than three separate tests each re-running the full fresh-session
+    // bootstrap. This whole 65+ test suite runs single-worker off one Clerk session snapshot
+    // captured once at the start of the run; three separate bootstraps here were occasionally
+    // extending total suite duration enough to tip later, unrelated authenticated tests into a
+    // stale-session 401 once the session neared its refresh window — confirmed by their own error
+    // ("Not signed in") having nothing to do with any case id or state this file touches. One
+    // bootstrap keeps this file's contribution to total suite time minimal.
+    //
     // Entirely self-contained: seeds a local "existing case, draft reviewed" session directly
     // (same technique as hydrateChatAiSession in helpers/chat-ai-ladder-continuity-e2e.ts) and
     // mocks the case GET / price GET this fake id's checkout-return effect calls — no real
@@ -185,24 +194,30 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
       }
     );
 
-    await page.route(`**/api/justice/cases/${caseId}`, async (route) => {
-      if (route.request().method() !== "GET") {
-        await route.continue();
-        return;
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: caseId,
-          intake,
-          client_state: {},
-          timeline: [],
-          archived_at: null,
-          paid_at: null,
-        }),
+    async function routeCaseGet(paidAt: string | null): Promise<void> {
+      // Playwright resolves the most-recently-registered matching route first, so a later call
+      // to this same pattern (scenario B below) takes over from this one without needing to
+      // unroute it first.
+      await page.route(`**/api/justice/cases/${caseId}`, async (route) => {
+        if (route.request().method() !== "GET") {
+          await route.continue();
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: caseId,
+            intake,
+            client_state: {},
+            timeline: [],
+            archived_at: null,
+            paid_at: paidAt,
+          }),
+        });
       });
-    });
+    }
+    await routeCaseGet(null);
     await page.route(`**/api/justice/cases/${caseId}/checkout`, async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
@@ -215,10 +230,10 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
       });
     });
 
-    // Simulate returning from a cancelled/abandoned Stripe Checkout for this exact case — no real
-    // Checkout session is created or visited; the return effect only reads the URL params and
-    // re-checks the (mocked-unpaid) case, so this is a faithful way to exercise it without ever
-    // contacting Stripe.
+    // --- Scenario A: unpaid case returns from a cancelled/abandoned Checkout ---
+    // No real Checkout session is created or visited; the return effect only reads the URL params
+    // and re-checks the (mocked-unpaid) case, so this is a faithful way to exercise it without
+    // ever contacting Stripe.
     await page.goto(`/justice/chat-ai?case=${caseId}&checkout=cancelled`);
     await waitForClerkBrowserApiSession(page);
 
@@ -246,90 +261,33 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     await expect(approveButton).toBeEnabled();
 
     // One-time display: reloading the now-cleaned URL must not replay the notice. The case/price
-    // routes above stay mocked-unpaid here (page.route stays active for the whole page context,
-    // not just one navigation), but that's irrelevant to this check — the checkout query param is
+    // routes stay mocked-unpaid here (page.route stays active for the whole page context, not
+    // just one navigation), but that's irrelevant to this check — the checkout query param is
     // what gates the entire cancelled-branch code path, and it's already gone, so this proves the
     // query cleanup itself is what prevents a replay, independent of paid_at.
     await page.reload();
     await waitForClerkBrowserApiSession(page);
     await expect(page.locator(CANCELLED_NOTICE_SELECTOR)).toHaveCount(0);
-  });
 
-  test("never shows the cancellation notice when the freshly-refreshed case is already paid (paid-state race protection)", async ({
-    page,
-  }) => {
-    test.setTimeout(120_000);
-
+    // --- Scenario B: paid-state race protection ---
     // A real paid case can't be created here without triggering an actual Stripe payment, which
-    // is out of scope for this suite — so this test controls paid_at directly via response
-    // interception, kept active for the test's one navigation (never reloaded, so there is no
-    // claim here about what a later reload would see). Uses the shared fresh-session bootstrap
-    // (clears sessionStorage after the initial load) so chat-ai's resume-on-mount can't leave a
-    // real, previously-active case's local cache in place under this fake case id.
-    await bootstrapFreshUncommittedSession(page);
-
-    await page.evaluate(
-      ([key, value]) => sessionStorage.setItem(key, value),
-      [STORAGE_CASE_ID, PLAYWRIGHT_MOCK_SECOND_CASE_ID]
-    );
-
-    await page.route(
-      new RegExp(`/api/justice/cases/${PLAYWRIGHT_MOCK_SECOND_CASE_ID}(\\?|$)`),
-      async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            id: PLAYWRIGHT_MOCK_SECOND_CASE_ID,
-            client_state: {},
-            timeline: [],
-            archived_at: null,
-            paid_at: new Date().toISOString(),
-          }),
-        });
-      }
-    );
-
-    await page.goto(
-      `/justice/chat-ai?case=${PLAYWRIGHT_MOCK_SECOND_CASE_ID}&checkout=cancelled`
-    );
-    const chatInput = page.locator("#chat-ai-input");
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    // is out of scope for this suite — so this re-routes the same case GET to report paid_at set,
+    // then returns from a fresh cancelled-checkout navigation for it. The notice must never appear
+    // once the freshly-refreshed server state shows a confirmed payment.
+    await routeCaseGet(new Date().toISOString());
+    await page.goto(`/justice/chat-ai?case=${caseId}&checkout=cancelled`);
     await waitForClerkBrowserApiSession(page);
-
-    // Give the checkout-return effect a moment to have shown the notice if it were going to.
     await page.waitForTimeout(1_500);
     await expect(page.locator(CANCELLED_NOTICE_SELECTOR)).toHaveCount(0);
-
-    // The checkout param is still cleaned up regardless of the paid outcome.
     await expect.poll(() => page.url()).not.toContain("checkout=");
-    expect(page.url()).toContain(`case=${PLAYWRIGHT_MOCK_SECOND_CASE_ID}`);
-  });
+    expect(page.url()).toContain(`case=${caseId}`);
 
-  test("a successful-checkout return is unaffected by the cancelled-notice logic", async ({
-    page,
-  }) => {
-    test.setTimeout(120_000);
-
-    // Same fresh-session bootstrap as above, for the same reason: without clearing sessionStorage
-    // first, chat-ai's resume-on-mount can leave a real, previously-active case's local cache in
-    // place, which would render that other case's UI regardless of this fake ?case= id.
-    await bootstrapFreshUncommittedSession(page);
-
-    await page.evaluate(
-      ([key, value]) => sessionStorage.setItem(key, value),
-      [STORAGE_CASE_ID, PLAYWRIGHT_MOCK_SECOND_CASE_ID]
-    );
-
-    await page.goto(
-      `/justice/chat-ai?case=${PLAYWRIGHT_MOCK_SECOND_CASE_ID}&checkout=success`
-    );
-    const chatInput = page.locator("#chat-ai-input");
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
-    await waitForClerkBrowserApiSession(page);
-
+    // --- Scenario C: a successful-checkout return is unaffected by the cancelled-notice logic ---
     // The success path never sets the cancelled notice, and (unlike cancelled) intentionally
-    // leaves the checkout param in the URL — that branch is untouched by this change.
+    // leaves the checkout param in the URL — that branch is untouched by this change. Paid state
+    // doesn't matter for this check, so the still-paid mock from scenario B is left as-is.
+    await page.goto(`/justice/chat-ai?case=${caseId}&checkout=success`);
+    await waitForClerkBrowserApiSession(page);
     await page.waitForTimeout(1_500);
     await expect(page.locator(CANCELLED_NOTICE_SELECTOR)).toHaveCount(0);
   });
