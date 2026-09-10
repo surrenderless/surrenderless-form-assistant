@@ -5,6 +5,10 @@ import {
   processStripeCheckoutCompletedEvent,
   type StripeWebhookEventLike,
 } from "@/lib/stripe/processStripeCheckoutCompletedEvent";
+import {
+  processStripeRefundDisputeEvent,
+  STRIPE_REFUND_DISPUTE_HANDLED_EVENT_TYPES,
+} from "@/lib/stripe/processStripeRefundDisputeEvent";
 import { resolveStripeWebhookEnv } from "@/lib/stripe/stripeEnv";
 
 export const runtime = "nodejs";
@@ -37,9 +41,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const payload = await req.text();
   const signature = req.headers.get("stripe-signature") ?? "";
 
+  const stripe = getStripeClient(env.secretKey);
   let event: StripeWebhookEventLike;
   try {
-    const stripe = getStripeClient(env.secretKey);
     event = stripe.webhooks.constructEvent(
       payload,
       signature,
@@ -55,10 +59,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Supabase is not configured on this server." }, { status: 503 });
   }
 
-  const result = await processStripeCheckoutCompletedEvent(supabase, event);
+  const result = STRIPE_REFUND_DISPUTE_HANDLED_EVENT_TYPES.has(event.type)
+    ? await processStripeRefundDisputeEvent(supabase, stripe.checkout.sessions, event)
+    : await processStripeCheckoutCompletedEvent(supabase, event);
   // Surface real failures as 5xx so Stripe retries delivery; every other outcome (granted,
-  // duplicate, ignored, malformed, case_mismatch) is a definitive 200 ack — Stripe must never
-  // retry an event this handler has already durably resolved.
+  // duplicate, ignored, malformed, case_mismatch, recorded) is a definitive 200 ack — Stripe
+  // must never retry an event this handler has already durably resolved.
   const status = result.status === "error" ? 500 : 200;
   return NextResponse.json({ ok: result.status !== "error", ...result }, { status });
 }

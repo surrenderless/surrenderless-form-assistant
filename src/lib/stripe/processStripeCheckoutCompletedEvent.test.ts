@@ -10,7 +10,12 @@ const USER_ID = "user_owner_1";
 const OTHER_USER_ID = "user_owner_2";
 
 type CaseRow = { id: string; user_id: string; paid_at: string | null };
-type PaymentRow = { stripe_event_id: string; case_id: string; user_id: string };
+type PaymentRow = {
+  stripe_event_id: string;
+  case_id: string;
+  user_id: string;
+  stripe_payment_intent_id?: string | null;
+};
 
 type Store = {
   cases: CaseRow[];
@@ -41,6 +46,7 @@ function makeSupabase(store: Store): SupabaseClient {
             stripe_event_id: eventId,
             case_id: String(payload.case_id),
             user_id: String(payload.user_id),
+            stripe_payment_intent_id: (payload.stripe_payment_intent_id as string | null) ?? null,
           });
           return { data: null, error: null };
         },
@@ -130,6 +136,7 @@ function checkoutEvent(
     amountTotal?: number;
     currency?: string;
     metadata?: Record<string, unknown> | null;
+    paymentIntent?: string | { id: string } | null;
   } = {}
 ): StripeWebhookEventLike {
   const metadata =
@@ -146,6 +153,7 @@ function checkoutEvent(
         amount_total: overrides.amountTotal ?? 4900,
         currency: overrides.currency ?? "usd",
         metadata,
+        payment_intent: overrides.paymentIntent,
       },
     },
   };
@@ -326,5 +334,32 @@ describe("processStripeCheckoutCompletedEvent", () => {
     const result = await processStripeCheckoutCompletedEvent(makeSupabase(store), checkoutEvent());
 
     expect(result).toEqual({ status: "error", error: "update down" });
+  });
+
+  it("captures a plain-string payment_intent id for later refund/dispute matching", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ paymentIntent: "pi_123" })
+    );
+
+    expect(store.payments[0].stripe_payment_intent_id).toBe("pi_123");
+  });
+
+  it("captures an expanded-object payment_intent id (session retrieved with expand)", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ paymentIntent: { id: "pi_expanded_456" } })
+    );
+
+    expect(store.payments[0].stripe_payment_intent_id).toBe("pi_expanded_456");
+  });
+
+  it("stores a null payment_intent id rather than throwing when absent from the session payload", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(makeSupabase(store), checkoutEvent({ paymentIntent: undefined }));
+
+    expect(store.payments[0].stripe_payment_intent_id).toBeNull();
   });
 });

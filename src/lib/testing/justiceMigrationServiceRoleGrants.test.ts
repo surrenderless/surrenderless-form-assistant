@@ -43,6 +43,7 @@ describe("justice Supabase migrations grant service_role explicit table privileg
         "justice_case_chat_messages",
         "justice_case_evidence",
         "justice_case_filings",
+        "justice_case_payment_events",
         "justice_case_payments",
         "justice_case_tasks",
       ].sort()

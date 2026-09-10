@@ -10,6 +10,7 @@ import {
 } from "./helpers/clerk-e2e";
 import {
   chatAiTranscript,
+  expandChatAiComposer,
   PLAYWRIGHT_MOCK_INTAKE_CHAT_E2E_FICTIONAL_USER_MESSAGE,
 } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import {
@@ -114,8 +115,20 @@ test.describe("signed-in chat-ai resumes the latest case after a cleared session
     await clearJusticeSession(page);
     await page.reload();
 
+    // The resumed case has a submission draft review pending, so the composer may come back
+    // collapsed behind its disclosure (exactly-one-primary-action precedence). The collapsed
+    // textarea stays mounted in the DOM (just hidden inside a closed <details>), so combining
+    // both locators with .or() and asserting toBeVisible() throws a strict-mode violation —
+    // it resolves to both elements regardless of which is actually visible. Poll each
+    // locator's own (non-throwing) isVisible() instead and OR the booleans in JS.
     const chatInput = page.locator("#chat-ai-input");
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    const composerDisclosure = page.getByText("Need to change something? Continue in chat");
+    await expect
+      .poll(async () => (await chatInput.isVisible()) || (await composerDisclosure.isVisible()), {
+        timeout: 30_000,
+      })
+      .toBe(true);
+    await expandChatAiComposer(page);
     await waitForClerkBrowserApiSession(page);
 
     // The fallback hydration effect resumes the existing case instead of starting fresh.
