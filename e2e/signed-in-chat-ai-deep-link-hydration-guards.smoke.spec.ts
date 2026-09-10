@@ -288,10 +288,10 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     // A real paid case can't be created here without triggering an actual Stripe payment, which
     // is out of scope for this suite — so this test controls paid_at directly via response
     // interception, kept active for the test's one navigation (never reloaded, so there is no
-    // claim here about what a later reload would see).
-    await resetPlaywrightMockActiveCaseIfAny(page);
-    await page.goto("/justice/chat-ai");
-    await waitForClerkBrowserApiSession(page);
+    // claim here about what a later reload would see). Uses the shared fresh-session bootstrap
+    // (clears sessionStorage after the initial load) so chat-ai's resume-on-mount can't leave a
+    // real, previously-active case's local cache in place under this fake case id.
+    await bootstrapFreshUncommittedSession(page);
 
     await page.evaluate(
       ([key, value]) => sessionStorage.setItem(key, value),
@@ -336,9 +336,10 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
   }) => {
     test.setTimeout(120_000);
 
-    await resetPlaywrightMockActiveCaseIfAny(page);
-    await page.goto("/justice/chat-ai");
-    await waitForClerkBrowserApiSession(page);
+    // Same fresh-session bootstrap as above, for the same reason: without clearing sessionStorage
+    // first, chat-ai's resume-on-mount can leave a real, previously-active case's local cache in
+    // place, which would render that other case's UI regardless of this fake ?case= id.
+    await bootstrapFreshUncommittedSession(page);
 
     await page.evaluate(
       ([key, value]) => sessionStorage.setItem(key, value),
