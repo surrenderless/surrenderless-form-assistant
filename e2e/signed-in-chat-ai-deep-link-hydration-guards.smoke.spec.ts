@@ -164,7 +164,10 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     // PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID through intake+draft-review, which left that
     // id in a state the mock-reset helper could not fully clear for later tests reusing it).
     const caseId = PLAYWRIGHT_MOCK_SECOND_CASE_ID;
-    const intake = buildPlaywrightMockE2eCaseIntake();
+    // company_contact_email is required here: this destination blocks approval on a missing
+    // merchant recipient address (the recipient-required gate), which isn't what this test is
+    // about — a real case at this exact ladder point would already have it on file.
+    const intake = { ...buildPlaywrightMockE2eCaseIntake(), company_contact_email: "merchant@example.com" };
 
     await bootstrapFreshUncommittedSession(page);
     await page.evaluate(
