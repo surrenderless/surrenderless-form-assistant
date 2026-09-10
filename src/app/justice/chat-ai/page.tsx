@@ -251,6 +251,7 @@ import {
 } from "@/lib/justice/resolveReviewTaskDeepLink";
 import {
   buildCheckoutPriceHeadline,
+  CHECKOUT_CANCELLED_MESSAGE,
   CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE,
   CHECKOUT_CONFIRMING_PAYMENT_MESSAGE,
   CHECKOUT_DISCLOSURE_PARAGRAPHS,
@@ -261,6 +262,7 @@ import {
   type CheckoutPriceState,
 } from "@/lib/stripe/checkoutDisclosureCopy";
 import { checkoutConfirmationDelayForAttempt } from "@/lib/stripe/checkoutConfirmationPolling";
+import { stripCheckoutQueryParam } from "@/lib/stripe/stripCheckoutQueryParam";
 import {
   isCheckoutPriceResponseStale,
   nextCheckoutPriceRequestId,
@@ -719,6 +721,7 @@ const CHAT_MERCHANT_CONTACT_RECIPIENT_RETRY_INPUT_ID = "chat-merchant-contact-re
 const CHAT_DEMAND_LETTER_RECIPIENT_RETRY_INPUT_ID = "chat-demand-letter-recipient-retry-input";
 
 const CHAT_AI_CHECKOUT_PRICE_DISCLOSURE_ELEMENT_ID = "chat-ai-checkout-price-disclosure";
+const CHAT_AI_CHECKOUT_CANCELLED_NOTICE_ELEMENT_ID = "chat-ai-checkout-cancelled-notice";
 
 function isChatPreviewSelectableDestination(d: JusticeDestination): boolean {
   return d.status === "recommended" || d.status === "available";
@@ -2698,6 +2701,11 @@ export default function JusticeChatAiPage() {
   const [checkoutPriceState, setCheckoutPriceState] = useState<CheckoutPriceState>({
     status: "loading",
   });
+  /** True once a checkout=cancelled return has been confirmed (via a fresh server paid_at check)
+   *  to not have a completed payment on file. One-shot: set at most once per checkout-return
+   *  effect run, and the URL's checkout param is stripped in the same step so a reload can never
+   *  cause this to be set again for the same return. */
+  const [checkoutCancelledNotice, setCheckoutCancelledNotice] = useState(false);
   const [submissionDraftReviewChecked, setSubmissionDraftReviewChecked] = useState(false);
   const [markingSubmissionDraftReviewed, setMarkingSubmissionDraftReviewed] = useState(false);
   const [submissionDraftReviewError, setSubmissionDraftReviewError] = useState<string | null>(null);
@@ -3192,7 +3200,10 @@ export default function JusticeChatAiPage() {
   // redirect itself as proof of payment — it only ensures the exact case is loaded, then
   // refreshes from the server (paid_at only ever comes from there) with a few bounded retries to
   // absorb ordinary webhook-delivery latency, so approval can resume cleanly without the
-  // consumer needing to manually reload.
+  // consumer needing to manually reload. A cancelled return (the consumer backed out of or
+  // abandoned Checkout) shows a one-time, non-blaming notice once the fresh paid_at confirms no
+  // confirmed payment is recorded yet, then strips the checkout param so reloading never replays
+  // it; the ordinary pay prompt remains untouched and immediately retryable.
   useEffect(() => {
     if (!isLoaded || typeof window === "undefined") return;
     if (checkoutReturnHandledRef.current) return;
@@ -3251,6 +3262,28 @@ export default function JusticeChatAiPage() {
         } else {
           await refreshChatCaseFromServer(returnCaseId);
         }
+
+        if (checkoutStatus === "cancelled") {
+          // paid_at only ever comes from the signature-verified webhook (casePaidAtRef is never
+          // set from this redirect or any other client-side signal) — refreshed just above, so
+          // this is the authoritative post-return value, not a stale/optimistic guess.
+          if (!cancelled && !casePaidAtRef.current) {
+            setCheckoutCancelledNotice(true);
+          }
+          if (typeof window !== "undefined") {
+            window.history.replaceState(
+              null,
+              "",
+              stripCheckoutQueryParam(
+                window.location.pathname,
+                window.location.search,
+                window.location.hash
+              )
+            );
+          }
+          return;
+        }
+
         if (cancelled || checkoutStatus !== "success") return;
 
         // Keep the approval UI in a persistent "Confirming your payment…" state and poll the server
@@ -7195,6 +7228,17 @@ export default function JusticeChatAiPage() {
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
           {CHAT_AI_ENTRY_DISCLAIMER}
         </p>
+
+        {checkoutCancelledNotice ? (
+          <div
+            id={CHAT_AI_CHECKOUT_CANCELLED_NOTICE_ELEMENT_ID}
+            className="mt-4 rounded-xl border border-amber-300/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-950/[0.04] dark:border-amber-800/60 dark:bg-amber-950/20 dark:text-amber-100 dark:ring-amber-500/10"
+            role="status"
+            aria-label="Checkout not completed"
+          >
+            {CHECKOUT_CANCELLED_MESSAGE}
+          </div>
+        ) : null}
 
         {isUpdatingExistingCase ? (
           <div className={`mt-4 ${activeCaseBannerCls}`} role="status" aria-label="Active case">
