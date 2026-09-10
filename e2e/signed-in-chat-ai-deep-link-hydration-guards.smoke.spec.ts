@@ -14,7 +14,7 @@ import {
   driveConsumerToSavedCaseForEvidenceUpload,
   uploadEvidenceFileViaChat,
 } from "./helpers/chat-ai-evidence-upload-e2e";
-import { chatAiTranscript } from "./helpers/chat-ai-owned-fulfillment-e2e";
+import { chatAiTranscript, expandChatAiComposer } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { expectUrlStaysOnChatAi } from "./helpers/chat-ai-ladder-continuity-e2e";
 import { CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE } from "@/lib/justice/chatLegalConsentGates";
 
@@ -176,6 +176,7 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
         res.url().includes("/api/justice/submission-draft-reviewed"),
       { timeout: 30_000 }
     );
+    await expandChatAiComposer(page);
     await chatInput.fill(CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE);
     await page.getByRole("button", { name: "Send" }).click();
     expect((await draftReviewedResponse).ok()).toBeTruthy();
