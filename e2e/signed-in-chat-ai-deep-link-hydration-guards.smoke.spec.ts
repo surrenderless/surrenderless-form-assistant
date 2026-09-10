@@ -6,14 +6,14 @@ import {
   isClerkE2eConfigured,
   waitForClerkBrowserApiSession,
 } from "./helpers/clerk-e2e";
-import { STORAGE_CASE_ID } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
-import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
-import { driveConsumerToSavedCaseForEvidenceUpload } from "./helpers/chat-ai-evidence-upload-e2e";
-import { chatAiTranscript, expandChatAiComposer } from "./helpers/chat-ai-owned-fulfillment-e2e";
-import { expectUrlStaysOnChatAi } from "./helpers/chat-ai-ladder-continuity-e2e";
-import { CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE } from "@/lib/justice/chatLegalConsentGates";
+import { buildPlaywrightMockE2eCaseIntake } from "@/lib/testing/playwrightMockIntakeCaseHydrationPipeline";
+
+// Mirrors the page-local (unexported) key in src/app/justice/chat-ai/page.tsx — matches the same
+// redeclaration pattern already used by e2e/helpers/chat-ai-ladder-continuity-e2e.ts.
+const STORAGE_SUBMISSION_DRAFT_REVIEWED_V1 = "justice_submission_draft_reviewed_v1";
 
 // Doesn't need to resolve to a real task — both guards under test fire before the deep link's
 // case/task lookup ever runs, so a well-formed UUID is all `parseReviewTaskDeepLinkParams`
@@ -154,57 +154,35 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
   test("shows a one-time notice for an unpaid case, cleans the checkout param while keeping the case id, and leaves the real payment retry control visible and enabled", async ({
     page,
   }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(120_000);
 
-    // Drive a genuinely persisted case through a real intake commit + draft review (real POSTs
-    // against the real backend) to reach the exact point where Checkout would normally be
-    // triggered. Deliberately skips the evidence-file upload step other specs perform on this
-    // same shared deterministic fixture id — showInlinePreparedPacketApproval never depends on
-    // evidence, and combining evidence upload with draft review here left this id in a state the
-    // shared mock-reset helper could not fully clear for other tests running later in the same CI
-    // job (confirmed by pre-existing, unrelated specs reusing this id failing afterward). This
-    // fixture id also turns out to carry a real, historically-set paid_at in the shared test
-    // database (confirmed via its case GET response; this suite has no way to reset it) — see the
-    // mocking below, right before the checkout=cancelled navigation, for how the unpaid state and
-    // price are then deterministically served.
-    await driveConsumerToSavedCaseForEvidenceUpload(page);
-    await expectUrlStaysOnChatAi(page);
+    // Entirely self-contained: seeds a local "existing case, draft reviewed" session directly
+    // (same technique as hydrateChatAiSession in helpers/chat-ai-ladder-continuity-e2e.ts) and
+    // mocks the case GET / price GET this fake id's checkout-return effect calls — no real
+    // backend mutation against any shared fixture case, so nothing here can leave residue for
+    // other specs in the same CI job (an earlier version of this test drove the real, shared
+    // PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID through intake+draft-review, which left that
+    // id in a state the mock-reset helper could not fully clear for later tests reusing it).
+    const caseId = PLAYWRIGHT_MOCK_SECOND_CASE_ID;
+    const intake = buildPlaywrightMockE2eCaseIntake();
 
-    const chatInput = page.locator("#chat-ai-input");
-    const chatTranscript = chatAiTranscript(page);
-    const draftReviewedResponse = page.waitForResponse(
-      (res) =>
-        res.request().method() === "POST" &&
-        res.url().includes("/api/justice/submission-draft-reviewed"),
-      { timeout: 30_000 }
+    await bootstrapFreshUncommittedSession(page);
+    await page.evaluate(
+      ({ caseId, intake, storageCaseIdKey, storageIntakeKey, draftReviewedKey }) => {
+        sessionStorage.setItem(storageCaseIdKey, caseId);
+        sessionStorage.setItem(storageIntakeKey, JSON.stringify(intake));
+        sessionStorage.setItem(draftReviewedKey, JSON.stringify({ [caseId]: true }));
+      },
+      {
+        caseId,
+        intake,
+        storageCaseIdKey: STORAGE_CASE_ID,
+        storageIntakeKey: STORAGE_INTAKE,
+        draftReviewedKey: STORAGE_SUBMISSION_DRAFT_REVIEWED_V1,
+      }
     );
-    await expandChatAiComposer(page);
-    await chatInput.fill(CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE);
-    await page.getByRole("button", { name: "Send" }).click();
-    expect((await draftReviewedResponse).ok()).toBeTruthy();
-    await expect(
-      chatTranscript.getByText(CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE)
-    ).toBeVisible({ timeout: 15_000 });
 
-    const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
-    await expect(packetApproval).toBeVisible({ timeout: 30_000 });
-
-    // This deterministic, shared fixture case carries a real, historically-set paid_at in the
-    // test database (left over from prior activity this suite has no way to reset), so its case
-    // GET and price-lookup endpoints are re-fetched here and re-served with paid_at forced to
-    // null and a plausible price — everything else in the payload is the real, just-fetched data
-    // for this case, unmodified — so the checkout=cancelled return below deterministically
-    // exercises the genuinely-unpaid UI path (notice + real, priced retry control) instead of
-    // depending on fragile shared-database payment state.
-    const realCaseGetUrl = `**/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`;
-    const realCaseCheckoutUrl = `${realCaseGetUrl}/checkout`;
-    const realCaseRes = await page.request.get(
-      `/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`
-    );
-    expect(realCaseRes.ok()).toBeTruthy();
-    const realCaseBody = (await realCaseRes.json()) as Record<string, unknown>;
-
-    await page.route(realCaseGetUrl, async (route) => {
+    await page.route(`**/api/justice/cases/${caseId}`, async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
         return;
@@ -212,10 +190,17 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ ...realCaseBody, paid_at: null }),
+        body: JSON.stringify({
+          id: caseId,
+          intake,
+          client_state: {},
+          timeline: [],
+          archived_at: null,
+          paid_at: null,
+        }),
       });
     });
-    await page.route(realCaseCheckoutUrl, async (route) => {
+    await page.route(`**/api/justice/cases/${caseId}/checkout`, async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
         return;
@@ -229,15 +214,9 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
 
     // Simulate returning from a cancelled/abandoned Stripe Checkout for this exact case — no real
     // Checkout session is created or visited; the return effect only reads the URL params and
-    // re-checks the (now mocked-unpaid) case, so this is a faithful way to exercise it without
-    // ever contacting Stripe.
-    await page.goto(
-      `/justice/chat-ai?case=${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}&checkout=cancelled`
-    );
-    // Not a chatInput visibility wait here: the case is already at the packet-approval step, so
-    // the composer defaults to collapsed (see expandChatAiComposer's doc comment) and #chat-ai-input
-    // is legitimately hidden — waitForClerkBrowserApiSession itself waits on the always-visible
-    // header instead, so it's a reliable "page loaded" signal regardless of composer state.
+    // re-checks the (mocked-unpaid) case, so this is a faithful way to exercise it without ever
+    // contacting Stripe.
+    await page.goto(`/justice/chat-ai?case=${caseId}&checkout=cancelled`);
     await waitForClerkBrowserApiSession(page);
 
     const notice = page.locator(CANCELLED_NOTICE_SELECTOR);
@@ -248,33 +227,26 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     // Query cleanup: checkout is gone, case id is preserved, so a manual reload can't replay it
     // and any other page logic keyed off ?case= keeps working.
     await expect.poll(() => page.url()).not.toContain("checkout=");
-    expect(page.url()).toContain(`case=${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`);
+    expect(page.url()).toContain(`case=${caseId}`);
 
     // Retry availability: the message says "You can try again below" — verify the real payment
     // control it refers to, not merely that the chat input is present. The price disclosure must
     // have loaded a real amount (not stuck loading/unavailable), and once the packet is marked
     // reviewed, "Approve prepared packet" — the control that starts Checkout again — must be
     // visible and enabled. It is deliberately never clicked, so no Checkout session is created.
-    const packetApprovalAfterReturn = page.locator("#chat-ai-inline-prepared-packet-approval");
-    await expect(packetApprovalAfterReturn).toBeVisible({ timeout: 30_000 });
-    await expect(packetApprovalAfterReturn.getByText(/One-time fee: /)).toBeVisible({
-      timeout: 30_000,
-    });
-    await packetApprovalAfterReturn
-      .getByLabel("I reviewed this prepared packet")
-      .check();
-    const approveButton = packetApprovalAfterReturn.getByRole("button", {
-      name: "Approve prepared packet",
-    });
+    const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
+    await expect(packetApproval).toBeVisible({ timeout: 30_000 });
+    await expect(packetApproval.getByText(/One-time fee: /)).toBeVisible({ timeout: 30_000 });
+    await packetApproval.getByLabel("I reviewed this prepared packet").check();
+    const approveButton = packetApproval.getByRole("button", { name: "Approve prepared packet" });
     await expect(approveButton).toBeVisible();
     await expect(approveButton).toBeEnabled();
 
     // One-time display: reloading the now-cleaned URL must not replay the notice. The case/price
-    // routes above are still mocked-unpaid here (page.route stays active for the whole page
-    // context, not just one navigation), but that's irrelevant to this check — the checkout query
-    // param is what gates the entire cancelled-branch code path, and it's already gone, so this
-    // proves the query cleanup itself is what prevents a replay, independent of paid_at.
-    // Same reasoning as above: wait on the header (composer-state-independent), not #chat-ai-input.
+    // routes above stay mocked-unpaid here (page.route stays active for the whole page context,
+    // not just one navigation), but that's irrelevant to this check — the checkout query param is
+    // what gates the entire cancelled-branch code path, and it's already gone, so this proves the
+    // query cleanup itself is what prevents a replay, independent of paid_at.
     await page.reload();
     await waitForClerkBrowserApiSession(page);
     await expect(page.locator(CANCELLED_NOTICE_SELECTOR)).toHaveCount(0);
