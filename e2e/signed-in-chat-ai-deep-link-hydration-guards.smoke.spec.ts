@@ -194,7 +194,10 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     await page.goto(
       `/justice/chat-ai?case=${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}&checkout=cancelled`
     );
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    // Not a chatInput visibility wait here: the case is already at the packet-approval step, so
+    // the composer defaults to collapsed (see expandChatAiComposer's doc comment) and #chat-ai-input
+    // is legitimately hidden — waitForClerkBrowserApiSession itself waits on the always-visible
+    // header instead, so it's a reliable "page loaded" signal regardless of composer state.
     await waitForClerkBrowserApiSession(page);
 
     const notice = page.locator(CANCELLED_NOTICE_SELECTOR);
@@ -228,8 +231,9 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
 
     // One-time display: reloading the now-cleaned URL must not replay the notice. Nothing here is
     // mocked, so this reload exercises the real case-fetch path exactly as a consumer would hit it.
+    // Same reasoning as above: wait on the header (composer-state-independent), not #chat-ai-input.
     await page.reload();
-    await expect(chatInput).toBeVisible({ timeout: 30_000 });
+    await waitForClerkBrowserApiSession(page);
     await expect(page.locator(CANCELLED_NOTICE_SELECTOR)).toHaveCount(0);
   });
 
