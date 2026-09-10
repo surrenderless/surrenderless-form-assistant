@@ -10,10 +10,7 @@ import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { STORAGE_STAGED_PROOF_NOTES_V1 } from "@/lib/justice/stagedProofNotes";
 import { PLAYWRIGHT_MOCK_SECOND_CASE_ID } from "@/lib/testing/playwrightMockJusticeChatMessagesOwnership";
 import { PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID } from "@/lib/testing/playwrightMockIntakeCaseCommitPipeline";
-import {
-  driveConsumerToSavedCaseForEvidenceUpload,
-  uploadEvidenceFileViaChat,
-} from "./helpers/chat-ai-evidence-upload-e2e";
+import { driveConsumerToSavedCaseForEvidenceUpload } from "./helpers/chat-ai-evidence-upload-e2e";
 import { chatAiTranscript, expandChatAiComposer } from "./helpers/chat-ai-owned-fulfillment-e2e";
 import { expectUrlStaysOnChatAi } from "./helpers/chat-ai-ladder-continuity-e2e";
 import { CHAT_LEGAL_CONSENT_SUBMISSION_DRAFT_REVIEW_MESSAGE } from "@/lib/justice/chatLegalConsentGates";
@@ -159,15 +156,18 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
   }) => {
     test.setTimeout(240_000);
 
-    // Drive a genuinely persisted case through the same real flow as
-    // signed-in-chat-ai-inline-packet-preview.smoke.spec.ts (real intake, evidence upload, draft
-    // review — all real POSTs against the real backend) to reach the exact point where Checkout
-    // would normally be triggered. This deterministic fixture id turns out to carry a real,
-    // historically-set paid_at in the shared test database (confirmed via its case GET response;
-    // this suite has no way to reset it) — see the mocking below, right before the checkout=
-    // cancelled navigation, for how the unpaid state and price are then deterministically served.
+    // Drive a genuinely persisted case through a real intake commit + draft review (real POSTs
+    // against the real backend) to reach the exact point where Checkout would normally be
+    // triggered. Deliberately skips the evidence-file upload step other specs perform on this
+    // same shared deterministic fixture id — showInlinePreparedPacketApproval never depends on
+    // evidence, and combining evidence upload with draft review here left this id in a state the
+    // shared mock-reset helper could not fully clear for other tests running later in the same CI
+    // job (confirmed by pre-existing, unrelated specs reusing this id failing afterward). This
+    // fixture id also turns out to carry a real, historically-set paid_at in the shared test
+    // database (confirmed via its case GET response; this suite has no way to reset it) — see the
+    // mocking below, right before the checkout=cancelled navigation, for how the unpaid state and
+    // price are then deterministically served.
     await driveConsumerToSavedCaseForEvidenceUpload(page);
-    await uploadEvidenceFileViaChat(page);
     await expectUrlStaysOnChatAi(page);
 
     const chatInput = page.locator("#chat-ai-input");
