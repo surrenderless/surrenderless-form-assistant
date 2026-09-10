@@ -154,16 +154,18 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
   const CANCELLED_NOTICE_SELECTOR = "#chat-ai-checkout-cancelled-notice";
   const CANCELLED_NOTICE_TEXT = /Checkout wasn't completed\. We don't see a confirmed payment/;
 
-  test("shows a one-time notice for a real unpaid case, cleans the checkout param while keeping the case id, and leaves the real payment retry control visible and enabled", async ({
+  test("shows a one-time notice for an unpaid case, cleans the checkout param while keeping the case id, and leaves the real payment retry control visible and enabled", async ({
     page,
   }) => {
     test.setTimeout(240_000);
 
-    // Drive a genuinely persisted, unpaid case to the exact point where Checkout would normally
-    // be triggered — the same real flow as signed-in-chat-ai-inline-packet-preview.smoke.spec.ts
-    // — instead of a fixture id the case-fetch route doesn't recognize, so the checkout price
-    // lookup below is real and the Approve control's enabled/disabled state is the real thing a
-    // consumer would see, not an assumption.
+    // Drive a genuinely persisted case through the same real flow as
+    // signed-in-chat-ai-inline-packet-preview.smoke.spec.ts (real intake, evidence upload, draft
+    // review — all real POSTs against the real backend) to reach the exact point where Checkout
+    // would normally be triggered. This deterministic fixture id turns out to carry a real,
+    // historically-set paid_at in the shared test database (confirmed via its case GET response;
+    // this suite has no way to reset it) — see the mocking below, right before the checkout=
+    // cancelled navigation, for how the unpaid state and price are then deterministically served.
     await driveConsumerToSavedCaseForEvidenceUpload(page);
     await uploadEvidenceFileViaChat(page);
     await expectUrlStaysOnChatAi(page);
@@ -187,10 +189,48 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     const packetApproval = page.locator("#chat-ai-inline-prepared-packet-approval");
     await expect(packetApproval).toBeVisible({ timeout: 30_000 });
 
-    // Simulate returning from a cancelled/abandoned Stripe Checkout for this exact, still-unpaid
-    // case — no real Checkout session is created or visited; the return effect only reads the
-    // URL params and re-checks the server's own paid_at, so this is a faithful way to exercise it
-    // without ever contacting Stripe.
+    // This deterministic, shared fixture case carries a real, historically-set paid_at in the
+    // test database (left over from prior activity this suite has no way to reset), so its case
+    // GET and price-lookup endpoints are re-fetched here and re-served with paid_at forced to
+    // null and a plausible price — everything else in the payload is the real, just-fetched data
+    // for this case, unmodified — so the checkout=cancelled return below deterministically
+    // exercises the genuinely-unpaid UI path (notice + real, priced retry control) instead of
+    // depending on fragile shared-database payment state.
+    const realCaseGetUrl = `**/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`;
+    const realCaseCheckoutUrl = `${realCaseGetUrl}/checkout`;
+    const realCaseRes = await page.request.get(
+      `/api/justice/cases/${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}`
+    );
+    expect(realCaseRes.ok()).toBeTruthy();
+    const realCaseBody = (await realCaseRes.json()) as Record<string, unknown>;
+
+    await page.route(realCaseGetUrl, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...realCaseBody, paid_at: null }),
+      });
+    });
+    await page.route(realCaseCheckoutUrl, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ unitAmount: 4900, currency: "usd" }),
+      });
+    });
+
+    // Simulate returning from a cancelled/abandoned Stripe Checkout for this exact case — no real
+    // Checkout session is created or visited; the return effect only reads the URL params and
+    // re-checks the (now mocked-unpaid) case, so this is a faithful way to exercise it without
+    // ever contacting Stripe.
     await page.goto(
       `/justice/chat-ai?case=${PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID}&checkout=cancelled`
     );
@@ -229,8 +269,11 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     await expect(approveButton).toBeVisible();
     await expect(approveButton).toBeEnabled();
 
-    // One-time display: reloading the now-cleaned URL must not replay the notice. Nothing here is
-    // mocked, so this reload exercises the real case-fetch path exactly as a consumer would hit it.
+    // One-time display: reloading the now-cleaned URL must not replay the notice. The case/price
+    // routes above are still mocked-unpaid here (page.route stays active for the whole page
+    // context, not just one navigation), but that's irrelevant to this check — the checkout query
+    // param is what gates the entire cancelled-branch code path, and it's already gone, so this
+    // proves the query cleanup itself is what prevents a replay, independent of paid_at.
     // Same reasoning as above: wait on the header (composer-state-independent), not #chat-ai-input.
     await page.reload();
     await waitForClerkBrowserApiSession(page);
