@@ -6,14 +6,19 @@ import path from "node:path";
  * Regression coverage for a real bug: waitForClerkBrowserApiSession (the shared e2e helper used
  * by 35+ specs to confirm the browser's Clerk session is authenticated before proceeding) used to
  * probe by POSTing to /api/justice/intake-chat — a write-shaped request to a chat/AI endpoint,
- * repeated on every navigation across every test that calls it. Investigation traced the shared
- * PLAYWRIGHT_MOCK_SECOND_CASE_ID fixture becoming visible in a test user's case list mid-run back
- * to this probe's pattern of use (though the intake-chat route handler itself turned out to be
- * stateless — verified directly in its own source, see the second describe block below). The
- * fix replaces it with GET /api/justice/cases, a route whose GET handler is a provable read-only
- * Supabase SELECT (or a pure read-only mock-pipeline response builder), keeping the exact same
- * retry-until-200 / 401-detection contract. This file guards both sides of that fix directly
- * against source (not assumptions) so neither can silently regress.
+ * repeated on every navigation across every test that calls it. Direct source inspection proved
+ * that route handler is actually stateless (no case_id accepted, no persistence), so it was never
+ * an active mutator — but it was still the wrong kind of endpoint for a pure auth check.
+ *
+ * The fix replaces it with GET /api/justice/cases?e2eSessionProbe=1, a route whose GET handler is
+ * a provable read-only Supabase SELECT (or a pure read-only mock-pipeline response builder). The
+ * query param matters: a first attempt at this fix probed the bare, unparameterized
+ * /api/justice/cases and broke signed-in-chat-ai-resume-latest-case-after-session-clear specs,
+ * which deliberately intercept that exact bare URL with page.route to test race conditions around
+ * the app's own resume-on-mount fetch — this probe's traffic was getting caught in their
+ * held/delayed responses. The inert query param keeps this probe's requests structurally distinct
+ * from that URL so they can never be caught by a `$`-anchored interception again. This file guards
+ * all of this directly against source (not assumptions) so none of it can silently regress.
  */
 
 const HELPER_PATH = path.join(process.cwd(), "e2e", "helpers", "clerk-e2e.ts");
@@ -57,6 +62,11 @@ describe("waitForClerkBrowserApiSession uses a genuinely read-only probe", () =>
 
   it("probes the provably read-only case-list endpoint", () => {
     expect(fnSource).toMatch(/\/api\/justice\/cases(?!\/)/);
+  });
+
+  it("never probes the bare, unparameterized cases URL — other specs intercept exactly that with a $-anchored page.route to test resume-on-mount race conditions, and this probe's traffic would get caught in their held/delayed responses", () => {
+    expect(fnSource).not.toMatch(/["'`]\/api\/justice\/cases["'`]/);
+    expect(fnSource).toMatch(/\/api\/justice\/cases\?e2eSessionProbe=1/);
   });
 
   it("preserves the retry-until-200 / 401-detection contract", () => {

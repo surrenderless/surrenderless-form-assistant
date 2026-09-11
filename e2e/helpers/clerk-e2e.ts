@@ -129,14 +129,21 @@ export const CLERK_E2E_SKIP_REASON =
 
 /** Wait until Clerk UI and browser `fetch` share an authenticated API session.
  *
- * Probes with GET /api/justice/cases (no query params — the plain, unfiltered list) rather than
- * a write endpoint: its GET handler (src/app/api/justice/cases/route.ts) is a provably read-only
- * Supabase SELECT (or, under the mock pipelines, a pure read-only response builder) with no
- * case_id in scope and no branch that writes anything — verified directly in source, not assumed.
- * A prior version of this probe POSTed to /api/justice/intake-chat; that handler also turned out
- * to be stateless (no case_id accepted, no persistence — it only proxies to OpenAI or a mock
- * responder), so it was never the actual mutator, but it was still the wrong kind of endpoint for
- * a pure auth check to depend on, and is deliberately not used here going forward. */
+ * Probes with GET /api/justice/cases rather than a write endpoint: its GET handler
+ * (src/app/api/justice/cases/route.ts) is a provably read-only Supabase SELECT (or, under the
+ * mock pipelines, a pure read-only response builder) with no case_id in scope and no branch that
+ * writes anything — verified directly in source, not assumed. A prior version of this probe
+ * POSTed to /api/justice/intake-chat; that handler also turned out to be stateless (no case_id
+ * accepted, no persistence — it only proxies to OpenAI or a mock responder), so it was never the
+ * actual mutator, but it was still the wrong kind of endpoint for a pure auth check to depend on.
+ *
+ * The `e2eSessionProbe=1` query param is inert to the handler (it only ever reads `limit`,
+ * `offset`, and `archived`) but is required here: several specs (e.g.
+ * signed-in-chat-ai-resume-latest-case-after-session-clear.smoke.spec.ts) intercept the bare,
+ * unparameterized `/api/justice/cases` GET with page.route to test race conditions around the
+ * app's own resume-on-mount fetch. An earlier version of this probe hit that exact bare URL and
+ * got caught in those tests' held/delayed responses, causing unrelated failures — the query
+ * param keeps this probe's traffic structurally distinct from that URL so it can never collide. */
 export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open user menu" }).waitFor({
     state: "visible",
@@ -146,9 +153,10 @@ export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
     .poll(
       async () =>
         page.evaluate(async () => {
-          const res = await fetch("/api/justice/cases", {
+          const res = await fetch("/api/justice/cases?e2eSessionProbe=1", {
             method: "GET",
             credentials: "include",
+            cache: "no-store",
           });
           return res.status;
         }),
