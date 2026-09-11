@@ -156,22 +156,18 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
   }) => {
     test.setTimeout(120_000);
 
-    // All three scenarios below share a single bootstrap + case setup and are asserted back to
-    // back in one test, rather than three separate tests each re-running the full fresh-session
-    // bootstrap. This whole 65+ test suite runs single-worker off one Clerk session snapshot
-    // captured once at the start of the run; three separate bootstraps here were occasionally
-    // extending total suite duration enough to tip later, unrelated authenticated tests into a
-    // stale-session 401 once the session neared its refresh window — confirmed by their own error
-    // ("Not signed in") having nothing to do with any case id or state this file touches. One
-    // bootstrap keeps this file's contribution to total suite time minimal.
+    // The three scenarios below share a single bootstrap + case setup rather than three separate
+    // tests each re-running the full fresh-session bootstrap, since each bootstrap is a handful
+    // of real network round-trips this suite doesn't need to repeat three times for what is
+    // otherwise the same fake case id and mocked responses.
     //
     // Entirely self-contained: seeds a local "existing case, draft reviewed" session directly
     // (same technique as hydrateChatAiSession in helpers/chat-ai-ladder-continuity-e2e.ts) and
-    // mocks the case GET / price GET this fake id's checkout-return effect calls — no real
-    // backend mutation against any shared fixture case, so nothing here can leave residue for
-    // other specs in the same CI job (an earlier version of this test drove the real, shared
-    // PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID through intake+draft-review, which left that
-    // id in a state the mock-reset helper could not fully clear for later tests reusing it).
+    // mocks the case GET / price GET this fake id's checkout-return effect calls. This test's own
+    // code never issues a real write against any shared fixture case (an earlier version of this
+    // test drove the real, shared PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID through
+    // intake+draft-review, which left that id in a state the mock-reset helper could not fully
+    // clear for later tests reusing it — this version avoids that fixture entirely instead).
     const caseId = PLAYWRIGHT_MOCK_SECOND_CASE_ID;
     // company_contact_email is required here: this destination blocks approval on a missing
     // merchant recipient address (the recipient-required gate), which isn't what this test is

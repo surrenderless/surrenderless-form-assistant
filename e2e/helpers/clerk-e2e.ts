@@ -127,7 +127,16 @@ export function clerkE2eSkipReason(): string {
 export const CLERK_E2E_SKIP_REASON =
   "Skipped: set real Clerk test credentials — NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, E2E_CLERK_USER_EMAIL (or E2E_CLERK_USER_USERNAME), and E2E_CLERK_USER_PASSWORD — then re-run Playwright global setup.";
 
-/** Wait until Clerk UI and browser `fetch` share an authenticated API session. */
+/** Wait until Clerk UI and browser `fetch` share an authenticated API session.
+ *
+ * Probes with GET /api/justice/cases (no query params — the plain, unfiltered list) rather than
+ * a write endpoint: its GET handler (src/app/api/justice/cases/route.ts) is a provably read-only
+ * Supabase SELECT (or, under the mock pipelines, a pure read-only response builder) with no
+ * case_id in scope and no branch that writes anything — verified directly in source, not assumed.
+ * A prior version of this probe POSTed to /api/justice/intake-chat; that handler also turned out
+ * to be stateless (no case_id accepted, no persistence — it only proxies to OpenAI or a mock
+ * responder), so it was never the actual mutator, but it was still the wrong kind of endpoint for
+ * a pure auth check to depend on, and is deliberately not used here going forward. */
 export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open user menu" }).waitFor({
     state: "visible",
@@ -137,15 +146,9 @@ export async function waitForClerkBrowserApiSession(page: Page): Promise<void> {
     .poll(
       async () =>
         page.evaluate(async () => {
-          const res = await fetch("/api/justice/intake-chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+          const res = await fetch("/api/justice/cases", {
+            method: "GET",
             credentials: "include",
-            body: JSON.stringify({
-              user_message: "E2E browser auth probe.",
-              parts: {},
-              conversation_history: [],
-            }),
           });
           return res.status;
         }),
