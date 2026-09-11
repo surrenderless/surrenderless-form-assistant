@@ -162,19 +162,34 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     // otherwise the same fake case id and mocked responses.
     //
     // Entirely self-contained: seeds a local "existing case, draft reviewed" session directly
-    // (same technique as hydrateChatAiSession in helpers/chat-ai-ladder-continuity-e2e.ts) and
-    // mocks the case GET / price GET this fake id's checkout-return effect calls. This test's own
-    // code never issues a real write against any shared fixture case (an earlier version of this
-    // test drove the real, shared PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID through
-    // intake+draft-review, which left that id in a state the mock-reset helper could not fully
-    // clear for later tests reusing it — this version avoids that fixture entirely instead).
-    const caseId = PLAYWRIGHT_MOCK_SECOND_CASE_ID;
+    // (same technique as hydrateChatAiSession in helpers/chat-ai-ladder-continuity-e2e.ts) on a
+    // freshly generated random UUID — never PLAYWRIGHT_MOCK_SECOND_CASE_ID or any other seeded
+    // backend fixture. Two earlier versions of this test each left real, confirmed residue on a
+    // seeded id: driving PLAYWRIGHT_MOCK_INTAKE_CASE_COMMIT_E2E_CASE_ID through intake+draft-review
+    // left that id in a state the mock-reset helper couldn't fully clear for later tests reusing
+    // it, and separately, merely navigating with PLAYWRIGHT_MOCK_SECOND_CASE_ID (a case the mock
+    // backend already knows about, seeded with real data from server start) caused it to newly
+    // appear in this test user's real GET /api/justice/cases list afterward — confirmed via
+    // before/after snapshots showing an empty list becoming non-empty, and via network traces on
+    // three separate unrelated specs that ran after this one in the same job, each shown (by their
+    // own trace) resuming that exact id instead of their own intended blank session. A random UUID
+    // the backend has never seen can't be "discovered" by any later test's resume-on-mount fetch —
+    // there's nothing for it to find. Every case-specific read this UUID's checkout-return effect
+    // and its resume-on-mount siblings can issue is mocked below (case, checkout price, evidence,
+    // filings, tasks, chat-messages) — all GET-only, so no real write is possible either.
+    const caseId = crypto.randomUUID();
     // company_contact_email is required here: this destination blocks approval on a missing
     // merchant recipient address (the recipient-required gate), which isn't what this test is
     // about — a real case at this exact ladder point would already have it on file.
     const intake = { ...buildPlaywrightMockE2eCaseIntake(), company_contact_email: "merchant@example.com" };
 
     await bootstrapFreshUncommittedSession(page);
+
+    // Real (unmocked) snapshot of this test user's actual case list, taken before this test seeds
+    // anything or registers a single page.route — the baseline the "after" snapshot below must
+    // exactly reproduce to prove this test leaves no server-side residue.
+    const casesListBefore = await (await page.request.get("/api/justice/cases")).json();
+
     await page.evaluate(
       ({ caseId, intake, storageCaseIdKey, storageIntakeKey, draftReviewedKey }) => {
         sessionStorage.setItem(storageCaseIdKey, caseId);
@@ -225,6 +240,31 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
         body: JSON.stringify({ unitAmount: 4900, currency: "usd" }),
       });
     });
+    // The resume-on-mount / checkout-return hydration path also fetches these three (evidence,
+    // filings, tasks — all plain arrays) and the chat transcript for whatever case id is active in
+    // sessionStorage, regardless of which checkout-return scenario is running. Mocked here so none
+    // of them ever reach the real backend for this random, never-seeded id. Regexes (not glob
+    // strings) so the query string's literal "?" is unambiguous — Playwright's glob syntax treats
+    // "?" as a single-character wildcard, not a literal, which would technically still match a
+    // real "?" by coincidence but shouldn't be relied on for something this test exists to prove.
+    const escapedCaseId = caseId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const [resource, body] of [
+      ["evidence", "[]"],
+      ["filings", "[]"],
+      ["tasks", "[]"],
+      ["chat-messages", JSON.stringify({ messages: [] })],
+    ] as const) {
+      await page.route(
+        new RegExp(`/api/justice/${resource}\\?case_id=${escapedCaseId}$`),
+        async (route) => {
+          if (route.request().method() !== "GET") {
+            await route.continue();
+            return;
+          }
+          await route.fulfill({ status: 200, contentType: "application/json", body });
+        }
+      );
+    }
 
     // --- Scenario A: unpaid case returns from a cancelled/abandoned Checkout ---
     // No real Checkout session is created or visited; the return effect only reads the URL params
@@ -286,5 +326,13 @@ test.describe("signed-in chat-ai cancelled-checkout acknowledgment", () => {
     await waitForClerkBrowserApiSession(page);
     await page.waitForTimeout(1_500);
     await expect(page.locator(CANCELLED_NOTICE_SELECTOR)).toHaveCount(0);
+
+    // Proof of isolation: the real (unmocked — page.request bypasses this page's own page.route
+    // handlers) case list for this user must come back byte-for-byte identical to before this test
+    // did anything. Nothing this test did (three checkout-return navigations, a reload, and a
+    // random case id that was never sent to the real backend in any writeable form) may leave any
+    // trace a later, unrelated test could resume.
+    const casesListAfter = await (await page.request.get("/api/justice/cases")).json();
+    expect(casesListAfter).toEqual(casesListBefore);
   });
 });
