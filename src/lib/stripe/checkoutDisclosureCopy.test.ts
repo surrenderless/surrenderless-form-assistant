@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCheckoutPriceHeadline,
+  CHECKOUT_CANCELLED_MESSAGE,
   CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE,
   CHECKOUT_CONFIRMING_PAYMENT_MESSAGE,
   CHECKOUT_DISCLOSURE_PARAGRAPHS,
@@ -116,6 +117,25 @@ describe("payment confirmation messages", () => {
     expect(CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE.toLowerCase()).toContain("longer than usual");
     expect(CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE.toLowerCase()).toMatch(/keep checking|resume/);
     expect(CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE.toLowerCase()).not.toContain("could not");
+  });
+});
+
+describe("CHECKOUT_CANCELLED_MESSAGE", () => {
+  it("states plainly that checkout was not completed", () => {
+    expect(CHECKOUT_CANCELLED_MESSAGE.toLowerCase()).toContain("wasn't completed");
+  });
+
+  it("states no confirmed payment is on file, without asserting the consumer was never charged", () => {
+    expect(CHECKOUT_CANCELLED_MESSAGE.toLowerCase()).toContain("don't see a confirmed payment");
+    // The redirect alone is never proof either way, so this must never claim certainty about
+    // charges — only about the absence of a confirmed payment record.
+    expect(CHECKOUT_CANCELLED_MESSAGE.toLowerCase()).not.toContain("not been charged");
+    expect(CHECKOUT_CANCELLED_MESSAGE.toLowerCase()).not.toContain("weren't charged");
+    expect(CHECKOUT_CANCELLED_MESSAGE.toLowerCase()).not.toContain("won't be charged");
+  });
+
+  it("invites the consumer to retry", () => {
+    expect(CHECKOUT_CANCELLED_MESSAGE.toLowerCase()).toContain("try again");
   });
 });
 

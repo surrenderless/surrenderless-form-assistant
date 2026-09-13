@@ -29,6 +29,13 @@ export const CHECKOUT_CONFIRMING_PAYMENT_MESSAGE =
 export const CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE =
   "Your payment went through, but confirmation is taking longer than usual. You haven't been charged twice and don't need to pay again — keep checking, or come back shortly and it will resume automatically.";
 
+/** Shown once after the consumer cancels or abandons a Stripe Checkout session (clicks back, or
+ * closes/navigates away without finishing). Deliberately does not claim the consumer was not
+ * charged — only that no confirmed payment is recorded yet — since the redirect itself is never
+ * treated as proof either way; paid_at is checked fresh from the server before this is ever shown. */
+export const CHECKOUT_CANCELLED_MESSAGE =
+  "Checkout wasn't completed. We don't see a confirmed payment for this case yet. You can try again below.";
+
 /** Exact, non-negotiable disclosure required before checkout can ever be triggered — payment
  * opens Stripe Checkout, is per case, does not guarantee an outcome, is final once completed,
  * and the definite refund policy (duplicate charges, an uncorrectable verified Surrenderless

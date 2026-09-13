@@ -557,3 +557,77 @@ describe("chat-ai page precedence UX correction batch 3", () => {
     expect(pageSource).not.toMatch(/Active case checklist below/);
   });
 });
+
+/**
+ * Cancelled-Checkout acknowledgment: a consumer who cancels or abandons Stripe Checkout
+ * previously landed back in chat with zero acknowledgment — indistinguishable from an ordinary
+ * resume, with no test coverage. These structural checks guard the wiring that fixes it (this
+ * file has no jsdom/RTL render harness — see the top-of-file note — so behavior is verified
+ * against the source text, matching every other suite in this file). The pure URL-rewriting
+ * logic itself has real behavioral coverage in stripCheckoutQueryParam.test.ts.
+ */
+describe("chat-ai page cancelled-checkout acknowledgment", () => {
+  it("declares one-shot notice state alongside the existing checkout price state", () => {
+    expect(pageSource).toMatch(
+      /const \[checkoutCancelledNotice, setCheckoutCancelledNotice\] = useState\(false\);/
+    );
+  });
+
+  function checkoutReturnEffectBody(): string {
+    const match = pageSource.match(
+      /\/\/ Resolves a return from Stripe Checkout[\s\S]*?useEffect\(\(\) => \{([\s\S]*?)\r?\n {2}\}, \[isLoaded, isSignedIn\]\);/
+    );
+    expect(match).not.toBeNull();
+    return match![1]!;
+  }
+
+  it("only flags the notice when the freshly-refreshed server paid_at is still absent — never from the redirect alone", () => {
+    const body = checkoutReturnEffectBody();
+    const cancelledBranchMatch = body.match(
+      /if \(checkoutStatus === "cancelled"\) \{([\s\S]*?)\r?\n {8}\}\r?\n\r?\n {8}if \(cancelled \|\| checkoutStatus !== "success"\)/
+    );
+    expect(cancelledBranchMatch).not.toBeNull();
+    const cancelledBranch = cancelledBranchMatch![1]!;
+    expect(cancelledBranch).toMatch(
+      /if \(!cancelled && !casePaidAtRef\.current\) \{\s*setCheckoutCancelledNotice\(true\);/
+    );
+  });
+
+  it("strips only the checkout query param via history.replaceState, preserving the case id and other params", () => {
+    const body = checkoutReturnEffectBody();
+    expect(body).toMatch(/window\.history\.replaceState\(\s*null,\s*"",\s*stripCheckoutQueryParam\(/);
+    expect(body).toMatch(
+      /stripCheckoutQueryParam\(\s*window\.location\.pathname,\s*window\.location\.search,\s*window\.location\.hash\s*\)/
+    );
+  });
+
+  it("returns immediately after handling a cancelled return, never falling through to the success/payment-confirmation logic", () => {
+    const body = checkoutReturnEffectBody();
+    const cancelledIndex = body.indexOf('if (checkoutStatus === "cancelled")');
+    const returnIndex = body.indexOf("return;", cancelledIndex);
+    const confirmIndex = body.indexOf("confirmPaymentWithBackoff(returnCaseId)");
+    expect(cancelledIndex).toBeGreaterThanOrEqual(0);
+    expect(returnIndex).toBeGreaterThan(cancelledIndex);
+    expect(confirmIndex).toBeGreaterThan(returnIndex);
+  });
+
+  it("renders the notice as accessible status copy, gated on the one-shot flag, imported from the shared checkout copy module", () => {
+    expect(pageSource).toMatch(
+      /CHECKOUT_CANCELLED_MESSAGE,\r?\n {2}CHECKOUT_CONFIRMATION_TIMEOUT_MESSAGE,/
+    );
+    const noticeBlockMatch = pageSource.match(
+      /\{checkoutCancelledNotice \? \(([\s\S]*?)\) : null\}/
+    );
+    expect(noticeBlockMatch).not.toBeNull();
+    const noticeBlock = noticeBlockMatch![1]!;
+    expect(noticeBlock).toMatch(/role="status"/);
+    expect(noticeBlock).toMatch(/aria-label="Checkout not completed"/);
+    expect(noticeBlock).toMatch(/\{CHECKOUT_CANCELLED_MESSAGE\}/);
+    expect(noticeBlock).not.toMatch(/disabled/);
+  });
+
+  it("does not touch the success-path confirmation copy/logic", () => {
+    expect(pageSource).toMatch(/CHECKOUT_CONFIRMING_PAYMENT_MESSAGE/);
+    expect(pageSource).toMatch(/confirmPaymentWithBackoff/);
+  });
+});
