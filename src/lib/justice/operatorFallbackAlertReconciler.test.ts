@@ -18,6 +18,9 @@ import { hasValidMerchantContactRecipient } from "@/lib/justice/merchantContactR
 import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
 import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
+import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
+import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
+import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import {
   fccOwnedFilingIdempotencyKey,
   upsertFccOwnedFilingDeliveryNotes,
@@ -57,7 +60,28 @@ type Task = {
   updated_at: string;
 };
 
-type Store = { tasks: Task[]; failSelect?: boolean; failUpdate?: boolean };
+type CaseRow = { id: string; archived_at: string | null };
+
+/**
+ * Optional deterministic barrier: when present, every SELECT (task list or case-archive lookup)
+ * blocks on `wait()` before resolving, calling `onRead()` first so the test can observe how many
+ * reads are currently pending. Used to force two "concurrent" reconciler runs to both complete
+ * their reads — both genuinely observing "not yet sent" — before either is allowed to proceed to
+ * provider.send(), rather than hoping for that interleaving to occur naturally on an unthrottled
+ * fake (which it may not: a synchronous mock with no gate can let one run's read-through-write
+ * finish entirely before the other's read even starts, silently proving nothing about the actual
+ * concurrent-attempt contract).
+ */
+type SelectGate = { wait: () => Promise<void>; onRead?: () => void };
+
+type Store = {
+  tasks: Task[];
+  cases?: CaseRow[];
+  failSelect?: boolean;
+  failUpdate?: boolean;
+  failCaseSelect?: boolean;
+  gate?: SelectGate;
+};
 
 function makeSupabase(store: Store): SupabaseClient {
   const from = (table: string) => {
@@ -65,13 +89,31 @@ function makeSupabase(store: Store): SupabaseClient {
       table: string;
       op: "select" | "update";
       filters: Record<string, string>;
+      inFilter: { col: string; vals: string[] } | null;
       like: string | null;
       update: Record<string, unknown> | null;
       orderBy: { col: string; ascending: boolean }[];
       cursor: { updatedAt: string; id: string } | null;
-    } = { table, op: "select", filters: {}, like: null, update: null, orderBy: [], cursor: null };
+    } = {
+      table,
+      op: "select",
+      filters: {},
+      inFilter: null,
+      like: null,
+      update: null,
+      orderBy: [],
+      cursor: null,
+    };
+
+    const resolveCasesSelect = () => {
+      if (store.failCaseSelect) return { data: null, error: { message: "cases select down" } };
+      const ids = new Set(state.inFilter?.vals ?? []);
+      const rows = (store.cases ?? []).filter((c) => ids.has(c.id));
+      return { data: rows, error: null };
+    };
 
     const resolveSelect = (opts: { range?: [number, number]; limit?: number }) => {
+      if (state.table === "justice_cases") return resolveCasesSelect();
       if (store.failSelect) return { data: null, error: { message: "select down" } };
       const needle = state.like ? state.like.replace(/%/g, "") : "";
       let rows = store.tasks.filter(
@@ -106,7 +148,7 @@ function makeSupabase(store: Store): SupabaseClient {
       return { data: rows, error: null };
     };
 
-    const resolve = (range?: [number, number], limit?: number) => {
+    const resolve = async (range?: [number, number], limit?: number) => {
       if (state.op === "update" && state.table === "justice_case_tasks") {
         if (store.failUpdate) return { data: null, error: { message: "update down" } };
         const task = store.tasks.find(
@@ -115,7 +157,11 @@ function makeSupabase(store: Store): SupabaseClient {
         if (task) task.notes = String((state.update as Record<string, unknown>).notes);
         return { data: null, error: null };
       }
-      if (state.op === "select" && state.table === "justice_case_tasks") {
+      if (state.op === "select" && (state.table === "justice_case_tasks" || state.table === "justice_cases")) {
+        if (store.gate) {
+          store.gate.onRead?.();
+          await store.gate.wait();
+        }
         return resolveSelect({ range, limit });
       }
       return { data: [], error: null };
@@ -126,6 +172,10 @@ function makeSupabase(store: Store): SupabaseClient {
       is: () => api,
       eq: (col: string, val: string) => {
         state.filters[col] = val;
+        return api;
+      },
+      in: (col: string, vals: string[]) => {
+        state.inFilter = { col, vals };
         return api;
       },
       like: (_col: string, pattern: string) => {
@@ -153,6 +203,39 @@ function makeSupabase(store: Store): SupabaseClient {
     return api;
   };
   return { from } as unknown as SupabaseClient;
+}
+
+/**
+ * Creates a deterministic SelectGate plus test-side controls: every SELECT the fake Supabase
+ * client issues blocks on `wait()` until `release()` is called. Used to force two "concurrent"
+ * reconciler runs to both genuinely observe "not yet sent" before either is allowed to reach
+ * provider.send() — proving an actual race rather than hoping the JS microtask scheduler happens
+ * to interleave two calls against an unthrottled fake.
+ */
+function makeSelectGate(): { gate: SelectGate; release: () => void; readsStarted: () => number } {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const gate: SelectGate = {
+    wait: () => promise,
+    onRead: () => {
+      reads += 1;
+    },
+  };
+  return { gate, release, readsStarted: () => reads };
+}
+
+/**
+ * Advances the microtask queue until both concurrent runs have each issued at least one blocked
+ * read (or a small bound is hit) — enough for both to have reached their first select against the
+ * gated fake, before the caller releases it.
+ */
+async function waitUntilBothRunsAreBlocked(readsStarted: () => number, minReads = 2): Promise<void> {
+  for (let i = 0; i < 50 && readsStarted() < minReads; i++) {
+    await Promise.resolve();
+  }
 }
 
 function bbbFailedTask(
@@ -354,20 +437,28 @@ describe("reconcileOperatorFallbackAlerts", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("is concurrency-safe: parallel runs share one idempotency key and one durable marker", async () => {
+  it("concurrent attempts: two runs forced past their reads before either send resolves make exactly two send attempts with the identical key, and exactly one durable marker remains", async () => {
     const store: Store = { tasks: [ftcFailedTask({ caseId: "c1", stopReason: "invalid_decision" })] };
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
     const supabase = makeSupabase(store);
 
-    await Promise.all([
-      reconcileOperatorFallbackAlerts(supabase),
-      reconcileOperatorFallbackAlerts(supabase),
-    ]);
+    const runA = reconcileOperatorFallbackAlerts(supabase);
+    const runB = reconcileOperatorFallbackAlerts(supabase);
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
 
-    // Every send used the identical provider idempotency key, so Resend dedupes to one email.
+    // The actual current contract: both runs independently observed "not yet sent" and both
+    // called provider.send() — this is not deduped by any application-level lock. Collapsing two
+    // attempts sharing one idempotency key into a single delivered email is Resend's own
+    // idempotency-key contract (see resendEmailProvider.test.ts), not something asserted here.
+    expect(send).toHaveBeenCalledTimes(2);
     const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toBe("operator-fallback-alert:task_c1:invalid_decision");
-    // The durable marker is idempotent — it appears exactly once regardless of parallel writes.
+    // The durable marker still lands exactly once: both attempts compute an identical
+    // marker+timestamp from the same pre-race notes, so the second write is a no-op overwrite.
     const occurrences = (store.tasks[0].notes ?? "").match(/operator_alert_sent:/g) ?? [];
     expect(occurrences.length).toBe(1);
   });
@@ -784,11 +875,33 @@ describe("reconcileOperatorFallbackAlerts — 24h/72h staleness escalation", () 
     expect(send).toHaveBeenCalledTimes(3);
     expect(send.mock.calls[2][0].subject).toContain("ESCALATION (72h)");
 
-    // Long after 72h, nothing new ever fires again for this task (no tier beyond 72h exists).
+    // Long after 72h, the cadence keeps going: recurring reminder #1 at 144h+ (here 200h), never
+    // resending the 24h tier — there is no cutoff.
     const wellPast = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 200 * HOUR });
-    expect(wellPast.sent).toBe(0);
-    expect(wellPast.skipped).toBe(1);
-    expect(send).toHaveBeenCalledTimes(3);
+    expect(wellPast.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.calls[3][0].subject).toContain("ESCALATION (overdue reminder #1)");
+
+    // The same window is never resent on a repeat run at the same age.
+    const repeatSameWindow = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 200 * HOUR });
+    expect(repeatSameWindow.sent).toBe(0);
+    expect(repeatSameWindow.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(4);
+
+    // The next 72h window (reminder #2) fires in turn, still with no upper bound.
+    const nextWindow = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 220 * HOUR });
+    expect(nextWindow.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(5);
+    expect(send.mock.calls[4][0].subject).toContain("ESCALATION (overdue reminder #2)");
+
+    const finalNotes = store.tasks[0].notes ?? "";
+    expect(
+      hasOperatorAlertBeenSent(finalNotes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "merchant_contact"))
+    ).toBe(true);
+    // 24h was recorded once, at the 24h run — never resent by any later recurring window.
+    expect(
+      (finalNotes.match(/operator_alert_sent: task_c1\|operator-queue-24h\|merchant_contact/g) ?? []).length
+    ).toBe(1);
   });
 
   it("sends only the single highest due tier when a task is first observed already past 72h — no burst of immediate + 24h + 72h", async () => {
@@ -810,27 +923,41 @@ describe("reconcileOperatorFallbackAlerts — 24h/72h staleness escalation", () 
     expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "ftc"))).toBe(false);
     expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-72h", "ftc"))).toBe(true);
 
-    // A later run never fires the skipped lower tiers.
+    // A later run never fires the skipped lower tiers, but the recurring cadence past 72h still
+    // isn't cut off — reminder #1 is due by 200h.
     const later = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 + 200 * HOUR });
-    expect(later.sent).toBe(0);
-    expect(later.skipped).toBe(1);
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(later.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].subject).toContain("ESCALATION (overdue reminder #1)");
+    expect(send.mock.calls[1][0].subject).not.toContain("ESCALATION (24h)");
+
+    const laterNotes = store.tasks[0].notes ?? "";
+    expect(hasOperatorAlertBeenSent(laterNotes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "ftc"))).toBe(false);
   });
 
-  it("is idempotent: identical concurrent runs at the same escalated age share one tier key and send exactly once", async () => {
+  it("concurrent attempts at the same escalated age: two runs forced past their reads make exactly two send attempts with the identical tier key, and exactly one durable marker remains", async () => {
     const store: Store = {
       tasks: [openTask({ caseId: "c1", marker: bbbFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
     };
     const supabase = makeSupabase(store);
-    // Immediate already sent in an earlier run, so this run is the 24h escalation.
+    // Immediate already sent in an earlier, ungated run, so this run is the 24h escalation.
     await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
     send.mockClear();
 
-    await Promise.all([
-      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR }),
-      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR }),
-    ]);
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
 
+    const runA = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    const runB = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
+
+    // The actual current contract: both runs independently observed "not yet sent" for the 24h
+    // tier and both called provider.send() — no application-level lock prevents this. Collapsing
+    // two attempts sharing one idempotency key into a single delivered email is Resend's own
+    // idempotency-key contract (see resendEmailProvider.test.ts), not something asserted here.
+    expect(send).toHaveBeenCalledTimes(2);
     const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toBe("operator-queue-alert:task_c1:bbb:24h");
@@ -853,6 +980,246 @@ describe("reconcileOperatorFallbackAlerts — 24h/72h staleness escalation", () 
     const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 + 200 * HOUR });
 
     expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("reconcileOperatorFallbackAlerts — recurring overdue reminders past 72h", () => {
+  const T0 = Date.parse("2026-07-01T00:00:00.000Z");
+  const HOUR = 3_600_000;
+
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** Drives a task straight to "72h tier already sent" without asserting on those earlier sends. */
+  async function primeThroughSeventyTwoHours(supabase: SupabaseClient): Promise<void> {
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR });
+  }
+
+  it("timing boundary: no reminder just under 144h, reminder #1 fires exactly at 144h", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: bbbFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const justUnder = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR - 1 });
+    expect(justUnder.sent).toBe(0);
+    expect(justUnder.skipped).toBe(1);
+    expect(send).not.toHaveBeenCalled();
+
+    const atBoundary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    expect(atBoundary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (overdue reminder #1)");
+  });
+
+  it("timing boundary: no reminder #2 just under 216h, fires exactly at 216h — sequential numbering continues", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: ftcFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    send.mockClear();
+
+    const justUnder = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 216 * HOUR - 1 });
+    expect(justUnder.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+
+    const atBoundary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 216 * HOUR });
+    expect(atBoundary.sent).toBe(1);
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (overdue reminder #2)");
+    expect(send.mock.calls[0][0].subject).not.toContain("overdue reminder #1");
+  });
+
+  it("duplicate run at the identical age does not resend the same reminder window", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: stateAgFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const first = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    expect(first.sent).toBe(1);
+
+    // A second, independent run at the exact same age — simulating a duplicate cron invocation —
+    // must not resend, because the durable marker from the first run is already persisted.
+    const duplicate = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    expect(duplicate.sent).toBe(0);
+    expect(duplicate.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("concurrent attempts at the same recurring age: two runs forced past their reads make exactly two send attempts with the identical key, and exactly one durable marker remains", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: demandLetterFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
+
+    const runA = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    const runB = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
+
+    // The actual current contract for the new recurring-reminder branch, identical to the
+    // pre-existing fixed tiers: both runs independently observed "not yet sent" for reminder #1
+    // and both called provider.send() — no application-level lock prevents this. Collapsing two
+    // attempts sharing one idempotency key into a single delivered email is Resend's own
+    // idempotency-key contract (see resendEmailProvider.test.ts), not something asserted here.
+    expect(send).toHaveBeenCalledTimes(2);
+    const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
+    expect(keys.size).toBe(1);
+    expect([...keys][0]).toBe("operator-queue-alert:task_c1:demand_letter:recurring-1");
+    const occurrences =
+      (store.tasks[0].notes ?? "").match(/operator_alert_sent: task_c1\|operator-queue-recurring-1\|demand_letter/g) ?? [];
+    expect(occurrences.length).toBe(1);
+  });
+
+  it("provider failure on a recurring reminder leaves it retryable (no marker written), then succeeds on retry", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: cfpbFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+
+    send.mockResolvedValueOnce({ ok: false, error: "resend 500", retryable: true });
+    const failed = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    expect(failed.failed).toBe(1);
+    expect(failed.sent).toBe(0);
+    expect(
+      hasOperatorAlertBeenSent(
+        store.tasks[0].notes,
+        operatorFallbackAlertKey("task_c1", "operator-queue-recurring-1", "cfpb")
+      )
+    ).toBe(false);
+
+    send.mockResolvedValue({ ok: true, messageId: "msg_ok" });
+    const retried = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    expect(retried.sent).toBe(1);
+    expect(
+      hasOperatorAlertBeenSent(
+        store.tasks[0].notes,
+        operatorFallbackAlertKey("task_c1", "operator-queue-recurring-1", "cfpb")
+      )
+    ).toBe(true);
+  });
+
+  it("a reconciler outage doesn't burst backlogged reminders — jumping straight to a much later age fires only the single currently-due reminder", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: paymentDisputeFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    // Reconciler was down for a long stretch; next run observes the task at 500h — well past
+    // several backlogged windows (144h/#1, 216h/#2, 288h/#3, 360h/#4, 432h/#5).
+    const summary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 500 * HOUR });
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    // floor(500/72) - 1 = 6 - 1 = 5.
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (overdue reminder #5)");
+  });
+
+  it("includes the actual wait age and the overdue-reminder number in the operator copy", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "case-copy", marker: bbbFilingTaskNotesMarker("case-copy"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+
+    const body = send.mock.calls[0][0].text as string;
+    // 150h = 6d 6h.
+    expect(body).toMatch(/Task age: 6d 6h/);
+    expect(body).toContain("overdue reminder #1");
+  });
+
+  it("stops immediately once the task itself is completed, even mid-recurring-cadence", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: dotFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    send.mockClear();
+
+    // Operator completes the task between reminder #1 and reminder #2.
+    store.tasks[0].completed_at = new Date(T0 + 150 * HOUR).toISOString();
+
+    const summary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 216 * HOUR });
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("stops immediately once the case is archived — no further fixed-tier or recurring alert, across multiple destinations", async () => {
+    const store: Store = {
+      tasks: [
+        openTask({ caseId: "case-archived-1", marker: bbbFilingTaskNotesMarker("case-archived-1"), created_at: new Date(T0).toISOString() }),
+        openTask({ caseId: "case-archived-2", marker: merchantContactFilingTaskNotesMarker("case-archived-2"), created_at: new Date(T0).toISOString() }),
+      ],
+      cases: [
+        { id: "case-archived-1", archived_at: new Date(T0 + 100 * HOUR).toISOString() },
+        { id: "case-archived-2", archived_at: new Date(T0 + 100 * HOUR).toISOString() },
+      ],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const summary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 200 * HOUR });
+    expect(summary.sent).toBe(0);
+    expect(summary.attempted).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(summary.results.every((r) => r.result === "skipped" && r.reason === "case_archived")).toBe(
+      true
+    );
+  });
+
+  it("a case_id with no matching justice_cases row is treated as not archived (fail toward existing alerting behavior)", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "case-orphan", marker: fccFilingTaskNotesMarker("case-orphan"), created_at: new Date(T0).toISOString() })],
+      cases: [],
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 });
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails safe (stops the whole reconciliation run) when the archive-check case lookup errors, rather than risk alerting an archived case", async () => {
+    const store: Store = {
+      tasks: [openTask({ caseId: "c1", marker: bbbFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
+      failCaseSelect: true,
+    };
+
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 });
     expect(summary.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
   });
