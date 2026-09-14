@@ -260,9 +260,14 @@ function queueRecurringReminderOccasionId(reminderNumber: number): string {
  * due right now — numbered 1, 2, 3, ... at 144h, 216h, 288h, ... forever. `reminderNumber` is a
  * pure function of `ageMs` alone (not of wall-clock send time), so repeated or concurrent
  * reconciler runs observing the same task at the same age always compute the identical reminder
- * number and therefore the identical durable key — the same exactly-once mechanism used by the
- * fixed tiers (provider idempotency key before the marker lands, durable notes marker after)
- * carries over unchanged.
+ * number and therefore the identical durable key. That determinism is what makes duplicate
+ * delivery preventable at all — but the actual prevention, exactly like the fixed tiers, is not an
+ * application-level lock: two runs that both read this task before either has written its marker
+ * will both call the provider's send() with that identical key, and rely entirely on the email
+ * provider's own idempotency-key contract to collapse those into one delivered message (exercised,
+ * not merely assumed, by the forced-concurrency coverage in operatorFallbackAlertReconciler.test.ts
+ * and the Resend-forwarding coverage in resendEmailProvider.test.ts). The durable notes marker
+ * only prevents a *later, non-overlapping* run from re-alerting an already-recorded event.
  *
  * Mirrors resolveDueQueueAlertTier's "only the single highest due-and-unsent" rule: a task that
  * hasn't been scanned in a while (e.g. the reconciler was paused) jumps straight to whichever
@@ -420,8 +425,8 @@ export type ReconcileOperatorFallbackAlertsOptions = {
 };
 
 /**
- * Durable proactive operator alerting, in two phases sharing the same recipient resolution,
- * email provider, exactly-once marker mechanism, and case timeline audit trail:
+ * Durable proactive operator alerting, in two phases sharing the same recipient resolution, email
+ * provider, durable sent-marker mechanism, and case timeline audit trail:
  *
  * 1. Owned BBB/FTC/FCC filings that fell back to manual fulfillment (worker/provider failure,
  *    uncertain submission, execute-time config failure, or a stale queued/submitting reclaim —
@@ -439,13 +444,23 @@ export type ReconcileOperatorFallbackAlertsOptions = {
  *    codebase's resolution-closure signal, see reconcileClosedCaseConsumerNotifications.ts).
  *
  * Both phases email a configurable OPERATOR_ALERT_EMAIL through the existing Resend
- * infrastructure exactly once per alertable event (per task, per phase, per occasion — a task can
- * only ever match one phase, since phase 2 explicitly excludes any task carrying an owned-filing
- * delivery block). Fails safe: when the provider or recipient is unconfigured nothing is marked
- * delivered; provider/database failures leave the event retryable on the next run — a failed send
- * never marks its window sent, so it is retried (not skipped) the next time this runs. Never
- * alerts for successfully filed, completed, or (phase 2) archived-case tasks. Off all consumer
- * request paths (cron only).
+ * infrastructure, intending one delivered email per alertable event (per task, per phase, per
+ * occasion — a task can only ever match one phase, since phase 2 explicitly excludes any task
+ * carrying an owned-filing delivery block). Fails safe: when the provider or recipient is
+ * unconfigured nothing is marked delivered; provider/database failures leave the event retryable
+ * on the next run — a failed send never marks its window sent, so it is retried (not skipped) the
+ * next time this runs. Never alerts for successfully filed, completed, or (phase 2) archived-case
+ * tasks. Off all consumer request paths (cron only).
+ *
+ * IMPORTANT: within a single reconciler run, each window is attempted at most once per task
+ * (the durable notes marker prevents this run from re-attempting a window it already recorded
+ * sent, and a later run from re-attempting one recorded by an earlier run). Across two runs that
+ * genuinely overlap in time, though, there is no application-level lock — both can independently
+ * observe "not yet sent" and both will call the provider's send() with the identical deterministic
+ * idempotency key for that window. Collapsing that into a single delivered email is Resend's own
+ * idempotency-key contract, not something this code enforces itself — see the forced-concurrency
+ * tests in operatorFallbackAlertReconciler.test.ts and the forwarding proof in
+ * resendEmailProvider.test.ts.
  */
 export async function reconcileOperatorFallbackAlerts(
   supabase: SupabaseClient,
@@ -541,7 +556,9 @@ export async function reconcileOperatorFallbackAlerts(
               ageLabel,
               workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
             }),
-            // Per task + stop_reason: retries never duplicate the email even before the marker lands.
+            // Deterministic per task + stop_reason, so a retry (or a genuinely concurrent run)
+            // reuses this identical key — Resend's idempotency-key contract, not anything this
+            // code enforces itself, is what collapses repeats into one delivered email.
             idempotencyKey: `operator-fallback-alert:${task.id}:${stopReason || "failed"}`,
           });
 
@@ -569,7 +586,9 @@ export async function reconcileOperatorFallbackAlerts(
             .eq("user_id", userId);
 
           if (updateErr) {
-            // Provider idempotency key prevents a duplicate email on the retry next run.
+            // The marker write failed, but the idempotency key above is unchanged on retry — a
+            // duplicate delivered email on the next run is prevented by Resend's own idempotency
+            // contract, not by anything this application does after the fact.
             console.warn(`operator fallback alert (${cfg.kind}): mark sent`, updateErr.message);
             summary.results.push({
               case_id: caseId,
@@ -750,8 +769,10 @@ export async function reconcileOperatorFallbackAlerts(
             ageLabel,
             workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
           }),
-          // Per task + destination + tier: retries never duplicate the email even before the
-          // marker lands, and an escalation tier never dedupes against an earlier tier's send.
+          // Deterministic per task + destination + occasion, so a retry (or a genuinely
+          // concurrent run) reuses this identical key and an earlier occasion never collides with
+          // a later one. Collapsing repeats of the same key into one delivered email is Resend's
+          // idempotency-key contract, not an application-level lock this code implements itself.
           idempotencyKey: providerIdempotencyKey,
         });
 
@@ -779,7 +800,9 @@ export async function reconcileOperatorFallbackAlerts(
           .eq("user_id", userId);
 
         if (updateErr) {
-          // Provider idempotency key prevents a duplicate email on the retry next run.
+          // The marker write failed, but the idempotency key above is unchanged on retry — a
+          // duplicate delivered email on the next run is prevented by Resend's own idempotency
+          // contract, not by anything this application does after the fact.
           console.warn("operator fallback alert (queue): mark sent", updateErr.message);
           summary.results.push({
             case_id: caseId,

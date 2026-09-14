@@ -62,12 +62,25 @@ type Task = {
 
 type CaseRow = { id: string; archived_at: string | null };
 
+/**
+ * Optional deterministic barrier: when present, every SELECT (task list or case-archive lookup)
+ * blocks on `wait()` before resolving, calling `onRead()` first so the test can observe how many
+ * reads are currently pending. Used to force two "concurrent" reconciler runs to both complete
+ * their reads — both genuinely observing "not yet sent" — before either is allowed to proceed to
+ * provider.send(), rather than hoping for that interleaving to occur naturally on an unthrottled
+ * fake (which it may not: a synchronous mock with no gate can let one run's read-through-write
+ * finish entirely before the other's read even starts, silently proving nothing about the actual
+ * concurrent-attempt contract).
+ */
+type SelectGate = { wait: () => Promise<void>; onRead?: () => void };
+
 type Store = {
   tasks: Task[];
   cases?: CaseRow[];
   failSelect?: boolean;
   failUpdate?: boolean;
   failCaseSelect?: boolean;
+  gate?: SelectGate;
 };
 
 function makeSupabase(store: Store): SupabaseClient {
@@ -135,7 +148,7 @@ function makeSupabase(store: Store): SupabaseClient {
       return { data: rows, error: null };
     };
 
-    const resolve = (range?: [number, number], limit?: number) => {
+    const resolve = async (range?: [number, number], limit?: number) => {
       if (state.op === "update" && state.table === "justice_case_tasks") {
         if (store.failUpdate) return { data: null, error: { message: "update down" } };
         const task = store.tasks.find(
@@ -145,6 +158,10 @@ function makeSupabase(store: Store): SupabaseClient {
         return { data: null, error: null };
       }
       if (state.op === "select" && (state.table === "justice_case_tasks" || state.table === "justice_cases")) {
+        if (store.gate) {
+          store.gate.onRead?.();
+          await store.gate.wait();
+        }
         return resolveSelect({ range, limit });
       }
       return { data: [], error: null };
@@ -186,6 +203,39 @@ function makeSupabase(store: Store): SupabaseClient {
     return api;
   };
   return { from } as unknown as SupabaseClient;
+}
+
+/**
+ * Creates a deterministic SelectGate plus test-side controls: every SELECT the fake Supabase
+ * client issues blocks on `wait()` until `release()` is called. Used to force two "concurrent"
+ * reconciler runs to both genuinely observe "not yet sent" before either is allowed to reach
+ * provider.send() — proving an actual race rather than hoping the JS microtask scheduler happens
+ * to interleave two calls against an unthrottled fake.
+ */
+function makeSelectGate(): { gate: SelectGate; release: () => void; readsStarted: () => number } {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const gate: SelectGate = {
+    wait: () => promise,
+    onRead: () => {
+      reads += 1;
+    },
+  };
+  return { gate, release, readsStarted: () => reads };
+}
+
+/**
+ * Advances the microtask queue until both concurrent runs have each issued at least one blocked
+ * read (or a small bound is hit) — enough for both to have reached their first select against the
+ * gated fake, before the caller releases it.
+ */
+async function waitUntilBothRunsAreBlocked(readsStarted: () => number, minReads = 2): Promise<void> {
+  for (let i = 0; i < 50 && readsStarted() < minReads; i++) {
+    await Promise.resolve();
+  }
 }
 
 function bbbFailedTask(
@@ -387,20 +437,28 @@ describe("reconcileOperatorFallbackAlerts", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("is concurrency-safe: parallel runs share one idempotency key and one durable marker", async () => {
+  it("concurrent attempts: two runs forced past their reads before either send resolves make exactly two send attempts with the identical key, and exactly one durable marker remains", async () => {
     const store: Store = { tasks: [ftcFailedTask({ caseId: "c1", stopReason: "invalid_decision" })] };
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
     const supabase = makeSupabase(store);
 
-    await Promise.all([
-      reconcileOperatorFallbackAlerts(supabase),
-      reconcileOperatorFallbackAlerts(supabase),
-    ]);
+    const runA = reconcileOperatorFallbackAlerts(supabase);
+    const runB = reconcileOperatorFallbackAlerts(supabase);
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
 
-    // Every send used the identical provider idempotency key, so Resend dedupes to one email.
+    // The actual current contract: both runs independently observed "not yet sent" and both
+    // called provider.send() — this is not deduped by any application-level lock. Collapsing two
+    // attempts sharing one idempotency key into a single delivered email is Resend's own
+    // idempotency-key contract (see resendEmailProvider.test.ts), not something asserted here.
+    expect(send).toHaveBeenCalledTimes(2);
     const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toBe("operator-fallback-alert:task_c1:invalid_decision");
-    // The durable marker is idempotent — it appears exactly once regardless of parallel writes.
+    // The durable marker still lands exactly once: both attempts compute an identical
+    // marker+timestamp from the same pre-race notes, so the second write is a no-op overwrite.
     const occurrences = (store.tasks[0].notes ?? "").match(/operator_alert_sent:/g) ?? [];
     expect(occurrences.length).toBe(1);
   });
@@ -877,20 +935,29 @@ describe("reconcileOperatorFallbackAlerts — 24h/72h staleness escalation", () 
     expect(hasOperatorAlertBeenSent(laterNotes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "ftc"))).toBe(false);
   });
 
-  it("is idempotent: identical concurrent runs at the same escalated age share one tier key and send exactly once", async () => {
+  it("concurrent attempts at the same escalated age: two runs forced past their reads make exactly two send attempts with the identical tier key, and exactly one durable marker remains", async () => {
     const store: Store = {
       tasks: [openTask({ caseId: "c1", marker: bbbFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
     };
     const supabase = makeSupabase(store);
-    // Immediate already sent in an earlier run, so this run is the 24h escalation.
+    // Immediate already sent in an earlier, ungated run, so this run is the 24h escalation.
     await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
     send.mockClear();
 
-    await Promise.all([
-      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR }),
-      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR }),
-    ]);
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
 
+    const runA = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    const runB = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
+
+    // The actual current contract: both runs independently observed "not yet sent" for the 24h
+    // tier and both called provider.send() — no application-level lock prevents this. Collapsing
+    // two attempts sharing one idempotency key into a single delivered email is Resend's own
+    // idempotency-key contract (see resendEmailProvider.test.ts), not something asserted here.
+    expect(send).toHaveBeenCalledTimes(2);
     const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toBe("operator-queue-alert:task_c1:bbb:24h");
@@ -1000,7 +1067,7 @@ describe("reconcileOperatorFallbackAlerts — recurring overdue reminders past 7
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("concurrent claims: two overlapping runs at the same recurring age share one idempotency key and write one durable marker", async () => {
+  it("concurrent attempts at the same recurring age: two runs forced past their reads make exactly two send attempts with the identical key, and exactly one durable marker remains", async () => {
     const store: Store = {
       tasks: [openTask({ caseId: "c1", marker: demandLetterFilingTaskNotesMarker("c1"), created_at: new Date(T0).toISOString() })],
     };
@@ -1008,11 +1075,21 @@ describe("reconcileOperatorFallbackAlerts — recurring overdue reminders past 7
     await primeThroughSeventyTwoHours(supabase);
     send.mockClear();
 
-    await Promise.all([
-      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR }),
-      reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR }),
-    ]);
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
 
+    const runA = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    const runB = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
+
+    // The actual current contract for the new recurring-reminder branch, identical to the
+    // pre-existing fixed tiers: both runs independently observed "not yet sent" for reminder #1
+    // and both called provider.send() — no application-level lock prevents this. Collapsing two
+    // attempts sharing one idempotency key into a single delivered email is Resend's own
+    // idempotency-key contract (see resendEmailProvider.test.ts), not something asserted here.
+    expect(send).toHaveBeenCalledTimes(2);
     const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
     expect(keys.size).toBe(1);
     expect([...keys][0]).toBe("operator-queue-alert:task_c1:demand_letter:recurring-1");
