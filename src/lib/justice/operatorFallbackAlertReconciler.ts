@@ -440,8 +440,18 @@ export type ReconcileOperatorFallbackAlertsOptions = {
  *    (numbered "overdue reminder #1", #2, ...) for as long as the task remains genuinely open —
  *    there is no cutoff after which a stalled task goes silent. Stops the moment the task is
  *    completed/cancelled (both close it via `completed_at`, checked at the query level) or its
- *    case is archived (checked per page against `justice_cases.archived_at` — archiving is this
- *    codebase's resolution-closure signal, see reconcileClosedCaseConsumerNotifications.ts).
+ *    case is explicitly archived (checked per page against `justice_cases.archived_at`). Archiving
+ *    is a separate, later, explicit operator action (operatorOwnedCaseArchive.ts) — not itself the
+ *    resolution signal, and a case can sit "resolved" (client_state.approved_next_action.outcome_note
+ *    carries OPERATOR_RESOLVED_OUTCOME_MARKER, set only by completeFollowUpResponseReview.ts) for a
+ *    real, possibly long-lived stretch before an operator confirms the archive. That gap does not
+ *    reach this alerter, though: a resolved outcome_note (or the follow_up_needed write that leads
+ *    to one) can only ever be persisted once none of the 9 alert-eligible destinations still has an
+ *    open task — enforced, for every write path, by rejectPrematureResolutionClientStatePatch's use
+ *    of hasPendingHumanFulfillmentEscalation (escalationLadderResolution.ts), wired unconditionally
+ *    into the sole client_state-writing route (src/app/api/justice/cases/[id]/route.ts). So a
+ *    resolved-but-unarchived case can never retain an open task this alerter would still be firing
+ *    on — verified per-destination, not assumed.
  *
  * Both phases email a configurable OPERATOR_ALERT_EMAIL through the existing Resend
  * infrastructure, intending one delivered email per alertable event (per task, per phase, per
