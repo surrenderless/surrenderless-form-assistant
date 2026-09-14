@@ -25,6 +25,7 @@ import { taskNotesMatchFccFilingMarker } from "@/lib/justice/fccFilingTask";
 import { taskNotesMatchMerchantContactFilingMarker } from "@/lib/justice/merchantContactFilingTask";
 import { taskNotesMatchPaymentDisputeFilingMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { taskNotesMatchStateAgFilingMarker } from "@/lib/justice/stateAgFilingTask";
+import { taskNotesMatchFollowUpResponseReviewMarker } from "@/lib/justice/followUpResponseReviewTask";
 import {
   appendOperatorAlertSentMarker,
   hasOperatorAlertBeenSent,
@@ -49,7 +50,12 @@ function clampLen(s: string, max: number): string {
 
 type OwnedFilingKind = "bbb" | "ftc" | "fcc";
 
-/** All 9 owned escalation destinations — the ordinary (non-automated-fallback) queue alert covers all of them. */
+/**
+ * All 10 destinations the ordinary (non-automated-fallback) queue alert covers: the 9 owned
+ * escalation filing/contact destinations, plus follow_up_response_review — the operator's own
+ * resolved/no_resolution/further_escalation decision task, not a filing at all, but just as
+ * capable of silently stalling a case forever if nothing ever re-alerts on it.
+ */
 type AllDestinationKind =
   | OwnedFilingKind
   | "merchant_contact"
@@ -58,7 +64,8 @@ type AllDestinationKind =
   | "cfpb"
   | "payment_dispute"
   | "fcc"
-  | "dot";
+  | "dot"
+  | "follow_up_response_review";
 
 type OwnedDeliveryRecord = {
   delivery_state: "queued" | "submitting" | "failed" | "filed";
@@ -110,13 +117,22 @@ type QueueAlertDestination = {
   kind: AllDestinationKind;
   destinationLabel: string;
   taskMarkerMatches: (notes: string | null | undefined, caseId: string) => boolean;
+  /**
+   * Overrides "filing" in the alert subject ("Manual filing needed — ..."). Only follow_up_response_review
+   * sets this — it isn't a filing, so calling it one would misdescribe what the operator needs to do.
+   */
+  subjectActionNoun?: string;
+  /** Overrides QUEUE_ALERT_FAILURE_TEXT's "no automated filing was attempted" framing. */
+  reasonText?: string;
+  /** Overrides "${destinationLabel} filing awaiting fulfillment" in the case timeline entry label. */
+  timelineAwaitingLabel?: string;
 };
 
 /**
- * All 9 owned escalation destinations, for the ordinary-queue alert. BBB/FTC markers match
- * regardless of whether an owned-filing delivery block is present — the caller excludes tasks
- * that have one, since those are either being (or were) handled by the automated pipeline and
- * are covered by DESTINATIONS above instead.
+ * All 10 destinations the ordinary-queue alert covers (see AllDestinationKind). BBB/FTC markers
+ * match regardless of whether an owned-filing delivery block is present — the caller excludes
+ * tasks that have one, since those are either being (or were) handled by the automated pipeline
+ * and are covered by DESTINATIONS above instead.
  */
 const QUEUE_ALERT_DESTINATIONS: QueueAlertDestination[] = [
   {
@@ -163,6 +179,15 @@ const QUEUE_ALERT_DESTINATIONS: QueueAlertDestination[] = [
     kind: "dot",
     destinationLabel: "USDOT / aviation consumer",
     taskMarkerMatches: taskNotesMatchDotFilingMarker,
+  },
+  {
+    kind: "follow_up_response_review",
+    destinationLabel: "Follow-up response review",
+    taskMarkerMatches: taskNotesMatchFollowUpResponseReviewMarker,
+    subjectActionNoun: "review",
+    reasonText:
+      "No automated resolution decision is possible — this case is awaiting an operator's response-review outcome (resolved, no resolution, or further escalation).",
+    timelineAwaitingLabel: "Follow-up response review awaiting an operator decision",
   },
 ];
 
@@ -365,9 +390,10 @@ function formatAgeMs(ageMs: number): string {
 
 export function buildOperatorFallbackAlertSubject(
   cfg: Pick<AlertDestination, "destinationLabel">,
-  caseId: string
+  caseId: string,
+  actionNoun: string = "filing"
 ): string {
-  return `[Surrenderless] Manual filing needed — ${cfg.destinationLabel} (case ${caseId})`;
+  return `[Surrenderless] Manual ${actionNoun} needed — ${cfg.destinationLabel} (case ${caseId})`;
 }
 
 export function buildOperatorFallbackAlertBody(params: {
@@ -433,9 +459,12 @@ export type ReconcileOperatorFallbackAlertsOptions = {
  *    all converge to `delivery_state: "failed"`). FCC has no live execution path yet (dry-run
  *    only), so this phase currently never actually fires for FCC in production — it exists so
  *    the wiring is ready once a real harness lands.
- * 2. Ordinary open operator-fulfillment work across all 9 escalation destinations that never had
- *    an automated filing attempted at all — i.e. every case in the default product mode (owned
- *    BBB/FTC/FCC autofill off, or any of the other 6 destinations, which have no automated path).
+ * 2. Ordinary open operator-fulfillment work across all 10 QUEUE_ALERT_DESTINATIONS: the 9
+ *    escalation filing/contact destinations that never had an automated filing attempted at all
+ *    (every case in the default product mode — owned BBB/FTC/FCC autofill off, or any of the
+ *    other 6 destinations, which have no automated path) — plus follow_up_response_review, the
+ *    operator's own resolved/no_resolution/further_escalation decision task, which isn't a filing
+ *    but stalls a case just as permanently if nothing ever re-alerts on it.
  *    Escalates immediate -> 24h -> 72h, then keeps re-alerting every further 72h indefinitely
  *    (numbered "overdue reminder #1", #2, ...) for as long as the task remains genuinely open —
  *    there is no cutoff after which a stalled task goes silent. Stops the moment the task is
@@ -704,7 +733,7 @@ export async function reconcileOperatorFallbackAlerts(
 
       if (archivedCaseIds.has(caseId)) {
         // Only count/report this as a skip if the task would otherwise have been alertable at
-        // all (matches one of the 9 destinations) — an archived case's unrelated open task (e.g.
+        // all (matches one of the 10 QUEUE_ALERT_DESTINATIONS) — an archived case's unrelated open task (e.g.
         // a plain personal reminder) was never going to be scanned or alerted either way.
         const cfgForArchived = QUEUE_ALERT_DESTINATIONS.find((d) => d.taskMarkerMatches(task.notes, caseId));
         if (cfgForArchived) {
@@ -770,12 +799,12 @@ export async function reconcileOperatorFallbackAlerts(
         const sendResult = await providerResolved.provider.send({
           from: providerResolved.from,
           to: recipient,
-          subject: `${subjectPrefix}${buildOperatorFallbackAlertSubject(cfg, caseId)}`,
+          subject: `${subjectPrefix}${buildOperatorFallbackAlertSubject(cfg, caseId, cfg.subjectActionNoun)}`,
           text: buildOperatorFallbackAlertBody({
             destinationLabel: cfg.destinationLabel,
             caseId,
-            taskTitle: task.title?.trim() || `${cfg.destinationLabel} filing`,
-            failureReason: `${QUEUE_ALERT_FAILURE_TEXT}${reasonSuffix}`,
+            taskTitle: task.title?.trim() || `${cfg.destinationLabel} ${cfg.subjectActionNoun ?? "filing"}`,
+            failureReason: `${cfg.reasonText ?? QUEUE_ALERT_FAILURE_TEXT}${reasonSuffix}`,
             ageLabel,
             workspaceUrl: resolveOperatorWorkspaceUrl(caseId),
           }),
@@ -833,8 +862,8 @@ export async function reconcileOperatorFallbackAlerts(
         await appendCaseTimelineEntry(supabase, userId, caseId, {
           id: `operator_queue_alert:${task.id}:${cfg.kind}${timelineIdSuffix}`,
           type: "outcome_recorded",
-          label: `Operator alerted — ${cfg.destinationLabel} filing awaiting fulfillment${timelineLabelSuffix}`,
-          detail: `${QUEUE_ALERT_FAILURE_TEXT}${reasonSuffix}`,
+          label: `Operator alerted — ${cfg.timelineAwaitingLabel ?? `${cfg.destinationLabel} filing awaiting fulfillment`}${timelineLabelSuffix}`,
+          detail: `${cfg.reasonText ?? QUEUE_ALERT_FAILURE_TEXT}${reasonSuffix}`,
           ts: sentAt,
         });
 
