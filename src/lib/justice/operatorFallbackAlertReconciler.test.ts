@@ -663,16 +663,21 @@ describe("reconcileOperatorFallbackAlerts — default-mode operator-queue alerts
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("does not alert for a follow-up response review task — that is not one of the 9 filing destinations", async () => {
+  it("alerts immediately for an open follow-up response review task, same as the 9 filing destinations", async () => {
     const store: Store = {
       tasks: [openTask({ caseId: "c1", marker: followUpResponseReviewTaskNotesMarker("c1") })],
     };
 
     const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store));
 
-    expect(summary.attempted).toBe(0);
-    expect(summary.sent).toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(summary.attempted).toBe(1);
+    expect(summary.sent).toBe(1);
+    expect(send.mock.calls[0][0].subject).toContain("Manual review needed");
+    expect(send.mock.calls[0][0].text).toContain(
+      "awaiting an operator's response-review outcome"
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(store.tasks[0].notes).toContain("operator_alert_sent:");
   });
 
   it("never alerts for a completed task", async () => {
@@ -1222,6 +1227,274 @@ describe("reconcileOperatorFallbackAlerts — recurring overdue reminders past 7
     const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 });
     expect(summary.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Dedicated coverage for follow_up_response_review as its own QUEUE_ALERT_DESTINATIONS entry —
+ * the operator's own resolved/no_resolution/further_escalation decision task, added because it
+ * used to be entirely excluded from queue alerting (see the "alerts immediately for an open
+ * follow-up response review task" test above, which replaced the old "does not alert" test this
+ * fix inverted). Mirrors the generic 24h/72h and recurring-reminder describe blocks above,
+ * proving this destination follows the identical schedule, wording conventions, pagination, and
+ * fail-safe archive handling — not a special case bolted on separately.
+ */
+describe("reconcileOperatorFallbackAlerts — follow_up_response_review operator alerts", () => {
+  const T0 = Date.parse("2026-08-01T00:00:00.000Z");
+  const HOUR = 3_600_000;
+
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function reviewTask(overrides: Partial<Task> & { caseId: string }): Task {
+    return openTask({ ...overrides, marker: followUpResponseReviewTaskNotesMarker(overrides.caseId) });
+  }
+
+  /** Drives a follow_up_response_review task straight to "72h tier already sent". */
+  async function primeThroughSeventyTwoHours(supabase: SupabaseClient): Promise<void> {
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR });
+  }
+
+  it("escalates immediate -> 24h -> 72h with the correct subject wording and distinct per-tier keys", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+
+    const immediate = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    expect(immediate.sent).toBe(1);
+    expect(send.mock.calls[0][0].subject).toContain("Manual review needed");
+    expect(send.mock.calls[0][0].subject).not.toContain("ESCALATION");
+
+    const at24h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    expect(at24h.sent).toBe(1);
+    expect(send.mock.calls[1][0].subject).toContain("ESCALATION (24h)");
+
+    const at72h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR });
+    expect(at72h.sent).toBe(1);
+    expect(send.mock.calls[2][0].subject).toContain("ESCALATION (72h)");
+
+    const notes = store.tasks[0].notes ?? "";
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue", "follow_up_response_review"))).toBe(true);
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-24h", "follow_up_response_review"))).toBe(true);
+    expect(hasOperatorAlertBeenSent(notes, operatorFallbackAlertKey("task_c1", "operator-queue-72h", "follow_up_response_review"))).toBe(true);
+  });
+
+  it("timing boundary: no reminder just under 144h, reminder #1 fires exactly at 144h", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const justUnder = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR - 1 });
+    expect(justUnder.sent).toBe(0);
+    expect(justUnder.skipped).toBe(1);
+    expect(send).not.toHaveBeenCalled();
+
+    const atBoundary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    expect(atBoundary.sent).toBe(1);
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (overdue reminder #1)");
+  });
+
+  it("timing boundary: no reminder #2 just under 216h, fires exactly at 216h", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    send.mockClear();
+
+    const justUnder = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 216 * HOUR - 1 });
+    expect(justUnder.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+
+    const atBoundary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 216 * HOUR });
+    expect(atBoundary.sent).toBe(1);
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (overdue reminder #2)");
+  });
+
+  it("a reconciler outage doesn't burst backlogged reminders — jumping to a much later age fires only the single currently-due reminder", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const summary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 500 * HOUR });
+    expect(summary.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].subject).toContain("ESCALATION (overdue reminder #5)");
+  });
+
+  it("provider failure leaves a recurring reminder retryable (no marker written), then succeeds on retry", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+
+    send.mockResolvedValueOnce({ ok: false, error: "resend 500", retryable: true });
+    const failed = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    expect(failed.failed).toBe(1);
+    expect(failed.sent).toBe(0);
+    expect(
+      hasOperatorAlertBeenSent(
+        store.tasks[0].notes,
+        operatorFallbackAlertKey("task_c1", "operator-queue-recurring-1", "follow_up_response_review")
+      )
+    ).toBe(false);
+
+    send.mockResolvedValue({ ok: true, messageId: "msg_ok" });
+    const retried = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    expect(retried.sent).toBe(1);
+    expect(
+      hasOperatorAlertBeenSent(
+        store.tasks[0].notes,
+        operatorFallbackAlertKey("task_c1", "operator-queue-recurring-1", "follow_up_response_review")
+      )
+    ).toBe(true);
+  });
+
+  it("stops immediately once the review task itself is completed, even mid-recurring-cadence", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    send.mockClear();
+
+    store.tasks[0].completed_at = new Date(T0 + 150 * HOUR).toISOString();
+
+    const summary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 216 * HOUR });
+    expect(summary.attempted).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("stops immediately once the case is archived — no further fixed-tier or recurring alert", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "case-archived-review", created_at: new Date(T0).toISOString() })],
+      cases: [{ id: "case-archived-review", archived_at: new Date(T0 + 100 * HOUR).toISOString() }],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const summary = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 200 * HOUR });
+    expect(summary.sent).toBe(0);
+    expect(summary.attempted).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(
+      summary.results.every((r) => r.result === "skipped" && r.reason === "case_archived")
+    ).toBe(true);
+  });
+
+  it("concurrent attempts at the same recurring age: two runs forced past their reads make exactly two send attempts with the identical key, and exactly one durable marker remains", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    const { gate, release, readsStarted } = makeSelectGate();
+    store.gate = gate;
+
+    const runA = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    const runB = reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+    await waitUntilBothRunsAreBlocked(readsStarted);
+    release();
+    await Promise.all([runA, runB]);
+
+    // Identical contract to every other destination: no application-level lock, both runs call
+    // send() with the same deterministic key, and Resend's own idempotency contract (not this
+    // code) is what would collapse two attempts into one delivered email.
+    expect(send).toHaveBeenCalledTimes(2);
+    const keys = new Set(send.mock.calls.map((c) => c[0].idempotencyKey));
+    expect(keys.size).toBe(1);
+    expect([...keys][0]).toBe("operator-queue-alert:task_c1:follow_up_response_review:recurring-1");
+    const occurrences =
+      (store.tasks[0].notes ?? "").match(
+        /operator_alert_sent: task_c1\|operator-queue-recurring-1\|follow_up_response_review/g
+      ) ?? [];
+    expect(occurrences.length).toBe(1);
+  });
+
+  it("includes the actual wait age, reminder number, and operator-workspace URL in the copy, with review-specific (not filing) wording", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.surrenderless.test");
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "case-copy", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+    await primeThroughSeventyTwoHours(supabase);
+    send.mockClear();
+
+    await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 150 * HOUR });
+
+    const call = send.mock.calls[0][0];
+    expect(call.subject).toContain("Manual review needed");
+    expect(call.subject).not.toContain("Manual filing needed");
+    const body = call.text as string;
+    expect(body).toMatch(/Task age: 6d 6h/);
+    expect(body).toContain("overdue reminder #1");
+    expect(body).toContain("awaiting an operator's response-review outcome");
+    expect(body).not.toContain("No automated filing was attempted");
+    expect(body).toContain("https://app.surrenderless.test/operator/fulfillment?case=case-copy");
+  });
+
+  it("does not double-alert once open-task volume exceeds one page — reaches a review task beyond the first page", async () => {
+    const baseMs = Date.now() - 10_000_000;
+    const noiseTasks: Task[] = Array.from({ length: 120 }, (_, i) => ({
+      id: `noise-${String(i).padStart(4, "0")}`,
+      user_id: "user-noise",
+      case_id: `case-noise-${i}`,
+      title: "Personal reminder",
+      notes: "Follow up personally",
+      completed_at: null,
+      created_at: new Date(baseMs + i * 1000).toISOString(),
+      updated_at: new Date(baseMs + i * 1000).toISOString(),
+    }));
+    const targetCaseId = "case-review-target";
+    const store: Store = {
+      tasks: [
+        ...noiseTasks,
+        reviewTask({
+          caseId: targetCaseId,
+          id: "review-target-task",
+          created_at: new Date(baseMs + 200 * 1000).toISOString(),
+        }),
+      ],
+    };
+    const supabase = makeSupabase(store);
+
+    const first = await reconcileOperatorFallbackAlerts(supabase);
+    expect(first.sent).toBe(1);
+    expect(
+      first.results.some((r) => r.task_id === "review-target-task" && r.result === "sent")
+    ).toBe(true);
+
+    const second = await reconcileOperatorFallbackAlerts(supabase);
+    expect(second.sent).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
 
