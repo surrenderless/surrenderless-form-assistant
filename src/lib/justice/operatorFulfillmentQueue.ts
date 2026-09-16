@@ -40,6 +40,12 @@ import {
 } from "@/lib/justice/followUpResponseReviewTask";
 import { followUpTaskOwnerHref } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
+import { taskNotesMatchOrphanedPaidCaseApprovalMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
+import {
+  computeEligibleOrphanedPaidCaseApprovalActions,
+  type EligibleOrphanedPaidCaseApprovalAction,
+} from "@/lib/justice/orphanedPaidCaseApprovalResolution";
+import { findDurableIntendedActionForCase } from "@/lib/justice/durablePaymentIntendedAction";
 import { mapOperatorFulfillmentQueueEvidenceRow } from "@/lib/justice/operatorFulfillmentQueueEvidence";
 import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import {
@@ -101,7 +107,16 @@ export type OperatorFulfillmentStep =
   | "ftc"
   | "bbb"
   | "follow_up_response_review"
-  | "superseded_lane_review";
+  | "superseded_lane_review"
+  | "orphaned_paid_case_approval";
+
+/** An orphaned-paid-case-approval review's server-validated options — never an arbitrary href. */
+export type OrphanedPaidCaseApprovalWorkspace = {
+  eligible_actions: EligibleOrphanedPaidCaseApprovalAction[];
+  /** The durably-recorded, metadata-bound action the case's own payment was for, if any. */
+  durable_intended_href: string | null;
+  durable_intended_label: string | null;
+};
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -143,6 +158,8 @@ export type OperatorFulfillmentQueueItem = {
    * recorded against the wrong lane's row.
    */
   owner_href?: string;
+  /** Present only for orphaned-paid-case-approval review — server-validated resolution options. */
+  orphaned_paid_case_approval_workspace?: OrphanedPaidCaseApprovalWorkspace;
 };
 
 /** Aggregate response-SLA metrics for the operator fulfillment queue. */
@@ -191,6 +208,7 @@ export type OperatorFulfillmentPanelKind =
   | "payment_dispute_workspace"
   | "follow_up_response_review"
   | "superseded_lane_review"
+  | "orphaned_paid_case_approval_review"
   | "record_form";
 
 /** UI branching for /operator/fulfillment — keeps workspace panels scoped by step. */
@@ -209,6 +227,7 @@ export function resolveOperatorFulfillmentPanelKind(
     | "payment_dispute_workspace"
   >
 ): OperatorFulfillmentPanelKind {
+  if (item.step === "orphaned_paid_case_approval") return "orphaned_paid_case_approval_review";
   if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
   if (item.step === "cfpb" && item.cfpb_workspace) return "cfpb_workspace";
   if (item.step === "fcc" && item.fcc_workspace) return "fcc_workspace";
@@ -242,7 +261,8 @@ export function operatorFulfillmentStepLoadsCaseEvidence(step: OperatorFulfillme
     step === "merchant_contact" ||
     step === "payment_dispute" ||
     step === "follow_up_response_review" ||
-    step === "superseded_lane_review"
+    step === "superseded_lane_review" ||
+    step === "orphaned_paid_case_approval"
   );
 }
 
@@ -314,6 +334,20 @@ export function classifyOpenOperatorTask(
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseSupersededLaneReviewTaskDraft(task.notes)),
       owner_href: ownerHref,
+      evidence: [],
+    };
+  }
+
+  if (taskNotesMatchOrphanedPaidCaseApprovalMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "orphaned_paid_case_approval",
+      task_title: task.title?.trim() || "Paid case needs manual approval review",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: "",
       evidence: [],
     };
   }
@@ -603,11 +637,42 @@ export async function listOperatorFulfillmentQueue(
     }
   }
 
+  const orphanedApprovalCaseIds = items
+    .filter((item) => item.step === "orphaned_paid_case_approval")
+    .map((item) => item.case_id);
+  const durableIntentByCaseId = new Map<string, { href: string; label: string } | null>();
+  if (orphanedApprovalCaseIds.length > 0) {
+    const durableIntents = await Promise.all(
+      [...new Set(orphanedApprovalCaseIds)].map(async (caseId) => [
+        caseId,
+        await findDurableIntendedActionForCase(supabase, caseId),
+      ] as const)
+    );
+    for (const [caseId, durable] of durableIntents) {
+      durableIntentByCaseId.set(caseId, durable);
+    }
+  }
+
   return items.map((item) => {
     const intake = intakeByCaseId.get(item.case_id);
     if (!intake) return item;
     const task = operatorTasks.find((t) => t.id === item.task_id);
     const evidence = evidenceByCaseId.get(item.case_id) ?? [];
+
+    if (item.step === "orphaned_paid_case_approval") {
+      const durable = durableIntentByCaseId.get(item.case_id) ?? null;
+      return {
+        ...item,
+        evidence,
+        orphaned_paid_case_approval_workspace: {
+          eligible_actions: computeEligibleOrphanedPaidCaseApprovalActions(intake, {
+            hasUploadedEvidenceFile: hasUploadedEvidenceFileByCaseId.get(item.case_id) ?? false,
+          }),
+          durable_intended_href: durable?.href ?? null,
+          durable_intended_label: durable?.label ?? null,
+        },
+      };
+    }
 
     if (item.step === "state_ag" && item.state_ag_workspace) {
       return {

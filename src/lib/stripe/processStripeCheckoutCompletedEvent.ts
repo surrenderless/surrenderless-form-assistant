@@ -108,6 +108,8 @@ export async function processStripeCheckoutCompletedEvent(
     amount_total: amountTotal,
     currency,
     stripe_payment_intent_id: paymentIntentId,
+    intended_action_href: intendedActionHref || null,
+    intended_action_label: intendedActionLabel || null,
   });
 
   if (insertError && insertError.code !== "23505") {

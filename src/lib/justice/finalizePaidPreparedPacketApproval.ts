@@ -3,6 +3,7 @@ import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionSta
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import { ensureOwnedFilingTaskAfterClientStateWrite } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merchantContactEmailDelivery";
+import { completeOrphanedPaidCaseApprovalTaskIfOpen } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import { updateClientStateIfUnchanged } from "@/lib/justice/updateClientStateIfUnchanged";
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
@@ -38,8 +39,20 @@ export type FinalizePaidPreparedPacketApprovalResult =
  * re-checks prepared_packet_approved on every attempt, and writes via updateClientStateIfUnchanged
  * (optimistic concurrency on justice_cases.updated_at) so a losing concurrent writer — another
  * redelivered webhook, a lagging browser PATCH, a cron reconciler pass — retries against fresh
- * state instead of silently clobbering whichever attempt wins the race. Once
- * prepared_packet_approved is true, every subsequent call (however it arrives) is a genuine no-op.
+ * state instead of silently clobbering whichever attempt wins the race.
+ *
+ * Idempotent task-creation retry: the CAS write (prepared_packet_approved + approved_next_action)
+ * and the fulfillment-task ensure are two separate steps, so a prior call can have durably
+ * committed the approval write and then failed at the ensure step (a transient DB error inside
+ * ensureOwnedFilingTaskAfterClientStateWrite). ensureOwnedFilingTaskAfterClientStateWrite is
+ * ALWAYS attempted on every call — including when client_state was already approved by an earlier
+ * call — never skipped as a side effect of the CAS write being a no-op this time. It is itself
+ * idempotent (marker-based existence check before insert), so re-attempting it on an
+ * already-fulfilled case is a cheap, safe no-op; re-attempting it on a case whose task creation
+ * previously failed is exactly the retry that closes the gap. Errors from this step always
+ * propagate as {status:"error"}, so both the Stripe webhook (which surfaces that as a 5xx and gets
+ * redelivered) and the 5-minute orphan-recovery reconciler (which revisits every paid case, not
+ * only unapproved ones) keep retrying until it succeeds.
  */
 export async function finalizePaidPreparedPacketApproval(
   supabase: SupabaseClient,
@@ -79,63 +92,77 @@ export async function finalizePaidPreparedPacketApproval(
     }
 
     const existingState = parseJusticeCaseClientState(caseRow.client_state);
-    if (existingState.prepared_packet_approved === true) {
-      // Already finalized — by an earlier call to this same function, or by the consumer's own
-      // browser PATCH landing first. Either way, nothing left to do.
-      return { status: "already_finalized" };
-    }
     if (!isJusticeIntakePayload(caseRow.intake)) {
       return { status: "invalid_intake" };
     }
 
-    const nextAction: JusticeApprovedNextAction = {
-      label,
-      href,
-      status: "approved",
-      approved_at: new Date().toISOString(),
-    };
-    const nextClientState: Record<string, unknown> = {
-      ...existingState,
-      prepared_packet_approved: true,
-      approved_next_action: nextAction,
-    };
+    let clientStateForEnsure: Record<string, unknown> = existingState;
+    let justApproved = false;
 
-    const writeResult = await updateClientStateIfUnchanged(supabase, {
-      caseId,
-      userId,
-      expectedUpdatedAt: caseRow.updated_at as string,
-      clientState: nextClientState,
-    });
+    if (existingState.prepared_packet_approved !== true) {
+      const nextAction: JusticeApprovedNextAction = {
+        label,
+        href,
+        status: "approved",
+        approved_at: new Date().toISOString(),
+      };
+      const nextClientState: Record<string, unknown> = {
+        ...existingState,
+        prepared_packet_approved: true,
+        approved_next_action: nextAction,
+      };
 
-    if (!writeResult.ok) {
-      if (writeResult.status === 409) {
-        // Someone else wrote client_state between our read and write (another concurrent
-        // finalize attempt, or an unrelated case update) — re-read fresh state and retry rather
-        // than giving up or overwriting.
-        continue;
+      const writeResult = await updateClientStateIfUnchanged(supabase, {
+        caseId,
+        userId,
+        expectedUpdatedAt: caseRow.updated_at as string,
+        clientState: nextClientState,
+      });
+
+      if (!writeResult.ok) {
+        if (writeResult.status === 409) {
+          // Someone else wrote client_state between our read and write (another concurrent
+          // finalize attempt, or an unrelated case update) — re-read fresh state and retry rather
+          // than giving up or overwriting.
+          continue;
+        }
+        return { status: "error", error: writeResult.error };
       }
-      return { status: "error", error: writeResult.error };
+
+      clientStateForEnsure = nextClientState;
+      justApproved = true;
     }
 
     const ownedEnsure = await ensureOwnedFilingTaskAfterClientStateWrite(supabase, {
       userId,
       caseId,
-      clientState: nextClientState,
+      clientState: clientStateForEnsure,
       intake: caseRow.intake as JusticeIntake,
       paymentDisputeDraft: caseRow.payment_dispute_draft,
     });
     if (!ownedEnsure.ok) {
-      // client_state (the durable "this case is approved" record) is already written — the
-      // invariant that matters most is satisfied. A missing task is retried automatically by
-      // reconcileMissingOwnedFilingTasks's own cron pass, which re-derives the required task kind
-      // from this same client_state and is itself idempotent.
+      // The approval write (if this call just made one) is already durably committed — but the
+      // fulfillment-task invariant is not yet satisfied, so this must surface as a retryable
+      // error rather than a success, precisely so the next webhook redelivery or 5-minute orphan
+      // pass re-attempts ensureOwnedFilingTaskAfterClientStateWrite instead of treating the case
+      // as done.
       return { status: "error", error: ownedEnsure.error };
     }
     if (ownedEnsure.kind === "merchant_contact") {
+      // Idempotent (reuses a stable per-case provider idempotency key and skips once already
+      // accepted) — safe to attempt unconditionally on every call, matching the PATCH route's own
+      // unconditional call pattern, so a prior delivery failure is retried too.
       await attemptAutomatedMerchantContactEmailDelivery(supabase, userId, caseId);
     }
 
-    return { status: "finalized" };
+    // The case is now definitively approved (whether this call just approved it, or found it
+    // already approved) with its fulfillment task confirmed present — any lingering orphan-review
+    // task is now stale. Closing it is best-effort: a failure here does not fail this call, since
+    // the invariant that matters (approval + fulfillment task) is already satisfied, and this same
+    // cleanup is retried on the next call (webhook redelivery or 5-minute orphan pass) regardless.
+    await completeOrphanedPaidCaseApprovalTaskIfOpen(supabase, userId, caseId);
+
+    return { status: justApproved ? "finalized" : "already_finalized" };
   }
 
   return { status: "conflict_retries_exhausted" };

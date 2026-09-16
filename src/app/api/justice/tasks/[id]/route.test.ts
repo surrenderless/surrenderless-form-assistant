@@ -48,6 +48,7 @@ import { DELETE, PATCH } from "@/app/api/justice/tasks/[id]/route";
 import { getUserOr401 } from "@/server/requireUser";
 import { bbbFilingTaskNotesMarker } from "@/lib/justice/bbbFilingTask";
 import { buildSupersededLaneResponseReviewTaskNotes } from "@/lib/justice/followUpResponseReviewTask";
+import { orphanedPaidCaseApprovalTaskNotesMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 
 const USER_ID = "user_test_123";
 const TASK_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -95,6 +96,20 @@ function supersededLaneReviewTaskRow() {
       "550e8400-e29b-41d4-a716-446655440099",
       "Small claims / demand letter"
     ),
+    completed_at: null,
+    created_at: "2026-07-01T00:00:00.000Z",
+    updated_at: "2026-07-01T00:00:00.000Z",
+  };
+}
+
+function orphanedPaidCaseApprovalTaskRow() {
+  return {
+    id: TASK_ID,
+    user_id: USER_ID,
+    case_id: CASE_ID,
+    title: "Paid case needs manual approval review",
+    due_date: null,
+    notes: `${orphanedPaidCaseApprovalTaskNotesMarker(CASE_ID)}\nreason: no_routable_destination`,
     completed_at: null,
     created_at: "2026-07-01T00:00:00.000Z",
     updated_at: "2026-07-01T00:00:00.000Z",
@@ -165,6 +180,29 @@ describe("PATCH/DELETE /api/justice/tasks/[id] managed-task protection", () => {
     const body = await res.json();
     expect(body.error).toMatch(/managed by Surrenderless/i);
     expect(mockTaskUpdateMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("rejects PATCH bare-completion of an orphaned-paid-case-approval review — a consumer must never be able to silence their own case's operator safety net", async () => {
+    mockTaskSelectMaybeSingle.mockResolvedValue({ data: orphanedPaidCaseApprovalTaskRow(), error: null });
+
+    const res = await PATCH(
+      buildRequest("PATCH", { completed_at: "2026-07-15T00:00:00.000Z" }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/managed by Surrenderless/i);
+    expect(mockTaskUpdateMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("rejects DELETE of an orphaned-paid-case-approval review task", async () => {
+    mockTaskSelectMaybeSingle.mockResolvedValue({ data: orphanedPaidCaseApprovalTaskRow(), error: null });
+
+    const res = await DELETE(buildRequest("DELETE"), routeContext());
+
+    expect(res.status).toBe(403);
+    expect(mockTaskDeleteSelect).not.toHaveBeenCalled();
   });
 
   it("allows DELETE on a legitimate user reminder task", async () => {

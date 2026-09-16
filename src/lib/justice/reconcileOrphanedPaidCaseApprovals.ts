@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseJusticeCaseClientState } from "@/lib/justice/approvedNextActionState";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
+import { findDurableIntendedActionForCase } from "@/lib/justice/durablePaymentIntendedAction";
 import { finalizePaidPreparedPacketApproval } from "@/lib/justice/finalizePaidPreparedPacketApproval";
 import { ensureOrphanedPaidCaseApprovalTask } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import {
@@ -41,27 +42,38 @@ function emptySummary(): ReconcileOrphanedPaidCaseApprovalsSummary {
 }
 
 /**
- * Safety-net recovery for paid cases whose approval was never finalized — the primary path is
+ * Safety-net recovery for paid cases whose approval was never finalized, or whose approval was
+ * finalized but whose fulfillment task creation failed — the primary path is
  * finalizePaidPreparedPacketApproval running inline from the Stripe webhook itself
- * (processStripeCheckoutCompletedEvent.ts); this reconciler exists for two situations that path
+ * (processStripeCheckoutCompletedEvent.ts); this reconciler exists for three situations that path
  * cannot cover on its own:
  *
  * 1. A "legacy orphan" — a case paid before the checkout route started binding an intended action
  *    into Stripe metadata (see resolveIntendedPreparedAction.ts / checkout/route.ts). The webhook
  *    has no intended_action_href to finalize with for these.
- * 2. Defense in depth against a webhook-side finalize call that failed for a reason a later retry
- *    could resolve (a transient DB error, a concurrent-write conflict) — safe to reattempt here
+ * 2. Defense in depth against a webhook-side finalize call that failed before ever writing
+ *    client_state (a transient DB error, a concurrent-write conflict) — safe to reattempt here
  *    since finalizePaidPreparedPacketApproval is itself idempotent.
+ * 3. Approved-but-taskless recovery: a case whose client_state was already durably written
+ *    (prepared_packet_approved: true) but whose fulfillment-task creation then failed. This
+ *    reconciler revisits EVERY paid, non-archived case every run — not only unapproved ones — and
+ *    re-attempts finalizePaidPreparedPacketApproval with the case's own already-approved action,
+ *    which idempotently re-ensures the fulfillment task (and closes any now-stale orphan-review
+ *    task) without re-deciding what was approved.
  *
- * For each open case (paid_at set, not archived, prepared_packet_approved not yet true):
- * prefers any href already sitting on client_state.approved_next_action (e.g. left by a prior
- * partial PATCH) over recomputing; otherwise deterministically recomputes via
- * resolveIntendedPreparedAction from the case's own current intake. Finalizes automatically ONLY
- * when that resolves to a single, unambiguous, currently-routable destination. Never guesses:
- * invalid intake or no routable destination instead creates (idempotently) a durable, operator-
- * visible review task — picked up by the existing operator queue-alert mechanism
- * (operatorFallbackAlertReconciler.ts) exactly like every other destination, with the same
- * immediate/24h/72h/recurring schedule, not a one-shot notice.
+ * For a case not yet approved: NEVER trusts client_state.approved_next_action.href as a signal of
+ * intent — that field is writable by the consumer's own PATCH independent of any payment, so
+ * treating it as authoritative here would let orphan recovery finalize an action nobody actually
+ * paid for. Instead compares two independent, trustworthy sources: the durable metadata-bound
+ * action recorded on the case's own Stripe payment row at checkout-creation time (what was
+ * actually paid for), and a fresh recompute from the case's current intake (what would be
+ * approved today). Finalizes automatically ONLY when both exist and agree — an unambiguous match.
+ * Any disagreement (intake changed since checkout, so the paid-for action is no longer what
+ * today's intake would produce), or the absence of either signal resolving cleanly, is uncertain
+ * intent and is never guessed past: it creates (idempotently) a durable, operator-visible review
+ * task instead — picked up by the existing operator queue-alert mechanism
+ * (operatorFallbackAlertReconciler.ts) exactly like every other destination, and by the operator
+ * fulfillment queue for manual resolution (operatorFulfillmentQueue.ts).
  *
  * Paginated via the same keyset scheme as the other reconcilers so growing volume can never
  * strand an old case behind a fixed-size page.
@@ -106,8 +118,34 @@ export async function reconcileOrphanedPaidCaseApprovals(
       if (!caseId || !userId) continue;
 
       const state = parseJusticeCaseClientState(row.client_state);
+
       if (state.prepared_packet_approved === true) {
-        summary.already_approved += 1;
+        // Already approved — confirm (idempotently) that its fulfillment task actually exists,
+        // and close any now-stale orphan-review task. The href/label here are the SETTLED
+        // approval, not a guess: reusing them is completing a decision already made, not
+        // reinterpreting one.
+        const approvedHref = state.approved_next_action?.href?.trim();
+        const approvedLabel = state.approved_next_action?.label?.trim() || approvedHref;
+        if (!approvedHref) {
+          summary.already_approved += 1;
+          continue;
+        }
+        const confirmResult = await finalizePaidPreparedPacketApproval(supabase, {
+          caseId,
+          userId,
+          intendedAction: { href: approvedHref, label: approvedLabel || approvedHref },
+        });
+        if (confirmResult.status === "finalized" || confirmResult.status === "already_finalized") {
+          summary.already_approved += 1;
+        } else {
+          summary.failed += 1;
+          summary.results.push({
+            case_id: caseId,
+            user_id: userId,
+            kind: "failed",
+            reason: confirmResult.status,
+          });
+        }
         continue;
       }
 
@@ -121,30 +159,39 @@ export async function reconcileOrphanedPaidCaseApprovals(
       }
       const intake = row.intake as JusticeIntake;
 
-      // Prefer an href already on file — e.g. a prior PATCH attempt that wrote approved_next_action
-      // but failed before prepared_packet_approved flipped to true. That is a stronger signal of
-      // actual intent than a fresh recomputation, and must never be silently overridden by one.
-      const existingHref = state.approved_next_action?.href?.trim();
-      let intendedHref = existingHref || "";
-      let intendedLabel = state.approved_next_action?.label?.trim() || "";
+      const [durable, resolved] = await Promise.all([
+        findDurableIntendedActionForCase(supabase, caseId),
+        resolveIntendedPreparedAction(supabase, { userId, caseId, intake }),
+      ]);
 
-      if (!intendedHref) {
-        const resolved = await resolveIntendedPreparedAction(supabase, { userId, caseId, intake });
-        if (!resolved.ok) {
-          const reason = resolved.reason === "error" ? resolved.error : resolved.reason;
-          await ensureOrphanedPaidCaseApprovalTask(supabase, userId, caseId, reason);
-          summary.flagged_for_review += 1;
-          summary.results.push({ case_id: caseId, user_id: userId, kind: "flagged_for_review", reason });
-          continue;
+      let intendedHref = "";
+      let intendedLabel = "";
+      let reviewReason: string | null = null;
+
+      if (durable) {
+        const recomputedHref = resolved.ok ? resolved.action.href?.trim() ?? "" : "";
+        if (recomputedHref && recomputedHref === durable.href) {
+          intendedHref = durable.href;
+          intendedLabel = durable.label;
+        } else {
+          reviewReason = "durable_intent_mismatch";
         }
+      } else if (resolved.ok) {
         intendedHref = resolved.action.href?.trim() ?? "";
         intendedLabel = resolved.action.label?.trim() ?? "";
         if (!intendedHref) {
-          await ensureOrphanedPaidCaseApprovalTask(supabase, userId, caseId, "no_routable_destination");
-          summary.flagged_for_review += 1;
-          summary.results.push({ case_id: caseId, user_id: userId, kind: "flagged_for_review", reason: "no_routable_destination" });
-          continue;
+          reviewReason = "no_routable_destination";
         }
+      } else {
+        reviewReason = resolved.reason === "error" ? resolved.error : resolved.reason;
+      }
+
+      if (reviewReason || !intendedHref) {
+        const reason = reviewReason ?? "no_routable_destination";
+        await ensureOrphanedPaidCaseApprovalTask(supabase, userId, caseId, reason);
+        summary.flagged_for_review += 1;
+        summary.results.push({ case_id: caseId, user_id: userId, kind: "flagged_for_review", reason });
+        continue;
       }
 
       const finalizeResult = await finalizePaidPreparedPacketApproval(supabase, {

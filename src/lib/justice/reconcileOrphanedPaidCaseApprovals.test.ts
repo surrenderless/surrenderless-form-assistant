@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { DurableIntendedAction } from "@/lib/justice/durablePaymentIntendedAction";
 import type { FinalizePaidPreparedPacketApprovalResult } from "@/lib/justice/finalizePaidPreparedPacketApproval";
 import type { ResolveIntendedPreparedActionResult } from "@/lib/justice/resolveIntendedPreparedAction";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
@@ -24,6 +25,13 @@ const ensureReviewTaskMock = vi.fn<
 >(async () => ({ task: null, timeline: null, created: true }));
 vi.mock("@/lib/justice/orphanedPaidCaseApprovalTask", () => ({
   ensureOrphanedPaidCaseApprovalTask: (...args: unknown[]) => ensureReviewTaskMock(...args),
+}));
+
+const durableMock = vi.fn<(...args: unknown[]) => Promise<DurableIntendedAction | null>>(
+  async () => null
+);
+vi.mock("@/lib/justice/durablePaymentIntendedAction", () => ({
+  findDurableIntendedActionForCase: (...args: unknown[]) => durableMock(...args),
 }));
 
 import { reconcileOrphanedPaidCaseApprovals } from "@/lib/justice/reconcileOrphanedPaidCaseApprovals";
@@ -140,30 +148,76 @@ describe("reconcileOrphanedPaidCaseApprovals", () => {
       action: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
     } as ResolveIntendedPreparedActionResult);
     ensureReviewTaskMock.mockReset().mockResolvedValue({ task: null, timeline: null, created: true });
+    durableMock.mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("skips a case whose client_state is already prepared_packet_approved", async () => {
+  it("already-approved case: re-confirms its fulfillment task via finalize (reusing the settled action), not skipped as inert", async () => {
+    const store: Store = {
+      cases: [
+        paidCase({
+          id: "c1",
+          client_state: {
+            prepared_packet_approved: true,
+            approved_next_action: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
+          },
+        }),
+      ],
+    };
+    finalizeMock.mockResolvedValue({ status: "already_finalized" });
+    const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
+
+    expect(summary.already_approved).toBe(1);
+    expect(summary.scanned).toBe(0);
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
+    expect(finalizeMock.mock.calls[0][1]).toMatchObject({
+      caseId: "c1",
+      intendedAction: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
+    });
+    expect(resolveIntendedMock).not.toHaveBeenCalled();
+    expect(durableMock).not.toHaveBeenCalled();
+  });
+
+  it("already-approved case with no href on file yet is a pure skip — nothing to confirm", async () => {
     const store: Store = {
       cases: [paidCase({ id: "c1", client_state: { prepared_packet_approved: true } })],
     };
     const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
 
     expect(summary.already_approved).toBe(1);
-    expect(summary.scanned).toBe(0);
     expect(finalizeMock).not.toHaveBeenCalled();
-    expect(ensureReviewTaskMock).not.toHaveBeenCalled();
   });
 
-  it("unambiguous historical orphan: recomputes the intended action and finalizes automatically", async () => {
+  it("already-approved case whose task-confirmation fails is counted as failed for retry on the next run", async () => {
+    const store: Store = {
+      cases: [
+        paidCase({
+          id: "c1",
+          client_state: {
+            prepared_packet_approved: true,
+            approved_next_action: { href: "/justice/state-ag", label: "State AG" },
+          },
+        }),
+      ],
+    };
+    finalizeMock.mockResolvedValue({ status: "error", error: "task insert down" });
+    const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
+
+    expect(summary.already_approved).toBe(0);
+    expect(summary.failed).toBe(1);
+    expect(summary.results[0]).toMatchObject({ case_id: "c1", kind: "failed", reason: "error" });
+  });
+
+  it("true legacy orphan (no durable payment binding): recomputes and finalizes automatically when unambiguous", async () => {
     const store: Store = { cases: [paidCase({ id: "c1" })] };
     const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
 
     expect(summary.scanned).toBe(1);
     expect(summary.finalized).toBe(1);
+    expect(durableMock).toHaveBeenCalledTimes(1);
     expect(resolveIntendedMock).toHaveBeenCalledTimes(1);
     expect(finalizeMock).toHaveBeenCalledTimes(1);
     expect(finalizeMock.mock.calls[0][1]).toMatchObject({
@@ -173,22 +227,43 @@ describe("reconcileOrphanedPaidCaseApprovals", () => {
     expect(ensureReviewTaskMock).not.toHaveBeenCalled();
   });
 
-  it("prefers an href already on file over recomputing — never overrides a stronger existing signal", async () => {
-    const store: Store = {
-      cases: [
-        paidCase({
-          id: "c1",
-          client_state: { approved_next_action: { href: "/justice/bbb", label: "Better Business Bureau" } },
-        }),
-      ],
-    };
+  it("durable metadata-bound action agrees with a fresh recompute: finalizes automatically with the durable value", async () => {
+    durableMock.mockResolvedValue({ href: "/justice/state-ag", label: "State AG (paid)" });
+    const store: Store = { cases: [paidCase({ id: "c1" })] };
     const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
 
     expect(summary.finalized).toBe(1);
-    expect(resolveIntendedMock).not.toHaveBeenCalled();
     expect(finalizeMock.mock.calls[0][1]).toMatchObject({
-      intendedAction: { href: "/justice/bbb", label: "Better Business Bureau" },
+      intendedAction: { href: "/justice/state-ag", label: "State AG (paid)" },
     });
+    expect(ensureReviewTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("never reinterprets a metadata-bound mismatch as a different action: durable action disagrees with the fresh recompute, so neither is guessed — flags for review instead", async () => {
+    durableMock.mockResolvedValue({ href: "/justice/merchant", label: "Merchant contact" });
+    resolveIntendedMock.mockResolvedValue({
+      ok: true,
+      action: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
+    } as ResolveIntendedPreparedActionResult);
+    const store: Store = { cases: [paidCase({ id: "c1" })] };
+    const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
+
+    expect(summary.finalized).toBe(0);
+    expect(summary.flagged_for_review).toBe(1);
+    expect(finalizeMock).not.toHaveBeenCalled();
+    expect(ensureReviewTaskMock).toHaveBeenCalledTimes(1);
+    expect(ensureReviewTaskMock.mock.calls[0][3]).toBe("durable_intent_mismatch");
+  });
+
+  it("never guesses the durable action past a failed recompute either: durable action present but current intake resolves to no routable destination — flags for review, does not blindly trust the durable href", async () => {
+    durableMock.mockResolvedValue({ href: "/justice/state-ag", label: "State AG" });
+    resolveIntendedMock.mockResolvedValue({ ok: false, reason: "no_routable_destination" });
+    const store: Store = { cases: [paidCase({ id: "c1" })] };
+    const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
+
+    expect(summary.flagged_for_review).toBe(1);
+    expect(finalizeMock).not.toHaveBeenCalled();
+    expect(ensureReviewTaskMock.mock.calls[0][3]).toBe("durable_intent_mismatch");
   });
 
   it("ambiguous historical orphan handling: invalid intake creates a durable review task instead of guessing", async () => {
@@ -200,11 +275,12 @@ describe("reconcileOrphanedPaidCaseApprovals", () => {
     expect(summary.finalized).toBe(0);
     expect(finalizeMock).not.toHaveBeenCalled();
     expect(resolveIntendedMock).not.toHaveBeenCalled();
+    expect(durableMock).not.toHaveBeenCalled();
     expect(ensureReviewTaskMock).toHaveBeenCalledTimes(1);
     expect(ensureReviewTaskMock.mock.calls[0][3]).toBe("invalid_intake");
   });
 
-  it("ambiguous historical orphan handling: no routable destination creates a durable review task instead of guessing", async () => {
+  it("ambiguous historical orphan handling: no routable destination (no durable binding either) creates a durable review task instead of guessing", async () => {
     resolveIntendedMock.mockResolvedValue({ ok: false, reason: "no_routable_destination" });
     const store: Store = { cases: [paidCase({ id: "c1" })] };
     const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
@@ -248,7 +324,7 @@ describe("reconcileOrphanedPaidCaseApprovals", () => {
     const cases: CaseRow[] = Array.from({ length: 3 }, (_, i) =>
       paidCase({
         id: `case-${i}`,
-        client_state: { prepared_packet_approved: true }, // noise: already approved, sorts first
+        client_state: { prepared_packet_approved: true }, // noise: already approved, no href on file
         updated_at: new Date(baseMs + i * 1000).toISOString(),
       })
     );
@@ -260,6 +336,7 @@ describe("reconcileOrphanedPaidCaseApprovals", () => {
     expect(summary.already_approved).toBe(3);
     expect(summary.scanned).toBe(1);
     expect(summary.finalized).toBe(1);
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
     expect(finalizeMock.mock.calls[0][1]).toMatchObject({ caseId: "case-target" });
   });
 });

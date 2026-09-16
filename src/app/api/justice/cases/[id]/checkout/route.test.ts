@@ -60,6 +60,7 @@ vi.mock("@supabase/supabase-js", () => ({
 }));
 
 import { GET, POST } from "@/app/api/justice/cases/[id]/checkout/route";
+import { fitsStripeMetadataValue } from "@/lib/stripe/stripeMetadataBounds";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -408,5 +409,34 @@ describe("GET /api/justice/cases/[id]/checkout", () => {
 
     expect(res.status).toBe(503);
     expect(stripePricesRetrieve).not.toHaveBeenCalled();
+  });
+});
+
+describe("fitsStripeMetadataValue", () => {
+  it("accepts a value at exactly Stripe's 500-char metadata limit", () => {
+    expect(fitsStripeMetadataValue("a".repeat(500))).toBe(true);
+  });
+
+  it("fails closed (rejects) a value one character over the limit — never truncates", () => {
+    expect(fitsStripeMetadataValue("a".repeat(501))).toBe(false);
+  });
+
+  it("accepts every real prepared-action href/label used in this codebase — all well under the limit", () => {
+    const realValues = [
+      "/justice/merchant",
+      "/justice/state-ag",
+      "/justice/bbb",
+      "/justice/cfpb",
+      "/justice/fcc",
+      "/justice/dot",
+      "/justice/demand-letter",
+      "/justice/payment-dispute",
+      "Merchant contact",
+      "State Attorney General (consumer)",
+      "Better Business Bureau",
+    ];
+    for (const value of realValues) {
+      expect(fitsStripeMetadataValue(value)).toBe(true);
+    }
   });
 });

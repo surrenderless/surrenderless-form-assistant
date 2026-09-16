@@ -7,6 +7,7 @@ import Header from "@/app/components/Header";
 import {
   OperatorClosableCasesPanel,
   OperatorFulfillmentQueuePanel,
+  type OrphanedPaidCaseApprovalReviewInput,
   type ResponseReviewInput,
   type SupersededLaneReviewInput,
 } from "@/app/components/operator/OperatorFulfillmentQueuePanel";
@@ -207,6 +208,33 @@ export default function OperatorFulfillmentPage() {
     }
   }
 
+  async function finalizeOrphanedPaidCaseApproval(
+    item: OperatorFulfillmentQueueItem,
+    input: OrphanedPaidCaseApprovalReviewInput
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    setSavingTaskId(item.task_id);
+    try {
+      const res = await fetch("/api/operator/orphaned-paid-case-approvals/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: item.case_id, href: input.href }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as { error?: string };
+        return { ok: false, error: err.error ?? "Could not finalize approval." };
+      }
+      await loadQueue();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not finalize approval." };
+    } finally {
+      setSavingTaskId(null);
+    }
+  }
+
   async function closeCase(
     item: OperatorClosableCaseItem,
     confirmArchive: boolean
@@ -296,6 +324,7 @@ export default function OperatorFulfillmentPage() {
                 onRecordComplete={recordComplete}
                 onCompleteResponseReview={completeResponseReview}
                 onCompleteSupersededLaneReview={completeSupersededLaneReview}
+                onFinalizeOrphanedPaidCaseApproval={finalizeOrphanedPaidCaseApproval}
                 onCancelTask={cancelTask}
               />
               <h2 className="mt-10 text-lg font-semibold text-neutral-900 dark:text-neutral-100">

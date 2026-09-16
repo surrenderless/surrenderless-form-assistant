@@ -21,6 +21,12 @@ describe("operatorEvidenceFileAccess", () => {
     expect(taskNotesMatchAnyOperatorFulfillmentMarker(notes, OTHER_CASE)).toBe(false);
   });
 
+  it("matches an orphaned-paid-case-approval review, so an operator can view evidence and a consumer cannot bare-complete it via the generic task route", () => {
+    const notes = `orphaned_paid_case_approval_queue:${CASE_ID}\nreason: no_routable_destination`;
+    expect(taskNotesMatchAnyOperatorFulfillmentMarker(notes, CASE_ID)).toBe(true);
+    expect(taskNotesMatchAnyOperatorFulfillmentMarker(notes, OTHER_CASE)).toBe(false);
+  });
+
   it("grants evidence access only for open matching tasks on the same case", () => {
     const openNotes = `cfpb_filing_queue:${CASE_ID}\ncase_id: ${CASE_ID}\ndraft:\nBody`;
 

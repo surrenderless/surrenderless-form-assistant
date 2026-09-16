@@ -5,14 +5,9 @@ import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import { resolveIntendedPreparedAction } from "@/lib/justice/resolveIntendedPreparedAction";
 import { fetchStripePriceSummary } from "@/lib/stripe/getStripePriceSummary";
 import { getStripeClient } from "@/lib/stripe/getStripeClient";
+import { fitsStripeMetadataValue } from "@/lib/stripe/stripeMetadataBounds";
 import { resolveStripeCheckoutEnv } from "@/lib/stripe/stripeEnv";
 import { getUserOr401 } from "@/server/requireUser";
-
-const MAX_METADATA_VALUE = 480;
-
-function clampMetadataValue(s: string): string {
-  return s.length <= MAX_METADATA_VALUE ? s : s.slice(0, MAX_METADATA_VALUE);
-}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -195,6 +190,15 @@ export async function POST(req: NextRequest, context: RouteCtx): Promise<NextRes
       { status: 409 }
     );
   }
+  const intendedHref = intended.action.href ?? "";
+  const intendedLabel = intended.action.label ?? "";
+  if (!fitsStripeMetadataValue(intendedHref) || !fitsStripeMetadataValue(intendedLabel)) {
+    console.warn("justice case checkout: intended action exceeds Stripe metadata bounds", id);
+    return NextResponse.json(
+      { error: "Could not determine what to approve. Refresh and try again." },
+      { status: 409 }
+    );
+  }
 
   const env = resolveStripeCheckoutEnv();
   if (!env.enabled) {
@@ -223,8 +227,8 @@ export async function POST(req: NextRequest, context: RouteCtx): Promise<NextRes
         metadata: {
           case_id: id,
           user_id: userId,
-          intended_action_href: clampMetadataValue(intended.action.href ?? ""),
-          intended_action_label: clampMetadataValue(intended.action.label ?? ""),
+          intended_action_href: intendedHref,
+          intended_action_label: intendedLabel,
         },
         success_url: chatReturnUrl(id, "success"),
         cancel_url: chatReturnUrl(id, "cancelled"),

@@ -30,6 +30,17 @@ export type EnsureOrphanedPaidCaseApprovalTaskResult = {
   created: boolean;
 };
 
+export type CompleteOrphanedPaidCaseApprovalTaskResult = {
+  task: JusticeCaseTaskRow | null;
+  timeline: unknown;
+  completed: boolean;
+  failed: boolean;
+};
+
+function orphanedPaidCaseApprovalTaskCompletedTimelineId(taskId: string): string {
+  return `orphaned_paid_case_approval_task_completed:${taskId}`;
+}
+
 /**
  * Durable operator-visible marker for a paid case whose intended approval could not be
  * automatically finalized (no captured intended action, and current intake either invalid or no
@@ -98,4 +109,67 @@ export async function ensureOrphanedPaidCaseApprovalTask(
   });
 
   return { task, timeline, created: true };
+}
+
+/**
+ * Closes any still-open orphaned_paid_case_approval review task for this case — idempotent
+ * no-op when none is open. Called from every path that confirms a case is (now) durably
+ * approved: finalizePaidPreparedPacketApproval (automatic finalization, whether that happened
+ * just now or on an earlier attempt) and the operator manual-resolution endpoint. A stale open
+ * review task left behind after the underlying problem is actually resolved would otherwise
+ * escalate forever via operatorFallbackAlertReconciler's recurring-every-72h schedule.
+ */
+export async function completeOrphanedPaidCaseApprovalTaskIfOpen(
+  supabase: SupabaseClient,
+  userId: string,
+  caseId: string
+): Promise<CompleteOrphanedPaidCaseApprovalTaskResult> {
+  const marker = orphanedPaidCaseApprovalTaskNotesMarker(caseId);
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("justice_case_tasks")
+    .select(TASK_SELECT)
+    .eq("user_id", userId)
+    .eq("case_id", caseId)
+    .like("notes", `${marker}%`)
+    .is("completed_at", null)
+    .limit(1);
+
+  if (existingErr) {
+    console.warn("orphaned paid case approval task: select for complete", existingErr.message);
+    return { task: null, timeline: null, completed: false, failed: true };
+  }
+
+  const task = existingRows?.[0] as JusticeCaseTaskRow | undefined;
+  if (!task) {
+    return { task: null, timeline: null, completed: false, failed: false };
+  }
+
+  const completedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("justice_case_tasks")
+    .update({ completed_at: completedAt })
+    .eq("id", task.id)
+    .eq("user_id", userId)
+    .select(TASK_SELECT)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.warn(
+      "orphaned paid case approval task: complete update",
+      error?.message ?? "not found"
+    );
+    return { task, timeline: null, completed: false, failed: true };
+  }
+
+  const completedTask = data as JusticeCaseTaskRow;
+  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
+    id: orphanedPaidCaseApprovalTaskCompletedTimelineId(completedTask.id),
+    type: "task_completed",
+    label: "Paid case approval review resolved",
+    detail: completedTask.title.trim(),
+    ts: completedTask.completed_at ?? completedAt,
+  });
+
+  return { task: completedTask, timeline, completed: true, failed: false };
 }

@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { finalizePaidPreparedPacketApproval } from "@/lib/justice/finalizePaidPreparedPacketApproval";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF } from "@/lib/justice/handlingTrackingProgress";
+import { orphanedPaidCaseApprovalTaskNotesMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
+import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
@@ -102,14 +104,27 @@ function makeSupabase(store: Store): SupabaseClient {
 
     if (table === "justice_case_tasks") {
       const state: {
-        op: "select" | "insert";
+        op: "select" | "insert" | "update";
         filters: Record<string, string>;
         like: string | null;
         insertPayload?: Record<string, unknown>;
+        updatePayload?: Record<string, unknown>;
       } = { op: "select", filters: {}, like: null };
 
+      const resolveUpdate = () => {
+        const row = store.tasks.find(
+          (t) => t.id === state.filters.id && t.user_id === state.filters.user_id
+        );
+        if (!row) return { data: null, error: null };
+        Object.assign(row, state.updatePayload);
+        return { data: row, error: null };
+      };
+
       const builder: Record<string, unknown> = {
-        select: () => builder,
+        select: () => {
+          if (state.op !== "update") state.op = "select";
+          return builder;
+        },
         eq: (col: string, val: string) => {
           state.filters[col] = val;
           return builder;
@@ -135,6 +150,12 @@ function makeSupabase(store: Store): SupabaseClient {
           state.insertPayload = payload;
           return builder;
         },
+        update: (payload: Record<string, unknown>) => {
+          state.op = "update";
+          state.updatePayload = payload;
+          return builder;
+        },
+        maybeSingle: async () => resolveUpdate(),
         single: async () => {
           if (store.failTaskInsert) return { data: null, error: { message: "task insert down" } };
           store.nextTaskId = (store.nextTaskId ?? 0) + 1;
@@ -220,7 +241,7 @@ describe("finalizePaidPreparedPacketApproval", () => {
     expect(store.tasks).toHaveLength(1);
   });
 
-  it("is a no-op for an already-approved case: returns already_finalized, writes nothing, creates no task", async () => {
+  it("is a no-op for an already-approved case whose task already exists: returns already_finalized, writes nothing, creates no NEW task", async () => {
     const store: Store = {
       cases: [
         baseCase({
@@ -230,7 +251,18 @@ describe("finalizePaidPreparedPacketApproval", () => {
           },
         }),
       ],
-      tasks: [],
+      tasks: [
+        {
+          id: "task_existing",
+          user_id: USER_ID,
+          case_id: CASE_ID,
+          title: "State AG filing",
+          notes: stateAgFilingTaskNotesMarker(CASE_ID),
+          completed_at: null,
+          created_at: "2026-08-01T00:00:00.000Z",
+          updated_at: "2026-08-01T00:00:00.000Z",
+        },
+      ],
     };
     const result = await finalizePaidPreparedPacketApproval(makeSupabase(store), {
       caseId: CASE_ID,
@@ -238,7 +270,64 @@ describe("finalizePaidPreparedPacketApproval", () => {
       intendedAction: INTENDED_ACTION,
     });
     expect(result).toEqual({ status: "already_finalized" });
+    expect(store.tasks).toHaveLength(1);
+    expect(store.tasks[0].id).toBe("task_existing");
+  });
+
+  it("idempotent task-creation retry: a prior call that approved client_state but failed to create the task is retried on the next call and creates exactly one task", async () => {
+    const store: Store = { cases: [baseCase()], tasks: [], failTaskInsert: true };
+    const supabase = makeSupabase(store);
+
+    const first = await finalizePaidPreparedPacketApproval(supabase, {
+      caseId: CASE_ID,
+      userId: USER_ID,
+      intendedAction: INTENDED_ACTION,
+    });
+    expect(first.status).toBe("error");
+    // The approval write already committed even though task creation failed.
+    expect(store.cases[0].client_state.prepared_packet_approved).toBe(true);
     expect(store.tasks).toHaveLength(0);
+
+    store.failTaskInsert = false;
+    const second = await finalizePaidPreparedPacketApproval(supabase, {
+      caseId: CASE_ID,
+      userId: USER_ID,
+      intendedAction: INTENDED_ACTION,
+    });
+    // client_state was already approved on this call, so this is "already_finalized" rather than
+    // a fresh "finalized" — the important invariant is that the retry actually ensured the task.
+    expect(second.status).toBe("already_finalized");
+    expect(store.tasks).toHaveLength(1);
+    expect(store.tasks[0].notes).toContain("state_ag_filing_queue");
+  });
+
+  it("automatic finalization closes any existing open orphaned-review task for the case", async () => {
+    const store: Store = {
+      cases: [baseCase()],
+      tasks: [
+        {
+          id: "review_task",
+          user_id: USER_ID,
+          case_id: CASE_ID,
+          title: "Paid case needs manual approval review",
+          notes: orphanedPaidCaseApprovalTaskNotesMarker(CASE_ID) + "\nreason: no_routable_destination",
+          completed_at: null,
+          created_at: "2026-08-01T00:00:00.000Z",
+          updated_at: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const result = await finalizePaidPreparedPacketApproval(makeSupabase(store), {
+      caseId: CASE_ID,
+      userId: USER_ID,
+      intendedAction: INTENDED_ACTION,
+    });
+    expect(result).toEqual({ status: "finalized" });
+    const reviewTask = store.tasks.find((t) => t.id === "review_task");
+    expect(reviewTask?.completed_at).toBeTruthy();
+    // The fulfillment task for the actually-approved action was also created, independent of the
+    // review-task closure.
+    expect(store.tasks.some((t) => t.notes.includes("state_ag_filing_queue"))).toBe(true);
   });
 
   it("duplicate/out-of-order delivery: calling finalize twice in a row still leaves exactly one fulfillment task", async () => {

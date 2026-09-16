@@ -35,6 +35,12 @@ import {
   parseStateAgFilingTaskDraft,
   taskNotesMatchStateAgFilingMarker,
 } from "@/lib/justice/stateAgFilingTask";
+import { orphanedPaidCaseApprovalTaskNotesMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
+import {
+  classifyOpenOperatorTask,
+  operatorFulfillmentStepLoadsCaseEvidence,
+  resolveOperatorFulfillmentPanelKind,
+} from "@/lib/justice/operatorFulfillmentQueue";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -132,5 +138,65 @@ describe("operatorFulfillmentQueue markers", () => {
     expect(taskNotesMatchBbbFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(taskNotesMatchMerchantContactFilingMarker(task.notes, CASE_ID)).toBe(false);
     expect(intake.company_name).toBe("Acme Retail");
+  });
+});
+
+describe("orphaned_paid_case_approval in the operator fulfillment queue", () => {
+  const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+  const intake: JusticeIntake = {
+    problem_category: "online_purchase",
+    company_name: "Acme Retail",
+    company_website: "",
+    purchase_or_signup: "widget",
+    story: "Test",
+    money_involved: "$10",
+    pay_or_order_date: "",
+    order_confirmation_details: "",
+    user_display_name: "Jordan",
+    reply_email: "test@example.com",
+    already_contacted: "no",
+    consumer_us_state: "CA",
+  };
+
+  function orphanedTask(): JusticeCaseTaskRow {
+    return {
+      id: "task-1",
+      user_id: "user_1",
+      case_id: CASE_ID,
+      title: "Paid case needs manual approval review",
+      due_date: null,
+      notes: `${orphanedPaidCaseApprovalTaskNotesMarker(CASE_ID)}\nreason: no_routable_destination`,
+      completed_at: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  it("classifies an open orphaned-paid-case-approval task into the queue", () => {
+    const item = classifyOpenOperatorTask(orphanedTask(), intake);
+    expect(item).not.toBeNull();
+    expect(item?.step).toBe("orphaned_paid_case_approval");
+    expect(item?.case_id).toBe(CASE_ID);
+    expect(item?.case_owner_user_id).toBe("user_1");
+  });
+
+  it("resolves a dedicated panel kind, distinct from the generic record form every filing step falls through to", () => {
+    const item = classifyOpenOperatorTask(orphanedTask(), intake);
+    expect(item).not.toBeNull();
+    if (!item) return;
+    expect(resolveOperatorFulfillmentPanelKind(item)).toBe("orphaned_paid_case_approval_review");
+  });
+
+  it("loads case evidence for orphaned-paid-case-approval, so an operator can review it before choosing an action", () => {
+    expect(operatorFulfillmentStepLoadsCaseEvidence("orphaned_paid_case_approval")).toBe(true);
+  });
+
+  it("returns null (not classified) for a completed task, matching every other step", () => {
+    const item = classifyOpenOperatorTask(
+      { ...orphanedTask(), completed_at: "2026-02-01T00:00:00.000Z" },
+      intake
+    );
+    expect(item).toBeNull();
   });
 });

@@ -24,6 +24,8 @@ type PaymentRow = {
   case_id: string;
   user_id: string;
   stripe_payment_intent_id?: string | null;
+  intended_action_href?: string | null;
+  intended_action_label?: string | null;
 };
 
 type Store = {
@@ -56,6 +58,8 @@ function makeSupabase(store: Store): SupabaseClient {
             case_id: String(payload.case_id),
             user_id: String(payload.user_id),
             stripe_payment_intent_id: (payload.stripe_payment_intent_id as string | null) ?? null,
+            intended_action_href: (payload.intended_action_href as string | null) ?? null,
+            intended_action_label: (payload.intended_action_label as string | null) ?? null,
           });
           return { data: null, error: null };
         },
@@ -414,6 +418,26 @@ describe("processStripeCheckoutCompletedEvent — server-owned approval finaliza
       userId: USER_ID,
       intendedAction: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
     });
+  });
+
+  it("durably records the intended action on the payments row, not only as a transient finalize argument, so orphan recovery can compare against it later", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ metadata: INTENDED_ACTION_METADATA })
+    );
+
+    expect(store.payments).toHaveLength(1);
+    expect(store.payments[0].intended_action_href).toBe("/justice/state-ag");
+    expect(store.payments[0].intended_action_label).toBe("State Attorney General (consumer)");
+  });
+
+  it("records null intended action fields for a legacy session with no captured binding", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(makeSupabase(store), checkoutEvent());
+
+    expect(store.payments[0].intended_action_href).toBeNull();
+    expect(store.payments[0].intended_action_label).toBeNull();
   });
 
   it("also finalizes on checkout.session.async_payment_succeeded — both handled event types reach it identically", async () => {

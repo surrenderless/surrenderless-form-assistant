@@ -10,6 +10,7 @@ import {
   taskNotesMatchSupersededLaneReviewMarker,
 } from "@/lib/justice/followUpResponseReviewTask";
 import { taskNotesMatchMerchantContactFilingMarker } from "@/lib/justice/merchantContactFilingTask";
+import { taskNotesMatchOrphanedPaidCaseApprovalMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import { taskNotesMatchPaymentDisputeFilingMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { taskNotesMatchStateAgFilingMarker } from "@/lib/justice/stateAgFilingTask";
 
@@ -37,7 +38,8 @@ export function taskNotesMatchAnyOperatorFulfillmentMarker(
     taskNotesMatchFccFilingMarker(notes, trimmedCaseId) ||
     taskNotesMatchDotFilingMarker(notes, trimmedCaseId) ||
     taskNotesMatchBbbFilingMarker(notes, trimmedCaseId) ||
-    taskNotesMatchFtcFilingMarker(notes, trimmedCaseId)
+    taskNotesMatchFtcFilingMarker(notes, trimmedCaseId) ||
+    taskNotesMatchOrphanedPaidCaseApprovalMarker(notes, trimmedCaseId)
   );
 }
 
