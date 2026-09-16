@@ -3675,8 +3675,17 @@ export default function JusticeChatAiPage() {
         setApprovingPreparedPacket(true);
         setTrackingSaveError(null);
         try {
+          // Tell the server which ephemeral (never persisted) consumer choice to fold into the
+          // action it binds this Checkout session to — everything else that computation needs is
+          // already visible to the server from the case's own stored intake. See
+          // resolveIntendedPreparedAction.ts and this route's own doc comment.
+          const manualFtcForCheckout =
+            typeof window !== "undefined" &&
+            sessionStorage.getItem(STORAGE_FTC_MANUAL_UNLOCK) === "1";
           const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}/checkout`, {
             method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ manualFtc: manualFtcForCheckout }),
           });
           const payload = (await res.json().catch(() => null)) as {
             url?: string;

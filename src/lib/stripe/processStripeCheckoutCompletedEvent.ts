@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { finalizePaidPreparedPacketApproval } from "@/lib/justice/finalizePaidPreparedPacketApproval";
 
 /**
  * Stripe fires checkout.session.completed for essentially all mode:"payment" sessions; some
@@ -78,6 +79,11 @@ export async function processStripeCheckoutCompletedEvent(
   const metadata = session.metadata ?? {};
   const caseId = readString(metadata.case_id);
   const userId = readString(metadata.user_id);
+  // Set by the checkout route at session-creation time (see resolveIntendedPreparedAction.ts) —
+  // absent only for a session created before this binding existed, in which case finalization
+  // below is skipped and the orphan-recovery reconciler is the sole path back to it.
+  const intendedActionHref = readString(metadata.intended_action_href);
+  const intendedActionLabel = readString(metadata.intended_action_label);
   const amountTotal = typeof session.amount_total === "number" ? session.amount_total : null;
   const currency = readString(session.currency) || null;
   // Not present on Checkout's default webhook payload for async_payment_succeeded in every
@@ -149,20 +155,51 @@ export async function processStripeCheckoutCompletedEvent(
     return { status: "case_mismatch" };
   }
 
-  if (caseRow.paid_at) {
-    // Already granted on a prior fully-successful delivery — nothing left to do.
-    return { status: "granted", case_id: caseId };
+  if (!caseRow.paid_at) {
+    const { error: updateError } = await supabase
+      .from("justice_cases")
+      .update({ paid_at: new Date().toISOString() })
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .is("paid_at", null);
+
+    if (updateError) {
+      return { status: "error", error: updateError.message };
+    }
   }
 
-  const { error: updateError } = await supabase
-    .from("justice_cases")
-    .update({ paid_at: new Date().toISOString() })
-    .eq("id", caseId)
-    .eq("user_id", userId)
-    .is("paid_at", null);
-
-  if (updateError) {
-    return { status: "error", error: updateError.message };
+  // Finalize approval on EVERY delivery that reaches here — fresh, redelivered, or arriving via
+  // the other handled event type for the same session — not only the one that just granted
+  // paid_at. finalizePaidPreparedPacketApproval is itself idempotent (no-ops once
+  // prepared_packet_approved is true), so this is what makes duplicate/out-of-order deliveries
+  // safe, and what recovers a prior delivery that granted payment but crashed before finalizing.
+  // A session created before this binding existed carries no intended_action_href — that case is
+  // left to the orphan-recovery reconciler, which can still finalize it once the intended action
+  // is unambiguous from the case's own current state, or otherwise surfaces it for a human.
+  if (intendedActionHref) {
+    const finalizeResult = await finalizePaidPreparedPacketApproval(supabase, {
+      caseId,
+      userId,
+      intendedAction: { href: intendedActionHref, label: intendedActionLabel },
+    });
+    if (finalizeResult.status === "error" || finalizeResult.status === "conflict_retries_exhausted") {
+      // Worth a Stripe redelivery retry — payment is already durably granted either way, so a
+      // retry can only ever re-attempt finalization, never double-charge or re-grant.
+      return {
+        status: "error",
+        error:
+          finalizeResult.status === "error"
+            ? finalizeResult.error
+            : "finalize approval: concurrent write conflict retries exhausted",
+      };
+    }
+    if (finalizeResult.status === "invalid_intake" || finalizeResult.status === "invalid_action") {
+      console.warn(
+        "stripe checkout completed: finalize approval could not proceed, deferring to orphan-recovery reconciler",
+        finalizeResult.status,
+        caseId
+      );
+    }
   }
 
   return { status: "granted", case_id: caseId };

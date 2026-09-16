@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { FinalizePaidPreparedPacketApprovalResult } from "@/lib/justice/finalizePaidPreparedPacketApproval";
+
+const finalizeMock = vi.fn<(...args: unknown[]) => Promise<FinalizePaidPreparedPacketApprovalResult>>(
+  async () => ({ status: "finalized" })
+);
+vi.mock("@/lib/justice/finalizePaidPreparedPacketApproval", () => ({
+  finalizePaidPreparedPacketApproval: (...args: unknown[]) => finalizeMock(...args),
+}));
+
 import {
   processStripeCheckoutCompletedEvent,
   type StripeWebhookEventLike,
@@ -168,6 +177,10 @@ function baseStore(overrides: Partial<Store> = {}): Store {
 }
 
 describe("processStripeCheckoutCompletedEvent", () => {
+  beforeEach(() => {
+    finalizeMock.mockReset().mockResolvedValue({ status: "finalized" as const });
+  });
+
   it("grants entitlement on a valid checkout.session.completed paid event", async () => {
     const store = baseStore();
     const result = await processStripeCheckoutCompletedEvent(makeSupabase(store), checkoutEvent());
@@ -361,5 +374,147 @@ describe("processStripeCheckoutCompletedEvent", () => {
     await processStripeCheckoutCompletedEvent(makeSupabase(store), checkoutEvent({ paymentIntent: undefined }));
 
     expect(store.payments[0].stripe_payment_intent_id).toBeNull();
+  });
+});
+
+const INTENDED_ACTION_METADATA = {
+  case_id: CASE_ID,
+  user_id: USER_ID,
+  intended_action_href: "/justice/state-ag",
+  intended_action_label: "State Attorney General (consumer)",
+};
+
+/**
+ * Server-owned approval finalization: the fix for the paid-but-never-approved-again gap. Mocks
+ * finalizePaidPreparedPacketApproval itself — this file's job is proving the webhook correctly
+ * wires *into* that function (right args, right event types, right status mapping for
+ * duplicate/error/ambiguous outcomes), not re-verifying finalization's own internals, which
+ * finalizePaidPreparedPacketApproval.test.ts already covers end-to-end.
+ */
+describe("processStripeCheckoutCompletedEvent — server-owned approval finalization", () => {
+  beforeEach(() => {
+    finalizeMock.mockReset().mockResolvedValue({ status: "finalized" as const });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("browser never returns: finalizes purely from the webhook, with the metadata-captured intended action, on checkout.session.completed", async () => {
+    const store = baseStore();
+    const result = await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ metadata: INTENDED_ACTION_METADATA })
+    );
+
+    expect(result).toEqual({ status: "granted", case_id: CASE_ID });
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
+    expect(finalizeMock.mock.calls[0][1]).toMatchObject({
+      caseId: CASE_ID,
+      userId: USER_ID,
+      intendedAction: { href: "/justice/state-ag", label: "State Attorney General (consumer)" },
+    });
+  });
+
+  it("also finalizes on checkout.session.async_payment_succeeded — both handled event types reach it identically", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({
+        type: "checkout.session.async_payment_succeeded",
+        id: "evt_async",
+        metadata: INTENDED_ACTION_METADATA,
+      })
+    );
+
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not attempt finalization for a legacy session with no captured intended action (unchanged behavior for pre-fix sessions)", async () => {
+    const store = baseStore();
+    await processStripeCheckoutCompletedEvent(makeSupabase(store), checkoutEvent());
+
+    expect(finalizeMock).not.toHaveBeenCalled();
+  });
+
+  it("duplicate/out-of-order delivery: a redelivered event still attempts finalization even though paid_at is already granted, and the webhook still acks granted", async () => {
+    const store = baseStore();
+    const supabase = makeSupabase(store);
+    await processStripeCheckoutCompletedEvent(supabase, checkoutEvent({ metadata: INTENDED_ACTION_METADATA }));
+    finalizeMock.mockClear();
+    finalizeMock.mockResolvedValue({ status: "already_finalized" as const });
+
+    const replay = await processStripeCheckoutCompletedEvent(
+      supabase,
+      checkoutEvent({ metadata: INTENDED_ACTION_METADATA })
+    );
+
+    expect(replay).toEqual({ status: "granted", case_id: CASE_ID });
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("out-of-order delivery: async_payment_succeeded arriving after completed also re-attempts finalization safely", async () => {
+    const store = baseStore();
+    const supabase = makeSupabase(store);
+    await processStripeCheckoutCompletedEvent(supabase, checkoutEvent({ metadata: INTENDED_ACTION_METADATA }));
+    finalizeMock.mockClear();
+    finalizeMock.mockResolvedValue({ status: "already_finalized" as const });
+
+    const second = await processStripeCheckoutCompletedEvent(
+      supabase,
+      checkoutEvent({
+        type: "checkout.session.async_payment_succeeded",
+        id: "evt_async_after",
+        metadata: INTENDED_ACTION_METADATA,
+      })
+    );
+
+    expect(second).toEqual({ status: "granted", case_id: CASE_ID });
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retry after partial failure: surfaces a finalize error as a retryable webhook error so Stripe redelivers, without touching the already-granted payment", async () => {
+    finalizeMock.mockResolvedValue({ status: "error" as const, error: "ensure task failed" });
+    const store = baseStore();
+    const result = await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ metadata: INTENDED_ACTION_METADATA })
+    );
+
+    expect(result).toEqual({ status: "error", error: "ensure task failed" });
+    expect(store.cases[0].paid_at).toBeTruthy();
+  });
+
+  it("retry after partial failure: surfaces conflict_retries_exhausted as a retryable webhook error", async () => {
+    finalizeMock.mockResolvedValue({ status: "conflict_retries_exhausted" as const });
+    const store = baseStore();
+    const result = await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ metadata: INTENDED_ACTION_METADATA })
+    );
+
+    expect(result.status).toBe("error");
+  });
+
+  it("ambiguous historical orphan handling: does not fail the webhook when finalize reports invalid_intake or invalid_action — defers to the orphan-recovery reconciler instead of guessing", async () => {
+    finalizeMock.mockResolvedValue({ status: "invalid_intake" as const });
+    const store = baseStore();
+    const result = await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ metadata: INTENDED_ACTION_METADATA })
+    );
+
+    expect(result).toEqual({ status: "granted", case_id: CASE_ID });
+  });
+
+  it("mismatched case/user/action: never calls finalize for a session whose metadata user_id doesn't match the case owner", async () => {
+    const store = baseStore({ cases: [{ id: CASE_ID, user_id: OTHER_USER_ID, paid_at: null }] });
+    const result = await processStripeCheckoutCompletedEvent(
+      makeSupabase(store),
+      checkoutEvent({ userId: USER_ID, metadata: { ...INTENDED_ACTION_METADATA, user_id: USER_ID } })
+    );
+
+    expect(result).toEqual({ status: "case_mismatch" });
+    expect(finalizeMock).not.toHaveBeenCalled();
   });
 });

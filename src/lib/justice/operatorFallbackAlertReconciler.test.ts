@@ -19,6 +19,7 @@ import { stateAgFilingTaskNotesMarker } from "@/lib/justice/stateAgFilingTask";
 import { dotFilingTaskNotesMarker } from "@/lib/justice/dotFilingTask";
 import { fccFilingTaskNotesMarker } from "@/lib/justice/fccFilingTask";
 import { demandLetterFilingTaskNotesMarker } from "@/lib/justice/demandLetterFilingTask";
+import { orphanedPaidCaseApprovalTaskNotesMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import { cfpbFilingTaskNotesMarker } from "@/lib/justice/cfpbFilingTask";
 import { paymentDisputeFilingTaskNotesMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import {
@@ -1495,6 +1496,87 @@ describe("reconcileOperatorFallbackAlerts — follow_up_response_review operator
     expect(second.sent).toBe(0);
     expect(second.skipped).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Dedicated coverage for orphaned_paid_case_approval — a paid case whose intended approval could
+ * not be automatically finalized (see reconcileOrphanedPaidCaseApprovals.ts / the paid-but-never-
+ * approved-again fix). Proves it follows the identical schedule and wiring as every other
+ * destination (including the previously-added follow_up_response_review), rather than a bespoke
+ * one-shot notice.
+ */
+describe("reconcileOperatorFallbackAlerts — orphaned_paid_case_approval operator alerts", () => {
+  const T0 = Date.parse("2026-09-01T00:00:00.000Z");
+  const HOUR = 3_600_000;
+
+  beforeEach(() => {
+    send.mockReset().mockImplementation(async (req: EmailSendRequest) => ({
+      ok: true,
+      messageId: `msg_${req.idempotencyKey}`,
+    }));
+    timelineAppend.mockReset().mockResolvedValue(undefined);
+    providerResolution = { ok: true, provider: { name: "mock", send }, from: "ops@surrenderless.test" };
+    vi.stubEnv("OPERATOR_ALERT_EMAIL", "alerts@surrenderless.test");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function reviewTask(overrides: Partial<Task> & { caseId: string }): Task {
+    return openTask({ ...overrides, marker: orphanedPaidCaseApprovalTaskNotesMarker(overrides.caseId) });
+  }
+
+  it("alerts immediately with review-specific (not filing) wording, then escalates 24h -> 72h -> recurring on the identical schedule", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "c1", created_at: new Date(T0).toISOString() })],
+    };
+    const supabase = makeSupabase(store);
+
+    const immediate = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 });
+    expect(immediate.sent).toBe(1);
+    expect(send.mock.calls[0][0].subject).toContain("Manual approval review needed");
+    expect(send.mock.calls[0][0].text).toContain(
+      "could not automatically determine and finalize which action to approve"
+    );
+
+    const at24h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 24 * HOUR });
+    expect(at24h.sent).toBe(1);
+    expect(send.mock.calls[1][0].subject).toContain("ESCALATION (24h)");
+
+    const at72h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 72 * HOUR });
+    expect(at72h.sent).toBe(1);
+    expect(send.mock.calls[2][0].subject).toContain("ESCALATION (72h)");
+
+    const at144h = await reconcileOperatorFallbackAlerts(supabase, { nowMs: T0 + 144 * HOUR });
+    expect(at144h.sent).toBe(1);
+    expect(send.mock.calls[3][0].subject).toContain("ESCALATION (overdue reminder #1)");
+  });
+
+  it("stops immediately once the case is archived", async () => {
+    const store: Store = {
+      tasks: [reviewTask({ caseId: "case-orphan-archived", created_at: new Date(T0).toISOString() })],
+      cases: [{ id: "case-orphan-archived", archived_at: new Date(T0 + 1 * HOUR).toISOString() }],
+    };
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 });
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("stops immediately once the review task is completed (the case was manually approved)", async () => {
+    const store: Store = {
+      tasks: [
+        reviewTask({
+          caseId: "c1",
+          created_at: new Date(T0).toISOString(),
+          completed_at: new Date(T0 + 1 * HOUR).toISOString(),
+        }),
+      ],
+    };
+    const summary = await reconcileOperatorFallbackAlerts(makeSupabase(store), { nowMs: T0 + 200 * HOUR });
+    expect(summary.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
   });
 });
 

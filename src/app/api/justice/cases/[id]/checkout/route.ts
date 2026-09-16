@@ -1,10 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
+import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
+import { resolveIntendedPreparedAction } from "@/lib/justice/resolveIntendedPreparedAction";
 import { fetchStripePriceSummary } from "@/lib/stripe/getStripePriceSummary";
 import { getStripeClient } from "@/lib/stripe/getStripeClient";
 import { resolveStripeCheckoutEnv } from "@/lib/stripe/stripeEnv";
 import { getUserOr401 } from "@/server/requireUser";
+
+const MAX_METADATA_VALUE = 480;
+
+function clampMetadataValue(s: string): string {
+  return s.length <= MAX_METADATA_VALUE ? s : s.slice(0, MAX_METADATA_VALUE);
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -147,6 +155,47 @@ export async function POST(req: NextRequest, context: RouteCtx): Promise<NextRes
     return NextResponse.json({ alreadyPaid: true });
   }
 
+  // Bind this Checkout session to the specific action it is paying to approve — recomputed here,
+  // server-side, from the case's own stored intake (never trusted from the request), so the
+  // signed Stripe webhook can durably finalize approval later without ever needing the browser
+  // back. `manualFtc` is the one genuinely ephemeral (client-only) input this computation needs;
+  // everything else is a pure function of intake already visible to this server. Fails closed —
+  // refuses to start checkout — if intake is missing/invalid or no destination is currently
+  // routable, rather than sending a consumer to pay for an action nothing could bind.
+  const { data: intakeRow, error: intakeErr } = await supabase
+    .from("justice_cases")
+    .select("intake")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (intakeErr) {
+    console.warn("justice case checkout: select intake", intakeErr.message);
+    return NextResponse.json({ error: intakeErr.message }, { status: 500 });
+  }
+  if (!intakeRow || !isJusticeIntakePayload(intakeRow.intake)) {
+    return NextResponse.json({ error: "Case intake is not ready for checkout." }, { status: 409 });
+  }
+  let manualFtc = false;
+  try {
+    const body = (await req.json().catch(() => null)) as { manualFtc?: unknown } | null;
+    manualFtc = body?.manualFtc === true;
+  } catch {
+    manualFtc = false;
+  }
+  const intended = await resolveIntendedPreparedAction(supabase, {
+    userId,
+    caseId: id,
+    intake: intakeRow.intake,
+    manualFtc,
+  });
+  if (!intended.ok) {
+    console.warn("justice case checkout: resolve intended action failed", intended.reason);
+    return NextResponse.json(
+      { error: "Could not determine what to approve. Refresh and try again." },
+      { status: 409 }
+    );
+  }
+
   const env = resolveStripeCheckoutEnv();
   if (!env.enabled) {
     return NextResponse.json(
@@ -171,7 +220,12 @@ export async function POST(req: NextRequest, context: RouteCtx): Promise<NextRes
         mode: "payment",
         line_items: [{ price: env.priceId, quantity: 1 }],
         client_reference_id: id,
-        metadata: { case_id: id, user_id: userId },
+        metadata: {
+          case_id: id,
+          user_id: userId,
+          intended_action_href: clampMetadataValue(intended.action.href ?? ""),
+          intended_action_label: clampMetadataValue(intended.action.label ?? ""),
+        },
         success_url: chatReturnUrl(id, "success"),
         cancel_url: chatReturnUrl(id, "cancelled"),
       },

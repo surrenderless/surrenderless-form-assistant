@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 
 const getUserOr401 = vi.fn();
 const resolveStripeCheckoutEnv = vi.fn();
@@ -10,9 +11,10 @@ const getStripeClient = vi.fn<(...args: unknown[]) => unknown>(() => ({
   prices: { retrieve: (...args: unknown[]) => stripePricesRetrieve(...args) },
 }));
 
-type CaseRow = { id: string; user_id: string; paid_at: string | null };
+type CaseRow = { id: string; user_id: string; paid_at: string | null; intake?: unknown };
 
 let casesStore: CaseRow[] = [];
+let evidenceStore: { file_name: string | null; mime_type: string | null; file_size_bytes: number | null }[] = [];
 
 vi.mock("@/server/requireUser", () => ({
   getUserOr401: (...args: unknown[]) => getUserOr401(...args),
@@ -29,6 +31,14 @@ vi.mock("@/lib/stripe/getStripeClient", () => ({
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
     from: (table: string) => {
+      if (table === "justice_case_evidence") {
+        const builder: Record<string, unknown> = {
+          select: () => builder,
+          eq: () => builder,
+          limit: async () => ({ data: evidenceStore, error: null }),
+        };
+        return builder;
+      }
       if (table !== "justice_cases") throw new Error(`unexpected table ${table}`);
       const state: { eqFilters: Record<string, string> } = { eqFilters: {} };
       const builder: Record<string, unknown> = {
@@ -54,9 +64,23 @@ import { GET, POST } from "@/app/api/justice/cases/[id]/checkout/route";
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "user_1";
 
-function buildRequest(): NextRequest {
+/** Uncontacted intake deterministically resolves to the merchant-contact action — the simplest,
+ *  most stable fixture for tests that don't care exactly which destination gets picked. */
+function uncontactedIntake(): unknown {
+  return buildJusticeIntakeFromParts({
+    ...defaultBuildJusticeIntakeParts(),
+    problem_category: "online_purchase",
+    company_name: "Acme Retail",
+    already_contacted: "no",
+  });
+}
+
+function buildRequest(body?: Record<string, unknown>): NextRequest {
   return new NextRequest(`http://localhost/api/justice/cases/${CASE_ID}/checkout`, {
     method: "POST",
+    ...(body !== undefined
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : {}),
   });
 }
 
@@ -81,7 +105,8 @@ describe("POST /api/justice/cases/[id]/checkout", () => {
       .mockResolvedValue({ url: "https://checkout.stripe.com/session/abc" });
     stripePricesRetrieve.mockReset().mockResolvedValue({ unit_amount: 4900, currency: "usd" });
     getStripeClient.mockClear();
-    casesStore = [{ id: CASE_ID, user_id: USER_ID, paid_at: null }];
+    casesStore = [{ id: CASE_ID, user_id: USER_ID, paid_at: null, intake: uncontactedIntake() }];
+    evidenceStore = [];
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.example.com");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
@@ -101,7 +126,12 @@ describe("POST /api/justice/cases/[id]/checkout", () => {
         mode: "payment",
         line_items: [{ price: "price_123", quantity: 1 }],
         client_reference_id: CASE_ID,
-        metadata: { case_id: CASE_ID, user_id: USER_ID },
+        metadata: {
+          case_id: CASE_ID,
+          user_id: USER_ID,
+          intended_action_href: "/justice/merchant",
+          intended_action_label: "Merchant contact",
+        },
         success_url: expect.stringContaining(`case=${CASE_ID}&checkout=success`),
         cancel_url: expect.stringContaining(`case=${CASE_ID}&checkout=cancelled`),
       }),
@@ -146,7 +176,7 @@ describe("POST /api/justice/cases/[id]/checkout", () => {
 
   it("uses a different idempotency key for a different case, never reusing another case's key", async () => {
     const OTHER_CASE_ID = "22222222-2222-4222-8222-222222222222";
-    casesStore.push({ id: OTHER_CASE_ID, user_id: USER_ID, paid_at: null });
+    casesStore.push({ id: OTHER_CASE_ID, user_id: USER_ID, paid_at: null, intake: uncontactedIntake() });
 
     await POST(buildRequest(), ctx());
     const firstKey = stripeCheckoutSessionsCreate.mock.calls[0][1]?.idempotencyKey;
@@ -194,6 +224,52 @@ describe("POST /api/justice/cases/[id]/checkout", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ alreadyPaid: true });
+    expect(stripeCheckoutSessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("binds the checkout session to the intended action recomputed from the case's own stored intake, and passes manualFtc through to that computation", async () => {
+    await POST(buildRequest({ manualFtc: true }), ctx());
+
+    // Uncontacted intake always resolves to merchant contact regardless of manualFtc — this just
+    // proves the flag round-trips through the request body without breaking the happy path.
+    expect(stripeCheckoutSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ intended_action_href: "/justice/merchant" }),
+      }),
+      expect.anything()
+    );
+  });
+
+  it("fails closed with 409 and never starts checkout when the case's stored intake is invalid", async () => {
+    casesStore = [{ id: CASE_ID, user_id: USER_ID, paid_at: null, intake: { not: "a real intake" } }];
+
+    const res = await POST(buildRequest(), ctx());
+
+    expect(res.status).toBe(409);
+    expect(stripeCheckoutSessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 409 and never starts checkout when no destination is currently routable", async () => {
+    // A contacted, fully "later"/non-routable intake (merchant issue already marked resolved)
+    // can leave pickPreparedNextAction with nothing to route to.
+    casesStore = [
+      {
+        id: CASE_ID,
+        user_id: USER_ID,
+        paid_at: null,
+        intake: buildJusticeIntakeFromParts({
+          ...defaultBuildJusticeIntakeParts(),
+          problem_category: "online_purchase",
+          company_name: "Acme Retail",
+          already_contacted: "yes",
+          merchant_response_type: "resolved",
+        }),
+      },
+    ];
+
+    const res = await POST(buildRequest(), ctx());
+
+    expect(res.status).toBe(409);
     expect(stripeCheckoutSessionsCreate).not.toHaveBeenCalled();
   });
 
