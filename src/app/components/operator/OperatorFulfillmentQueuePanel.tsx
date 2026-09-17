@@ -52,6 +52,10 @@ export type OrphanedPaidCaseApprovalReviewInput = {
   href: string;
 };
 
+export type OrphanedPaidCaseApprovalIntakeRepairInput = {
+  intake: unknown;
+};
+
 const CONTACT_METHOD_OPTIONS: { value: ContactMethod; label: string }[] = [
   { value: "email", label: "Email" },
   { value: "chat", label: "Chat" },
@@ -555,6 +559,79 @@ function SupersededLaneReviewForm({
   );
 }
 
+function OrphanedPaidCaseApprovalInvalidIntakeForm({
+  item,
+  saving,
+  onSubmit,
+}: {
+  item: OperatorFulfillmentQueueItem;
+  saving: boolean;
+  onSubmit: (
+    input: OrphanedPaidCaseApprovalIntakeRepairInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const rawIntake = item.orphaned_paid_case_approval_invalid_intake?.raw_intake;
+  const [text, setText] = useState(() => {
+    try {
+      return JSON.stringify(rawIntake ?? {}, null, 2);
+    } catch {
+      return "{}";
+    }
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      setError("Not valid JSON.");
+      return;
+    }
+    setError(null);
+    const result = await onSubmit({ intake: parsed });
+    if (!result.ok) setError(result.error);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 space-y-3">
+      <div className="space-y-2 rounded-lg border border-red-200/90 bg-red-50/70 p-3 dark:border-red-800 dark:bg-red-950/30">
+        <p className="text-xs font-medium text-red-950 dark:text-red-100">
+          Paid case has invalid intake data
+        </p>
+        <p className="text-[11px] leading-relaxed text-red-900/90 dark:text-red-100/90">
+          This case was paid, but its stored intake fails validation, so Surrenderless cannot
+          compute what action to approve. Review the raw intake below, correct it, and save — the
+          review can then be finalized normally once intake is valid.
+        </p>
+      </div>
+      <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300">
+        Raw intake (JSON)
+        <textarea
+          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-neutral-600 dark:bg-neutral-950"
+          rows={14}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          disabled={saving}
+        />
+      </label>
+      {error ? (
+        <p className="text-sm text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900"
+      >
+        {saving ? "Saving…" : "Save corrected intake"}
+      </button>
+    </form>
+  );
+}
+
 function OrphanedPaidCaseApprovalReviewForm({
   item,
   saving,
@@ -746,6 +823,7 @@ export function OperatorFulfillmentQueuePanel({
   onCompleteResponseReview,
   onCompleteSupersededLaneReview,
   onFinalizeOrphanedPaidCaseApproval,
+  onRepairOrphanedPaidCaseApprovalIntake,
   onCancelTask,
 }: {
   items: OperatorFulfillmentQueueItem[];
@@ -766,6 +844,10 @@ export function OperatorFulfillmentQueuePanel({
   onFinalizeOrphanedPaidCaseApproval: (
     item: OperatorFulfillmentQueueItem,
     input: OrphanedPaidCaseApprovalReviewInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onRepairOrphanedPaidCaseApprovalIntake: (
+    item: OperatorFulfillmentQueueItem,
+    input: OrphanedPaidCaseApprovalIntakeRepairInput
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   onCancelTask?: (item: OperatorFulfillmentQueueItem, note: string) => Promise<CancelTaskResult>;
 }) {
@@ -908,6 +990,15 @@ export function OperatorFulfillmentQueuePanel({
               );
             }
             if (panelKind === "orphaned_paid_case_approval_review") {
+              if (item.orphaned_paid_case_approval_invalid_intake) {
+                return (
+                  <OrphanedPaidCaseApprovalInvalidIntakeForm
+                    item={item}
+                    saving={savingTaskId === item.task_id}
+                    onSubmit={(input) => onRepairOrphanedPaidCaseApprovalIntake(item, input)}
+                  />
+                );
+              }
               return (
                 <OrphanedPaidCaseApprovalReviewForm
                   item={item}

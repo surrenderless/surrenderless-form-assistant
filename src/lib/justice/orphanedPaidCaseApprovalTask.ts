@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { insertManagedFulfillmentTaskConflictSafe } from "@/lib/justice/managedFulfillmentTaskDedupe";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 
@@ -84,31 +85,30 @@ export async function ensureOrphanedPaidCaseApprovalTask(
     MAX_NOTES
   );
 
-  const { data, error } = await supabase
-    .from("justice_case_tasks")
-    .insert({
-      user_id: userId,
-      case_id: caseId,
-      title: "Paid case needs manual approval review",
-      notes,
-    })
-    .select(TASK_SELECT)
-    .single();
+  const insertResult = await insertManagedFulfillmentTaskConflictSafe(supabase, {
+    userId,
+    caseId,
+    marker,
+    title: "Paid case needs manual approval review",
+    notes,
+  });
 
-  if (error) {
-    console.warn("orphaned paid case approval task: insert", error.message);
+  if (!insertResult.ok) {
+    console.warn("orphaned paid case approval task: insert", insertResult.error);
     return { task: null, timeline: null, created: false };
   }
 
-  const task = data as JusticeCaseTaskRow;
-  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
-    id: `justice_task_add:${task.id}`,
-    type: "task_added",
-    label: "Paid case flagged for manual approval review",
-    detail: reason,
-  });
+  const task = insertResult.task;
+  const timeline = insertResult.created
+    ? await appendCaseTimelineEntry(supabase, userId, caseId, {
+        id: `justice_task_add:${task.id}`,
+        type: "task_added",
+        label: "Paid case flagged for manual approval review",
+        detail: reason,
+      })
+    : null;
 
-  return { task, timeline, created: true };
+  return { task, timeline, created: insertResult.created };
 }
 
 /**

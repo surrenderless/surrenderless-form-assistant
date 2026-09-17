@@ -18,6 +18,7 @@ type CaseRow = {
   payment_dispute_draft?: unknown;
   timeline: unknown[];
   updated_at: string;
+  orphan_recovery_confirmed_at?: string | null;
 };
 type TaskRow = {
   id: string;
@@ -53,8 +54,9 @@ function makeSupabase(store: Store): SupabaseClient {
       const state: {
         op: "select" | "update";
         filters: Record<string, string>;
+        isNullFilters: string[];
         payload?: Record<string, unknown>;
-      } = { op: "select", filters: {} };
+      } = { op: "select", filters: {}, isNullFilters: [] };
 
       const resolve = () => {
         if (state.op === "update") {
@@ -62,7 +64,10 @@ function makeSupabase(store: Store): SupabaseClient {
             (c) =>
               c.id === state.filters.id &&
               c.user_id === state.filters.user_id &&
-              (state.filters.updated_at === undefined || c.updated_at === state.filters.updated_at)
+              (state.filters.updated_at === undefined || c.updated_at === state.filters.updated_at) &&
+              state.isNullFilters.every(
+                (col) => (c as unknown as Record<string, unknown>)[col] == null
+              )
           );
           if (!row) return { data: null, error: null }; // CAS miss — updateClientStateIfUnchanged treats as conflict
           if (store.conflictOnFirstCaseWrite) {
@@ -93,6 +98,10 @@ function makeSupabase(store: Store): SupabaseClient {
         },
         eq: (col: string, val: string) => {
           state.filters[col] = val;
+          return builder;
+        },
+        is: (col: string, val: unknown) => {
+          if (val === null) state.isNullFilters.push(col);
           return builder;
         },
         maybeSingle: async () => resolve(),
@@ -226,6 +235,44 @@ describe("finalizePaidPreparedPacketApproval", () => {
     ).toBe(MANUAL_ACTION_TRACKING_REAL_STATE_AG_PREP_HREF);
     expect(store.tasks).toHaveLength(1);
     expect(store.tasks[0].notes).toContain("state_ag_filing_queue");
+  });
+
+  it("state transition: durably marks the case orphan_recovery_confirmed_at exactly once confirmation succeeds", async () => {
+    const store: Store = { cases: [baseCase()], tasks: [] };
+    expect(store.cases[0].orphan_recovery_confirmed_at).toBeFalsy();
+    const result = await finalizePaidPreparedPacketApproval(makeSupabase(store), {
+      caseId: CASE_ID,
+      userId: USER_ID,
+      intendedAction: INTENDED_ACTION,
+    });
+    expect(result).toEqual({ status: "finalized" });
+    expect(store.cases[0].orphan_recovery_confirmed_at).toBeTruthy();
+  });
+
+  it("no-repeat-side-effect: once orphan_recovery_confirmed_at is set, a later call short-circuits before ever reaching task-ensure or task-lookup work again", async () => {
+    // failTaskInsert would break a real ensure attempt, and the store starts with zero tasks —
+    // if the short-circuit did not hold, this call would either error out or leave a task
+    // behind. Neither happens: the call must never even look.
+    const store: Store = {
+      cases: [
+        baseCase({
+          client_state: {
+            prepared_packet_approved: true,
+            approved_next_action: { href: INTENDED_ACTION.href, label: INTENDED_ACTION.label, status: "approved" },
+          },
+          orphan_recovery_confirmed_at: "2026-08-01T00:00:05.000Z",
+        }),
+      ],
+      tasks: [],
+      failTaskInsert: true,
+    };
+    const result = await finalizePaidPreparedPacketApproval(makeSupabase(store), {
+      caseId: CASE_ID,
+      userId: USER_ID,
+      intendedAction: INTENDED_ACTION,
+    });
+    expect(result).toEqual({ status: "already_finalized" });
+    expect(store.tasks).toHaveLength(0);
   });
 
   it("browser never returns: finalization succeeds purely server-side with no PATCH ever having been sent", async () => {

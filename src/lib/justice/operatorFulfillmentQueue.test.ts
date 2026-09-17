@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   parseBbbFilingTaskDraft,
   taskNotesMatchBbbFilingMarker,
@@ -38,6 +39,7 @@ import {
 import { orphanedPaidCaseApprovalTaskNotesMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import {
   classifyOpenOperatorTask,
+  listOperatorFulfillmentQueue,
   operatorFulfillmentStepLoadsCaseEvidence,
   resolveOperatorFulfillmentPanelKind,
 } from "@/lib/justice/operatorFulfillmentQueue";
@@ -198,5 +200,110 @@ describe("orphaned_paid_case_approval in the operator fulfillment queue", () => 
       intake
     );
     expect(item).toBeNull();
+  });
+});
+
+describe("listOperatorFulfillmentQueue — invalid-intake recovery", () => {
+  const CASE_ID = "550e8400-e29b-41d4-a716-446655440002";
+  const ARCHIVED_CASE_ID = "550e8400-e29b-41d4-a716-446655440003";
+
+  function makeSupabase(params: {
+    tasks: { id: string; case_id: string; notes: string }[];
+    cases: { id: string; user_id: string; intake: unknown; archived_at: string | null }[];
+  }): SupabaseClient {
+    const from = (table: string) => {
+      if (table === "justice_case_tasks") {
+        return {
+          select: () => ({
+            is: () => ({
+              order: async () => ({
+                data: params.tasks.map((t) => ({
+                  id: t.id,
+                  user_id: "user_1",
+                  case_id: t.case_id,
+                  title: "Paid case needs manual approval review",
+                  due_date: null,
+                  notes: t.notes,
+                  completed_at: null,
+                  created_at: "2026-01-01T00:00:00.000Z",
+                  updated_at: "2026-01-01T00:00:00.000Z",
+                })),
+                error: null,
+              }),
+            }),
+          }),
+        } as unknown as ReturnType<SupabaseClient["from"]>;
+      }
+      if (table === "justice_cases") {
+        return {
+          select: () => ({
+            in: async (_col: string, ids: string[]) => ({
+              data: params.cases.filter((c) => ids.includes(c.id)),
+              error: null,
+            }),
+          }),
+        } as unknown as ReturnType<SupabaseClient["from"]>;
+      }
+      if (table === "justice_case_evidence") {
+        return {
+          select: () => ({
+            in: () => ({
+              order: () => ({
+                limit: async () => ({ data: [], error: null }),
+              }),
+            }),
+          }),
+        } as unknown as ReturnType<SupabaseClient["from"]>;
+      }
+      throw new Error(`unexpected table ${table}`);
+    };
+    return { from } as unknown as SupabaseClient;
+  }
+
+  it("surfaces an invalid_intake-flagged orphaned_paid_case_approval task instead of silently dropping it — the one review reason no other step type could ever recover from being excluded", async () => {
+    const marker = `orphaned_paid_case_approval_queue:${CASE_ID}`;
+    const supabase = makeSupabase({
+      tasks: [{ id: "task-1", case_id: CASE_ID, notes: `${marker}\nreason: invalid_intake` }],
+      cases: [{ id: CASE_ID, user_id: "user_1", intake: { not: "a real intake" }, archived_at: null }],
+    });
+
+    const items = await listOperatorFulfillmentQueue(supabase);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.step).toBe("orphaned_paid_case_approval");
+    expect(items[0]?.orphaned_paid_case_approval_invalid_intake).toEqual({
+      raw_intake: { not: "a real intake" },
+    });
+  });
+
+  it("still excludes an archived case's invalid-intake orphaned task, matching every other step's convention", async () => {
+    const marker = `orphaned_paid_case_approval_queue:${ARCHIVED_CASE_ID}`;
+    const supabase = makeSupabase({
+      tasks: [{ id: "task-1", case_id: ARCHIVED_CASE_ID, notes: `${marker}\nreason: invalid_intake` }],
+      cases: [
+        {
+          id: ARCHIVED_CASE_ID,
+          user_id: "user_1",
+          intake: { not: "a real intake" },
+          archived_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const items = await listOperatorFulfillmentQueue(supabase);
+
+    expect(items).toHaveLength(0);
+  });
+
+  it("does not surface a different task type's task for a case with invalid intake — the invalid-intake carve-out is scoped to orphaned_paid_case_approval only", async () => {
+    const marker = `state_ag_filing_queue:${CASE_ID}`;
+    const supabase = makeSupabase({
+      tasks: [{ id: "task-1", case_id: CASE_ID, notes: `${marker}\ncase_id: ${CASE_ID}` }],
+      cases: [{ id: CASE_ID, user_id: "user_1", intake: { not: "a real intake" }, archived_at: null }],
+    });
+
+    const items = await listOperatorFulfillmentQueue(supabase);
+
+    expect(items).toHaveLength(0);
   });
 });

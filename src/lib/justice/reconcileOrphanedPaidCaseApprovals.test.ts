@@ -44,6 +44,7 @@ type CaseRow = {
   paid_at: string | null;
   archived_at: string | null;
   updated_at: string;
+  orphan_recovery_confirmed_at?: string | null;
 };
 
 type Store = { cases: CaseRow[] };
@@ -317,6 +318,55 @@ describe("reconcileOrphanedPaidCaseApprovals", () => {
     expect(summary.failed).toBe(1);
     expect(summary.finalized).toBe(0);
     expect(ensureReviewTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("bounded scan: a case with orphan_recovery_confirmed_at already set is excluded at the query level — never fetched, never processed, not even counted as already_approved", async () => {
+    const store: Store = {
+      cases: [
+        paidCase({
+          id: "confirmed-1",
+          client_state: {
+            prepared_packet_approved: true,
+            approved_next_action: { href: "/justice/state-ag", label: "State AG" },
+          },
+          orphan_recovery_confirmed_at: "2026-08-01T00:00:00.000Z",
+        }),
+      ],
+    };
+    const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
+
+    expect(summary.scanned).toBe(0);
+    expect(summary.already_approved).toBe(0);
+    expect(summary.finalized).toBe(0);
+    expect(summary.results).toHaveLength(0);
+    expect(finalizeMock).not.toHaveBeenCalled();
+  });
+
+  it("bounded scan: confirmed cases drop out permanently while an unconfirmed case alongside them is still processed", async () => {
+    const store: Store = {
+      cases: [
+        paidCase({
+          id: "confirmed-1",
+          client_state: {
+            prepared_packet_approved: true,
+            approved_next_action: { href: "/justice/state-ag", label: "State AG" },
+          },
+          orphan_recovery_confirmed_at: "2026-08-01T00:00:00.000Z",
+        }),
+        paidCase({
+          id: "unconfirmed-1",
+          client_state: {
+            prepared_packet_approved: true,
+            approved_next_action: { href: "/justice/state-ag", label: "State AG" },
+          },
+        }),
+      ],
+    };
+    const summary = await reconcileOrphanedPaidCaseApprovals(makeSupabase(store));
+
+    expect(summary.already_approved).toBe(1);
+    expect(finalizeMock).toHaveBeenCalledTimes(1);
+    expect(finalizeMock.mock.calls[0][1]).toMatchObject({ caseId: "unconfirmed-1" });
   });
 
   it("paginates via keyset cursor to reach a case beyond the first page", async () => {

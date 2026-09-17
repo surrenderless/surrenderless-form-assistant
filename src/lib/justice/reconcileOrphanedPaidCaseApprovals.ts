@@ -77,6 +77,11 @@ function emptySummary(): ReconcileOrphanedPaidCaseApprovalsSummary {
  *
  * Paginated via the same keyset scheme as the other reconcilers so growing volume can never
  * strand an old case behind a fixed-size page.
+ *
+ * Bounded scan, not a forever rescan: the query itself excludes any case with
+ * orphan_recovery_confirmed_at already set (see finalizePaidPreparedPacketApproval.ts), so a
+ * case that has ever been fully confirmed drops out of this scan permanently at the database
+ * level rather than merely being skipped in application code after being fetched.
  */
 export async function reconcileOrphanedPaidCaseApprovals(
   supabase: SupabaseClient,
@@ -92,7 +97,8 @@ export async function reconcileOrphanedPaidCaseApprovals(
         .from("justice_cases")
         .select(CASE_SELECT)
         .not("paid_at", "is", null)
-        .is("archived_at", null),
+        .is("archived_at", null)
+        .is("orphan_recovery_confirmed_at", null),
       cursor
     ).limit(limit);
 

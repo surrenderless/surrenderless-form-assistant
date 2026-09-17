@@ -7,6 +7,7 @@ import Header from "@/app/components/Header";
 import {
   OperatorClosableCasesPanel,
   OperatorFulfillmentQueuePanel,
+  type OrphanedPaidCaseApprovalIntakeRepairInput,
   type OrphanedPaidCaseApprovalReviewInput,
   type ResponseReviewInput,
   type SupersededLaneReviewInput,
@@ -217,7 +218,7 @@ export default function OperatorFulfillmentPage() {
       const res = await fetch("/api/operator/orphaned-paid-case-approvals/finalize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ case_id: item.case_id, href: input.href }),
+        body: JSON.stringify({ case_id: item.case_id, task_id: item.task_id, href: input.href }),
       });
       const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -230,6 +231,33 @@ export default function OperatorFulfillmentPage() {
       return { ok: true };
     } catch {
       return { ok: false, error: "Could not finalize approval." };
+    } finally {
+      setSavingTaskId(null);
+    }
+  }
+
+  async function repairOrphanedPaidCaseApprovalIntake(
+    item: OperatorFulfillmentQueueItem,
+    input: OrphanedPaidCaseApprovalIntakeRepairInput
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    setSavingTaskId(item.task_id);
+    try {
+      const res = await fetch("/api/operator/orphaned-paid-case-approvals/repair-intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: item.case_id, task_id: item.task_id, intake: input.intake }),
+      });
+      const payload: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = (payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {}) as { error?: string };
+        return { ok: false, error: err.error ?? "Could not save corrected intake." };
+      }
+      await loadQueue();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Could not save corrected intake." };
     } finally {
       setSavingTaskId(null);
     }
@@ -325,6 +353,7 @@ export default function OperatorFulfillmentPage() {
                 onCompleteResponseReview={completeResponseReview}
                 onCompleteSupersededLaneReview={completeSupersededLaneReview}
                 onFinalizeOrphanedPaidCaseApproval={finalizeOrphanedPaidCaseApproval}
+                onRepairOrphanedPaidCaseApprovalIntake={repairOrphanedPaidCaseApprovalIntake}
                 onCancelTask={cancelTask}
               />
               <h2 className="mt-10 text-lg font-semibold text-neutral-900 dark:text-neutral-100">

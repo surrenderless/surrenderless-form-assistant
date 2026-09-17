@@ -5,6 +5,7 @@ import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import { findDurableIntendedActionForCase } from "@/lib/justice/durablePaymentIntendedAction";
 import { finalizePaidPreparedPacketApproval } from "@/lib/justice/finalizePaidPreparedPacketApproval";
 import { computeEligibleOrphanedPaidCaseApprovalActions } from "@/lib/justice/orphanedPaidCaseApprovalResolution";
+import { taskNotesMatchOrphanedPaidCaseApprovalMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import { resolveCaseOwnerUserIdForOperatorFulfillment } from "@/lib/justice/operatorFulfillmentQueue";
 import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -48,6 +49,11 @@ const FINALIZE_STATUS_HTTP: Record<string, number> = {
  * operator fulfillment queue's orphaned_paid_case_approval_workspace. Finalizing here reuses
  * finalizePaidPreparedPacketApproval, so it gets the exact same idempotent CAS write, fulfillment-
  * task-ensure, and review-task auto-close behavior as every other finalization path.
+ *
+ * Requires task_id: the caller must name an actual open orphaned_paid_case_approval task bound
+ * to case_id, verified against justice_case_tasks directly (not merely inferred from case_id
+ * alone) — this can only ever act on a case the automated system genuinely flagged, never an
+ * arbitrary paid case an operator happens to know the id of.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const auth = await requireOperatorApiAccess(req);
@@ -65,9 +71,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const b = body as Record<string, unknown>;
   const caseId = typeof b.case_id === "string" ? b.case_id.trim() : "";
+  const taskId = typeof b.task_id === "string" ? b.task_id.trim() : "";
   const href = typeof b.href === "string" ? b.href.trim() : "";
   if (!caseId || !isUuid(caseId)) {
     return NextResponse.json({ error: "Invalid case_id" }, { status: 400 });
+  }
+  if (!taskId || !isUuid(taskId)) {
+    return NextResponse.json({ error: "Invalid task_id" }, { status: 400 });
   }
   if (!href) {
     return NextResponse.json({ error: "Invalid href" }, { status: 400 });
@@ -81,6 +91,29 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: owner.error }, { status: owner.status });
   }
   const userId = owner.userId;
+
+  // Require proof the automated system actually flagged this exact case for manual review —
+  // never let an operator finalize an action against a case that was never actually orphaned,
+  // even though the eligibility check below would still refuse an illegitimate href on its own.
+  const { data: reviewTaskRow, error: reviewTaskErr } = await supabase
+    .from("justice_case_tasks")
+    .select("id, case_id, notes, completed_at")
+    .eq("id", taskId)
+    .eq("case_id", caseId)
+    .maybeSingle();
+  if (reviewTaskErr) {
+    return NextResponse.json({ error: reviewTaskErr.message }, { status: 500 });
+  }
+  if (
+    !reviewTaskRow ||
+    reviewTaskRow.completed_at ||
+    !taskNotesMatchOrphanedPaidCaseApprovalMarker(reviewTaskRow.notes, caseId)
+  ) {
+    return NextResponse.json(
+      { error: "No open orphaned-paid-case-approval review task bound to this case." },
+      { status: 409 }
+    );
+  }
 
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")

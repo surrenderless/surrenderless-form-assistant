@@ -8,7 +8,7 @@ import { updateClientStateIfUnchanged } from "@/lib/justice/updateClientStateIfU
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 const CASE_SELECT =
-  "id, user_id, client_state, intake, paid_at, payment_dispute_draft, updated_at" as const;
+  "id, user_id, client_state, intake, paid_at, payment_dispute_draft, updated_at, orphan_recovery_confirmed_at" as const;
 
 export type FinalizePaidPreparedPacketApprovalResult =
   | { status: "finalized" }
@@ -51,8 +51,14 @@ export type FinalizePaidPreparedPacketApprovalResult =
  * already-fulfilled case is a cheap, safe no-op; re-attempting it on a case whose task creation
  * previously failed is exactly the retry that closes the gap. Errors from this step always
  * propagate as {status:"error"}, so both the Stripe webhook (which surfaces that as a 5xx and gets
- * redelivered) and the 5-minute orphan-recovery reconciler (which revisits every paid case, not
- * only unapproved ones) keep retrying until it succeeds.
+ * redelivered) and the 5-minute orphan-recovery reconciler (which revisits every not-yet-confirmed
+ * paid case) keep retrying until it succeeds.
+ *
+ * Bounded, not a forever rescan: once ensureOwnedFilingTaskAfterClientStateWrite succeeds,
+ * justice_cases.orphan_recovery_confirmed_at is set exactly once, and every later call for that
+ * case short-circuits immediately (no DB write, no ensure, no email-provider call) before even
+ * reaching the intake-parsing step. The reconciler's own scan query additionally excludes
+ * confirmed cases at the database level, so a case leaves the hot scan permanently after this.
  */
 export async function finalizePaidPreparedPacketApproval(
   supabase: SupabaseClient,
@@ -92,6 +98,15 @@ export async function finalizePaidPreparedPacketApproval(
     }
 
     const existingState = parseJusticeCaseClientState(caseRow.client_state);
+
+    // Already confirmed once — the one thing this function exists to guarantee (approval +
+    // fulfillment task) is already durably true, and re-verifying it on every redelivery/cron
+    // pass forever is exactly the unbounded rescan and repeated email-provider calls this check
+    // exists to prevent. No further DB calls, no email-provider calls, nothing to retry.
+    if (existingState.prepared_packet_approved === true && caseRow.orphan_recovery_confirmed_at) {
+      return { status: "already_finalized" };
+    }
+
     if (!isJusticeIntakePayload(caseRow.intake)) {
       return { status: "invalid_intake" };
     }
@@ -154,6 +169,17 @@ export async function finalizePaidPreparedPacketApproval(
       // unconditional call pattern, so a prior delivery failure is retried too.
       await attemptAutomatedMerchantContactEmailDelivery(supabase, userId, caseId);
     }
+
+    // Mark this case confirmed so every later call (webhook redelivery, reconciler pass) takes
+    // the fast short-circuit above instead of repeating this work — and so the reconciler's own
+    // scan query can exclude it outright. Guarded by .is(...,null) so it's a cheap, at-most-once
+    // write; best-effort, since a failure here just means one more (still-idempotent) pass later.
+    await supabase
+      .from("justice_cases")
+      .update({ orphan_recovery_confirmed_at: new Date().toISOString() })
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .is("orphan_recovery_confirmed_at", null);
 
     // The case is now definitively approved (whether this call just approved it, or found it
     // already approved) with its fulfillment task confirmed present — any lingering orphan-review
