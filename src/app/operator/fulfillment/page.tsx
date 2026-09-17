@@ -245,7 +245,12 @@ export default function OperatorFulfillmentPage() {
       const res = await fetch("/api/operator/orphaned-paid-case-approvals/repair-intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ case_id: item.case_id, task_id: item.task_id, intake: input.intake }),
+        body: JSON.stringify({
+          case_id: item.case_id,
+          task_id: item.task_id,
+          intake: input.intake,
+          expected_updated_at: input.caseUpdatedAt,
+        }),
       });
       const payload: unknown = await res.json().catch(() => null);
       if (!res.ok) {

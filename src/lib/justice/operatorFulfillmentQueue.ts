@@ -165,9 +165,11 @@ export type OperatorFulfillmentQueueItem = {
    * the case's own stored intake fails validation, so no eligible-action set can be computed at
    * all. Carries the raw (untyped, possibly malformed) intake so an operator can inspect and
    * submit a corrected one via /api/operator/orphaned-paid-case-approvals/repair-intake, the only
-   * way this specific review can ever become actionable.
+   * way this specific review can ever become actionable. case_updated_at is the case row's
+   * updated_at at the moment this was read — the repair-intake endpoint requires it back
+   * unchanged as an optimistic-concurrency guard against a lost update.
    */
-  orphaned_paid_case_approval_invalid_intake?: { raw_intake: unknown };
+  orphaned_paid_case_approval_invalid_intake?: { raw_intake: unknown; case_updated_at: string };
 };
 
 /** Aggregate response-SLA metrics for the operator fulfillment queue. */
@@ -573,7 +575,7 @@ export async function listOperatorFulfillmentQueue(
   const caseIds = [...new Set(operatorTasks.map((task) => task.case_id.trim()).filter(Boolean))];
   const { data: caseRows, error: casesErr } = await supabase
     .from("justice_cases")
-    .select("id, user_id, intake, archived_at")
+    .select("id, user_id, intake, archived_at, updated_at")
     .in("id", caseIds);
 
   if (casesErr) {
@@ -581,11 +583,15 @@ export async function listOperatorFulfillmentQueue(
     return [];
   }
 
-  const rawCaseByCaseId = new Map<string, { archived_at: string | null; intake: unknown }>();
+  const rawCaseByCaseId = new Map<
+    string,
+    { archived_at: string | null; intake: unknown; updated_at: string }
+  >();
   for (const row of caseRows ?? []) {
     rawCaseByCaseId.set(String(row.id).trim(), {
       archived_at: (row.archived_at as string | null) ?? null,
       intake: row.intake,
+      updated_at: row.updated_at as string,
     });
   }
 
@@ -625,7 +631,10 @@ export async function listOperatorFulfillmentQueue(
       draft_excerpt: "",
       evidence: [],
       created_at: task.created_at ?? null,
-      orphaned_paid_case_approval_invalid_intake: { raw_intake: raw.intake },
+      orphaned_paid_case_approval_invalid_intake: {
+        raw_intake: raw.intake,
+        case_updated_at: raw.updated_at,
+      },
     });
   }
 

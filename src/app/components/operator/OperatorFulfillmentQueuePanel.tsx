@@ -54,6 +54,7 @@ export type OrphanedPaidCaseApprovalReviewInput = {
 
 export type OrphanedPaidCaseApprovalIntakeRepairInput = {
   intake: unknown;
+  caseUpdatedAt: string;
 };
 
 const CONTACT_METHOD_OPTIONS: { value: ContactMethod; label: string }[] = [
@@ -571,6 +572,7 @@ function OrphanedPaidCaseApprovalInvalidIntakeForm({
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
   const rawIntake = item.orphaned_paid_case_approval_invalid_intake?.raw_intake;
+  const caseUpdatedAt = item.orphaned_paid_case_approval_invalid_intake?.case_updated_at ?? "";
   const [text, setText] = useState(() => {
     try {
       return JSON.stringify(rawIntake ?? {}, null, 2);
@@ -590,7 +592,7 @@ function OrphanedPaidCaseApprovalInvalidIntakeForm({
       return;
     }
     setError(null);
-    const result = await onSubmit({ intake: parsed });
+    const result = await onSubmit({ intake: parsed, caseUpdatedAt });
     if (!result.ok) setError(result.error);
   }
 

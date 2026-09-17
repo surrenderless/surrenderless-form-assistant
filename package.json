@@ -34,6 +34,7 @@
   },
   "devDependencies": {
     "@clerk/testing": "^1.14.8",
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4.1.11",

@@ -49,7 +49,14 @@ begin
   ) d;
 
   if dup_count > 0 then
-    raise exception 'justice_case_tasks_dedupe_key: % dedupe_key value(s) already have more than one open task — resolve these before this migration can create the unique index (see the apply-and-verify procedure). Query: select dedupe_key, array_agg(id), array_agg(case_id) from justice_case_tasks where completed_at is null and dedupe_key is not null group by dedupe_key having count(*) > 1;', dup_count;
+    -- This whole file runs as one transaction: by the time this message could actually be read
+    -- and acted on, the failure below has already rolled back the ALTER TABLE that added
+    -- dedupe_key, so a remediation query referencing dedupe_key would itself fail with "column
+    -- does not exist". The query printed here is the same marker/case_id-derived one used for the
+    -- pre-flight check in the apply procedure — runnable both before this migration is attempted
+    -- and immediately after it fails — and never selects the notes column itself (draft/complaint
+    -- text), only the short marker prefix and identifiers.
+    raise exception 'justice_case_tasks_dedupe_key: % marker(s) already have more than one open task — resolve these before this migration can create the unique index. See the canonical, PII-free remediation query (marker/case_id derived, never the notes column, runnable before this migration and immediately after this failure) in supabase/migrations/APPLY_PROCEDURE_20260916.md step 1.', dup_count;
   end if;
 end $$;
 

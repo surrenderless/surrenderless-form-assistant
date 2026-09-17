@@ -47,17 +47,31 @@ before running anything below.
 Run this **before** applying anything, to catch a code/schema incompatibility instead of letting
 migration #2's own guard (see step 3) surface it as a mid-migration failure:
 
+This is the **canonical remediation query** — used here, reused verbatim at step 3, and safe to
+run at any time regardless of whether migration #2 has been applied yet: it derives the stable
+task marker from `notes` itself (the same first-line convention every managed-task builder
+writes, and the same expression the migration's own backfill uses) rather than the `dedupe_key`
+column migration #2 creates, so it never depends on that column existing. It also never selects
+the `notes` column itself — every managed task's notes body embeds consumer complaint/draft text,
+so selecting it here would print that content to whatever terminal or log captures this session.
+Only the short marker prefix (e.g. `state_ag_filing_queue:<uuid>`) and row identifiers are
+selected — never PII, never complaint content.
+
 ```sql
--- Any existing duplicate open managed task for the same case+destination? (the exact race
+-- Any existing duplicate OPEN managed task for the same case+destination? (the exact race
 -- migration #2 closes with a unique index — if this already happened in Production, both rows
--- are real work and must be resolved by a human, never auto-merged by a migration.)
-select case_id, notes, count(*)
+-- are real work and must be resolved by a human, never auto-merged by a migration.) Matches only
+-- rows whose first line of notes ends with ":<that row's own case_id>" — the fixed convention
+-- every managed-task builder writes — so an ordinary personal reminder task can never be
+-- misclassified as a duplicate.
+select split_part(notes, chr(10), 1) as marker, count(*) as open_count, array_agg(id) as task_ids
 from justice_case_tasks
 where completed_at is null
-group by case_id, notes
+  and notes is not null
+  and split_part(notes, chr(10), 1) like ('%:' || case_id::text)
+group by split_part(notes, chr(10), 1)
 having count(*) > 1;
--- Expect: 0 rows. If this returns anything, stop and resolve the duplicates first (see step 3
--- for the exact remediation query if migration #2's own check trips instead).
+-- Expect: 0 rows. If this returns anything, stop and resolve the duplicates first (see step 3).
 ```
 
 ## Step 2 — apply migration #1 (justice_case_payments intended-action columns)
@@ -86,12 +100,18 @@ This migration contains its own pre-flight guard (a `DO $$ ... $$` block) that r
 readable exception — not a raw duplicate-key error — if the backfill step finds more than one
 open task sharing a dedupe_key. **If it fails with that exception:**
 
+The whole migration file runs as a single transaction, so the failure above has already rolled
+back the `ALTER TABLE ... ADD COLUMN dedupe_key` from earlier in the same file — the column does
+not exist at this point. Do **not** query `dedupe_key` here; re-run the exact same query from
+step 1 above (reproduced here for convenience — keep these two copies identical):
+
 ```sql
--- Exact remediation query named in the exception message:
-select dedupe_key, array_agg(id), array_agg(case_id)
+select split_part(notes, chr(10), 1) as marker, count(*) as open_count, array_agg(id) as task_ids
 from justice_case_tasks
-where completed_at is null and dedupe_key is not null
-group by dedupe_key
+where completed_at is null
+  and notes is not null
+  and split_part(notes, chr(10), 1) like ('%:' || case_id::text)
+group by split_part(notes, chr(10), 1)
 having count(*) > 1;
 ```
 
