@@ -84,9 +84,22 @@ async function patchMockCase(
   }
 ): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  // This PATCH always carries intake, which now requires a real expected_updated_at precondition
+  // (see patchJusticeCaseIntake.ts) — establish the current version with a GET immediately before
+  // writing, mirroring how the real client self-heals when it has no cached version yet.
+  const getRes = await page.request.get(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+  if (!getRes.ok()) {
+    throw new Error(`Failed to read mock case before patch (${getRes.status()}): ${await getRes.text()}`);
+  }
+  const current = (await getRes.json()) as { updated_at?: string };
+  if (!current.updated_at) {
+    throw new Error("Mock case GET response is missing updated_at");
+  }
+
   const patchRes = await page.request.patch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
     data: {
       intake: data.intake ?? buildPlaywrightMockE2eCaseIntake(),
+      expected_updated_at: current.updated_at,
       timeline: data.timeline ?? buildCaseStartedTimeline(caseId),
       ...(data.client_state ? { client_state: data.client_state } : {}),
       ...(Object.prototype.hasOwnProperty.call(data, "payment_dispute_draft")
