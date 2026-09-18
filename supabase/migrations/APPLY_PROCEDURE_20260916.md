@@ -1,4 +1,4 @@
-# Apply-and-verify procedure — 3 pending migrations (not yet applied to Production)
+# Apply-and-verify procedure — 4 pending migrations (not yet applied to Production)
 
 This procedure is for the person merging/deploying this branch to run manually against the
 **Production** Supabase project, in this exact order, **before** the corresponding application
@@ -11,12 +11,16 @@ Pending migrations, in required order:
 1. `20260916120000_justice_case_payments_intended_action.sql`
 2. `20260916130000_justice_case_tasks_dedupe_key.sql`
 3. `20260916140000_justice_cases_orphan_recovery_confirmed_at.sql`
+4. `20260917120000_justice_case_audit_events.sql`
 
-All three are additive only (new nullable columns, new indexes, one backfill `UPDATE` scoped by a
-precise `WHERE`, one `DO $$ ... $$` pre-flight check). None of them drop or rename a column, alter
-a type, or change any existing constraint. Each is individually safe to apply on its own — the
-order above matters only because #1 must exist before the checkout/webhook code paths it supports
-go live, and #2's pre-flight check should run before you rely on the constraint it creates.
+All four are additive only (new nullable columns, new indexes, one backfill `UPDATE` scoped by a
+precise `WHERE`, one `DO $$ ... $$` pre-flight check, and #4's new table + function). None of them
+drop or rename a column, alter a type, or change any existing constraint. Each is individually
+safe to apply on its own — the order above matters only because #1 must exist before the
+checkout/webhook code paths it supports go live, #2's pre-flight check should run before you rely
+on the constraint it creates, and #4's RPC must exist before the repair-intake application code
+(which calls it exclusively — it no longer writes justice_cases directly for that flow) reaches
+Production.
 
 ## Why schema-first, not code-first
 
@@ -161,7 +165,61 @@ where tablename = 'justice_cases' and indexname = 'idx_justice_cases_orphan_reco
 -- Expect: 1 row.
 ```
 
-## Step 5 — final code/schema agreement check
+## Step 5 — apply migration #4 (justice_case_audit_events table + repair_orphaned_paid_case_approval_intake RPC)
+
+```sh
+psql "$PGURL" -f supabase/migrations/20260917120000_justice_case_audit_events.sql
+```
+
+This adds an immutable, append-only audit table and the atomic RPC the operator repair-intake
+endpoint now calls exclusively (it no longer writes `justice_cases.intake` or `.timeline`
+directly). Verify both the table's existence AND its restricted grants — the whole point of this
+table is that no role can alter or erase a row once inserted, so confirm that structurally, not
+just that it exists:
+
+```sql
+select column_name from information_schema.columns
+where table_name = 'justice_case_audit_events' and column_name = 'idempotency_key';
+-- Expect: 1 row.
+
+select indexname from pg_indexes
+where tablename = 'justice_case_audit_events' and indexname = 'idx_justice_case_audit_events_idempotency_key';
+-- Expect: 1 row (this is what makes an exact retry dedupe instead of duplicating).
+
+select grantee, privilege_type from information_schema.role_table_grants
+where table_name = 'justice_case_audit_events'
+order by grantee, privilege_type;
+-- Expect: exactly service_role / SELECT and service_role / INSERT — no UPDATE, no DELETE, for
+-- any role. If either appears, immutability is not actually enforced — stop and investigate
+-- before proceeding; do not rely on this procedure's own re-application to fix a manual grant
+-- someone added directly in the dashboard.
+
+select routine_name from information_schema.routines
+where routine_name = 'repair_orphaned_paid_case_approval_intake';
+-- Expect: 1 row.
+
+-- Sanity: the atomic RPC works end to end against a real (non-production-data) row, and an exact
+-- retry does not duplicate the audit event. Never run this against a real case_id.
+begin;
+insert into justice_cases (id, user_id, intake) values (gen_random_uuid(), 'apply_procedure_smoke_test', '{"smoke": true}'::jsonb);
+insert into justice_case_tasks (user_id, case_id, title, notes)
+select 'apply_procedure_smoke_test', id, 'smoke', 'orphaned_paid_case_approval_queue:' || id::text
+from justice_cases where user_id = 'apply_procedure_smoke_test';
+select repair_orphaned_paid_case_approval_intake(
+  (select id from justice_cases where user_id = 'apply_procedure_smoke_test'),
+  (select id from justice_case_tasks where user_id = 'apply_procedure_smoke_test'),
+  'apply_procedure_smoke_test',
+  (select updated_at from justice_cases where user_id = 'apply_procedure_smoke_test'),
+  '{"smoke": true, "corrected": true}'::jsonb,
+  'apply_procedure_smoke_test_operator'
+);
+-- Expect: a jsonb row with status = "applied".
+select count(*) from justice_case_audit_events where actor = 'apply_procedure_smoke_test_operator';
+-- Expect: 1.
+rollback;
+```
+
+## Step 6 — final code/schema agreement check
 
 Confirm the application code's expectations match what is now live, using the service-role
 credentials the app itself uses (catches an RLS/grant gap a raw `psql` superuser session would
@@ -177,17 +235,35 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.
   const { error: e1 } = await supabase.from("justice_case_payments").select("intended_action_href, intended_action_label").limit(1);
   const { error: e2 } = await supabase.from("justice_case_tasks").select("dedupe_key").limit(1);
   const { error: e3 } = await supabase.from("justice_cases").select("orphan_recovery_confirmed_at").limit(1);
-  console.log({ payments: e1?.message ?? "ok", tasks: e2?.message ?? "ok", cases: e3?.message ?? "ok" });
+  const { error: e4 } = await supabase.from("justice_case_audit_events").select("idempotency_key").limit(1);
+  const { error: e5 } = await supabase.rpc("repair_orphaned_paid_case_approval_intake", {
+    p_case_id: "00000000-0000-4000-8000-000000000000",
+    p_task_id: "00000000-0000-4000-8000-000000000000",
+    p_user_id: "schema_check_nonexistent_user",
+    p_expected_updated_at: new Date(0).toISOString(),
+    p_new_intake: {},
+    p_actor: "schema_check",
+  });
+  console.log({
+    payments: e1?.message ?? "ok",
+    tasks: e2?.message ?? "ok",
+    cases: e3?.message ?? "ok",
+    audit_events: e4?.message ?? "ok",
+    // A real "function does not exist" / grant error here means Step 5 was skipped or the grant
+    // is missing. A clean call returning task_conflict (no such task) is expected and fine — it
+    // proves the function is callable end to end, not that this fake id resolved to anything.
+    repair_rpc: e5?.message ?? "ok",
+  });
 })();
 '
 ```
 
-Expect `{ payments: "ok", tasks: "ok", cases: "ok" }`. Any error here means the code/schema
-incompatibility this procedure exists to catch is still present — do not deploy the application
-code until this prints clean.
+Expect every field to print `"ok"`. Any error here means the code/schema incompatibility this
+procedure exists to catch is still present — do not deploy the application code until this prints
+clean.
 
-## Step 6 — only now, deploy the application code
+## Step 7 — only now, deploy the application code
 
 Merge/deploy as normal. Do not run this procedure again for the same migrations — re-running
-step 3/4 is safe (both migrations use `if not exists` guards throughout) but unnecessary once
-step 5 passes.
+step 3/4/5 is safe (all three migrations use `if not exists` / `create or replace` guards
+throughout) but unnecessary once step 6 passes.

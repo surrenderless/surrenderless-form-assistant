@@ -254,6 +254,7 @@ import { attemptAutomatedMerchantContactEmailDelivery } from "@/lib/justice/merc
 import { attemptAutomatedPaymentDisputeEmailDelivery } from "@/lib/justice/paymentDisputeEmailDelivery";
 import { attemptAutomatedDemandLetterEmailDeliveryAfterEnsure } from "@/lib/justice/demandLetterEmailDelivery";
 import { completeMerchantContactFilingTaskIfOpen } from "@/lib/justice/merchantContactFilingTask";
+import { CLIENT_STATE_UPDATE_CONFLICT_ERROR } from "@/lib/justice/updateClientStateIfUnchanged";
 
 const USER_ID = "user_test_123";
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -1124,8 +1125,10 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
   it("still enforces documentation validation for a client_state-only PATCH after an EARLIER, separate intake-only PATCH persisted incomplete documentation", async () => {
     const incompleteIntake = { ...resolvedIntake, contact_date: "" };
 
-    // First request: intake-only PATCH — never gated (needsEscalationValidation requires
-    // client_state or archived_at) — persists incomplete documentation for real.
+    // First request: intake-only PATCH. This now does perform a fresh read and attaches a
+    // compare-and-swap on updated_at (see the dedicated CAS/merge describe block below) — but
+    // this test's default mock row (set in the outer beforeEach) doesn't include updated_at, so
+    // the CAS is inert here and the write proceeds, persisting incomplete documentation for real.
     mockCaseUpdateMaybeSingle.mockResolvedValueOnce({
       data: {
         id: CASE_ID,
@@ -1719,5 +1722,139 @@ describe("PATCH /api/justice/cases/[id] follow-up clearing — multiple simultan
     expect(res.status).toBe(200);
     expect(followUpTasksStore.find((t) => t.id === "task-merchant")?.completed_at).toBeNull();
     expect(followUpTasksStore.find((t) => t.id === "task-payment-dispute")?.completed_at).toBeNull();
+  });
+});
+
+describe("PATCH /api/justice/cases/[id] — intake compare-and-swap and safe timeline merge", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+    vi.mocked(getUserOr401).mockReturnValue(USER_ID);
+    followUpTasksStore = [];
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      error: null,
+    });
+    mockCaseUpdateMaybeSingle.mockResolvedValue({
+      data: {
+        id: CASE_ID,
+        intake,
+        timeline: [],
+        payment_dispute_draft: null,
+        client_state: {},
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:05:00.000Z",
+        archived_at: null,
+        case_label: null,
+        paid_at: null,
+      },
+      error: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    mockCaseUpdateCasGate = null;
+  });
+
+  it("an intake-only PATCH now performs a fresh read and is compare-and-swap protected — a stale updated_at returns 409 and never reaches the write", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T09:99:99.000Z" }; // never matches
+
+    const res = await PATCH(buildPatchRequest({ intake }), routeContext());
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR });
+  });
+
+  it("an intake-only PATCH succeeds when updated_at still matches what was just read", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" };
+
+    const res = await PATCH(buildPatchRequest({ intake }), routeContext());
+
+    expect(res.status).toBe(200);
+    expect(mockCaseUpdatePatch).toHaveBeenCalledWith(expect.objectContaining({ intake }));
+  });
+
+  it("a pure timeline-only PATCH is never CAS-gated — an unrelated stale updated_at does not block it", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      error: null,
+    });
+    // Armed with a gate that would reject ANY updated_at filter — proves none was attached.
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "some-other-value-entirely" };
+
+    const res = await PATCH(
+      buildPatchRequest({ timeline: [{ id: "e1", case_id: CASE_ID, type: "task_added", label: "L", ts: "2026-01-01T00:00:00.000Z" }] }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it("a stale client-submitted timeline that omits a newer, server-appended entry does not erase that entry — it survives in the merged write", async () => {
+    const serverOnlyEntry = {
+      id: "server_appended_after_client_loaded",
+      case_id: CASE_ID,
+      type: "task_added" as const,
+      label: "Appended by another flow after this client last loaded",
+      ts: "2026-01-01T00:10:00.000Z",
+    };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [serverOnlyEntry] },
+      error: null,
+    });
+
+    const staleClientEntry = {
+      id: "client_own_entry",
+      case_id: CASE_ID,
+      type: "task_added" as const,
+      label: "Client's own locally-tracked entry",
+      ts: "2026-01-01T00:05:00.000Z",
+    };
+
+    const res = await PATCH(buildPatchRequest({ timeline: [staleClientEntry] }), routeContext());
+
+    expect(res.status).toBe(200);
+    expect(mockCaseUpdatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeline: expect.arrayContaining([
+          expect.objectContaining({ id: "server_appended_after_client_loaded" }),
+          expect.objectContaining({ id: "client_own_entry" }),
+        ]),
+      })
+    );
+    const call = mockCaseUpdatePatch.mock.calls.at(-1)?.[0] as { timeline: { id: string }[] };
+    expect(call.timeline).toHaveLength(2);
+  });
+
+  it("combined intake + timeline PATCH: intake gets CAS-guarded while the timeline is still safely merged, not blindly overwritten", async () => {
+    const serverOnlyEntry = {
+      id: "server_only",
+      case_id: CASE_ID,
+      type: "task_added" as const,
+      label: "Server-only",
+      ts: "2026-01-01T00:10:00.000Z",
+    };
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [serverOnlyEntry] },
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" };
+
+    const res = await PATCH(buildPatchRequest({ intake, timeline: [] }), routeContext());
+
+    expect(res.status).toBe(200);
+    const call = mockCaseUpdatePatch.mock.calls.at(-1)?.[0] as { intake: unknown; timeline: { id: string }[] };
+    expect(call.intake).toEqual(intake);
+    expect(call.timeline).toEqual([expect.objectContaining({ id: "server_only" })]);
   });
 });

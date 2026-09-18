@@ -50,6 +50,7 @@ import {
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
 import { completeMerchantContactFilingTaskIfOpen } from "@/lib/justice/merchantContactFilingTask";
+import { mergeCaseTimelineEntries } from "@/lib/justice/mergeCaseTimelineEntries";
 import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -250,10 +251,17 @@ async function patchJusticeCase(
   const needsEscalationValidation =
     Object.prototype.hasOwnProperty.call(patch, "client_state") ||
     Object.prototype.hasOwnProperty.call(patch, "archived_at");
+  // intake needs the same compare-and-swap protection as client_state/archived_at — a consumer
+  // PATCH carrying only {intake, timeline} (the shape every intake-continuity caller actually
+  // sends) must not blindly overwrite a newer write. timeline never needs CAS (see
+  // mergeCaseTimelineEntries above) but does need the CURRENT row read so it can be merged rather
+  // than replaced.
+  const needsIntakeCas = Object.prototype.hasOwnProperty.call(patch, "intake");
 
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
   let existingRowUpdatedAt: string | undefined;
+  let existingRowTimeline: unknown;
   let existingIntake: JusticeIntake | null | undefined;
   // Mock/E2E cases have no real Stripe-backed payment record — treated as already paid so the
   // payment gate never interferes with the Playwright pipeline.
@@ -271,6 +279,7 @@ async function patchJusticeCase(
       const mockRow = buildPlaywrightMockCaseGetResponse(id);
       existingClientState = mockRow.client_state;
       existingArchivedAt = mockRow.archived_at;
+      existingRowTimeline = mockRow.timeline;
       validationTasks = buildPlaywrightMockJusticeTasksGetResponse(id, userId) as JusticeCaseTaskRow[];
       validationFilings = buildPlaywrightMockJusticeFilingsGetResponse(id).map((row) => ({
         destination: row.destination,
@@ -282,7 +291,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("client_state, archived_at, updated_at, paid_at, intake")
+        .select("client_state, archived_at, updated_at, paid_at, intake, timeline")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -298,6 +307,7 @@ async function patchJusticeCase(
       existingClientState = existingRow.client_state;
       existingArchivedAt = existingRow.archived_at as string | null;
       existingRowUpdatedAt = existingRow.updated_at as string;
+      existingRowTimeline = existingRow.timeline;
       existingPaidAt = existingRow.paid_at as string | null;
       existingIntake = existingRow.intake as JusticeIntake | null;
 
@@ -428,6 +438,36 @@ async function patchJusticeCase(
         }
       }
     }
+  } else if (needsIntakeCas || Object.prototype.hasOwnProperty.call(patch, "timeline")) {
+    // Neither client_state nor archived_at is present, so none of the escalation-specific
+    // machinery above applies — but intake still needs its compare-and-swap token, and timeline
+    // (if present) still needs the current row to merge against, so a minimal, narrowly-scoped
+    // read happens here instead of the full escalation-validation read above.
+    if (isMockCase) {
+      const mockRow = buildPlaywrightMockCaseGetResponse(id);
+      existingRowTimeline = mockRow.timeline;
+    } else {
+      const supabaseForValidation = getSupabaseAdmin();
+      if (!supabaseForValidation) return supabaseUnavailableResponse();
+
+      const { data: existingRow, error: existingErr } = await supabaseForValidation
+        .from("justice_cases")
+        .select("updated_at, timeline")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (existingErr) {
+        console.warn("justice_cases select before patch:", existingErr.message);
+        return NextResponse.json({ error: existingErr.message }, { status: 500 });
+      }
+      if (!existingRow) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+
+      existingRowUpdatedAt = existingRow.updated_at as string;
+      existingRowTimeline = existingRow.timeline;
+    }
   }
 
   if (isMockCase) {
@@ -440,6 +480,12 @@ async function patchJusticeCase(
   if (!needsEscalationValidation) {
     existingClientState = undefined;
     existingArchivedAt = undefined;
+  }
+  if (!needsEscalationValidation && !needsIntakeCas) {
+    // A pure timeline-only patch never needs the compare-and-swap — merging (see
+    // mergeCaseTimelineEntries) is safe regardless of how stale updated_at is; only intake and
+    // client_state/archived_at have genuine two-values-conflict semantics that need it.
+    existingRowUpdatedAt = undefined;
   }
 
   // Task reconciliation happens BEFORE the terminal client_state is persisted, not after: if
@@ -499,6 +545,14 @@ async function patchJusticeCase(
         existingRowUpdatedAt = freshRow.updated_at as string;
       }
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "timeline")) {
+    // Never trust the client's submitted timeline as the full truth — merge it against whatever
+    // is currently stored so a stale local copy can only ever add entries, never erase ones it
+    // simply didn't know about (e.g. a server-side audit append that happened after this client
+    // last loaded the case).
+    patch.timeline = mergeCaseTimelineEntries(existingRowTimeline, patch.timeline as TimelineEntry[]);
   }
 
   // When we read the row above for escalation validation, guard the write with a
