@@ -1,4 +1,5 @@
 import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
+import { writeLocalIntakeUpdatedAt } from "@/lib/justice/patchJusticeCaseIntake";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import {
@@ -53,6 +54,10 @@ export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeI
   if (!row.id || !isJusticeIntakePayload(row.intake)) return null;
   sessionStorage.setItem(STORAGE_CASE_ID, row.id);
   sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
+  // Cache the version this intake was read at — every subsequent intake-bearing PATCH sends this
+  // back as expected_updated_at (see patchJusticeCaseIntake), so a fresh hydration establishes a
+  // genuine, never-substituted starting point for optimistic concurrency.
+  writeLocalIntakeUpdatedAt(row.updated_at ?? null);
   const serverTimeline = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
   replaceTimelineForCase(row.id, serverTimeline);
   if (

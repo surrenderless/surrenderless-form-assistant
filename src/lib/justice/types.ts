@@ -183,6 +183,9 @@ export type JusticeCaseClientState = {
 };
 
 export const STORAGE_INTAKE = "justice_intake_v1";
+/** Last known justice_cases.updated_at for the active case's intake — the optimistic-concurrency
+ * token every intake-bearing PATCH to /api/justice/cases/[id] must send as expected_updated_at. */
+export const STORAGE_INTAKE_UPDATED_AT = "justice_intake_updated_at_v1";
 export const STORAGE_CASE_ID = "justice_case_id";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
 /** Session JSON: `Record<caseId, TimelineEntry[]>` */

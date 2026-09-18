@@ -7,6 +7,7 @@ import {
 } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
 
 const FTC_MOCK_COMPLETED_KEY = "justice_ftc_mock_completed";
 
@@ -177,32 +178,18 @@ export async function documentMerchantContact({
   let finalIntake = updated;
 
   if (isLoaded && isSignedIn && trimmedCaseId) {
-    try {
-      const timeline = readTimeline(trimmedCaseId);
-      const res = await fetch(`/api/justice/cases/${encodeURIComponent(trimmedCaseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intake: updated, timeline }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          intake?: JusticeIntake;
-          timeline?: unknown;
-        };
-        if (data.intake) {
-          finalIntake = data.intake;
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
-          }
-        }
-        if (Array.isArray(data.timeline)) {
-          replaceTimelineForCase(trimmedCaseId, data.timeline as TimelineEntry[]);
-        }
-      } else {
-        console.warn(`${logLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
+    const timeline = readTimeline(trimmedCaseId);
+    const result = await patchJusticeCaseIntake(trimmedCaseId, updated, { timeline });
+    if (result.ok) {
+      finalIntake = result.intake;
+      if (Array.isArray(result.timeline)) {
+        replaceTimelineForCase(trimmedCaseId, result.timeline as TimelineEntry[]);
       }
-    } catch (e) {
-      console.warn(`${logLabel}: PATCH /api/justice/cases/[id] error`, e);
+    } else {
+      // Reconcile, never overwrite: on a genuine conflict the helper has already adopted the
+      // fresh server intake/version into session storage; the documentation just recorded here
+      // stays local until the next save attempt, which will use the correct version.
+      console.warn(`${logLabel}: PATCH /api/justice/cases/[id] ${result.reason}`, result.error);
     }
   }
 

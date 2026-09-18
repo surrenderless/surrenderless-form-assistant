@@ -26,7 +26,7 @@ create table if not exists public.justice_case_audit_events (
 );
 
 comment on table public.justice_case_audit_events is 'Immutable, append-only, server-only audit log. No role is ever granted UPDATE or DELETE on this table (see grants below) — rows cannot be altered or erased once inserted, by any application code path, present or future. Distinct from justice_cases.timeline, a best-effort consumer-writable mirror that is never authoritative.';
-comment on column public.justice_case_audit_events.idempotency_key is 'Deterministic key derived from (what happened, its exact content). An exact retry of the same logical action with unchanged content reuses this key (INSERT ... ON CONFLICT DO NOTHING dedupes it); a second, genuinely different action produces a different key and a second row.';
+comment on column public.justice_case_audit_events.idempotency_key is 'Deterministic key derived from (task_id, expected prior version, exact content) — never content alone. An exact retry (same stale expected_updated_at, same content) reuses this key (INSERT ... ON CONFLICT DO NOTHING dedupes it); a distinct transition — including one whose content happens to match an earlier one (A -> B -> A) — carries a different expected prior version and so gets its own key and its own row.';
 
 create unique index if not exists idx_justice_case_audit_events_idempotency_key
   on public.justice_case_audit_events (idempotency_key);
@@ -43,12 +43,15 @@ grant select, insert on public.justice_case_audit_events to service_role;
 -- is enforced by Postgres privileges, not application discipline.
 
 -- Atomic operator repair of a case's stored intake plus its durable audit event: both commit in
--- one transaction, or neither does. Content-addressed idempotency (idempotency_key derives from
--- task_id + the canonical text of the corrected intake) means an exact retry of the same content
--- is a genuine no-op (dedupes on the unique index), while a second, distinct correction for the
--- same still-open task inserts a second, independent audit event — never silently swallowed by an
--- id keyed only on task_id. The task binding and the case row are both re-verified here against
--- row-locked, live data, closing the TOCTOU window a two-step Node-side check-then-write had.
+-- one transaction, or neither does. Transition-aware idempotency (idempotency_key derives from
+-- task_id + the expected prior version + the canonical text of the corrected intake) means an
+-- exact retry (same stale expected_updated_at, same content) is a genuine no-op (dedupes on the
+-- unique index), while a second, distinct correction for the same still-open task — even one that
+-- happens to revert to content identical to an earlier correction (A -> B -> A) — inserts its own
+-- independent audit event, since it carries a different expected prior version. Never keyed on
+-- content or task_id alone, which would conflate "this content was audited once" with "this
+-- transition is happening again". The task binding and the case row are both re-verified here
+-- against row-locked, live data, closing the TOCTOU window a two-step Node-side check-then-write had.
 create or replace function public.repair_orphaned_paid_case_approval_intake(
   p_case_id uuid,
   p_task_id uuid,
@@ -125,8 +128,19 @@ begin
   -- regardless of the original key order the caller sent — a stable, content-addressed hash
   -- without any custom canonicalization. md5() is core Postgres (no pgcrypto dependency); this is
   -- an idempotency key, not a security boundary, so collision resistance beyond md5 is unneeded.
+  --
+  -- The key is task_id + the EXPECTED PRIOR VERSION + the new content — never content alone.
+  -- Content alone would conflate "this exact byte-for-byte content was audited once" with "this
+  -- exact transition is happening again": A -> B -> A (three genuine, distinctly-versioned
+  -- corrections) must produce three audit events, not have the third collide with the first
+  -- merely because it happens to revert to earlier content. Including the expected prior version
+  -- makes each (from-version, to-content) transition its own identity, while an exact retry (same
+  -- request re-sent with the same stale expected_updated_at and the same content) still computes
+  -- the identical key and dedupes correctly. extract(epoch ...) rather than a text cast of the
+  -- timestamptz avoids any dependency on the session's timezone setting for key stability.
   v_content_hash := md5(p_new_intake::text);
-  v_idempotency_key := 'orphaned_paid_case_approval_intake_repaired:' || p_task_id::text || ':' || v_content_hash;
+  v_idempotency_key := 'orphaned_paid_case_approval_intake_repaired:' || p_task_id::text || ':'
+    || extract(epoch from p_expected_updated_at)::text || ':' || v_content_hash;
 
   select id, intake_snapshot into v_existing_audit_id, v_existing_audit_intake
     from public.justice_case_audit_events

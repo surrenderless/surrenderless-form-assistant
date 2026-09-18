@@ -251,12 +251,27 @@ async function patchJusticeCase(
   const needsEscalationValidation =
     Object.prototype.hasOwnProperty.call(patch, "client_state") ||
     Object.prototype.hasOwnProperty.call(patch, "archived_at");
-  // intake needs the same compare-and-swap protection as client_state/archived_at — a consumer
-  // PATCH carrying only {intake, timeline} (the shape every intake-continuity caller actually
-  // sends) must not blindly overwrite a newer write. timeline never needs CAS (see
-  // mergeCaseTimelineEntries above) but does need the CURRENT row read so it can be merged rather
-  // than replaced.
+  // intake needs true end-to-end optimistic concurrency, not merely a compare-and-swap on
+  // whatever this request happens to read for itself: a consumer PATCH carrying only
+  // {intake, timeline} (the shape every intake-continuity caller actually sends) must fail if it
+  // was built from data that went stale BEFORE this request was even sent — something a
+  // server-side read performed during this same request can never detect, since it has no way to
+  // know what the client actually saw. The client must therefore supply the version it read
+  // (expected_updated_at) and the write is guarded against exactly that value, never a value this
+  // request read for itself. timeline never needs this (see mergeCaseTimelineEntries above) since
+  // its server-side merge is append-safe regardless of staleness.
   const needsIntakeCas = Object.prototype.hasOwnProperty.call(patch, "intake");
+  let clientExpectedUpdatedAt: string | undefined;
+  if (needsIntakeCas) {
+    const raw = b.expected_updated_at;
+    if (typeof raw !== "string" || !raw.trim() || Number.isNaN(Date.parse(raw))) {
+      return NextResponse.json(
+        { error: "expected_updated_at is required and must be a valid date when updating intake" },
+        { status: 400 }
+      );
+    }
+    clientExpectedUpdatedAt = raw.trim();
+  }
 
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
@@ -555,13 +570,16 @@ async function patchJusticeCase(
     patch.timeline = mergeCaseTimelineEntries(existingRowTimeline, patch.timeline as TimelineEntry[]);
   }
 
-  // When we read the row above for escalation validation, guard the write with a
-  // compare-and-swap on updated_at (stamped on every row write by a DB trigger) so a
-  // concurrent writer — an operator completing a filing at the same time — can't have its
-  // change silently clobbered by this blind update.
+  // The CAS token guarding this write: for intake, it is ALWAYS the client-supplied
+  // expected_updated_at (real end-to-end optimistic concurrency — see needsIntakeCas above),
+  // never a value this request read for itself. For client_state/archived_at-only patches (no
+  // intake in this request), the pre-existing weaker guard — a compare-and-swap on whatever this
+  // request itself just read — still applies unchanged.
+  const casToken = needsIntakeCas ? clientExpectedUpdatedAt : existingRowUpdatedAt;
+
   let updateQuery = supabase.from("justice_cases").update(patch).eq("id", id).eq("user_id", userId);
-  if (existingRowUpdatedAt) {
-    updateQuery = updateQuery.eq("updated_at", existingRowUpdatedAt);
+  if (casToken) {
+    updateQuery = updateQuery.eq("updated_at", casToken);
   }
 
   const { data, error } = await updateQuery.select(SELECT).maybeSingle();
@@ -572,7 +590,32 @@ async function patchJusticeCase(
   }
 
   if (!data) {
-    if (existingRowUpdatedAt) {
+    if (needsIntakeCas) {
+      // A genuine conflict (or the row no longer exists for this owner) — refetch current state
+      // so the caller can reconcile in one round trip instead of blindly retrying the same stale
+      // write. Never falls back to writing anyway.
+      const { data: currentRow } = await supabase
+        .from("justice_cases")
+        .select("intake, updated_at, timeline")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!currentRow) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      return NextResponse.json(
+        {
+          error: CLIENT_STATE_UPDATE_CONFLICT_ERROR,
+          current: {
+            intake: currentRow.intake,
+            updated_at: currentRow.updated_at,
+            timeline: currentRow.timeline,
+          },
+        },
+        { status: 409 }
+      );
+    }
+    if (casToken) {
       return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
     }
     return NextResponse.json({ error: "Not found" }, { status: 404 });

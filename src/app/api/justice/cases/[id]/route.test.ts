@@ -1052,6 +1052,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       buildPatchRequest({
         intake: uploadProofIntake,
         client_state: merchantResolvedTerminalClientState,
+        expected_updated_at: "2026-01-01T00:00:00.000Z",
       }),
       routeContext()
     );
@@ -1080,6 +1081,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       buildPatchRequest({
         intake: spoofedIncompleteIntake,
         client_state: merchantResolvedTerminalClientState,
+        expected_updated_at: "2026-01-01T00:00:00.000Z",
       }),
       routeContext()
     );
@@ -1114,6 +1116,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       buildPatchRequest({
         intake: resolvedIntake,
         client_state: merchantResolvedTerminalClientState,
+        expected_updated_at: "2026-01-01T00:00:00.000Z",
       }),
       routeContext()
     );
@@ -1125,10 +1128,15 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
   it("still enforces documentation validation for a client_state-only PATCH after an EARLIER, separate intake-only PATCH persisted incomplete documentation", async () => {
     const incompleteIntake = { ...resolvedIntake, contact_date: "" };
 
-    // First request: intake-only PATCH. This now does perform a fresh read and attaches a
-    // compare-and-swap on updated_at (see the dedicated CAS/merge describe block below) — but
-    // this test's default mock row (set in the outer beforeEach) doesn't include updated_at, so
-    // the CAS is inert here and the write proceeds, persisting incomplete documentation for real.
+    // First request: intake-only PATCH. Real end-to-end optimistic concurrency now requires the
+    // client to supply expected_updated_at (matching the case's actual current updated_at here —
+    // this test's default mock row, set in the outer beforeEach, lacks updated_at, so the minimal
+    // read branch's own select mock is overridden below to supply one) and the write proceeds,
+    // persisting incomplete documentation for real.
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      error: null,
+    });
     mockCaseUpdateMaybeSingle.mockResolvedValueOnce({
       data: {
         id: CASE_ID,
@@ -1144,7 +1152,10 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       },
       error: null,
     });
-    const firstRes = await PATCH(buildPatchRequest({ intake: incompleteIntake }), routeContext());
+    const firstRes = await PATCH(
+      buildPatchRequest({ intake: incompleteIntake, expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
     expect(firstRes.status).toBe(200);
 
     // Second request: client_state-only PATCH attempting the terminal transition. The server
@@ -1544,6 +1555,10 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
   });
 
   it("never blocks intake-only writes (no client_state in the patch, so the gate never runs)", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      error: null,
+    });
     mockCaseUpdateMaybeSingle.mockResolvedValue({
       data: {
         id: CASE_ID,
@@ -1560,7 +1575,10 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
       error: null,
     });
 
-    const res = await PATCH(buildPatchRequest({ intake }), routeContext());
+    const res = await PATCH(
+      buildPatchRequest({ intake, expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
 
     expect(res.status).toBe(200);
   });
@@ -1758,30 +1776,86 @@ describe("PATCH /api/justice/cases/[id] — intake compare-and-swap and safe tim
     mockCaseUpdateCasGate = null;
   });
 
-  it("an intake-only PATCH now performs a fresh read and is compare-and-swap protected — a stale updated_at returns 409 and never reaches the write", async () => {
-    mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
-      error: null,
-    });
-    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T09:99:99.000Z" }; // never matches
-
+  it("fails closed with 400 when expected_updated_at is missing from an intake PATCH — never falls back to writing anyway", async () => {
     const res = await PATCH(buildPatchRequest({ intake }), routeContext());
 
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR });
+    expect(res.status).toBe(400);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
   });
 
-  it("an intake-only PATCH succeeds when updated_at still matches what was just read", async () => {
+  it("fails closed with 400 when expected_updated_at is present but not a valid date", async () => {
+    const res = await PATCH(
+      buildPatchRequest({ intake, expected_updated_at: "not-a-date" }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockCaseUpdatePatch).not.toHaveBeenCalled();
+  });
+
+  it("a stale client-supplied expected_updated_at (real current value has moved on) returns 409 before writing, and never overwrites", async () => {
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-02-01T00:00:00.000Z" }; // the REAL current value
+    // Client believes the case is still at an earlier version (e.g. it read this before an
+    // operator correction landed) — this is genuinely what the client last saw, not a server read.
+    const res = await PATCH(
+      buildPatchRequest({ intake, expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
+
+    // The UPDATE statement is issued (matching real Postgres: the WHERE clause is evaluated at
+    // the database, not pre-checked in application code) but its .eq("updated_at", ...) filter
+    // matches zero rows, so no data is ever returned or persisted.
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdateMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("conflict response includes fresh current state so the caller can reconcile without a second round trip", async () => {
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-02-01T00:00:00.000Z" };
+    // The post-conflict refetch reuses mockCaseSelectMaybeSingle — arm it with the REAL current row.
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { updated_at: "2026-01-01T00:00:00.000Z", timeline: [] },
+      data: { intake, updated_at: "2026-02-01T00:00:00.000Z", timeline: [] },
       error: null,
     });
+
+    const res = await PATCH(
+      buildPatchRequest({ intake, expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.current).toEqual({ intake, updated_at: "2026-02-01T00:00:00.000Z", timeline: [] });
+  });
+
+  it("an intake-only PATCH succeeds when the client-supplied expected_updated_at matches the real current value", async () => {
     mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" };
 
-    const res = await PATCH(buildPatchRequest({ intake }), routeContext());
+    const res = await PATCH(
+      buildPatchRequest({ intake, expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
 
     expect(res.status).toBe(200);
     expect(mockCaseUpdatePatch).toHaveBeenCalledWith(expect.objectContaining({ intake }));
+  });
+
+  it("never substitutes a server-side read for the client token — the write's CAS filter uses expected_updated_at even when this request's own SELECT returned something else entirely", async () => {
+    // This request's own pre-write read (the "minimal read" branch) returns a DIFFERENT
+    // updated_at than what the client supplied — simulating that the server's own incidental read
+    // is irrelevant to the CAS decision. The REAL current value (per the gate) still matches the
+    // client's token, so the write must still succeed using the CLIENT's value, not the server's.
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { updated_at: "2026-05-05T00:00:00.000Z", timeline: [] }, // server's own read: unrelated value
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" }; // the REAL current value
+
+    const res = await PATCH(
+      buildPatchRequest({ intake, expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(200);
   });
 
   it("a pure timeline-only PATCH is never CAS-gated — an unrelated stale updated_at does not block it", async () => {
@@ -1850,7 +1924,10 @@ describe("PATCH /api/justice/cases/[id] — intake compare-and-swap and safe tim
     });
     mockCaseUpdateCasGate = { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" };
 
-    const res = await PATCH(buildPatchRequest({ intake, timeline: [] }), routeContext());
+    const res = await PATCH(
+      buildPatchRequest({ intake, timeline: [], expected_updated_at: "2026-01-01T00:00:00.000Z" }),
+      routeContext()
+    );
 
     expect(res.status).toBe(200);
     const call = mockCaseUpdatePatch.mock.calls.at(-1)?.[0] as { intake: unknown; timeline: { id: string }[] };

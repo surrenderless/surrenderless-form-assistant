@@ -7,6 +7,7 @@ import {
   readTimeline,
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
+import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
 
 export type CommitIntakeMode = "create" | "update";
 
@@ -84,29 +85,19 @@ async function commitIntakeUpdateToSessionAndServer({
   }
 
   const timeline = readTimeline(caseId);
-  try {
-    const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ intake, timeline }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as {
-        intake?: JusticeIntake;
-        timeline?: unknown;
-      };
-      if (data.intake) {
-        sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
-      }
-      if (Array.isArray(data.timeline)) {
-        replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
-      }
-      return { caseId, serverPersisted: true };
+  const result = await patchJusticeCaseIntake(caseId, intake, { timeline });
+  if (result.ok) {
+    // patchJusticeCaseIntake already wrote the fresh intake + version to sessionStorage.
+    if (Array.isArray(result.timeline)) {
+      replaceTimelineForCase(caseId, result.timeline as TimelineEntry[]);
     }
-    console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
-  } catch (e) {
-    console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] error`, e);
+    return { caseId, serverPersisted: true };
   }
+  // Reconcile, never overwrite: on a genuine conflict the helper has already adopted the fresh
+  // server intake/version into session storage in place of this stale attempt, so the very next
+  // commit (this flow runs continuously as the user progresses through chat) retries against the
+  // correct version instead of repeating the same stale write.
+  console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] ${result.reason}`, result.error);
   return { caseId, serverPersisted: false };
 }
 

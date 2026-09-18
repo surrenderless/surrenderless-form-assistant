@@ -205,6 +205,7 @@ import {
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
+import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
 import {
   buildChatCapturedMerchantContactSummaryLines,
   buildMerchantContactDocumentationInputFromIntakeParts,
@@ -3623,19 +3624,20 @@ export default function JusticeChatAiPage() {
         if (hasRecipient) {
           // Valid email: persist it to the stored intake so both the server gate and the inline
           // delivery (which read the intake already stored on the case) send automatically.
-          try {
-            const intakeRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ intake: intakeForRecipient }),
-            });
-            if (!intakeRes.ok) {
-              setTrackingSaveError("Could not save the company's contact email. Try again.");
-              return false;
-            }
-          } catch (e) {
-            console.warn("justice chat-ai: save merchant recipient before approve error", e);
-            setTrackingSaveError("Could not save the company's contact email. Try again.");
+          const intakeResult = await patchJusticeCaseIntake(caseId, intakeForRecipient);
+          if (!intakeResult.ok) {
+            // Reconcile, never overwrite: on a conflict the helper already adopted the fresh
+            // server version, so retrying this same approve action will use the correct one.
+            console.warn(
+              "justice chat-ai: save merchant recipient before approve",
+              intakeResult.reason,
+              intakeResult.error
+            );
+            setTrackingSaveError(
+              intakeResult.reason === "conflict"
+                ? "This case was updated elsewhere. Reload and try again."
+                : "Could not save the company's contact email. Try again."
+            );
             return false;
           }
         } else {
@@ -3860,13 +3862,20 @@ export default function JusticeChatAiPage() {
     setAddingMerchantContactRecipient(true);
     setTrackingSaveError(null);
     try {
-      const intakeRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intake }),
-      });
-      if (!intakeRes.ok) {
-        setTrackingSaveError("Could not save the company's contact email. Try again.");
+      const intakeResult = await patchJusticeCaseIntake(caseId, intake);
+      if (!intakeResult.ok) {
+        // Reconcile, never overwrite: on a conflict the helper already adopted the fresh server
+        // version, so retrying this action will use the correct one.
+        console.warn(
+          "justice chat-ai: add merchant recipient retry",
+          intakeResult.reason,
+          intakeResult.error
+        );
+        setTrackingSaveError(
+          intakeResult.reason === "conflict"
+            ? "This case was updated elsewhere. Reload and try again."
+            : "Could not save the company's contact email. Try again."
+        );
         return;
       }
       // The recipient is now persisted, so advance the session baseline that drives the
