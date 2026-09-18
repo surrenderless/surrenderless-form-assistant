@@ -94,13 +94,14 @@ type CaseResponse = {
   client_state: unknown;
   created_at: string;
   updated_at: string;
+  case_version: number;
   archived_at: string | null;
   case_label: string | null;
   paid_at: string | null;
 };
 
 const SELECT =
-  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label, paid_at" as const;
+  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, case_version, archived_at, case_label, paid_at" as const;
 
 function isValidArchivedAt(value: unknown): value is string | null {
   if (value === null) return true;
@@ -257,25 +258,30 @@ async function patchJusticeCase(
   // was built from data that went stale BEFORE this request was even sent — something a
   // server-side read performed during this same request can never detect, since it has no way to
   // know what the client actually saw. The client must therefore supply the version it read
-  // (expected_updated_at) and the write is guarded against exactly that value, never a value this
-  // request read for itself. timeline never needs this (see mergeCaseTimelineEntries above) since
-  // its server-side merge is append-safe regardless of staleness.
+  // (expected_case_version) and the write is guarded against exactly that value, never a value
+  // this request read for itself. The token is case_version (a monotonic integer, bumped by
+  // exactly 1 on every UPDATE — see 20260917110000_justice_cases_case_version.sql), never
+  // updated_at: a release audit proved a wall-clock timestamp can repeat across genuinely
+  // sequential writes (empirically, roughly a third to half of racing-writer trials against real
+  // Postgres produced a silent lost update with no sleep involved), which a plain integer counter
+  // under row-level locking cannot do. timeline never needs this (see mergeCaseTimelineEntries
+  // above) since its server-side merge is append-safe regardless of staleness.
   const needsIntakeCas = Object.prototype.hasOwnProperty.call(patch, "intake");
-  let clientExpectedUpdatedAt: string | undefined;
+  let clientExpectedCaseVersion: number | undefined;
   if (needsIntakeCas) {
-    const raw = b.expected_updated_at;
-    if (typeof raw !== "string" || !raw.trim() || Number.isNaN(Date.parse(raw))) {
+    const raw = b.expected_case_version;
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
       return NextResponse.json(
-        { error: "expected_updated_at is required and must be a valid date when updating intake" },
+        { error: "expected_case_version is required and must be a non-negative integer when updating intake" },
         { status: 400 }
       );
     }
-    clientExpectedUpdatedAt = raw.trim();
+    clientExpectedCaseVersion = raw;
   }
 
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
-  let existingRowUpdatedAt: string | undefined;
+  let existingRowCaseVersion: number | undefined;
   let existingRowTimeline: unknown;
   let existingIntake: JusticeIntake | null | undefined;
   // Mock/E2E cases have no real Stripe-backed payment record — treated as already paid so the
@@ -306,7 +312,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("client_state, archived_at, updated_at, paid_at, intake, timeline")
+        .select("client_state, archived_at, case_version, paid_at, intake, timeline")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -321,7 +327,7 @@ async function patchJusticeCase(
 
       existingClientState = existingRow.client_state;
       existingArchivedAt = existingRow.archived_at as string | null;
-      existingRowUpdatedAt = existingRow.updated_at as string;
+      existingRowCaseVersion = existingRow.case_version as number;
       existingRowTimeline = existingRow.timeline;
       existingPaidAt = existingRow.paid_at as string | null;
       existingIntake = existingRow.intake as JusticeIntake | null;
@@ -467,7 +473,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("updated_at, timeline")
+        .select("case_version, timeline")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -480,7 +486,7 @@ async function patchJusticeCase(
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
-      existingRowUpdatedAt = existingRow.updated_at as string;
+      existingRowCaseVersion = existingRow.case_version as number;
       existingRowTimeline = existingRow.timeline;
     }
   }
@@ -498,9 +504,9 @@ async function patchJusticeCase(
   }
   if (!needsEscalationValidation && !needsIntakeCas) {
     // A pure timeline-only patch never needs the compare-and-swap — merging (see
-    // mergeCaseTimelineEntries) is safe regardless of how stale updated_at is; only intake and
+    // mergeCaseTimelineEntries) is safe regardless of how stale case_version is; only intake and
     // client_state/archived_at have genuine two-values-conflict semantics that need it.
-    existingRowUpdatedAt = undefined;
+    existingRowCaseVersion = undefined;
   }
 
   // Task reconciliation happens BEFORE the terminal client_state is persisted, not after: if
@@ -525,20 +531,20 @@ async function patchJusticeCase(
       preWriteReconcileTimeline = taskReconcile.timeline;
 
       // Reconciliation's own writes (completing the task; appending the audit timeline entry to
-      // justice_cases.timeline) can themselves advance justice_cases.updated_at via the
-      // set_justice_cases_updated_at trigger (BEFORE UPDATE ... FOR EACH ROW, unconditional on
-      // which columns changed). The updated_at captured before reconciliation ran is now stale
+      // justice_cases.timeline) can themselves advance justice_cases.case_version via the
+      // bump_justice_cases_case_version trigger (BEFORE UPDATE ... FOR EACH ROW, unconditional on
+      // which columns changed). The case_version captured before reconciliation ran is now stale
       // by construction — not because of any concurrent writer — so the CAS-guarded write below
       // would self-invalidate every single time a real open task gets reconciled. Re-read the row
       // and compare the fields the CAS exists to protect (client_state, archived_at, intake):
       // identical means the only intervening write was our own reconciliation, so it's safe to
-      // adopt the fresh updated_at; different means a genuine concurrent writer intervened while
+      // adopt the fresh case_version; different means a genuine concurrent writer intervened while
       // we were reconciling, and this must still fail exactly as the CAS was designed to — never
       // silently clobber a real concurrent change.
-      if (existingRowUpdatedAt) {
+      if (existingRowCaseVersion !== undefined) {
         const { data: freshRow, error: freshErr } = await supabase
           .from("justice_cases")
-          .select("client_state, archived_at, updated_at, intake")
+          .select("client_state, archived_at, case_version, intake")
           .eq("id", id)
           .eq("user_id", userId)
           .maybeSingle();
@@ -557,7 +563,7 @@ async function patchJusticeCase(
           return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
         }
 
-        existingRowUpdatedAt = freshRow.updated_at as string;
+        existingRowCaseVersion = freshRow.case_version as number;
       }
     }
   }
@@ -571,15 +577,16 @@ async function patchJusticeCase(
   }
 
   // The CAS token guarding this write: for intake, it is ALWAYS the client-supplied
-  // expected_updated_at (real end-to-end optimistic concurrency — see needsIntakeCas above),
+  // expected_case_version (real end-to-end optimistic concurrency — see needsIntakeCas above),
   // never a value this request read for itself. For client_state/archived_at-only patches (no
   // intake in this request), the pre-existing weaker guard — a compare-and-swap on whatever this
-  // request itself just read — still applies unchanged.
-  const casToken = needsIntakeCas ? clientExpectedUpdatedAt : existingRowUpdatedAt;
+  // request itself just read — still applies unchanged. Either way the column compared is
+  // case_version, never updated_at.
+  const casToken = needsIntakeCas ? clientExpectedCaseVersion : existingRowCaseVersion;
 
   let updateQuery = supabase.from("justice_cases").update(patch).eq("id", id).eq("user_id", userId);
-  if (casToken) {
-    updateQuery = updateQuery.eq("updated_at", casToken);
+  if (casToken !== undefined) {
+    updateQuery = updateQuery.eq("case_version", casToken);
   }
 
   const { data, error } = await updateQuery.select(SELECT).maybeSingle();
@@ -596,7 +603,7 @@ async function patchJusticeCase(
       // write. Never falls back to writing anyway.
       const { data: currentRow } = await supabase
         .from("justice_cases")
-        .select("intake, updated_at, timeline")
+        .select("intake, case_version, timeline")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -608,14 +615,14 @@ async function patchJusticeCase(
           error: CLIENT_STATE_UPDATE_CONFLICT_ERROR,
           current: {
             intake: currentRow.intake,
-            updated_at: currentRow.updated_at,
+            case_version: currentRow.case_version,
             timeline: currentRow.timeline,
           },
         },
         { status: 409 }
       );
     }
-    if (casToken) {
+    if (casToken !== undefined) {
       return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
     }
     return NextResponse.json({ error: "Not found" }, { status: 404 });

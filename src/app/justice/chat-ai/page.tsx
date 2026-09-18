@@ -205,7 +205,7 @@ import {
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
-import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
+import { patchJusticeCaseIntake, readLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
 import {
   buildChatCapturedMerchantContactSummaryLines,
   buildMerchantContactDocumentationInputFromIntakeParts,
@@ -326,6 +326,7 @@ import {
   fetchLatestActiveJusticeCaseRow,
   fetchMostRecentlyArchivedEligibleJusticeCase,
   hydrateSessionFromCaseListRow,
+  refreshLocalIntakeAndVersionFromServer,
   restoreArchivedJusticeCaseOnServer,
   type JusticeCaseListRow,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
@@ -3633,10 +3634,15 @@ export default function JusticeChatAiPage() {
               intakeResult.reason,
               intakeResult.error
             );
+            if (intakeResult.reason === "missing_version") {
+              await refreshLocalIntakeAndVersionFromServer(caseId);
+            }
             setTrackingSaveError(
               intakeResult.reason === "conflict"
                 ? "This case was updated elsewhere. Reload and try again."
-                : "Could not save the company's contact email. Try again."
+                : intakeResult.reason === "missing_version"
+                  ? "Could not verify the current case version. Reload and try again."
+                  : "Could not save the company's contact email. Try again."
             );
             return false;
           }
@@ -3871,10 +3877,15 @@ export default function JusticeChatAiPage() {
           intakeResult.reason,
           intakeResult.error
         );
+        if (intakeResult.reason === "missing_version") {
+          await refreshLocalIntakeAndVersionFromServer(caseId);
+        }
         setTrackingSaveError(
           intakeResult.reason === "conflict"
             ? "This case was updated elsewhere. Reload and try again."
-            : "Could not save the company's contact email. Try again."
+            : intakeResult.reason === "missing_version"
+              ? "Could not verify the current case version. Reload and try again."
+              : "Could not save the company's contact email. Try again."
         );
         return;
       }
@@ -3911,6 +3922,7 @@ export default function JusticeChatAiPage() {
   ): Promise<
     | { ok: true; updatedIntake: JusticeIntake }
     | { ok: false; contactDateError?: string; contactProofError?: string }
+    | { ok: false; reason: "conflict" | "missing_version"; error: string }
   > {
     if (!isLoaded) return { ok: false };
     const caseId =
@@ -3927,6 +3939,22 @@ export default function JusticeChatAiPage() {
       hasUploadedEvidenceFile: hasUploadedEvidenceFileNow,
     });
     if (!result.ok) {
+      if ("reason" in result) {
+        // Conflict/missing_version: session storage already reflects fresh server state (or is
+        // being refreshed) — resync the in-memory form so the next attempt edits from the correct
+        // baseline instead of the stale content that was just rejected.
+        const fresh = readValidLocalJusticeIntake();
+        if (fresh) {
+          const freshParts = justiceIntakeToBuildJusticeIntakeParts(fresh);
+          setParts(freshParts);
+          sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
+        }
+        setTrackingSaveError(
+          result.reason === "conflict"
+            ? "This case was updated elsewhere. Reload and try again."
+            : "Could not verify the current case version. Try again."
+        );
+      }
       return result;
     }
 
@@ -3996,8 +4024,8 @@ export default function JusticeChatAiPage() {
         contactProofText: merchantDocContactProofText,
       });
       if (!result.ok) {
-        setMerchantDocContactDateError(result.contactDateError ?? null);
-        setMerchantDocContactProofError(result.contactProofError ?? null);
+        setMerchantDocContactDateError("reason" in result ? null : result.contactDateError ?? null);
+        setMerchantDocContactProofError("reason" in result ? null : result.contactProofError ?? null);
       }
     } finally {
       setSavingMerchantContactDocumentation(false);
@@ -4472,6 +4500,39 @@ export default function JusticeChatAiPage() {
     }
     setStagedProofNotes(readStagedProofNotes());
   }, []);
+
+  // Reload reconciliation: sessionStorage's cached intake/case_version survives a page refresh
+  // within the same tab, but nothing yet re-verifies it against the server on that reload. A
+  // resulting PATCH would still be CAS-safe either way (the server rejects it with a 409 per
+  // patchJusticeCaseIntake if the case moved on), but silently editing on top of outdated content
+  // until the user happens to attempt a save is exactly the reload gap this closes. Runs once per
+  // mount: fetch the case fresh and, only if its case_version has actually moved past what this
+  // tab cached, adopt the server's content and version as the new baseline in place of the stale
+  // local draft.
+  useEffect(() => {
+    if (!isLoaded) return;
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) return;
+    const cachedVersion = readLocalIntakeCaseVersion();
+    if (cachedVersion === null) return;
+
+    let cancelled = false;
+    void (async () => {
+      const row = await fetchJusticeCaseById(caseId);
+      if (cancelled || !row) return;
+      const serverVersion = typeof row.case_version === "number" ? row.case_version : null;
+      if (serverVersion === null || serverVersion === cachedVersion) return;
+      const fresh = hydrateSessionFromCaseListRow(row);
+      if (!fresh || cancelled) return;
+      const freshParts = justiceIntakeToBuildJusticeIntakeParts(fresh);
+      setParts(freshParts);
+      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded]);
 
   // Signed-in, no local session and no in-progress draft — this is either a first visit or a
   // returning consumer whose sessionStorage expired (e.g. tab closed mid multi-day workflow). Try

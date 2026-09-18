@@ -249,7 +249,7 @@ export default function OperatorFulfillmentPage() {
           case_id: item.case_id,
           task_id: item.task_id,
           intake: input.intake,
-          expected_updated_at: input.caseUpdatedAt,
+          expected_case_version: input.caseVersion,
         }),
       });
       const payload: unknown = await res.json().catch(() => null);

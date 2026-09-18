@@ -10,7 +10,7 @@ const USER_ID = "user-owner-1";
 
 type MockState = {
   clientState: Record<string, unknown>;
-  updatedAt: string;
+  caseVersion: number;
   selectFail: boolean;
 };
 
@@ -24,17 +24,17 @@ function createCasesSupabase(state: MockState): SupabaseClient {
         update: (patch: Record<string, unknown>) => ({
           eq: (_col: string, _caseId: string) => ({
             eq: (_col2: string, _userId: string) => ({
-              eq: (_col3: string, expectedUpdatedAt: string) => ({
+              eq: (_col3: string, expectedCaseVersion: number) => ({
                 select: () => ({
                   maybeSingle: async () => {
                     if (state.selectFail) {
                       return { data: null, error: { message: "update failed" } };
                     }
-                    if (expectedUpdatedAt !== state.updatedAt) {
+                    if (expectedCaseVersion !== state.caseVersion) {
                       return { data: null, error: null };
                     }
                     state.clientState = patch.client_state as Record<string, unknown>;
-                    state.updatedAt = "2026-07-27T00:00:01.000Z";
+                    state.caseVersion += 1;
                     return { data: { id: CASE_ID }, error: null };
                   },
                 }),
@@ -48,17 +48,17 @@ function createCasesSupabase(state: MockState): SupabaseClient {
 }
 
 describe("updateClientStateIfUnchanged", () => {
-  it("writes client_state when updated_at still matches", async () => {
+  it("writes client_state when case_version still matches", async () => {
     const state: MockState = {
       clientState: {},
-      updatedAt: "2026-07-27T00:00:00.000Z",
+      caseVersion: 1,
       selectFail: false,
     };
 
     const result = await updateClientStateIfUnchanged(createCasesSupabase(state), {
       caseId: CASE_ID,
       userId: USER_ID,
-      expectedUpdatedAt: "2026-07-27T00:00:00.000Z",
+      expectedCaseVersion: 1,
       clientState: { approved_next_action: { status: "completed" } },
     });
 
@@ -66,17 +66,17 @@ describe("updateClientStateIfUnchanged", () => {
     expect(state.clientState).toEqual({ approved_next_action: { status: "completed" } });
   });
 
-  it("returns a 409 conflict without writing when updated_at no longer matches (concurrent writer won the race)", async () => {
+  it("returns a 409 conflict without writing when case_version no longer matches (concurrent writer won the race)", async () => {
     const state: MockState = {
       clientState: { approved_next_action: { status: "approved" } },
-      updatedAt: "2026-07-27T00:05:00.000Z", // a concurrent writer already advanced this
+      caseVersion: 6, // a concurrent writer already advanced this
       selectFail: false,
     };
 
     const result = await updateClientStateIfUnchanged(createCasesSupabase(state), {
       caseId: CASE_ID,
       userId: USER_ID,
-      expectedUpdatedAt: "2026-07-27T00:00:00.000Z", // stale value read before the race
+      expectedCaseVersion: 1, // stale value read before the race
       clientState: { approved_next_action: { status: "completed" } },
     });
 
@@ -92,14 +92,14 @@ describe("updateClientStateIfUnchanged", () => {
   it("returns a 500 error when the update itself fails", async () => {
     const state: MockState = {
       clientState: {},
-      updatedAt: "2026-07-27T00:00:00.000Z",
+      caseVersion: 1,
       selectFail: true,
     };
 
     const result = await updateClientStateIfUnchanged(createCasesSupabase(state), {
       caseId: CASE_ID,
       userId: USER_ID,
-      expectedUpdatedAt: "2026-07-27T00:00:00.000Z",
+      expectedCaseVersion: 1,
       clientState: { approved_next_action: { status: "completed" } },
     });
 

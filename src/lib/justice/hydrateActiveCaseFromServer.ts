@@ -1,5 +1,5 @@
 import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
-import { writeLocalIntakeUpdatedAt } from "@/lib/justice/patchJusticeCaseIntake";
+import { writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import {
@@ -21,6 +21,7 @@ export type JusticeCaseListRow = {
   client_state?: unknown;
   archived_at?: string | null;
   updated_at?: string | null;
+  case_version?: number | null;
   case_label?: string | null;
 };
 
@@ -54,10 +55,10 @@ export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeI
   if (!row.id || !isJusticeIntakePayload(row.intake)) return null;
   sessionStorage.setItem(STORAGE_CASE_ID, row.id);
   sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
-  // Cache the version this intake was read at — every subsequent intake-bearing PATCH sends this
-  // back as expected_updated_at (see patchJusticeCaseIntake), so a fresh hydration establishes a
-  // genuine, never-substituted starting point for optimistic concurrency.
-  writeLocalIntakeUpdatedAt(row.updated_at ?? null);
+  // Cache the case_version this intake was read at — every subsequent intake-bearing PATCH sends
+  // this back as expected_case_version (see patchJusticeCaseIntake), so a fresh hydration
+  // establishes a genuine, never-substituted starting point for optimistic concurrency.
+  writeLocalIntakeCaseVersion(typeof row.case_version === "number" ? row.case_version : null);
   const serverTimeline = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
   replaceTimelineForCase(row.id, serverTimeline);
   if (
@@ -148,6 +149,23 @@ export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): P
     fetchJusticeCaseListRows(true, signal),
   ]);
   return { activeRows, archivedRows };
+}
+
+/**
+ * GET a specific case fresh and hydrate session (intake + case_version + timeline) from it — the
+ * recovery path when a write is refused with patchJusticeCaseIntake's "missing_version" result
+ * (no cached version) or when a reload needs to reconcile local session state against the server
+ * rather than trusting stale sessionStorage indefinitely. Always refreshes content and version
+ * together; never establishes one without the other. Returns the fresh intake, or null if the
+ * case could not be loaded.
+ */
+export async function refreshLocalIntakeAndVersionFromServer(
+  caseId: string,
+  signal?: AbortSignal
+): Promise<JusticeIntake | null> {
+  const row = await fetchJusticeCaseById(caseId, signal);
+  if (!row) return null;
+  return hydrateSessionFromCaseListRow(row);
 }
 
 /** GET a single owned case by id for chat hydrate after selection/restore. */

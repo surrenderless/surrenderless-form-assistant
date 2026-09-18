@@ -44,7 +44,7 @@ const OPERATOR_ID = "operator_1";
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 const TASK_ID = "22222222-2222-4222-8222-222222222222";
 const USER_ID = "consumer_1";
-const EXPECTED_UPDATED_AT = "2026-08-01T00:00:00.000Z";
+const EXPECTED_CASE_VERSION = 3;
 
 function validIntake(overrides: Partial<Record<string, unknown>> = {}): unknown {
   return buildJusticeIntakeFromParts({
@@ -77,7 +77,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
     mockRpc.mockResolvedValue({
       data: {
         status: "applied",
-        case_updated_at: "2026-08-01T00:05:00.000Z",
+        case_version: EXPECTED_CASE_VERSION + 1,
         case_intake: {},
         audit_event_id: "audit-1",
       },
@@ -100,7 +100,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(403);
@@ -113,7 +113,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: "not-a-uuid",
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(400);
@@ -122,25 +122,45 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
 
   it("rejects a missing task_id", async () => {
     const res = await POST(
-      buildRequest({ case_id: CASE_ID, intake: validIntake(), expected_updated_at: EXPECTED_UPDATED_AT })
+      buildRequest({ case_id: CASE_ID, intake: validIntake(), expected_case_version: EXPECTED_CASE_VERSION })
     );
     expect(res.status).toBe(400);
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing or invalid expected_updated_at", async () => {
+  it("rejects a missing or invalid expected_case_version", async () => {
     const missing = await POST(buildRequest({ case_id: CASE_ID, task_id: TASK_ID, intake: validIntake() }));
     expect(missing.status).toBe(400);
 
-    const malformed = await POST(
+    const notANumber = await POST(
       buildRequest({
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: "not-a-date",
+        expected_case_version: "not-a-number",
       })
     );
-    expect(malformed.status).toBe(400);
+    expect(notANumber.status).toBe(400);
+
+    const negative = await POST(
+      buildRequest({
+        case_id: CASE_ID,
+        task_id: TASK_ID,
+        intake: validIntake(),
+        expected_case_version: -1,
+      })
+    );
+    expect(negative.status).toBe(400);
+
+    const nonInteger = await POST(
+      buildRequest({
+        case_id: CASE_ID,
+        task_id: TASK_ID,
+        intake: validIntake(),
+        expected_case_version: 1.5,
+      })
+    );
+    expect(nonInteger.status).toBe(400);
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
@@ -150,7 +170,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: { still: "broken" },
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(400);
@@ -164,7 +184,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(404);
@@ -178,7 +198,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake,
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(200);
@@ -187,7 +207,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
       p_case_id: CASE_ID,
       p_task_id: TASK_ID,
       p_user_id: USER_ID,
-      p_expected_updated_at: EXPECTED_UPDATED_AT,
+      p_expected_case_version: EXPECTED_CASE_VERSION,
       p_new_intake: intake,
       p_actor: OPERATOR_ID,
     });
@@ -200,7 +220,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(200);
@@ -214,7 +234,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(409);
@@ -228,7 +248,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(409);
@@ -242,7 +262,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(404);
@@ -255,7 +275,7 @@ describe("POST /api/operator/orphaned-paid-case-approvals/repair-intake", () => 
         case_id: CASE_ID,
         task_id: TASK_ID,
         intake: validIntake(),
-        expected_updated_at: EXPECTED_UPDATED_AT,
+        expected_case_version: EXPECTED_CASE_VERSION,
       })
     );
     expect(res.status).toBe(500);

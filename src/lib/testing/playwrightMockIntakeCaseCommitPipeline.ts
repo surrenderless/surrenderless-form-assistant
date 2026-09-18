@@ -12,6 +12,7 @@ export type PlaywrightMockCaseCreateResponse = {
   client_state: unknown;
   created_at: string;
   updated_at: string;
+  case_version: number;
   archived_at: string | null;
   case_label: string | null;
   paid_at: string | null;
@@ -48,6 +49,7 @@ export function buildPlaywrightMockCaseCreateResponse(
     client_state,
     created_at: PLAYWRIGHT_MOCK_CASE_CREATE_TIMESTAMP,
     updated_at: PLAYWRIGHT_MOCK_CASE_CREATE_TIMESTAMP,
+    case_version: 1,
     archived_at: null,
     case_label: null,
     // Fixed non-null, matching the server's own treatment of mock/E2E cases as already paid

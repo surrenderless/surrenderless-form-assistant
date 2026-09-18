@@ -1,4 +1,4 @@
-# Apply-and-verify procedure — 4 pending migrations (not yet applied to Production)
+# Apply-and-verify procedure — 5 pending migrations (not yet applied to Production)
 
 This procedure is for the person merging/deploying this branch to run manually against the
 **Production** Supabase project, in this exact order, **before** the corresponding application
@@ -11,16 +11,30 @@ Pending migrations, in required order:
 1. `20260916120000_justice_case_payments_intended_action.sql`
 2. `20260916130000_justice_case_tasks_dedupe_key.sql`
 3. `20260916140000_justice_cases_orphan_recovery_confirmed_at.sql`
-4. `20260917120000_justice_case_audit_events.sql`
+4. `20260917110000_justice_cases_case_version.sql`
+5. `20260917120000_justice_case_audit_events.sql`
 
-All four are additive only (new nullable columns, new indexes, one backfill `UPDATE` scoped by a
-precise `WHERE`, one `DO $$ ... $$` pre-flight check, and #4's new table + function). None of them
-drop or rename a column, alter a type, or change any existing constraint. Each is individually
-safe to apply on its own — the order above matters only because #1 must exist before the
-checkout/webhook code paths it supports go live, #2's pre-flight check should run before you rely
-on the constraint it creates, and #4's RPC must exist before the repair-intake application code
-(which calls it exclusively — it no longer writes justice_cases directly for that flow) reaches
-Production.
+All five are additive only (new nullable/defaulted columns, new indexes, one backfill `UPDATE`
+scoped by a precise `WHERE`, one `DO $$ ... $$` pre-flight check, #4's new trigger, and #5's new
+table + function). None of them drop or rename a column, alter a type, or change any existing
+constraint. Each is individually safe to apply on its own — the order above matters only because
+#1 must exist before the checkout/webhook code paths it supports go live, #2's pre-flight check
+should run before you rely on the constraint it creates, #4 must exist before #5 (whose RPC takes
+`p_expected_case_version` and reads/writes `justice_cases.case_version`), and #5's RPC must exist
+before the repair-intake application code (which calls it exclusively — it no longer writes
+justice_cases directly for that flow) reaches Production.
+
+**Every `justice_cases` optimistic-concurrency check in the application layer — the consumer
+intake PATCH, the operator repair-intake RPC, and `updateClientStateIfUnchanged` (used by all ten
+`complete*OperatorFiling.ts` files and `finalizePaidPreparedPacketApproval.ts`) — now compares
+`case_version`, never `updated_at`.** A release audit proved `updated_at` (a wall-clock timestamp)
+is not strictly monotonic under rapid or racing writes — two writers sharing a stale `updated_at`
+token both "succeeded" (a silent lost update) in roughly a third to half of trials against real
+Postgres with no sleep involved, purely from millisecond-level clock collisions. `case_version` is
+a plain integer, incremented by exactly 1 on every UPDATE by a `BEFORE UPDATE` trigger evaluated
+under the row lock Postgres already takes for the UPDATE itself, so it cannot repeat or go
+backwards regardless of write frequency or clock behavior. `updated_at` remains on the table,
+unchanged, for display/sorting only.
 
 ## Why schema-first, not code-first
 
@@ -165,7 +179,37 @@ where tablename = 'justice_cases' and indexname = 'idx_justice_cases_orphan_reco
 -- Expect: 1 row.
 ```
 
-## Step 5 — apply migration #4 (justice_case_audit_events table + repair_orphaned_paid_case_approval_intake RPC)
+## Step 5 — apply migration #4 (justice_cases.case_version + bump_justice_cases_case_version trigger)
+
+```sh
+psql "$PGURL" -f supabase/migrations/20260917110000_justice_cases_case_version.sql
+```
+
+Verify:
+
+```sql
+select column_name, is_nullable, data_type, column_default
+from information_schema.columns
+where table_name = 'justice_cases' and column_name = 'case_version';
+-- Expect: 1 row, not nullable, bigint, default 1.
+
+select trigger_name from information_schema.triggers
+where event_object_table = 'justice_cases' and trigger_name = 'bump_justice_cases_case_version';
+-- Expect: 1 row.
+
+-- Sanity: the trigger actually increments by exactly 1 on a real UPDATE, and does so even when
+-- updated_at does not change (proves this is not secretly timestamp-based).
+begin;
+insert into justice_cases (id, user_id, intake) values (gen_random_uuid(), 'apply_procedure_smoke_test', '{"smoke": true}'::jsonb);
+select case_version from justice_cases where user_id = 'apply_procedure_smoke_test';
+-- Expect: 1.
+update justice_cases set intake = '{"smoke": true, "edited": true}'::jsonb where user_id = 'apply_procedure_smoke_test';
+select case_version from justice_cases where user_id = 'apply_procedure_smoke_test';
+-- Expect: 2.
+rollback;
+```
+
+## Step 6 — apply migration #5 (justice_case_audit_events table + repair_orphaned_paid_case_approval_intake RPC)
 
 ```sh
 psql "$PGURL" -f supabase/migrations/20260917120000_justice_case_audit_events.sql
@@ -209,7 +253,7 @@ select repair_orphaned_paid_case_approval_intake(
   (select id from justice_cases where user_id = 'apply_procedure_smoke_test'),
   (select id from justice_case_tasks where user_id = 'apply_procedure_smoke_test'),
   'apply_procedure_smoke_test',
-  (select updated_at from justice_cases where user_id = 'apply_procedure_smoke_test'),
+  (select case_version from justice_cases where user_id = 'apply_procedure_smoke_test'),
   '{"smoke": true, "corrected": true}'::jsonb,
   'apply_procedure_smoke_test_operator'
 );
@@ -219,7 +263,7 @@ select count(*) from justice_case_audit_events where actor = 'apply_procedure_sm
 rollback;
 ```
 
-## Step 6 — final code/schema agreement check
+## Step 7 — final code/schema agreement check
 
 Confirm the application code's expectations match what is now live, using the service-role
 credentials the app itself uses (catches an RLS/grant gap a raw `psql` superuser session would
@@ -235,12 +279,13 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.
   const { error: e1 } = await supabase.from("justice_case_payments").select("intended_action_href, intended_action_label").limit(1);
   const { error: e2 } = await supabase.from("justice_case_tasks").select("dedupe_key").limit(1);
   const { error: e3 } = await supabase.from("justice_cases").select("orphan_recovery_confirmed_at").limit(1);
-  const { error: e4 } = await supabase.from("justice_case_audit_events").select("idempotency_key").limit(1);
-  const { error: e5 } = await supabase.rpc("repair_orphaned_paid_case_approval_intake", {
+  const { error: e4 } = await supabase.from("justice_cases").select("case_version").limit(1);
+  const { error: e5 } = await supabase.from("justice_case_audit_events").select("idempotency_key").limit(1);
+  const { error: e6 } = await supabase.rpc("repair_orphaned_paid_case_approval_intake", {
     p_case_id: "00000000-0000-4000-8000-000000000000",
     p_task_id: "00000000-0000-4000-8000-000000000000",
     p_user_id: "schema_check_nonexistent_user",
-    p_expected_updated_at: new Date(0).toISOString(),
+    p_expected_case_version: 0,
     p_new_intake: {},
     p_actor: "schema_check",
   });
@@ -248,11 +293,14 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.
     payments: e1?.message ?? "ok",
     tasks: e2?.message ?? "ok",
     cases: e3?.message ?? "ok",
-    audit_events: e4?.message ?? "ok",
-    // A real "function does not exist" / grant error here means Step 5 was skipped or the grant
-    // is missing. A clean call returning task_conflict (no such task) is expected and fine — it
-    // proves the function is callable end to end, not that this fake id resolved to anything.
-    repair_rpc: e5?.message ?? "ok",
+    case_version: e4?.message ?? "ok",
+    audit_events: e5?.message ?? "ok",
+    // A real "function does not exist" / grant error here means Step 6 was skipped, the grant is
+    // missing, or the function still has the old (uuid, uuid, text, timestamptz, jsonb, text)
+    // signature. A clean call returning task_conflict (no such task) is expected and fine — it
+    // proves the function is callable end to end with the new signature, not that this fake id
+    // resolved to anything.
+    repair_rpc: e6?.message ?? "ok",
   });
 })();
 '
@@ -262,8 +310,8 @@ Expect every field to print `"ok"`. Any error here means the code/schema incompa
 procedure exists to catch is still present — do not deploy the application code until this prints
 clean.
 
-## Step 7 — only now, deploy the application code
+## Step 8 — only now, deploy the application code
 
 Merge/deploy as normal. Do not run this procedure again for the same migrations — re-running
-step 3/4/5 is safe (all three migrations use `if not exists` / `create or replace` guards
-throughout) but unnecessary once step 6 passes.
+steps 3/4/5/6 is safe (all four migrations use `if not exists` / `create or replace` guards
+throughout) but unnecessary once step 7 passes.

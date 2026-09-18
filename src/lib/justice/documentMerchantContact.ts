@@ -8,6 +8,7 @@ import {
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
+import { refreshLocalIntakeAndVersionFromServer } from "@/lib/justice/hydrateActiveCaseFromServer";
 
 const FTC_MOCK_COMPLETED_KEY = "justice_ftc_mock_completed";
 
@@ -141,7 +142,14 @@ export type DocumentMerchantContactParams = {
 
 export type DocumentMerchantContactResult =
   | { ok: true; updatedIntake: JusticeIntake }
-  | { ok: false; contactDateError?: string; contactProofError?: string };
+  | { ok: false; contactDateError?: string; contactProofError?: string }
+  | {
+      ok: false;
+      reason: "conflict";
+      error: string;
+      current: { intake: unknown; caseVersion: number | null };
+    }
+  | { ok: false; reason: "missing_version"; error: string };
 
 /** Persist merchant/company contact documentation (session, timeline, optional server PATCH). */
 export async function documentMerchantContact({
@@ -175,27 +183,46 @@ export async function documentMerchantContact({
     applyMerchantContactTimelineEvents(trimmedCaseId, updated);
   }
 
-  let finalIntake = updated;
-
   if (isLoaded && isSignedIn && trimmedCaseId) {
     const timeline = readTimeline(trimmedCaseId);
     const result = await patchJusticeCaseIntake(trimmedCaseId, updated, { timeline });
     if (result.ok) {
-      finalIntake = result.intake;
       if (Array.isArray(result.timeline)) {
         replaceTimelineForCase(trimmedCaseId, result.timeline as TimelineEntry[]);
       }
-    } else {
-      // Reconcile, never overwrite: on a genuine conflict the helper has already adopted the
-      // fresh server intake/version into session storage; the documentation just recorded here
-      // stays local until the next save attempt, which will use the correct version.
-      console.warn(`${logLabel}: PATCH /api/justice/cases/[id] ${result.reason}`, result.error);
+      await logMerchantContactSavedEvent(input.merchantResponseType, trimmedCaseId || null);
+      return { ok: true, updatedIntake: result.intake };
     }
+    if (result.reason === "conflict") {
+      // Never claim success on a 409: the locally-computed `updated` intake was paired with a
+      // case_version the server has already moved past, so treating it as saved would let the
+      // caller silently discard whatever the winning writer persisted. The helper has already
+      // adopted the fresh server intake/version into session storage — propagate the conflict as
+      // the caller's own reconciliation point instead of returning ok:true.
+      return {
+        ok: false,
+        reason: "conflict",
+        error: result.error,
+        current: { intake: result.current.intake, caseVersion: result.current.caseVersion },
+      };
+    }
+    if (result.reason === "missing_version") {
+      // No cached version to pair with this write — refresh both content and case_version from
+      // the server before any further write is allowed, then surface the failure so the caller
+      // re-derives and resubmits this documentation against the fresh baseline.
+      await refreshLocalIntakeAndVersionFromServer(trimmedCaseId);
+      return { ok: false, reason: "missing_version", error: result.error };
+    }
+    // request_failed / invalid_response: transient/network failure, not a version conflict. The
+    // documentation stays local (already written to STORAGE_INTAKE above) until the next save
+    // attempt, which still uses the same still-valid cached version.
+    console.warn(`${logLabel}: PATCH /api/justice/cases/[id] ${result.reason}`, result.error);
+    return { ok: true, updatedIntake: updated };
   }
 
   await logMerchantContactSavedEvent(input.merchantResponseType, trimmedCaseId || null);
 
-  return { ok: true, updatedIntake: finalIntake };
+  return { ok: true, updatedIntake: updated };
 }
 
 /** Read case id from session when running in the browser. */

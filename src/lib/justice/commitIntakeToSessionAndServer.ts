@@ -7,7 +7,8 @@ import {
   readTimeline,
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
-import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
+import { patchJusticeCaseIntake, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
+import { refreshLocalIntakeAndVersionFromServer } from "@/lib/justice/hydrateActiveCaseFromServer";
 
 export type CommitIntakeMode = "create" | "update";
 
@@ -87,11 +88,16 @@ async function commitIntakeUpdateToSessionAndServer({
   const timeline = readTimeline(caseId);
   const result = await patchJusticeCaseIntake(caseId, intake, { timeline });
   if (result.ok) {
-    // patchJusticeCaseIntake already wrote the fresh intake + version to sessionStorage.
+    // patchJusticeCaseIntake already wrote the fresh intake + case_version to sessionStorage.
     if (Array.isArray(result.timeline)) {
       replaceTimelineForCase(caseId, result.timeline as TimelineEntry[]);
     }
     return { caseId, serverPersisted: true };
+  }
+  if (result.reason === "missing_version") {
+    // No cached version to pair with this write — refresh both content and case_version from the
+    // server together before any further attempt, rather than ever fetching just one of the two.
+    await refreshLocalIntakeAndVersionFromServer(caseId);
   }
   // Reconcile, never overwrite: on a genuine conflict the helper has already adopted the fresh
   // server intake/version into session storage in place of this stale attempt, so the very next
@@ -143,6 +149,7 @@ export async function commitIntakeToSessionAndServer({
         const data = (await res.json()) as {
           id?: string;
           intake?: JusticeIntake;
+          case_version?: number;
           timeline?: unknown;
         };
         if (data?.id) {
@@ -152,6 +159,10 @@ export async function commitIntakeToSessionAndServer({
           if (data.intake) {
             sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
           }
+          // Cache the version this create response returned — without this, the very first
+          // subsequent PATCH for this case would find no cached version and refuse to write
+          // (patchJusticeCaseIntake's missing_version guard) until an explicit refresh.
+          writeLocalIntakeCaseVersion(typeof data.case_version === "number" ? data.case_version : null);
           const serverTimeline = Array.isArray(data.timeline)
             ? (data.timeline as TimelineEntry[])
             : timeline;

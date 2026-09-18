@@ -26,7 +26,7 @@ create table if not exists public.justice_case_audit_events (
 );
 
 comment on table public.justice_case_audit_events is 'Immutable, append-only, server-only audit log. No role is ever granted UPDATE or DELETE on this table (see grants below) — rows cannot be altered or erased once inserted, by any application code path, present or future. Distinct from justice_cases.timeline, a best-effort consumer-writable mirror that is never authoritative.';
-comment on column public.justice_case_audit_events.idempotency_key is 'Deterministic key derived from (task_id, expected prior version, exact content) — never content alone. An exact retry (same stale expected_updated_at, same content) reuses this key (INSERT ... ON CONFLICT DO NOTHING dedupes it); a distinct transition — including one whose content happens to match an earlier one (A -> B -> A) — carries a different expected prior version and so gets its own key and its own row.';
+comment on column public.justice_case_audit_events.idempotency_key is 'Deterministic key derived from (task_id, expected prior case_version, exact content) — never content alone. An exact retry (same stale expected_case_version, same content) reuses this key (INSERT ... ON CONFLICT DO NOTHING dedupes it); a distinct transition — including one whose content happens to match an earlier one (A -> B -> A) — carries a different expected prior case_version and so gets its own key and its own row.';
 
 create unique index if not exists idx_justice_case_audit_events_idempotency_key
   on public.justice_case_audit_events (idempotency_key);
@@ -43,20 +43,26 @@ grant select, insert on public.justice_case_audit_events to service_role;
 -- is enforced by Postgres privileges, not application discipline.
 
 -- Atomic operator repair of a case's stored intake plus its durable audit event: both commit in
--- one transaction, or neither does. Transition-aware idempotency (idempotency_key derives from
--- task_id + the expected prior version + the canonical text of the corrected intake) means an
--- exact retry (same stale expected_updated_at, same content) is a genuine no-op (dedupes on the
--- unique index), while a second, distinct correction for the same still-open task — even one that
--- happens to revert to content identical to an earlier correction (A -> B -> A) — inserts its own
--- independent audit event, since it carries a different expected prior version. Never keyed on
--- content or task_id alone, which would conflate "this content was audited once" with "this
--- transition is happening again". The task binding and the case row are both re-verified here
--- against row-locked, live data, closing the TOCTOU window a two-step Node-side check-then-write had.
+-- one transaction, or neither does. The concurrency token is justice_cases.case_version — a
+-- monotonic integer bumped by exactly 1 on every UPDATE (see
+-- 20260917110000_justice_cases_case_version.sql) — never updated_at: a release audit proved a
+-- wall-clock timestamp can repeat across genuinely sequential writes (empirically, roughly a third
+-- to half of racing-writer trials against real Postgres produced a silent lost update with no
+-- sleep involved), which a plain integer counter under row-level locking cannot do. Transition-
+-- aware idempotency (idempotency_key derives from task_id + the expected prior case_version + the
+-- canonical text of the corrected intake) means an exact retry (same stale expected_case_version,
+-- same content) is a genuine no-op (dedupes on the unique index), while a second, distinct
+-- correction for the same still-open task — even one that happens to revert to content identical
+-- to an earlier correction (A -> B -> A) — inserts its own independent audit event, since it
+-- carries a different expected prior version. Never keyed on content or task_id alone, which would
+-- conflate "this content was audited once" with "this transition is happening again". The task
+-- binding and the case row are both re-verified here against row-locked, live data, closing the
+-- TOCTOU window a two-step Node-side check-then-write had.
 create or replace function public.repair_orphaned_paid_case_approval_intake(
   p_case_id uuid,
   p_task_id uuid,
   p_user_id text,
-  p_expected_updated_at timestamptz,
+  p_expected_case_version bigint,
   p_new_intake jsonb,
   p_actor text
 )
@@ -71,20 +77,19 @@ declare
   v_expected_marker text;
   v_case_id uuid;
   v_case_intake jsonb;
-  v_case_updated_at timestamptz;
+  v_case_version bigint;
   v_content_hash text;
   v_idempotency_key text;
   v_existing_audit_id uuid;
   v_existing_audit_intake jsonb;
   v_audit_id uuid;
-  v_now timestamptz := now();
   v_now_text text;
   v_entry jsonb;
   v_merged_timeline jsonb;
   v_content_matches boolean;
 begin
   if p_case_id is null or p_task_id is null or coalesce(btrim(p_user_id), '') = ''
-     or p_expected_updated_at is null or p_new_intake is null or coalesce(btrim(p_actor), '') = '' then
+     or p_expected_case_version is null or p_new_intake is null or coalesce(btrim(p_actor), '') = '' then
     return jsonb_build_object('status', 'invalid_input');
   end if;
 
@@ -109,8 +114,8 @@ begin
 
   -- Lock the case row for the rest of this transaction so a concurrent write (another operator
   -- repair attempt, or the consumer's own now-CAS-protected intake PATCH) serializes against it.
-  select id, intake, updated_at
-    into v_case_id, v_case_intake, v_case_updated_at
+  select id, intake, case_version
+    into v_case_id, v_case_intake, v_case_version
     from public.justice_cases
    where id = p_case_id and user_id = p_user_id
    for update;
@@ -129,18 +134,17 @@ begin
   -- without any custom canonicalization. md5() is core Postgres (no pgcrypto dependency); this is
   -- an idempotency key, not a security boundary, so collision resistance beyond md5 is unneeded.
   --
-  -- The key is task_id + the EXPECTED PRIOR VERSION + the new content — never content alone.
-  -- Content alone would conflate "this exact byte-for-byte content was audited once" with "this
-  -- exact transition is happening again": A -> B -> A (three genuine, distinctly-versioned
-  -- corrections) must produce three audit events, not have the third collide with the first
-  -- merely because it happens to revert to earlier content. Including the expected prior version
-  -- makes each (from-version, to-content) transition its own identity, while an exact retry (same
-  -- request re-sent with the same stale expected_updated_at and the same content) still computes
-  -- the identical key and dedupes correctly. extract(epoch ...) rather than a text cast of the
-  -- timestamptz avoids any dependency on the session's timezone setting for key stability.
+  -- The key is task_id + the EXPECTED PRIOR case_version + the new content — never content alone,
+  -- and never a timestamp. Content alone would conflate "this exact byte-for-byte content was
+  -- audited once" with "this exact transition is happening again": A -> B -> A (three genuine,
+  -- distinctly-versioned corrections) must produce three audit events, not have the third collide
+  -- with the first merely because it happens to revert to earlier content. Including the expected
+  -- prior case_version (a plain integer) makes each (from-version, to-content) transition its own
+  -- identity with no ambiguity, while an exact retry (same request re-sent with the same stale
+  -- expected_case_version and the same content) still computes the identical key and dedupes.
   v_content_hash := md5(p_new_intake::text);
   v_idempotency_key := 'orphaned_paid_case_approval_intake_repaired:' || p_task_id::text || ':'
-    || extract(epoch from p_expected_updated_at)::text || ':' || v_content_hash;
+    || p_expected_case_version::text || ':' || v_content_hash;
 
   select id, intake_snapshot into v_existing_audit_id, v_existing_audit_intake
     from public.justice_case_audit_events
@@ -153,7 +157,7 @@ begin
       -- concurrent identical repair). Nothing left to write.
       return jsonb_build_object(
         'status', 'already_applied',
-        'case_updated_at', v_case_updated_at,
+        'case_version', v_case_version,
         'case_intake', v_case_intake,
         'audit_event_id', v_existing_audit_id
       );
@@ -163,7 +167,7 @@ begin
       -- there now — refuse rather than guess.
       return jsonb_build_object(
         'status', 'conflict',
-        'case_updated_at', v_case_updated_at,
+        'case_version', v_case_version,
         'case_intake', v_case_intake
       );
     end if;
@@ -173,10 +177,10 @@ begin
   -- the compare-and-swap; if it does already match (a concurrent identical repair that raced this
   -- one to the write but not yet to the audit insert), no CAS is needed — there is nothing to
   -- overwrite, only a missing audit event to record.
-  if not v_content_matches and v_case_updated_at is distinct from p_expected_updated_at then
+  if not v_content_matches and v_case_version is distinct from p_expected_case_version then
     return jsonb_build_object(
       'status', 'conflict',
-      'case_updated_at', v_case_updated_at,
+      'case_version', v_case_version,
       'case_intake', v_case_intake
     );
   end if;
@@ -201,7 +205,7 @@ begin
     select id into v_audit_id from public.justice_case_audit_events where idempotency_key = v_idempotency_key;
   end if;
 
-  v_now_text := to_char(v_now at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_now_text := to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_entry := jsonb_build_object(
     'id', v_idempotency_key,
     'case_id', p_case_id,
@@ -225,25 +229,27 @@ begin
       select v_entry
     ) merged(elem);
 
+  -- case_version advances here via bump_justice_cases_case_version (BEFORE UPDATE trigger) —
+  -- unconditionally, on this same UPDATE, regardless of what the system clock is doing.
   update public.justice_cases
      set intake = p_new_intake,
          timeline = v_merged_timeline
    where id = p_case_id and user_id = p_user_id
-  returning updated_at, intake into v_case_updated_at, v_case_intake;
+  returning case_version, intake into v_case_version, v_case_intake;
 
   return jsonb_build_object(
     'status', 'applied',
-    'case_updated_at', v_case_updated_at,
+    'case_version', v_case_version,
     'case_intake', v_case_intake,
     'audit_event_id', v_audit_id
   );
 end;
 $$;
 
-comment on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, timestamptz, jsonb, text) is
-  'Atomically corrects a case''s intake and records an immutable, content-addressed audit event for an orphaned_paid_case_approval review task — both commit in one transaction or neither does.';
+comment on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text) is
+  'Atomically corrects a case''s intake and records an immutable, content-addressed audit event for an orphaned_paid_case_approval review task — both commit in one transaction or neither does. Concurrency token is case_version (a monotonic integer), never updated_at.';
 
 -- Postgres grants EXECUTE to PUBLIC by default; lock this down to the service role the app already
 -- uses for every operator/admin write, matching cancel_operator_fulfillment_task's precedent.
-revoke all on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, timestamptz, jsonb, text) from public;
-grant execute on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, timestamptz, jsonb, text) to service_role;
+revoke all on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text) from public;
+grant execute on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text) to service_role;

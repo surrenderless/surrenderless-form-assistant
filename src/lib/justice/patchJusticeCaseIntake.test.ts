@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   patchJusticeCaseIntake,
-  readLocalIntakeUpdatedAt,
-  writeLocalIntakeUpdatedAt,
+  readLocalIntakeCaseVersion,
+  writeLocalIntakeCaseVersion,
 } from "@/lib/justice/patchJusticeCaseIntake";
 import { STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -69,64 +69,51 @@ describe("patchJusticeCaseIntake", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("when no version is cached yet, GETs first to establish one before ever PATCHing — never sends an unprotected write", async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse(200, { updated_at: "2026-01-01T00:00:00.000Z" })) // GET
-      .mockResolvedValueOnce(
-        jsonResponse(200, { intake: baseIntake, updated_at: "2026-01-01T00:05:00.000Z", timeline: [] })
-      ); // PATCH
-
+  it("when no version is cached yet, refuses to write rather than fetching a fresh one to pair with this call's (possibly older) content", async () => {
     const result = await patchJusticeCaseIntake(CASE_ID, baseIntake);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [getCall, patchCall] = fetchMock.mock.calls;
-    expect(getCall[0]).toBe(`/api/justice/cases/${CASE_ID}`);
-    expect(patchCall[1]?.method).toBe("PATCH");
-    const patchBody = JSON.parse(patchCall[1]?.body as string);
-    expect(patchBody.expected_updated_at).toBe("2026-01-01T00:00:00.000Z");
-    expect(result.ok).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled(); // no GET-then-PATCH fallback — never sends an unprotected write
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("missing_version");
   });
 
-  it("sends the CACHED version as expected_updated_at — never a value read fresh during this same call", async () => {
-    writeLocalIntakeUpdatedAt("2026-03-01T00:00:00.000Z");
+  it("sends the CACHED case_version as expected_case_version — never a value read fresh during this same call", async () => {
+    writeLocalIntakeCaseVersion(3);
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { intake: baseIntake, updated_at: "2026-03-01T00:05:00.000Z", timeline: [] })
+      jsonResponse(200, { intake: baseIntake, case_version: 4, timeline: [] })
     );
 
     await patchJusticeCaseIntake(CASE_ID, baseIntake);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1); // no GET — a version was already cached
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
-    expect(body.expected_updated_at).toBe("2026-03-01T00:00:00.000Z");
+    expect(body.expected_case_version).toBe(3);
   });
 
-  it("on success, stores the NEW version returned by the server for the next write (sequential saves advance the token)", async () => {
-    writeLocalIntakeUpdatedAt("2026-03-01T00:00:00.000Z");
+  it("on success, stores the NEW case_version returned by the server for the next write (sequential saves advance the token)", async () => {
+    writeLocalIntakeCaseVersion(3);
     fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse(200, { intake: baseIntake, updated_at: "2026-03-01T00:05:00.000Z", timeline: [] })
-      )
-      .mockResolvedValueOnce(
-        jsonResponse(200, { intake: baseIntake, updated_at: "2026-03-01T00:10:00.000Z", timeline: [] })
-      );
+      .mockResolvedValueOnce(jsonResponse(200, { intake: baseIntake, case_version: 4, timeline: [] }))
+      .mockResolvedValueOnce(jsonResponse(200, { intake: baseIntake, case_version: 5, timeline: [] }));
 
     const first = await patchJusticeCaseIntake(CASE_ID, baseIntake);
     expect(first.ok).toBe(true);
-    expect(readLocalIntakeUpdatedAt()).toBe("2026-03-01T00:05:00.000Z");
+    if (first.ok) expect(first.caseVersion).toBe(4);
+    expect(readLocalIntakeCaseVersion()).toBe(4);
 
     await patchJusticeCaseIntake(CASE_ID, baseIntake);
     const secondBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
-    expect(secondBody.expected_updated_at).toBe("2026-03-01T00:05:00.000Z"); // the version from THIS session's last write
-    expect(readLocalIntakeUpdatedAt()).toBe("2026-03-01T00:10:00.000Z");
+    expect(secondBody.expected_case_version).toBe(4); // the version from THIS session's last write
+    expect(readLocalIntakeCaseVersion()).toBe(5);
   });
 
   it("on conflict (409), never retries the write itself, and reconciles by adopting the server's fresh state", async () => {
-    writeLocalIntakeUpdatedAt("2026-01-01T00:00:00.000Z");
+    writeLocalIntakeCaseVersion(1);
     const freshIntake = { ...baseIntake, company_name: "Someone else's edit" };
     fetchMock.mockResolvedValueOnce(
       jsonResponse(409, {
         error: "Case was updated concurrently. Reload and retry.",
-        current: { intake: freshIntake, updated_at: "2026-01-02T00:00:00.000Z" },
+        current: { intake: freshIntake, case_version: 2 },
       })
     );
 
@@ -134,19 +121,20 @@ describe("patchJusticeCaseIntake", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // exactly one PATCH attempt — no automatic retry
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toBe("conflict");
-      expect(result.current?.updatedAt).toBe("2026-01-02T00:00:00.000Z");
+    if (!result.ok && result.reason === "conflict") {
+      expect(result.current.caseVersion).toBe(2);
+    } else {
+      throw new Error("expected a conflict result");
     }
     // Reconciliation: the locally cached version and intake now reflect the ACTUAL server state,
     // not the stale write that was attempted — so the next call uses the correct token.
-    expect(readLocalIntakeUpdatedAt()).toBe("2026-01-02T00:00:00.000Z");
+    expect(readLocalIntakeCaseVersion()).toBe(2);
     expect(JSON.parse(sessionStorage.getItem(STORAGE_INTAKE) ?? "null")).toEqual(freshIntake);
   });
 
   it("a missing precondition (server rejects with 400) is never silently treated as success", async () => {
-    writeLocalIntakeUpdatedAt("2026-01-01T00:00:00.000Z");
-    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "Invalid expected_updated_at" }));
+    writeLocalIntakeCaseVersion(1);
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "Invalid expected_case_version" }));
 
     const result = await patchJusticeCaseIntake(CASE_ID, baseIntake);
     expect(result.ok).toBe(false);

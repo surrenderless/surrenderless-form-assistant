@@ -18,6 +18,7 @@ type CaseRow = {
   payment_dispute_draft?: unknown;
   timeline: unknown[];
   updated_at: string;
+  case_version: number;
   orphan_recovery_confirmed_at?: string | null;
 };
 type TaskRow = {
@@ -35,7 +36,7 @@ type Store = {
   cases: CaseRow[];
   tasks: TaskRow[];
   nextTaskId?: number;
-  /** Forces every justice_cases CAS write in this test to fail once with a stale-updated_at
+  /** Forces every justice_cases CAS write in this test to fail once with a stale-case_version
    *  conflict before succeeding — simulates a concurrent writer winning the race. */
   conflictOnFirstCaseWrite?: boolean;
   failTaskInsert?: boolean;
@@ -53,7 +54,7 @@ function makeSupabase(store: Store): SupabaseClient {
     if (table === "justice_cases") {
       const state: {
         op: "select" | "update";
-        filters: Record<string, string>;
+        filters: Record<string, string | number>;
         isNullFilters: string[];
         payload?: Record<string, unknown>;
       } = { op: "select", filters: {}, isNullFilters: [] };
@@ -64,7 +65,7 @@ function makeSupabase(store: Store): SupabaseClient {
             (c) =>
               c.id === state.filters.id &&
               c.user_id === state.filters.user_id &&
-              (state.filters.updated_at === undefined || c.updated_at === state.filters.updated_at) &&
+              (state.filters.case_version === undefined || c.case_version === state.filters.case_version) &&
               state.isNullFilters.every(
                 (col) => (c as unknown as Record<string, unknown>)[col] == null
               )
@@ -76,6 +77,7 @@ function makeSupabase(store: Store): SupabaseClient {
           }
           Object.assign(row, state.payload);
           row.updated_at = bumpUpdatedAt();
+          row.case_version += 1;
           return { data: { id: row.id }, error: null };
         }
         const row = store.cases.find(
@@ -96,7 +98,7 @@ function makeSupabase(store: Store): SupabaseClient {
           state.payload = payload;
           return builder;
         },
-        eq: (col: string, val: string) => {
+        eq: (col: string, val: string | number) => {
           state.filters[col] = val;
           return builder;
         },
@@ -210,6 +212,7 @@ function baseCase(overrides: Partial<CaseRow> = {}): CaseRow {
     paid_at: new Date().toISOString(),
     timeline: [],
     updated_at: "2026-08-01T00:00:00.000Z",
+    case_version: 1,
     ...overrides,
   };
 }
@@ -411,7 +414,7 @@ describe("finalizePaidPreparedPacketApproval", () => {
 
   it("exhausts retries and reports conflict_retries_exhausted under a permanent conflict", async () => {
     const store: Store = { cases: [baseCase()], tasks: [] };
-    // Simulate a permanent stale-updated_at mismatch: the row's updated_at never matches what
+    // Simulate a permanent stale-case_version mismatch: the row's case_version never matches what
     // any read will see, on every attempt.
     const original = store.cases[0];
     const brokenSupabase: SupabaseClient = {

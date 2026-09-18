@@ -8,7 +8,7 @@ import { updateClientStateIfUnchanged } from "@/lib/justice/updateClientStateIfU
 import type { JusticeApprovedNextAction, JusticeIntake } from "@/lib/justice/types";
 
 const CASE_SELECT =
-  "id, user_id, client_state, intake, paid_at, payment_dispute_draft, updated_at, orphan_recovery_confirmed_at" as const;
+  "id, user_id, client_state, intake, paid_at, payment_dispute_draft, case_version, orphan_recovery_confirmed_at" as const;
 
 export type FinalizePaidPreparedPacketApprovalResult =
   | { status: "finalized" }
@@ -37,9 +37,10 @@ export type FinalizePaidPreparedPacketApprovalResult =
  * Requires paid_at already set (never grants payment itself — that remains the webhook's own
  * separate, prior step). Safe against duplicate/concurrent invocation: re-reads fresh state and
  * re-checks prepared_packet_approved on every attempt, and writes via updateClientStateIfUnchanged
- * (optimistic concurrency on justice_cases.updated_at) so a losing concurrent writer — another
- * redelivered webhook, a lagging browser PATCH, a cron reconciler pass — retries against fresh
- * state instead of silently clobbering whichever attempt wins the race.
+ * (optimistic concurrency on justice_cases.case_version, a monotonic integer — never updated_at)
+ * so a losing concurrent writer — another redelivered webhook, a lagging browser PATCH, a cron
+ * reconciler pass — retries against fresh state instead of silently clobbering whichever attempt
+ * wins the race.
  *
  * Idempotent task-creation retry: the CAS write (prepared_packet_approved + approved_next_action)
  * and the fulfillment-task ensure are two separate steps, so a prior call can have durably
@@ -130,7 +131,7 @@ export async function finalizePaidPreparedPacketApproval(
       const writeResult = await updateClientStateIfUnchanged(supabase, {
         caseId,
         userId,
-        expectedUpdatedAt: caseRow.updated_at as string,
+        expectedCaseVersion: caseRow.case_version as number,
         clientState: nextClientState,
       });
 
