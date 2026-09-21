@@ -1,10 +1,11 @@
 import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
-import { writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
+import { clearUnsavedIntakeDraft, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import {
   STORAGE_CASE_ID,
   STORAGE_INTAKE,
+  STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID,
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
 import {
@@ -53,6 +54,15 @@ export function isEditingActiveLocalJusticeCase(): boolean {
 export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeIntake | null {
   if (typeof window === "undefined") return null;
   if (!row.id || !isJusticeIntakePayload(row.intake)) return null;
+  // A durable unsaved-draft marker (see patchJusticeCaseIntake.ts) belonging to a DIFFERENT case
+  // than the one being hydrated here is stale — a genuine case switch, not the same conflict flow
+  // that just wrote it — so drop it rather than let it resurrect against the wrong case later.
+  // Never clear one that already matches `row.id`: that could be the exact marker a caller in this
+  // same conflict/missing_version flow just wrote moments before calling this function.
+  const existingDraftCaseId = sessionStorage.getItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID);
+  if (existingDraftCaseId && existingDraftCaseId !== row.id) {
+    clearUnsavedIntakeDraft();
+  }
   sessionStorage.setItem(STORAGE_CASE_ID, row.id);
   sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
   // Cache the case_version this intake was read at — every subsequent intake-bearing PATCH sends

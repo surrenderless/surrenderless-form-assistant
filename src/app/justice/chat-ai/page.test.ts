@@ -648,9 +648,26 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
     expect(dirtyBranchMatch).not.toBeNull();
     expect(dirtyBranchMatch![1]).toMatch(/setPendingCaseReconciliation\(/);
     expect(dirtyBranchMatch![1]).not.toMatch(/setParts\(/);
+    // The dirty branch must durably stash the current draft BEFORE stashing the pending
+    // reconciliation, so a refresh/navigation while the banner is unresolved can still recover it.
+    expect(dirtyBranchMatch![1]).toMatch(/writeUnsavedIntakeDraft\(/);
+    expect(dirtyBranchMatch![1].indexOf("writeUnsavedIntakeDraft(")).toBeLessThan(
+      dirtyBranchMatch![1].indexOf("setPendingCaseReconciliation(")
+    );
     // The clean path (after the dirty check) is the only place this effect calls setParts.
     const afterDirtyBranch = effectBody.slice(effectBody.indexOf(dirtyBranchMatch![0]) + dirtyBranchMatch![0].length);
     expect(afterDirtyBranch).toMatch(/setParts\(freshParts\)/);
+  });
+
+  it("the reload-reconciliation effect's dirty check reads the draft via partsRef.current, never the closed-over `parts` — the effect's deps are [isLoaded] only, so a bare `parts` read would be stale by the time the async fetch resolves", () => {
+    const effectMatch = pageSource.match(
+      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
+    );
+    expect(effectMatch).not.toBeNull();
+    const effectBody = effectMatch![0];
+    // The dirty check itself must use the ref, not the closure variable.
+    expect(effectBody).toMatch(/areBuildJusticeIntakePartsDirty\(sessionBaselinePartsRef\.current, partsRef\.current\)/);
+    expect(effectBody).not.toMatch(/areBuildJusticeIntakePartsDirty\(sessionBaselinePartsRef\.current, parts\)/);
   });
 
   it("both Save buttons are disabled while a reconciliation is pending, blocking a write against a superseded local snapshot", () => {
@@ -679,13 +696,42 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
     expect(pageSource).toMatch(/function resolveCaseReconciliationUseServer\(\)/);
     expect(pageSource).toMatch(/onClick=\{resolveCaseReconciliationKeepLocal\}/);
     expect(pageSource).toMatch(/onClick=\{resolveCaseReconciliationUseServer\}/);
-    // "Keep local" must never touch parts/STORAGE_INTAKE — only the CAS token is realigned.
+    // "Keep local" never resets React state via setParts (the in-memory draft IS what's being
+    // kept — nothing to re-apply) but MUST durably promote that draft into STORAGE_INTAKE (via
+    // partsRef.current, so it survives a refresh even before the next save succeeds) and clear
+    // the now-superseded unsaved-draft marker, alongside realigning the CAS token.
     const keepLocalMatch = pageSource.match(
       /function resolveCaseReconciliationKeepLocal\(\) \{([\s\S]*?)\n {2}\}/
     );
     expect(keepLocalMatch).not.toBeNull();
     expect(keepLocalMatch![1]).not.toMatch(/setParts\(/);
     expect(keepLocalMatch![1]).toMatch(/writeLocalIntakeCaseVersion\(/);
+    expect(keepLocalMatch![1]).toMatch(/sessionStorage\.setItem\(STORAGE_INTAKE, JSON\.stringify\(buildJusticeIntakeFromParts\(partsRef\.current\)\)\)/);
+    expect(keepLocalMatch![1]).toMatch(/clearUnsavedIntakeDraft\(\)/);
+
+    // "Use server version" must discard the unsaved-draft marker — it is the only choice allowed
+    // to replace the local draft.
+    const useServerMatch = pageSource.match(
+      /function resolveCaseReconciliationUseServer\(\) \{([\s\S]*?)\n {2}\}/
+    );
+    expect(useServerMatch).not.toBeNull();
+    expect(useServerMatch![1]).toMatch(/clearUnsavedIntakeDraft\(\)/);
+    expect(useServerMatch![1]).toMatch(/sessionStorage\.setItem\(STORAGE_INTAKE, JSON\.stringify\(serverIntake\)\)/);
+  });
+
+  it("the mount effect restores an unresolved unsaved draft (writeUnsavedIntakeDraft from a prior conflict) and re-opens the reconciliation banner, instead of silently treating the server snapshot just loaded into STORAGE_INTAKE as the user's committed content", () => {
+    const mountEffectMatch = pageSource.match(
+      /useEffect\(\(\) => \{\r?\n {4}const intake = readValidLocalJusticeIntake\(\);[\s\S]*?\n {2}\}, \[\]\);/
+    );
+    expect(mountEffectMatch).not.toBeNull();
+    const body = mountEffectMatch![0];
+    expect(body).toMatch(/readUnsavedIntakeDraft\(caseId\)/);
+    expect(body).toMatch(/setPendingCaseReconciliation\(\{\s*\n\s*reason: "reload",\s*\n\s*serverIntake: intake,/);
+    // Restoring the draft as the working copy must happen via setParts on the draft content, not
+    // the server snapshot.
+    const draftBranchMatch = body.match(/if \(draft && serverCaseVersion !== null\) \{([\s\S]*?)\n {6}\}/);
+    expect(draftBranchMatch).not.toBeNull();
+    expect(draftBranchMatch![1]).toMatch(/setParts\(justiceIntakeToBuildJusticeIntakeParts\(draft\)\)/);
   });
 
   it("documentMerchantContact conflict/missing_version handling stashes a reconciliation snapshot instead of resyncing parts directly from session storage", () => {

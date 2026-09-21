@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearUnsavedIntakeDraft,
   patchJusticeCaseIntake,
   readLocalIntakeCaseVersion,
+  readUnsavedIntakeDraft,
   writeLocalIntakeCaseVersion,
 } from "@/lib/justice/patchJusticeCaseIntake";
-import { STORAGE_INTAKE } from "@/lib/justice/types";
+import { STORAGE_INTAKE, STORAGE_INTAKE_UNSAVED_DRAFT, STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -139,5 +141,106 @@ describe("patchJusticeCaseIntake", () => {
     const result = await patchJusticeCaseIntake(CASE_ID, baseIntake);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("request_failed");
+  });
+});
+
+describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my changes must survive a refresh)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    stubSessionStorage();
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("on a 409, stashes the local draft that failed to save BEFORE installing server content into STORAGE_INTAKE — recoverable via readUnsavedIntakeDraft even after STORAGE_INTAKE has moved on", async () => {
+    writeLocalIntakeCaseVersion(1);
+    const localDraft = { ...baseIntake, story: "My in-progress edit" };
+    const serverIntake = { ...baseIntake, company_name: "Someone else's edit" };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(409, { error: "conflict", current: { intake: serverIntake, case_version: 2 } })
+    );
+
+    await patchJusticeCaseIntake(CASE_ID, localDraft);
+
+    // STORAGE_INTAKE now holds the server's content (existing, intended behavior)...
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_INTAKE) ?? "null")).toEqual(serverIntake);
+    // ...but the user's actual draft is NOT lost: it survives independently, keyed to this case,
+    // exactly as if a page refresh had happened right after the conflict (nothing here resets
+    // sessionStorage between the write above and this read, the same guarantee real sessionStorage
+    // gives across a same-tab refresh/navigation).
+    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(localDraft);
+  });
+
+  it("on missing_version, stashes the local draft before the caller's refresh installs server content", async () => {
+    // No cached version — patchJusticeCaseIntake refuses to write.
+    const localDraft = { ...baseIntake, story: "Typed before ever syncing a version" };
+    const result = await patchJusticeCaseIntake(CASE_ID, localDraft);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("missing_version");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(localDraft);
+  });
+
+  it("a stashed draft is scoped to its case id — does not leak into a lookup for a different case", async () => {
+    writeLocalIntakeCaseVersion(1);
+    const localDraft = { ...baseIntake, story: "Draft for case A" };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(409, { error: "conflict", current: { intake: baseIntake, case_version: 2 } })
+    );
+    await patchJusticeCaseIntake(CASE_ID, localDraft);
+
+    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(localDraft);
+    expect(readUnsavedIntakeDraft("550e8400-e29b-41d4-a716-446655440099")).toBeNull();
+  });
+
+  it("repeated conflicts each overwrite the stashed draft with the NEWEST local edit, never a stale earlier one", async () => {
+    writeLocalIntakeCaseVersion(1);
+    const firstDraft = { ...baseIntake, story: "First attempt" };
+    const secondDraft = { ...baseIntake, story: "Second attempt, after seeing the first conflict" };
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse(409, { error: "conflict", current: { intake: baseIntake, case_version: 2 } })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(409, { error: "conflict", current: { intake: baseIntake, case_version: 3 } })
+      );
+
+    await patchJusticeCaseIntake(CASE_ID, firstDraft);
+    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(firstDraft);
+
+    await patchJusticeCaseIntake(CASE_ID, secondDraft);
+    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(secondDraft);
+  });
+
+  it("on success, clears any stashed draft marker for this case — nothing left to misclassify on a later reload", async () => {
+    writeLocalIntakeCaseVersion(1);
+    // First, produce a stashed draft via a conflict...
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(409, { error: "conflict", current: { intake: baseIntake, case_version: 2 } })
+    );
+    await patchJusticeCaseIntake(CASE_ID, { ...baseIntake, story: "Will be superseded by a real save" });
+    expect(readUnsavedIntakeDraft(CASE_ID)).not.toBeNull();
+
+    // ...then a subsequent save against the now-current version succeeds.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { intake: baseIntake, case_version: 3, timeline: [] })
+    );
+    const result = await patchJusticeCaseIntake(CASE_ID, baseIntake);
+    expect(result.ok).toBe(true);
+    expect(readUnsavedIntakeDraft(CASE_ID)).toBeNull();
+  });
+
+  it("clearUnsavedIntakeDraft removes both the draft and its case-id marker", () => {
+    writeLocalIntakeCaseVersion(1);
+    sessionStorage.setItem(STORAGE_INTAKE_UNSAVED_DRAFT, JSON.stringify(baseIntake));
+    sessionStorage.setItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID, CASE_ID);
+    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(baseIntake);
+    clearUnsavedIntakeDraft();
+    expect(readUnsavedIntakeDraft(CASE_ID)).toBeNull();
   });
 });

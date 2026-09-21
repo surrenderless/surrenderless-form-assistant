@@ -206,9 +206,12 @@ import {
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
 import {
+  clearUnsavedIntakeDraft,
   patchJusticeCaseIntake,
   readLocalIntakeCaseVersion,
+  readUnsavedIntakeDraft,
   writeLocalIntakeCaseVersion,
+  writeUnsavedIntakeDraft,
 } from "@/lib/justice/patchJusticeCaseIntake";
 import { areBuildJusticeIntakePartsDirty } from "@/lib/justice/buildJusticeIntakePartsDirty";
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
@@ -4518,6 +4521,25 @@ export default function JusticeChatAiPage() {
       sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
       setParts(hydrated);
       setIsUpdatingExistingCase(true);
+
+      // A conflict/missing-version/reload-reconciliation helper may have installed this server
+      // snapshot into STORAGE_INTAKE while this tab still had an unreconciled local draft stashed
+      // durably (writeUnsavedIntakeDraft) — e.g. the user refreshed or navigated away before
+      // choosing "Keep my changes" / "Use server version". Restore the draft as the working copy
+      // and re-open the same choice, instead of silently treating `hydrated` (the server content
+      // just loaded above) as though it were the user's committed intake.
+      const caseId =
+        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+      const serverCaseVersion = readLocalIntakeCaseVersion();
+      const draft = caseId ? readUnsavedIntakeDraft(caseId) : null;
+      if (draft && serverCaseVersion !== null) {
+        setParts(justiceIntakeToBuildJusticeIntakeParts(draft));
+        setPendingCaseReconciliation({
+          reason: "reload",
+          serverIntake: intake,
+          serverCaseVersion,
+        });
+      }
     } else {
       // No committed case yet — restore a pre-commit intake draft (if any) instead. Replaces
       // (never appends to) the initial opening-greeting message, so this cannot duplicate turns.
@@ -4555,7 +4577,18 @@ export default function JusticeChatAiPage() {
       if (serverVersion === null || serverVersion === cachedVersion) return;
       if (!isJusticeIntakePayload(row.intake)) return;
 
-      if (areBuildJusticeIntakePartsDirty(sessionBaselinePartsRef.current, parts)) {
+      // Read the CURRENT draft via partsRef.current, not the closed-over `parts` — this effect's
+      // dependency array is [isLoaded] (true once, near mount), so its closure over `parts` is
+      // fixed at creation time. If the user types while fetchJusticeCaseById above is in flight, a
+      // direct `parts` read here would evaluate dirtiness against a stale (pre-edit) snapshot and
+      // could misclassify a now-genuinely-dirty draft as clean. partsRef.current (kept current on
+      // every render body execution — see its declaration) always reflects the latest value
+      // regardless of when this async callback resolves; the same pattern already used elsewhere
+      // in this file for this exact class of bug (see its other call sites below).
+      if (areBuildJusticeIntakePartsDirty(sessionBaselinePartsRef.current, partsRef.current)) {
+        // Durably stash the draft before this banner can be lost to a refresh/navigation that
+        // happens before the user chooses — mirrors the save-path stash in patchJusticeCaseIntake.
+        writeUnsavedIntakeDraft(caseId, buildJusticeIntakeFromParts(partsRef.current));
         setPendingCaseReconciliation({
           reason: "reload",
           serverIntake: row.intake,
@@ -4564,6 +4597,7 @@ export default function JusticeChatAiPage() {
         return;
       }
 
+      clearUnsavedIntakeDraft();
       const fresh = hydrateSessionFromCaseListRow(row);
       if (!fresh || cancelled) return;
       const freshParts = justiceIntakeToBuildJusticeIntakeParts(fresh);
@@ -4578,13 +4612,20 @@ export default function JusticeChatAiPage() {
   /**
    * User chose to keep editing their own local draft rather than adopt the server's fresh
    * content — a deliberate, informed decision to overwrite whatever's on the server on the next
-   * save, not a silent one. Only the CAS token is aligned to the server's current value (so that
-   * deliberate save can actually succeed instead of hitting yet another conflict); `parts` and
-   * STORAGE_INTAKE are never touched by this choice.
+   * save, not a silent one. Promotes the CURRENT draft (via partsRef.current, so it reflects any
+   * edits made while this banner was showing) into STORAGE_INTAKE so it durably survives a
+   * refresh/navigation even before the next save succeeds — never leaving the server snapshot
+   * installed earlier as the only thing sessionStorage has to hydrate from. Aligns the cached
+   * case_version to the server's current value so that deliberate save can actually succeed
+   * instead of hitting yet another conflict, and clears the now-superseded unsaved-draft marker.
    */
   function resolveCaseReconciliationKeepLocal() {
     if (!pendingCaseReconciliation) return;
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(buildJusticeIntakeFromParts(partsRef.current)));
+    }
     writeLocalIntakeCaseVersion(pendingCaseReconciliation.serverCaseVersion);
+    clearUnsavedIntakeDraft();
     setPendingCaseReconciliation(null);
   }
 
@@ -4597,6 +4638,7 @@ export default function JusticeChatAiPage() {
     if (typeof window !== "undefined") {
       sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(serverIntake));
     }
+    clearUnsavedIntakeDraft();
     setParts(freshParts);
     sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
     setPendingCaseReconciliation(null);

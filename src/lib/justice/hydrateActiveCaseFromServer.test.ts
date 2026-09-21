@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isEditingActiveLocalJusticeCase } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { hydrateSessionFromCaseListRow, isEditingActiveLocalJusticeCase } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { readUnsavedIntakeDraft, writeUnsavedIntakeDraft } from "@/lib/justice/patchJusticeCaseIntake";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -68,5 +69,34 @@ describe("isEditingActiveLocalJusticeCase", () => {
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(validIntake));
     sessionStorage.setItem(STORAGE_CASE_ID, UUID);
     expect(isEditingActiveLocalJusticeCase()).toBe(true);
+  });
+});
+
+describe("hydrateSessionFromCaseListRow — unsaved-draft marker case-scoping", () => {
+  beforeEach(() => {
+    stubSessionStorage();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const OTHER_UUID = "550e8400-e29b-41d4-a716-446655440099";
+
+  it("clears a stale unsaved-draft marker left over from a DIFFERENT case", () => {
+    writeUnsavedIntakeDraft(OTHER_UUID, { ...validIntake, story: "Stale draft from a prior case" });
+    expect(readUnsavedIntakeDraft(OTHER_UUID)).not.toBeNull();
+
+    hydrateSessionFromCaseListRow({ id: UUID, intake: validIntake, case_version: 1 });
+
+    expect(readUnsavedIntakeDraft(OTHER_UUID)).toBeNull();
+  });
+
+  it("does NOT clear an unsaved-draft marker that already belongs to the case being hydrated — this is exactly the moment a conflict/missing_version helper writes it", () => {
+    writeUnsavedIntakeDraft(UUID, { ...validIntake, story: "Draft just stashed by this same conflict flow" });
+
+    hydrateSessionFromCaseListRow({ id: UUID, intake: validIntake, case_version: 1 });
+
+    expect(readUnsavedIntakeDraft(UUID)).toEqual({ ...validIntake, story: "Draft just stashed by this same conflict flow" });
   });
 });
