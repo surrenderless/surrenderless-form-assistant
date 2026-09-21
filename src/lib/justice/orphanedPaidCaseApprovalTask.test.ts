@@ -24,6 +24,7 @@ type TaskRow = {
 type Store = {
   tasks: TaskRow[];
   timeline: unknown[];
+  caseVersion?: number;
   failSelect?: boolean;
   failUpdate?: boolean;
 };
@@ -109,18 +110,39 @@ function makeSupabase(store: Store): SupabaseClient {
         select: () => ({
           eq: () => ({
             eq: () => ({
-              maybeSingle: async () => ({ data: { timeline: store.timeline }, error: null }),
+              maybeSingle: async () => ({
+                data: { timeline: store.timeline, case_version: store.caseVersion ?? 1 },
+                error: null,
+              }),
             }),
           }),
         }),
-        update: () => ({
-          eq: () => ({
-            eq: () => ({
-              then: (onF: (v: unknown) => unknown) =>
-                Promise.resolve({ data: null, error: null }).then(onF),
+        update: (payload: Record<string, unknown>) => {
+          const filters: Record<string, unknown> = {};
+          const chain = {
+            eq: (col: string, val: unknown) => {
+              filters[col] = val;
+              return chain;
+            },
+            select: () => ({
+              maybeSingle: async () => {
+                const currentVersion = store.caseVersion ?? 1;
+                if (
+                  Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                  filters.case_version !== currentVersion
+                ) {
+                  return { data: null, error: null };
+                }
+                if (Object.prototype.hasOwnProperty.call(payload, "timeline")) {
+                  store.timeline = payload.timeline as unknown[];
+                }
+                store.caseVersion = currentVersion + 1;
+                return { data: { id: String(filters.id ?? "") }, error: null };
+              },
             }),
-          }),
-        }),
+          };
+          return chain;
+        },
       } as unknown as ReturnType<SupabaseClient["from"]>;
     }
 

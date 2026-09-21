@@ -362,7 +362,7 @@ describe("chat-ai page next-action precedence redesign", () => {
 
   it("hides the standalone bottom Save button once any dedicated review/approval/tracking state exists", () => {
     const match = pageSource.match(
-      /\{!dedicatedActionActive \? \(\s*\n\s*<button\s*\n\s*type="button"\s*\n\s*disabled=\{submitting \|\| loading \|\| basicsMissing\.length > 0\}\s*\n\s*onClick=\{\(\) => void handleContinueToPreview\(\)\}/
+      /\{!dedicatedActionActive \? \(\s*\n\s*<button\s*\n\s*type="button"\s*\n\s*disabled=\{submitting \|\| loading \|\| basicsMissing\.length > 0 \|\| Boolean\(pendingCaseReconciliation\)\}\s*\n\s*onClick=\{\(\) => void handleContinueToPreview\(\)\}/
     );
     expect(match).not.toBeNull();
   });
@@ -629,5 +629,80 @@ describe("chat-ai page cancelled-checkout acknowledgment", () => {
   it("does not touch the success-path confirmation copy/logic", () => {
     expect(pageSource).toMatch(/CHECKOUT_CONFIRMING_PAYMENT_MESSAGE/);
     expect(pageSource).toMatch(/confirmPaymentWithBackoff/);
+  });
+});
+
+describe("chat-ai reload/conflict reconciliation never silently discards an unsaved draft", () => {
+  it("the reload-reconciliation effect checks dirty state via areBuildJusticeIntakePartsDirty before ever deciding what to do with the fresh server row", () => {
+    const effectMatch = pageSource.match(
+      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
+    );
+    expect(effectMatch).not.toBeNull();
+    const effectBody = effectMatch![0];
+    expect(effectBody).toMatch(/areBuildJusticeIntakePartsDirty\(/);
+    // The dirty branch must stash the fresh snapshot and return — never call setParts directly in
+    // that branch, which would silently discard the in-progress local draft.
+    const dirtyBranchMatch = effectBody.match(
+      /if \(areBuildJusticeIntakePartsDirty\([\s\S]*?\)\) \{([\s\S]*?)\n {6}\}/
+    );
+    expect(dirtyBranchMatch).not.toBeNull();
+    expect(dirtyBranchMatch![1]).toMatch(/setPendingCaseReconciliation\(/);
+    expect(dirtyBranchMatch![1]).not.toMatch(/setParts\(/);
+    // The clean path (after the dirty check) is the only place this effect calls setParts.
+    const afterDirtyBranch = effectBody.slice(effectBody.indexOf(dirtyBranchMatch![0]) + dirtyBranchMatch![0].length);
+    expect(afterDirtyBranch).toMatch(/setParts\(freshParts\)/);
+  });
+
+  it("both Save buttons are disabled while a reconciliation is pending, blocking a write against a superseded local snapshot", () => {
+    const saveAndContinueMatch = pageSource.match(
+      /disabled=\{submitting \|\| loading \|\| basicsMissing\.length > 0 \|\| Boolean\(pendingCaseReconciliation\)\}/
+    );
+    const saveChangesMatch = pageSource.match(
+      /disabled=\{submitting \|\| loading \|\| Boolean\(pendingCaseReconciliation\)\}/
+    );
+    expect(saveAndContinueMatch).not.toBeNull();
+    expect(saveChangesMatch).not.toBeNull();
+  });
+
+  it("handleContinueToPreview refuses to save while a reconciliation is pending, rather than silently proceeding", () => {
+    const fnMatch = pageSource.match(
+      /async function handleContinueToPreview\(\): Promise<boolean> \{([\s\S]*?)\n {2}\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const head = fnMatch![1]!.slice(0, 600);
+    expect(head).toMatch(/if \(pendingCaseReconciliation\) \{/);
+    expect(head).toMatch(/return false;/);
+  });
+
+  it("offers an explicit two-way choice (keep local vs use server) rather than auto-resolving, and neither handler silently retries a stale write", () => {
+    expect(pageSource).toMatch(/function resolveCaseReconciliationKeepLocal\(\)/);
+    expect(pageSource).toMatch(/function resolveCaseReconciliationUseServer\(\)/);
+    expect(pageSource).toMatch(/onClick=\{resolveCaseReconciliationKeepLocal\}/);
+    expect(pageSource).toMatch(/onClick=\{resolveCaseReconciliationUseServer\}/);
+    // "Keep local" must never touch parts/STORAGE_INTAKE — only the CAS token is realigned.
+    const keepLocalMatch = pageSource.match(
+      /function resolveCaseReconciliationKeepLocal\(\) \{([\s\S]*?)\n {2}\}/
+    );
+    expect(keepLocalMatch).not.toBeNull();
+    expect(keepLocalMatch![1]).not.toMatch(/setParts\(/);
+    expect(keepLocalMatch![1]).toMatch(/writeLocalIntakeCaseVersion\(/);
+  });
+
+  it("documentMerchantContact conflict/missing_version handling stashes a reconciliation snapshot instead of resyncing parts directly from session storage", () => {
+    expect(pageSource).not.toMatch(/resync the in-memory form so the next attempt/);
+    const fnMatch = pageSource.match(
+      /async function persistMerchantContactDocumentationFromChat\([\s\S]*?\n {2}\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    expect(fnMatch![0]).toMatch(/setPendingCaseReconciliation\(/);
+  });
+
+  it("POST-create and list hydration paths cache case_version alongside intake — a create/list response with case_version now flows through commitIntakeToSessionAndServer/hydrateSessionFromCaseListRow", () => {
+    // page.tsx itself never reads response.case_version directly (that plumbing lives in the
+    // shared helpers under test in commitIntakeToSessionAndServer.test.ts and
+    // hydrateActiveCaseFromServer.test.ts) — this just guards that the reload effect and the
+    // create/update flow still route through those real helpers, not a local re-implementation.
+    expect(pageSource).toMatch(/hydrateSessionFromCaseListRow\(/);
+    expect(pageSource).toMatch(/commitIntakeToSessionAndServer\(/);
   });
 });

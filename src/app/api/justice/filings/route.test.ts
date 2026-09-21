@@ -22,13 +22,19 @@ vi.mock("@supabase/supabase-js", () => ({
           select: (cols: string) => ({
             eq: () => ({
               eq: () => ({
-                maybeSingle: cols === "timeline" ? mockTimelineSelectMaybeSingle : mockCaseSelectMaybeSingle,
+                maybeSingle: cols.startsWith("timeline") ? mockTimelineSelectMaybeSingle : mockCaseSelectMaybeSingle,
               }),
             }),
           }),
           update: (patch: Record<string, unknown>) => ({
             eq: () => ({
-              eq: async () => mockTimelineUpdate(patch),
+              eq: () => ({
+                eq: () => ({
+                  select: () => ({
+                    maybeSingle: async () => mockTimelineUpdate(patch),
+                  }),
+                }),
+              }),
             }),
           }),
         };
@@ -66,8 +72,8 @@ describe("POST /api/justice/filings destination validation", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
     vi.mocked(getUserOr401).mockReturnValue(USER_ID);
-    mockTimelineSelectMaybeSingle.mockResolvedValue({ data: { timeline: [] }, error: null });
-    mockTimelineUpdate.mockResolvedValue({ error: null });
+    mockTimelineSelectMaybeSingle.mockResolvedValue({ data: { timeline: [], case_version: 1 }, error: null });
+    mockTimelineUpdate.mockResolvedValue({ data: { id: CASE_ID }, error: null });
     mockFilingInsertSingle.mockResolvedValue({
       data: {
         id: "filing-1",

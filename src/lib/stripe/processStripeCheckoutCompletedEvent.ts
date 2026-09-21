@@ -158,6 +158,11 @@ export async function processStripeCheckoutCompletedEvent(
   }
 
   if (!caseRow.paid_at) {
+    // Narrow, idempotent guard rather than full case_version CAS: this write only ever sets
+    // paid_at from null to a real timestamp, once, and never touches intake/client_state — an
+    // .is("paid_at", null) filter is itself a real compare-and-swap on the exact field being
+    // changed, so a redelivered/duplicate webhook (Stripe's own retry guarantee) matches zero
+    // rows on the second attempt instead of re-stamping a fresh timestamp over the real one.
     const { error: updateError } = await supabase
       .from("justice_cases")
       .update({ paid_at: new Date().toISOString() })

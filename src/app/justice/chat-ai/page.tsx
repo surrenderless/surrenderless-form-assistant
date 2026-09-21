@@ -205,7 +205,13 @@ import {
   shouldShowChatInlineRealBbbComplaintReadOnlyPrep,
 } from "@/lib/justice/chatInlineApprovedPrep";
 import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
-import { patchJusticeCaseIntake, readLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
+import {
+  patchJusticeCaseIntake,
+  readLocalIntakeCaseVersion,
+  writeLocalIntakeCaseVersion,
+} from "@/lib/justice/patchJusticeCaseIntake";
+import { areBuildJusticeIntakePartsDirty } from "@/lib/justice/buildJusticeIntakePartsDirty";
+import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import {
   buildChatCapturedMerchantContactSummaryLines,
   buildMerchantContactDocumentationInputFromIntakeParts,
@@ -306,7 +312,7 @@ import type {
   JusticeIntake,
   TimelineEntry,
 } from "@/lib/justice/types";
-import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import {
   buildJusticeIntakeFromParts,
   justiceIntakeToBuildJusticeIntakeParts,
@@ -2712,6 +2718,24 @@ export default function JusticeChatAiPage() {
   const [markingSubmissionDraftReviewed, setMarkingSubmissionDraftReviewed] = useState(false);
   const [submissionDraftReviewError, setSubmissionDraftReviewError] = useState<string | null>(null);
   const [trackingSaveError, setTrackingSaveError] = useState<string | null>(null);
+  /** User-visible surface for commitIntakeToSessionAndServer's saveError — a missing/stale
+   * case_version or a failed create/update must never be console-only. Cleared on the next
+   * successful commit. */
+  const [caseUpdateSaveError, setCaseUpdateSaveError] = useState<string | null>(null);
+  /**
+   * A fresh server intake/case_version this tab hasn't reconciled with, discovered either by the
+   * passive reload-reconciliation effect or by a save attempt hitting a 409/missing-version — set
+   * ONLY when the local draft is genuinely dirty (areBuildJusticeIntakePartsDirty against
+   * sessionBaselinePartsRef). Never auto-applied: `parts` is left untouched until the user
+   * explicitly picks "keep my changes" or "use server version" below. Saving is blocked while
+   * this is set so a stale-content write is never attempted against the (now-superseded) cached
+   * version.
+   */
+  const [pendingCaseReconciliation, setPendingCaseReconciliation] = useState<{
+    reason: "reload" | "conflict" | "missing_version";
+    serverIntake: JusticeIntake;
+    serverCaseVersion: number;
+  } | null>(null);
   const [submissionDraftReviewOverride, setSubmissionDraftReviewOverride] = useState(false);
   const [draftPreviewExpanded, setDraftPreviewExpanded] = useState(false);
   const [packetPreviewExpanded, setPacketPreviewExpanded] = useState(false);
@@ -3940,14 +3964,20 @@ export default function JusticeChatAiPage() {
     });
     if (!result.ok) {
       if ("reason" in result) {
-        // Conflict/missing_version: session storage already reflects fresh server state (or is
-        // being refreshed) — resync the in-memory form so the next attempt edits from the correct
-        // baseline instead of the stale content that was just rejected.
-        const fresh = readValidLocalJusticeIntake();
-        if (fresh) {
-          const freshParts = justiceIntakeToBuildJusticeIntakeParts(fresh);
-          setParts(freshParts);
-          sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
+        // Conflict/missing_version: the documentation just entered was NOT saved. Never resync
+        // `parts` from the fresh server state here — that would silently discard it (and any
+        // other unrelated unsaved edit) the moment it's rejected. Stash the fresh snapshot for
+        // the user's own explicit choice instead.
+        if (
+          result.current &&
+          isJusticeIntakePayload(result.current.intake) &&
+          typeof result.current.caseVersion === "number"
+        ) {
+          setPendingCaseReconciliation({
+            reason: result.reason,
+            serverIntake: result.current.intake,
+            serverCaseVersion: result.current.caseVersion,
+          });
         }
         setTrackingSaveError(
           result.reason === "conflict"
@@ -4502,13 +4532,13 @@ export default function JusticeChatAiPage() {
   }, []);
 
   // Reload reconciliation: sessionStorage's cached intake/case_version survives a page refresh
-  // within the same tab, but nothing yet re-verifies it against the server on that reload. A
-  // resulting PATCH would still be CAS-safe either way (the server rejects it with a 409 per
-  // patchJusticeCaseIntake if the case moved on), but silently editing on top of outdated content
-  // until the user happens to attempt a save is exactly the reload gap this closes. Runs once per
-  // mount: fetch the case fresh and, only if its case_version has actually moved past what this
-  // tab cached, adopt the server's content and version as the new baseline in place of the stale
-  // local draft.
+  // within the same tab, but nothing yet re-verifies it against the server on that reload. Runs
+  // once per mount: fetch the case fresh and, only if its case_version has actually moved past
+  // what this tab cached, reconcile. A CLEAN local draft (identical to the session baseline — no
+  // unsaved edits) is safe to silently bring current. A DIRTY draft (the user has typed something
+  // since the last sync) must never be silently discarded: this stashes the fresh server snapshot
+  // in `pendingCaseReconciliation` and leaves `parts` untouched until the user explicitly resolves
+  // it via resolveCaseReconciliationKeepLocal/resolveCaseReconciliationUseServer below.
   useEffect(() => {
     if (!isLoaded) return;
     const caseId =
@@ -4523,6 +4553,17 @@ export default function JusticeChatAiPage() {
       if (cancelled || !row) return;
       const serverVersion = typeof row.case_version === "number" ? row.case_version : null;
       if (serverVersion === null || serverVersion === cachedVersion) return;
+      if (!isJusticeIntakePayload(row.intake)) return;
+
+      if (areBuildJusticeIntakePartsDirty(sessionBaselinePartsRef.current, parts)) {
+        setPendingCaseReconciliation({
+          reason: "reload",
+          serverIntake: row.intake,
+          serverCaseVersion: serverVersion,
+        });
+        return;
+      }
+
       const fresh = hydrateSessionFromCaseListRow(row);
       if (!fresh || cancelled) return;
       const freshParts = justiceIntakeToBuildJusticeIntakeParts(fresh);
@@ -4533,6 +4574,34 @@ export default function JusticeChatAiPage() {
       cancelled = true;
     };
   }, [isLoaded]);
+
+  /**
+   * User chose to keep editing their own local draft rather than adopt the server's fresh
+   * content — a deliberate, informed decision to overwrite whatever's on the server on the next
+   * save, not a silent one. Only the CAS token is aligned to the server's current value (so that
+   * deliberate save can actually succeed instead of hitting yet another conflict); `parts` and
+   * STORAGE_INTAKE are never touched by this choice.
+   */
+  function resolveCaseReconciliationKeepLocal() {
+    if (!pendingCaseReconciliation) return;
+    writeLocalIntakeCaseVersion(pendingCaseReconciliation.serverCaseVersion);
+    setPendingCaseReconciliation(null);
+  }
+
+  /** User chose to discard their local draft and adopt the server's current content/version. */
+  function resolveCaseReconciliationUseServer() {
+    if (!pendingCaseReconciliation) return;
+    const { serverIntake, serverCaseVersion } = pendingCaseReconciliation;
+    const freshParts = justiceIntakeToBuildJusticeIntakeParts(serverIntake);
+    writeLocalIntakeCaseVersion(serverCaseVersion);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(serverIntake));
+    }
+    setParts(freshParts);
+    sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
+    setPendingCaseReconciliation(null);
+    setCaseUpdateSaveError(null);
+  }
 
   // Signed-in, no local session and no in-progress draft — this is either a first visit or a
   // returning consumer whose sessionStorage expired (e.g. tab closed mid multi-day workflow). Try
@@ -6352,6 +6421,13 @@ export default function JusticeChatAiPage() {
   }
 
   async function handleContinueToPreview(): Promise<boolean> {
+    if (pendingCaseReconciliation) {
+      // Block saving while an unreconciled server snapshot is pending — writing now would either
+      // pair this draft with a case_version the server has already moved past (409) or, worse,
+      // silently overwrite the choice the user hasn't made yet. Resolve the banner first.
+      setCaseUpdateSaveError("Resolve the pending update above before saving.");
+      return false;
+    }
     setContactProofError(null);
     setStagedProofFlushError(null);
     const basicsMissing = getPreviewBasicsMissing(parts);
@@ -6417,6 +6493,23 @@ export default function JusticeChatAiPage() {
         commitLogLabel: "justice chat-ai",
         mode: isUpdatingExistingCase ? "update" : "create",
       });
+      // A missing/stale case_version or a failed create/update must be visible here, not just a
+      // console.warn inside commitIntakeToSessionAndServer — this is the one place on the page
+      // that knows a save was just attempted.
+      if (commitResult.serverPersisted) {
+        setCaseUpdateSaveError(null);
+      } else if (commitResult.conflict) {
+        // The user just attempted to save real content and it was refused — never silently
+        // overwrite `parts` with the server's snapshot; stash it and let them explicitly choose.
+        setPendingCaseReconciliation({
+          reason: "conflict",
+          serverIntake: commitResult.conflict.intake,
+          serverCaseVersion: commitResult.conflict.caseVersion,
+        });
+        setCaseUpdateSaveError(commitResult.saveError ?? null);
+      } else {
+        setCaseUpdateSaveError(commitResult.saveError ?? null);
+      }
       // STORAGE_INTAKE/STORAGE_CASE_ID are durable from this point on (set synchronously inside
       // commitIntakeToSessionAndServer regardless of server round-trip outcome) — the pre-commit
       // draft's protective purpose is fulfilled, so it is cleared here rather than left to expire.
@@ -8073,7 +8166,7 @@ export default function JusticeChatAiPage() {
                 {dedicatedActionActive && showSessionChangesPanel ? (
                   <button
                     type="button"
-                    disabled={submitting || loading}
+                    disabled={submitting || loading || Boolean(pendingCaseReconciliation)}
                     onClick={() => void handleContinueToPreview()}
                     className="mt-2 w-full rounded-xl border border-blue-400/80 bg-white px-4 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-100 dark:hover:bg-neutral-800"
                   >
@@ -8105,7 +8198,7 @@ export default function JusticeChatAiPage() {
           {!dedicatedActionActive ? (
             <button
               type="button"
-              disabled={submitting || loading || basicsMissing.length > 0}
+              disabled={submitting || loading || basicsMissing.length > 0 || Boolean(pendingCaseReconciliation)}
               onClick={() => void handleContinueToPreview()}
               className={
                 basicsMissing.length === 0
@@ -8115,6 +8208,42 @@ export default function JusticeChatAiPage() {
             >
               {submitting ? "Saving…" : "Save and continue in chat"}
             </button>
+          ) : null}
+          {caseUpdateSaveError ? (
+            <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">
+              {caseUpdateSaveError}
+            </p>
+          ) : null}
+          {pendingCaseReconciliation ? (
+            <div
+              className="mt-3 rounded-xl border border-amber-300/90 bg-amber-50/80 p-3 ring-1 ring-amber-600/15 dark:border-amber-700/60 dark:bg-amber-950/30 dark:ring-amber-400/10"
+              role="alert"
+            >
+              <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">
+                This case changed on the server
+              </p>
+              <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-100/90">
+                {pendingCaseReconciliation.reason === "conflict"
+                  ? "Your last save could not go through because this case was updated elsewhere. You have unsaved changes here — choose how to proceed."
+                  : "This case was updated elsewhere while you had unsaved changes here. Choose how to proceed."}
+              </p>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={resolveCaseReconciliationKeepLocal}
+                  className="w-full rounded-lg border border-amber-500/80 bg-white px-3 py-2 text-xs font-semibold text-amber-900 shadow-sm transition hover:bg-amber-50 dark:border-amber-600 dark:bg-neutral-900 dark:text-amber-100 dark:hover:bg-neutral-800"
+                >
+                  Keep my changes
+                </button>
+                <button
+                  type="button"
+                  onClick={resolveCaseReconciliationUseServer}
+                  className="w-full rounded-lg border border-amber-500/80 bg-white px-3 py-2 text-xs font-semibold text-amber-900 shadow-sm transition hover:bg-amber-50 dark:border-amber-600 dark:bg-neutral-900 dark:text-amber-100 dark:hover:bg-neutral-800"
+                >
+                  Use server version
+                </button>
+              </div>
+            </div>
           ) : null}
         </div>
 

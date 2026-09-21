@@ -235,7 +235,7 @@ export async function completeFollowUpResponseReview(
 
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
-    .select("id, user_id, intake, client_state, archived_at, payment_dispute_draft")
+    .select("id, user_id, intake, client_state, archived_at, payment_dispute_draft, case_version")
     .eq("id", caseId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -299,15 +299,24 @@ export async function completeFollowUpResponseReview(
     patch.intake = plan.intake;
   }
 
-  const { error: patchErr } = await supabase
+  // case_version-guarded: an unconditional write here could silently clobber a concurrent
+  // consumer intake/client_state PATCH landing between the read above and this write.
+  const { data: patchedRow, error: patchErr } = await supabase
     .from("justice_cases")
     .update(patch)
     .eq("id", caseId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("case_version", caseRow.case_version)
+    .select("id")
+    .maybeSingle();
 
   if (patchErr) {
     console.warn("follow-up response review complete: patch case", patchErr.message);
     return { ok: false, error: "Could not update case", status: 500 };
+  }
+  if (!patchedRow) {
+    console.warn("follow-up response review complete: case_version CAS conflict", caseId);
+    return { ok: false, error: "Case was updated concurrently. Reload and retry.", status: 409 };
   }
 
   let timeline: TimelineEntry[] | null = null;

@@ -207,7 +207,7 @@ describe("reopenDemandLetterFilingTaskForBounce", () => {
   }
 
   function makeSupabase(task: JusticeCaseTaskRow | null) {
-    const store = { task: task ? { ...task } : null, timeline: [] as unknown[] };
+    const store = { task: task ? { ...task } : null, timeline: [] as unknown[], caseVersion: 1 };
     return {
       from(table: string) {
         if (table === "justice_case_tasks") {
@@ -245,17 +245,37 @@ describe("reopenDemandLetterFilingTaskForBounce", () => {
           return {
             select: () => ({
               eq: () => ({
-                eq: () => ({ maybeSingle: async () => ({ data: { timeline: store.timeline }, error: null }) }),
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { timeline: store.timeline, case_version: store.caseVersion },
+                    error: null,
+                  }),
+                }),
               }),
             }),
-            update: (payload: Record<string, unknown>) => ({
-              eq: () => ({
-                eq: () => {
-                  store.timeline = payload.timeline as unknown[];
-                  return { data: null, error: null };
+            update: (payload: Record<string, unknown>) => {
+              const filters: Record<string, unknown> = {};
+              const chain = {
+                eq: (col: string, val: unknown) => {
+                  filters[col] = val;
+                  return chain;
                 },
-              }),
-            }),
+                select: () => ({
+                  maybeSingle: async () => {
+                    if (
+                      Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                      filters.case_version !== store.caseVersion
+                    ) {
+                      return { data: null, error: null };
+                    }
+                    store.timeline = payload.timeline as unknown[];
+                    store.caseVersion += 1;
+                    return { data: { id: CASE_ID }, error: null };
+                  },
+                }),
+              };
+              return chain;
+            },
           };
         }
         throw new Error(`unexpected table ${table}`);

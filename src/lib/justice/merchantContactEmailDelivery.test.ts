@@ -203,7 +203,7 @@ describe("recordMerchantContactEmailBounceEvent", () => {
 
   function makeBounceSupabase(filingNotes: string) {
     const filing = { id: "filing-1", user_id: USER_ID, case_id: CASE_ID, notes: filingNotes };
-    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[] };
+    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[], caseVersion: 1 };
 
     return {
       from(table: string) {
@@ -234,17 +234,37 @@ describe("recordMerchantContactEmailBounceEvent", () => {
           return {
             select: () => ({
               eq: () => ({
-                eq: () => ({ maybeSingle: async () => ({ data: { timeline: caseRow.timeline }, error: null }) }),
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { timeline: caseRow.timeline, case_version: caseRow.caseVersion },
+                    error: null,
+                  }),
+                }),
               }),
             }),
-            update: (payload: Record<string, unknown>) => ({
-              eq: () => ({
-                eq: () => {
-                  caseRow.timeline = payload.timeline as unknown[];
-                  return { data: null, error: null };
+            update: (payload: Record<string, unknown>) => {
+              const filters: Record<string, unknown> = {};
+              const chain = {
+                eq: (col: string, val: unknown) => {
+                  filters[col] = val;
+                  return chain;
                 },
-              }),
-            }),
+                select: () => ({
+                  maybeSingle: async () => {
+                    if (
+                      Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                      filters.case_version !== caseRow.caseVersion
+                    ) {
+                      return { data: null, error: null };
+                    }
+                    caseRow.timeline = payload.timeline as unknown[];
+                    caseRow.caseVersion += 1;
+                    return { data: { id: caseRow.id }, error: null };
+                  },
+                }),
+              };
+              return chain;
+            },
           };
         }
         throw new Error(`unexpected table ${table}`);
@@ -372,7 +392,7 @@ describe("recordMerchantContactEmailBounceEvent", () => {
       provider_message_id: "re_mc_2",
     });
     const task = { id: "task-1", user_id: USER_ID, case_id: CASE_ID, notes };
-    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[] };
+    const caseRow = { id: CASE_ID, user_id: USER_ID, timeline: [] as unknown[], caseVersion: 1 };
     const supabase = {
       from(table: string) {
         if (table === "justice_case_filings") {
@@ -404,17 +424,37 @@ describe("recordMerchantContactEmailBounceEvent", () => {
           return {
             select: () => ({
               eq: () => ({
-                eq: () => ({ maybeSingle: async () => ({ data: { timeline: caseRow.timeline }, error: null }) }),
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { timeline: caseRow.timeline, case_version: caseRow.caseVersion },
+                    error: null,
+                  }),
+                }),
               }),
             }),
-            update: (payload: Record<string, unknown>) => ({
-              eq: () => ({
-                eq: () => {
-                  caseRow.timeline = payload.timeline as unknown[];
-                  return { data: null, error: null };
+            update: (payload: Record<string, unknown>) => {
+              const filters: Record<string, unknown> = {};
+              const chain = {
+                eq: (col: string, val: unknown) => {
+                  filters[col] = val;
+                  return chain;
                 },
-              }),
-            }),
+                select: () => ({
+                  maybeSingle: async () => {
+                    if (
+                      Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                      filters.case_version !== caseRow.caseVersion
+                    ) {
+                      return { data: null, error: null };
+                    }
+                    caseRow.timeline = payload.timeline as unknown[];
+                    caseRow.caseVersion += 1;
+                    return { data: { id: caseRow.id }, error: null };
+                  },
+                }),
+              };
+              return chain;
+            },
           };
         }
         throw new Error(`unexpected table ${table}`);

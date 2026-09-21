@@ -71,7 +71,7 @@ type TaskRow = {
   updated_at: string;
 };
 
-type CaseRow = { id: string; user_id: string; timeline: TimelineEntry[] };
+type CaseRow = { id: string; user_id: string; timeline: TimelineEntry[]; case_version: number };
 
 type Store = {
   filings: FilingRow[];
@@ -213,31 +213,44 @@ function makeStatefulSupabase(store: Store): SupabaseClient {
   }
 
   function casesFrom() {
-    const state: { op: "select" | "update"; filters: Record<string, string>; update: Record<string, unknown> | null } =
-      { op: "select", filters: {}, update: null };
+    const state: {
+      op: "select" | "update";
+      filters: Record<string, string | number>;
+      update: Record<string, unknown> | null;
+    } = { op: "select", filters: {}, update: null };
     const builder: Record<string, unknown> = {
       select() {
         return builder;
       },
-      eq(col: string, val: string) {
+      eq(col: string, val: string | number) {
         state.filters[col] = val;
         return builder;
       },
       maybeSingle() {
         const row = store.cases.find((c) => c.id === state.filters.id && c.user_id === state.filters.user_id);
-        return Promise.resolve({ data: row ? { timeline: row.timeline } : null, error: null });
+        if (state.op === "update") {
+          if (!row) return Promise.resolve({ data: null, error: null });
+          // Faithful CAS simulation: an .eq("case_version", X) filter only matches when X equals
+          // the row's current value — mirrors real PostgREST rejecting a stale-token update.
+          if (
+            state.filters.case_version !== undefined &&
+            row.case_version !== state.filters.case_version
+          ) {
+            return Promise.resolve({ data: null, error: null });
+          }
+          row.timeline = (state.update as Record<string, unknown>).timeline as TimelineEntry[];
+          row.case_version += 1;
+          return Promise.resolve({ data: { id: row.id }, error: null });
+        }
+        return Promise.resolve({
+          data: row ? { timeline: row.timeline, case_version: row.case_version } : null,
+          error: null,
+        });
       },
       update(payload: Record<string, unknown>) {
         state.op = "update";
         state.update = payload;
         return builder;
-      },
-      then(onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) {
-        if (state.op === "update") {
-          const row = store.cases.find((c) => c.id === state.filters.id && c.user_id === state.filters.user_id);
-          if (row) row.timeline = (state.update as Record<string, unknown>).timeline as TimelineEntry[];
-        }
-        return Promise.resolve({ data: null, error: null }).then(onF, onR);
       },
     };
     return builder;
@@ -305,7 +318,7 @@ describe("stale bounce replay after successful remediation — real helpers, no 
     const store: Store = {
       filings: [filingA],
       tasks: [taskT, followUpF1],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
     };
     const supabase = makeStatefulSupabase(store);
 
@@ -426,7 +439,7 @@ describe("stale bounce replay after successful remediation — real helpers, no 
     const store: Store = {
       filings: [filingA],
       tasks: [taskT, followUpF1],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
     };
     const supabase = makeStatefulSupabase(store);
 
@@ -526,7 +539,7 @@ describe("stale bounce replay after successful remediation — real helpers, no 
     const store: Store = {
       filings: [filingA],
       tasks: [taskT, followUpF1],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
     };
     const supabase = makeStatefulSupabase(store);
 
@@ -653,7 +666,7 @@ describe("stale bounce replay when the supersession lookup itself errors — rea
     const store: Store = {
       filings: [filingA, filingB],
       tasks: [taskT, followUpF1, followUpF2],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
       filingsSelectError: true,
     };
     const supabase = makeStatefulSupabase(store);
@@ -744,7 +757,7 @@ describe("stale bounce replay when the supersession lookup itself errors — rea
     const store: Store = {
       filings: [filingA, filingB],
       tasks: [taskT, followUpF1, followUpF2],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
       filingsSelectError: true,
     };
     const supabase = makeStatefulSupabase(store);
@@ -832,7 +845,7 @@ describe("stale bounce replay when the supersession lookup itself errors — rea
     const store: Store = {
       filings: [filingA, filingB],
       tasks: [taskT, followUpF1, followUpF2],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
       filingsSelectError: true,
     };
     const supabase = makeStatefulSupabase(store);
@@ -939,7 +952,7 @@ describe("cross-lane stale bounce does not close another lane's fresh follow-up 
     const store: Store = {
       filings: [filingA, filingB],
       tasks: [taskA, taskB, followUpDemandLetter, followUpPaymentDispute],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
     };
     const supabase = makeStatefulSupabase(store);
 
@@ -1042,7 +1055,7 @@ describe("cross-lane stale bounce does not close another lane's fresh follow-up 
     const store: Store = {
       filings: [filingA, filingB],
       tasks: [taskA, taskB, followUpPaymentDispute, followUpMerchantContact],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
     };
     const supabase = makeStatefulSupabase(store);
 
@@ -1140,7 +1153,7 @@ describe("cross-lane stale bounce does not close another lane's fresh follow-up 
     const store: Store = {
       filings: [filingA, filingB],
       tasks: [taskA, taskB, followUpMerchantContact, followUpDemandLetter],
-      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [] }],
+      cases: [{ id: CASE_ID, user_id: USER_ID, timeline: [], case_version: 1 }],
     };
     const supabase = makeStatefulSupabase(store);
 

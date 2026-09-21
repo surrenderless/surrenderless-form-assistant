@@ -86,6 +86,7 @@ type MockState = {
   intake: JusticeIntake;
   responseReviewInserted: number;
   casePatched: number;
+  case_version?: number;
   evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
@@ -234,23 +235,40 @@ function createCapableSupabase(state: MockState): SupabaseClient {
                     intake: state.intake,
                     client_state: state.client_state,
                     archived_at: null,
+                    case_version: state.case_version ?? 1,
                   },
                   error: null,
                 }),
               }),
             }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: () => ({
-              eq: async () => {
-                state.casePatched += 1;
-                if (patch.client_state) {
-                  state.client_state = patch.client_state as Record<string, unknown>;
-                }
-                return { error: null };
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
               },
-            }),
-          }),
+              select: () => ({
+                maybeSingle: async () => {
+                  const currentVersion = state.case_version ?? 1;
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                    filters.case_version !== currentVersion
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  state.casePatched += 1;
+                  if (patch.client_state) {
+                    state.client_state = patch.client_state as Record<string, unknown>;
+                  }
+                  state.case_version = currentVersion + 1;
+                  return { data: { id: CASE_ID }, error: null };
+                },
+              }),
+            };
+            return chain;
+          },
         };
       }
 

@@ -1,4 +1,5 @@
 import { validate as isUuid } from "uuid";
+import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import {
@@ -15,6 +16,19 @@ export type CommitIntakeMode = "create" | "update";
 export type CommitIntakeResult = {
   caseId: string;
   serverPersisted: boolean;
+  /**
+   * Present whenever serverPersisted is false — a user-facing message the caller must surface
+   * (e.g. a banner), never just a console.warn. A prior incident let a missing/stale case_version
+   * cause this edit to be silently dropped with no trace visible to the consumer; every failure
+   * path here must instead give the caller something to show.
+   */
+  saveError?: string;
+  /**
+   * Present on a genuine version conflict or a missing-cached-version recovery — the fresh
+   * server intake + case_version for the caller's OWN explicit reconciliation UI. Never applied
+   * automatically here: the caller decides whether to keep the local draft or adopt this.
+   */
+  conflict?: { intake: JusticeIntake; caseVersion: number };
 };
 
 export type ShouldRouteToChatAiAfterIntakeCommitInput = {
@@ -94,17 +108,27 @@ async function commitIntakeUpdateToSessionAndServer({
     }
     return { caseId, serverPersisted: true };
   }
+  let saveError = "Your latest change could not be saved. Try again.";
+  let conflict: CommitIntakeResult["conflict"];
   if (result.reason === "missing_version") {
     // No cached version to pair with this write — refresh both content and case_version from the
     // server together before any further attempt, rather than ever fetching just one of the two.
-    await refreshLocalIntakeAndVersionFromServer(caseId);
+    // This never touches the caller's in-memory draft (only sessionStorage) — the caller decides,
+    // via `conflict` below, whether to keep the local draft or adopt the fresh server snapshot.
+    const refreshed = await refreshLocalIntakeAndVersionFromServer(caseId);
+    saveError = "Your latest change could not be verified against the server and was not saved. Try again.";
+    if (refreshed) conflict = refreshed;
+  } else if (result.reason === "conflict") {
+    saveError = "This case was updated elsewhere. Your latest change was not saved — reload and retry.";
+    if (isJusticeIntakePayload(result.current.intake) && typeof result.current.caseVersion === "number") {
+      conflict = { intake: result.current.intake, caseVersion: result.current.caseVersion };
+    }
   }
-  // Reconcile, never overwrite: on a genuine conflict the helper has already adopted the fresh
-  // server intake/version into session storage in place of this stale attempt, so the very next
-  // commit (this flow runs continuously as the user progresses through chat) retries against the
-  // correct version instead of repeating the same stale write.
+  // Never auto-retry or auto-overwrite: `conflict` (when present) is handed back for the
+  // caller's own explicit reconciliation UI — a "the version is now refreshed for the next
+  // attempt" outcome is not the same as "your edit was saved" or "nothing was lost".
   console.warn(`${commitLogLabel}: PATCH /api/justice/cases/[id] ${result.reason}`, result.error);
-  return { caseId, serverPersisted: false };
+  return { caseId, serverPersisted: false, saveError, ...(conflict ? { conflict } : {}) };
 }
 
 /**
@@ -137,6 +161,7 @@ export async function commitIntakeToSessionAndServer({
 
   let finalCaseId = case_id;
   let serverPersisted = false;
+  let saveError: string | undefined;
   if (isLoaded && isSignedIn) {
     const timeline = readTimeline(case_id);
     try {
@@ -154,30 +179,42 @@ export async function commitIntakeToSessionAndServer({
         };
         if (data?.id) {
           finalCaseId = data.id;
-          serverPersisted = true;
           sessionStorage.setItem(STORAGE_CASE_ID, data.id);
           if (data.intake) {
             sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
           }
           // Cache the version this create response returned — without this, the very first
           // subsequent PATCH for this case would find no cached version and refuse to write
-          // (patchJusticeCaseIntake's missing_version guard) until an explicit refresh.
-          writeLocalIntakeCaseVersion(typeof data.case_version === "number" ? data.case_version : null);
+          // (patchJusticeCaseIntake's missing_version guard) until an explicit refresh. A create
+          // response with no case_version is itself a server-side bug, not a benign edge case —
+          // surface it rather than silently leaving the case unable to accept its first edit.
+          if (typeof data.case_version === "number") {
+            writeLocalIntakeCaseVersion(data.case_version);
+            serverPersisted = true;
+          } else {
+            writeLocalIntakeCaseVersion(null);
+            console.warn(`${commitLogLabel}: POST /api/justice/cases response missing case_version`);
+            saveError =
+              "Your case was created, but the server response was incomplete. Reload before making further edits.";
+          }
           const serverTimeline = Array.isArray(data.timeline)
             ? (data.timeline as TimelineEntry[])
             : timeline;
           replaceTimelineForCase(data.id, serverTimeline, { removeCaseIds: [case_id] });
         } else {
           console.warn(`${commitLogLabel}: POST /api/justice/cases succeeded but missing id`);
+          saveError = "Your case could not be saved to the server. Try again.";
         }
       } else {
         console.warn(`${commitLogLabel}: POST /api/justice/cases failed`, res.status);
+        saveError = "Your case could not be saved to the server. Try again.";
       }
     } catch (e) {
       console.warn(`${commitLogLabel}: POST /api/justice/cases error`, e);
+      saveError = "Your case could not be saved to the server. Try again.";
     }
   }
 
   await logIntakeCompleted(finalCaseId, intake.already_contacted);
-  return { caseId: finalCaseId, serverPersisted };
+  return { caseId: finalCaseId, serverPersisted, ...(saveError ? { saveError } : {}) };
 }

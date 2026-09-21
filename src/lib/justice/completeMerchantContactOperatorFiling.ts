@@ -331,11 +331,19 @@ export async function completeMerchantContactOperatorFiling(
     timeline = contactTimeline;
   }
 
-  const { error: intakePatchErr } = await supabase
+  // case_version-guarded: an unconditional write here could silently clobber a concurrent
+  // consumer intake PATCH landing between the read above and this write. On a CAS miss, fail
+  // loudly (409) rather than overwrite — the filing/timeline work already committed above is
+  // itself idempotent-safe (see confirmedNonBouncedFiling), so a retried call is a safe no-op for
+  // that part and only re-attempts the intake write and everything after it.
+  const { data: intakeUpdateRow, error: intakePatchErr } = await supabase
     .from("justice_cases")
     .update({ intake: updatedIntake })
     .eq("id", caseId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("case_version", caseRow.case_version)
+    .select("case_version")
+    .maybeSingle();
 
   if (intakePatchErr) {
     console.warn("justice merchant contact operator: patch intake", intakePatchErr.message);
@@ -345,6 +353,18 @@ export async function completeMerchantContactOperatorFiling(
       status: 500,
     };
   }
+  if (!intakeUpdateRow) {
+    console.warn("justice merchant contact operator: intake CAS conflict", caseId);
+    return {
+      ok: false,
+      error: "Case was updated concurrently. Reload and retry.",
+      status: 409,
+    };
+  }
+  // This write just advanced case_version past caseRow's own (now-stale) value — every
+  // subsequent CAS-guarded write in this call must use this fresh value, never caseRow.case_version,
+  // or it would spuriously conflict with the write this very function just made.
+  const currentCaseVersion = intakeUpdateRow.case_version as number;
 
   const taskResult = await completeMerchantContactFilingTaskIfOpen(
     supabase,
@@ -410,7 +430,7 @@ export async function completeMerchantContactOperatorFiling(
     const casResult = await updateClientStateIfUnchanged(supabase, {
       caseId,
       userId,
-      expectedCaseVersion: caseRow.case_version,
+      expectedCaseVersion: currentCaseVersion,
       clientState,
     });
     if (!casResult.ok) {

@@ -5,6 +5,7 @@ import { followUpTaskNotesMarker } from "@/lib/justice/followUpCaseTask";
 import { followUpResponseReviewTaskNotesMarker } from "@/lib/justice/followUpResponseReviewTask";
 import { OWNED_FILING_TASK_ENSURE_RETRYABLE_ERROR } from "@/lib/justice/ensureOwnedFilingTaskAfterClientStateWrite";
 import {
+  DUE_FOLLOW_UP_CASE_VERSION_CONFLICT_RETRYABLE_ERROR,
   FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR,
   NO_RESPONSE_OUTCOME_MARKER,
   processDueFollowUps,
@@ -82,6 +83,8 @@ type MockState = {
   archived_at: string | null;
   responseReviewInserted: number;
   casePatched: number;
+  case_version?: number;
+  concurrentCaseVersionBumpOnNextRead?: boolean;
   /** When true, owned filing-task inserts fail (simulates ensure failure). */
   failOwnedFilingInsert?: boolean;
   /** When true, response-review task inserts fail (simulates ensure failure). */
@@ -254,8 +257,9 @@ function createCapableSupabase(state: MockState): SupabaseClient {
           select: () => ({
             eq: () => ({
               eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
+                maybeSingle: async () => {
+                  const version = state.case_version ?? 1;
+                  const data = {
                     id: CASE_ID,
                     user_id: USER_ID,
                     intake: state.intake,
@@ -263,23 +267,44 @@ function createCapableSupabase(state: MockState): SupabaseClient {
                     archived_at: state.archived_at,
                     payment_dispute_draft: null,
                     timeline: timelineStore.entries,
-                  },
-                  error: null,
-                }),
+                    case_version: version,
+                  };
+                  if (state.concurrentCaseVersionBumpOnNextRead) {
+                    state.concurrentCaseVersionBumpOnNextRead = false;
+                    state.case_version = version + 1;
+                  }
+                  return { data, error: null };
+                },
               }),
             }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: () => ({
-              eq: async () => {
-                state.casePatched += 1;
-                if (patch.client_state) {
-                  state.client_state = patch.client_state as Record<string, unknown>;
-                }
-                return { error: null };
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
               },
-            }),
-          }),
+              select: () => ({
+                maybeSingle: async () => {
+                  const currentVersion = state.case_version ?? 1;
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                    filters.case_version !== currentVersion
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  state.casePatched += 1;
+                  if (patch.client_state) {
+                    state.client_state = patch.client_state as Record<string, unknown>;
+                  }
+                  state.case_version = currentVersion + 1;
+                  return { data: { id: CASE_ID }, error: null };
+                },
+              }),
+            };
+            return chain;
+          },
         };
       }
       if (table === "justice_case_evidence") {
@@ -355,6 +380,62 @@ describe("processDueFollowUps", () => {
     expect(next.follow_up_needed).toBe(false);
     expect(next.outcome_note).toContain(NO_RESPONSE_OUTCOME_MARKER);
     expect(timelineStore.entries.some((e) => e.type === "outcome_recorded")).toBe(true);
+  });
+
+  it("marks failed_retryable (never silently drops or overwrites) when a concurrent writer advances case_version between the read and the client_state write", async () => {
+    const marker = followUpTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      responseReviewInserted: 0,
+      casePatched: 0,
+      ownedFilingInserted: 0,
+      case_version: 9,
+      concurrentCaseVersionBumpOnNextRead: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-06-01T00:00:00.000Z",
+          follow_up_needed: true,
+          follow_up_at: "2026-07-01T12:00:00.000Z",
+          outcome_note: "Escalation complete. Awaiting responses.",
+          handling_requested_at: "2026-06-01T00:00:00.000Z",
+        },
+      },
+      followUpTask: {
+        id: FOLLOW_UP_TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Surrenderless follow-up: Small claims / demand letter",
+        due_date: "2026-07-01",
+        notes: `${marker}\nowner_href:/justice/demand-letter\nEscalation complete.`,
+        completed_at: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+    };
+
+    const summary = await processDueFollowUps(createCapableSupabase(state), {
+      now: new Date("2026-07-15T16:00:00.000Z"),
+    });
+
+    expect(summary.failed_retryable).toBe(1);
+    expect(summary.terminal_response_review).toBe(0);
+    expect(summary.results).toContainEqual({
+      case_id: CASE_ID,
+      task_id: FOLLOW_UP_TASK_ID,
+      kind: "failed_retryable",
+      error: DUE_FOLLOW_UP_CASE_VERSION_CONFLICT_RETRYABLE_ERROR,
+    });
+    // Never wrote — the concurrent writer's client_state survives untouched, and the follow-up
+    // task stays open for the next cron pass to retry against fresh state.
+    expect(state.casePatched).toBe(0);
+    expect(state.followUpTask.completed_at).toBeNull();
+    const next = state.client_state.approved_next_action as { follow_up_needed?: boolean };
+    expect(next.follow_up_needed).toBe(true);
   });
 
   it("skips resolved cases and does not archive or invent resolution", async () => {

@@ -78,6 +78,8 @@ type MockState = {
   archived_at: string | null;
   casePatched: number;
   lastPatch: Record<string, unknown> | null;
+  case_version?: number;
+  concurrentCaseVersionBumpOnNextRead?: boolean;
   evidence?: Array<{ file_name: string | null; mime_type: string | null; file_size_bytes: number | null }>;
 };
 
@@ -89,35 +91,57 @@ function createSupabase(state: MockState): SupabaseClient {
           select: () => ({
             eq: () => ({
               eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
+                maybeSingle: async () => {
+                  const version = state.case_version ?? 1;
+                  const data = {
                     id: CASE_ID,
                     user_id: USER_ID,
                     intake: state.intake,
                     client_state: state.client_state,
                     archived_at: state.archived_at,
-                  },
-                  error: null,
-                }),
+                    case_version: version,
+                  };
+                  if (state.concurrentCaseVersionBumpOnNextRead) {
+                    state.concurrentCaseVersionBumpOnNextRead = false;
+                    state.case_version = version + 1;
+                  }
+                  return { data, error: null };
+                },
               }),
             }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: () => ({
-              eq: async () => {
-                state.casePatched += 1;
-                state.lastPatch = patch;
-                if (patch.client_state) {
-                  state.client_state = patch.client_state as Record<string, unknown>;
-                }
-                if (patch.intake) {
-                  state.intake = patch.intake as JusticeIntake;
-                }
-                expect(patch).not.toHaveProperty("archived_at");
-                return { error: null };
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
               },
-            }),
-          }),
+              select: () => ({
+                maybeSingle: async () => {
+                  const currentVersion = state.case_version ?? 1;
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                    filters.case_version !== currentVersion
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  state.casePatched += 1;
+                  state.lastPatch = patch;
+                  if (patch.client_state) {
+                    state.client_state = patch.client_state as Record<string, unknown>;
+                  }
+                  if (patch.intake) {
+                    state.intake = patch.intake as JusticeIntake;
+                  }
+                  expect(patch).not.toHaveProperty("archived_at");
+                  state.case_version = currentVersion + 1;
+                  return { data: { id: CASE_ID }, error: null };
+                },
+              }),
+            };
+            return chain;
+          },
         };
       }
       if (table === "justice_case_tasks") {
@@ -231,6 +255,56 @@ describe("completeFollowUpResponseReview", () => {
     expect(next.follow_up_needed).toBe(false);
     expect(timelineStore.entries.some((e) => e.type === "outcome_recorded")).toBe(true);
     expect(timelineStore.entries.some((e) => e.type === "task_completed")).toBe(true);
+  });
+
+  it("returns a conflict (never silently overwrites) when a concurrent writer advances case_version between the read and the write", async () => {
+    const marker = followUpResponseReviewTaskNotesMarker(CASE_ID);
+    const state: MockState = {
+      intake: retailIntake(),
+      archived_at: null,
+      casePatched: 0,
+      lastPatch: null,
+      case_version: 4,
+      concurrentCaseVersionBumpOnNextRead: true,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Small claims / demand letter",
+          href: "/justice/demand-letter",
+          status: "completed",
+          completed_at: "2026-06-01T00:00:00.000Z",
+          follow_up_needed: false,
+          outcome_note: "No response recorded by follow-up date.",
+          handling_requested_at: "2026-06-01T00:00:00.000Z",
+        },
+      },
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Follow-up response review: Acme Retail",
+        due_date: null,
+        notes: marker,
+        completed_at: null,
+        created_at: "2026-07-01T00:00:00.000Z",
+        updated_at: "2026-07-01T00:00:00.000Z",
+      },
+    };
+
+    const result = await completeFollowUpResponseReview(createSupabase(state), USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      outcome: "resolved",
+      notes: "Full refund received.",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(409);
+    // Never wrote — the concurrent writer's state is untouched and the task stays open.
+    expect(state.casePatched).toBe(0);
+    expect(state.task.completed_at).toBeNull();
+    expect(state.intake.merchant_response_type).not.toBe("resolved");
   });
 
   it("is idempotent when the response-review task is already completed", async () => {

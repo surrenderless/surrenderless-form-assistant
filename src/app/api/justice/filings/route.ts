@@ -4,8 +4,9 @@ import { validate as isUuid } from "uuid";
 import { parseApprovedNextActionFromClientState } from "@/lib/justice/approvedNextActionState";
 import { completeHandlingRequestTaskIfOpen } from "@/lib/justice/handlingRequestTask";
 import { isFilingDestinationValidForApprovedAction } from "@/lib/justice/handlingTrackingProgress";
-import type { TimelineEntry, TimelineEntryType } from "@/lib/justice/types";
+import type { TimelineEntry } from "@/lib/justice/types";
 import { getUserOr401 } from "@/server/requireUser";
+import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
 import {
   buildPlaywrightMockJusticeFilingPostResponse,
   buildPlaywrightMockJusticeFilingsGetResponse,
@@ -56,15 +57,6 @@ function clampLen(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max);
 }
 
-function normalizeTimeline(v: unknown): TimelineEntry[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter((item) => item !== null && typeof item === "object" && !Array.isArray(item)) as TimelineEntry[];
-}
-
-function sortByTs(entries: TimelineEntry[]): TimelineEntry[] {
-  return [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
-}
-
 async function loadOwnedJusticeCase(
   supabase: SupabaseClient,
   userId: string,
@@ -84,59 +76,6 @@ async function loadOwnedJusticeCase(
   return data ?? null;
 }
 
-async function appendCaseTimelineEntry(
-  supabase: SupabaseClient,
-  userId: string,
-  caseId: string,
-  entry: {
-    id: string;
-    type: TimelineEntryType;
-    label: string;
-    detail?: string;
-    ts?: string;
-  }
-): Promise<TimelineEntry[] | null> {
-  const { data: row, error: fetchErr } = await supabase
-    .from("justice_cases")
-    .select("timeline")
-    .eq("id", caseId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (fetchErr || !row) {
-    console.warn("justice timeline append: load case", fetchErr?.message ?? "not found");
-    return null;
-  }
-
-  let timeline = normalizeTimeline(row.timeline);
-  if (timeline.some((e) => e.id === entry.id)) {
-    return sortByTs(timeline);
-  }
-
-  const newEntry: TimelineEntry = {
-    id: entry.id,
-    case_id: caseId,
-    type: entry.type,
-    label: entry.label,
-    ts: entry.ts ?? new Date().toISOString(),
-    ...(entry.detail !== undefined && entry.detail !== "" ? { detail: entry.detail } : {}),
-  };
-
-  timeline = sortByTs([...timeline, newEntry]);
-
-  const { error: upErr } = await supabase
-    .from("justice_cases")
-    .update({ timeline })
-    .eq("id", caseId)
-    .eq("user_id", userId);
-
-  if (upErr) {
-    console.warn("justice timeline append: update", upErr.message);
-    return null;
-  }
-
-  return timeline;
-}
 
 export async function GET(req: NextRequest) {
   const userId = getUserOr401(req);

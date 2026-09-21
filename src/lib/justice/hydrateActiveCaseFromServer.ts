@@ -162,10 +162,12 @@ export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): P
 export async function refreshLocalIntakeAndVersionFromServer(
   caseId: string,
   signal?: AbortSignal
-): Promise<JusticeIntake | null> {
+): Promise<{ intake: JusticeIntake; caseVersion: number } | null> {
   const row = await fetchJusticeCaseById(caseId, signal);
   if (!row) return null;
-  return hydrateSessionFromCaseListRow(row);
+  const intake = hydrateSessionFromCaseListRow(row);
+  if (!intake || typeof row.case_version !== "number") return null;
+  return { intake, caseVersion: row.case_version };
 }
 
 /** GET a single owned case by id for chat hydrate after selection/restore. */

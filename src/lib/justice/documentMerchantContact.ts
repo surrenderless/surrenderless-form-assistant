@@ -149,7 +149,14 @@ export type DocumentMerchantContactResult =
       error: string;
       current: { intake: unknown; caseVersion: number | null };
     }
-  | { ok: false; reason: "missing_version"; error: string };
+  | {
+      ok: false;
+      reason: "missing_version";
+      error: string;
+      /** Present when the refresh this triggers succeeds — the caller's reconciliation point,
+       * same shape as the conflict case, so both can share one UI. */
+      current?: { intake: JusticeIntake; caseVersion: number };
+    };
 
 /** Persist merchant/company contact documentation (session, timeline, optional server PATCH). */
 export async function documentMerchantContact({
@@ -210,8 +217,13 @@ export async function documentMerchantContact({
       // No cached version to pair with this write — refresh both content and case_version from
       // the server before any further write is allowed, then surface the failure so the caller
       // re-derives and resubmits this documentation against the fresh baseline.
-      await refreshLocalIntakeAndVersionFromServer(trimmedCaseId);
-      return { ok: false, reason: "missing_version", error: result.error };
+      const refreshed = await refreshLocalIntakeAndVersionFromServer(trimmedCaseId);
+      return {
+        ok: false,
+        reason: "missing_version",
+        error: result.error,
+        ...(refreshed ? { current: refreshed } : {}),
+      };
     }
     // request_failed / invalid_response: transient/network failure, not a version conflict. The
     // documentation stays local (already written to STORAGE_INTAKE above) until the next save

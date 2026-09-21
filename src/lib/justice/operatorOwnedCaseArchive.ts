@@ -360,15 +360,48 @@ export async function completeOperatorCaseArchive(
   }
 
   const archivedAt = new Date().toISOString();
-  const { error: patchErr } = await supabase
+  // Narrow, idempotent guard (never touches intake/client_state) rather than full case_version
+  // CAS: this write only ever sets archived_at from null to a real timestamp, once, so an
+  // .is("archived_at", null) filter is itself a real compare-and-swap on the exact field being
+  // changed — a second, concurrent archive attempt (or a race with the read above) matches zero
+  // rows instead of double-archiving or clobbering a timestamp another request already set.
+  const { data: archivedRow, error: patchErr } = await supabase
     .from("justice_cases")
     .update({ archived_at: archivedAt })
     .eq("id", caseId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .is("archived_at", null)
+    .select("id")
+    .maybeSingle();
 
   if (patchErr) {
     console.warn("operator case archive: patch", patchErr.message);
     return { ok: false, error: "Could not archive case", status: 500 };
+  }
+  if (!archivedRow) {
+    // Lost the race to a concurrent archive (or the case was archived by another request between
+    // the read above and this write) — not an error; re-read and report the outcome idempotently
+    // rather than retrying this write with a now-stale timestamp.
+    const { data: freshRow } = await supabase
+      .from("justice_cases")
+      .select("archived_at, client_state")
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    const freshArchivedAt = freshRow?.archived_at?.trim();
+    if (freshArchivedAt) {
+      const freshAction = parseApprovedNextActionFromClientState(freshRow?.client_state);
+      const freshOutcome = operatorOwnedClosableOutcomeFromAction(freshAction);
+      return {
+        ok: true,
+        caseId,
+        archived_at: freshArchivedAt,
+        timeline: null,
+        outcome: freshOutcome ?? outcome,
+        idempotent: true,
+      };
+    }
+    return { ok: false, error: "Case was updated concurrently. Reload and retry.", status: 409 };
   }
 
   let timeline: TimelineEntry[] | null = null;

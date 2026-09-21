@@ -68,9 +68,13 @@ type CaseResponse = {
   client_state: unknown;
   created_at: string;
   updated_at: string;
+  case_version: number;
   archived_at: string | null;
   case_label: string | null;
 };
+
+const CASE_SELECT =
+  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, case_version, archived_at, case_label" as const;
 
 const DEFAULT_LIST_LIMIT = 10;
 const MAX_LIST_LIMIT = 50;
@@ -121,9 +125,7 @@ export async function GET(req: NextRequest) {
 
   let listQuery = supabase
     .from("justice_cases")
-    .select(
-      "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label"
-    )
+    .select(CASE_SELECT)
     .eq("user_id", userId);
 
   listQuery = archivedOnly
@@ -265,9 +267,7 @@ export async function POST(req: NextRequest) {
       payment_dispute_draft,
       client_state,
     })
-    .select(
-      "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label"
-    )
+    .select(CASE_SELECT)
     .single();
 
   if (error) {

@@ -8,7 +8,7 @@ import { taskNotesMatchConsumerClosedNotificationMarker } from "@/lib/justice/re
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { TimelineEntry } from "@/lib/justice/types";
 
-type CaseRow = { id: string; user_id: string; timeline: TimelineEntry[] };
+type CaseRow = { id: string; user_id: string; timeline: TimelineEntry[]; case_version: number };
 
 type Store = {
   tasks: JusticeCaseTaskRow[];
@@ -23,7 +23,7 @@ function makeSupabase(store: Store): SupabaseClient {
       table: string;
       op: "select" | "update";
       update: Record<string, unknown> | null;
-      filters: Record<string, string>;
+      filters: Record<string, string | number>;
       like: string | null;
     } = { table, op: "select", update: null, filters: {}, like: null };
 
@@ -32,13 +32,6 @@ function makeSupabase(store: Store): SupabaseClient {
         if (store.failUpdate) return { data: null, error: { message: "update down" } };
         const task = store.tasks.find((t) => t.id === state.filters.id);
         if (task) task.notes = String((state.update as Record<string, unknown>).notes);
-        return { data: null, error: null };
-      }
-      if (state.op === "update" && state.table === "justice_cases") {
-        const row = store.cases.find(
-          (c) => c.id === state.filters.id && c.user_id === state.filters.user_id
-        );
-        if (row) row.timeline = (state.update as Record<string, unknown>).timeline as TimelineEntry[];
         return { data: null, error: null };
       }
       return { data: null, error: null };
@@ -53,7 +46,7 @@ function makeSupabase(store: Store): SupabaseClient {
         state.update = payload;
         return builder;
       },
-      eq(col: string, val: string) {
+      eq(col: string, val: string | number) {
         state.filters[col] = val;
         return builder;
       },
@@ -84,7 +77,22 @@ function makeSupabase(store: Store): SupabaseClient {
           const row = store.cases.find(
             (c) => c.id === state.filters.id && c.user_id === state.filters.user_id
           );
-          return Promise.resolve({ data: row ? { timeline: row.timeline } : null, error: null });
+          if (state.op === "update") {
+            if (!row) return Promise.resolve({ data: null, error: null });
+            if (
+              Object.prototype.hasOwnProperty.call(state.filters, "case_version") &&
+              state.filters.case_version !== row.case_version
+            ) {
+              return Promise.resolve({ data: null, error: null });
+            }
+            row.timeline = (state.update as Record<string, unknown>).timeline as TimelineEntry[];
+            row.case_version += 1;
+            return Promise.resolve({ data: { id: row.id }, error: null });
+          }
+          return Promise.resolve({
+            data: row ? { timeline: row.timeline, case_version: row.case_version } : null,
+            error: null,
+          });
         }
         return Promise.resolve({ data: null, error: null });
       },
@@ -128,7 +136,7 @@ function markerTask(caseId: string, messageId: string): JusticeCaseTaskRow {
 function baseStore(caseId = "case-1", messageId = "re_abc_123"): Store {
   return {
     tasks: [markerTask(caseId, messageId)],
-    cases: [{ id: caseId, user_id: `owner-${caseId}`, timeline: [] }],
+    cases: [{ id: caseId, user_id: `owner-${caseId}`, timeline: [], case_version: 1 }],
   };
 }
 

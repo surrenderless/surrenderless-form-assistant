@@ -329,6 +329,17 @@ async function recomputeApprovedNextActionAfterCancellation(
     approved_next_action: buildApprovedNextActionTarget(prepared),
   };
 
+  // Reviewed exception to the case_version-CAS rule (see justiceTimelineAppend.ts and
+  // updateClientStateIfUnchanged.ts for the general pattern): the authoritative state change
+  // (clearing approved_next_action) already committed atomically inside the RPC above. This is a
+  // purely best-effort, self-limiting follow-up that only ever WRITES the one field it read as
+  // null — the .is("client_state->approved_next_action", null) filter is itself a real
+  // compare-and-swap on exactly that field, verified by a real Postgres round trip, and rejects
+  // the write the instant a concurrent writer sets a different action first (see
+  // cancelOperatorFulfillmentTask.test.ts: "does not overwrite a concurrently-set
+  // approved_next_action"). A CAS miss here falls back to `clientStateAfterCancel` unchanged —
+  // never retried, never treated as a cancellation failure — which is exactly the fail-safe this
+  // narrow guard is designed to produce.
   const { data: updatedCase, error: updateErr } = await supabase
     .from("justice_cases")
     .update({ client_state: nextClientState })

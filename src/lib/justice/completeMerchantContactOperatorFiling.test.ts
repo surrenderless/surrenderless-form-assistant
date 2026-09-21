@@ -214,6 +214,10 @@ type MockCaseState = {
   supersededLaneReviews?: JusticeCaseTaskRow[];
   filingInsertCount: number;
   filingInsertShouldFail?: boolean;
+  case_version?: number;
+  /** Simulates a concurrent writer (e.g. a consumer intake PATCH) advancing case_version in the
+   * window between this function's own read and its first justice_cases write — consumed once. */
+  concurrentCaseVersionBumpOnNextRead?: boolean;
   evidence?: Array<{
     id?: string;
     file_name: string | null;
@@ -232,44 +236,60 @@ function createMerchantCompleteSupabase(state: MockCaseState): SupabaseClient {
           select: () => ({
             eq: () => ({
               eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
+                maybeSingle: async () => {
+                  const version = state.case_version ?? 1;
+                  const data = {
                     intake: state.intake,
                     client_state: state.client_state,
                     timeline: timelineStore.entries,
                     payment_dispute_draft: null,
-                    updated_at: "2026-02-01T00:00:00.000Z",
-                  },
-                  error: null,
-                }),
+                    case_version: version,
+                  };
+                  if (state.concurrentCaseVersionBumpOnNextRead) {
+                    // A concurrent writer (e.g. a consumer intake PATCH) advances the row AFTER
+                    // this read returns but BEFORE this function's own write — consumed once.
+                    state.concurrentCaseVersionBumpOnNextRead = false;
+                    state.case_version = version + 1;
+                  }
+                  return { data, error: null };
+                },
               }),
             }),
           }),
           update: (patch: Record<string, unknown>) => {
-            if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
-              return {
-                eq: () => ({
-                  eq: () => ({
-                    eq: () => ({
-                      select: () => ({
-                        maybeSingle: async () => {
-                          state.client_state = patch.client_state as Record<string, unknown>;
-                          return { data: { id: CASE_ID }, error: null };
-                        },
-                      }),
-                    }),
-                  }),
-                }),
-              };
-            }
-            return {
-              eq: () => ({
-                eq: async () => {
-                  if (patch.intake) state.intake = patch.intake as JusticeIntake;
-                  return { error: null };
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
+              },
+              select: (cols?: string) => ({
+                maybeSingle: async () => {
+                  const currentVersion = state.case_version ?? 1;
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                    filters.case_version !== currentVersion
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  if (Object.prototype.hasOwnProperty.call(patch, "client_state")) {
+                    state.client_state = patch.client_state as Record<string, unknown>;
+                  }
+                  if (Object.prototype.hasOwnProperty.call(patch, "intake")) {
+                    state.intake = patch.intake as JusticeIntake;
+                  }
+                  state.case_version = currentVersion + 1;
+                  return {
+                    data:
+                      cols === "case_version"
+                        ? { case_version: state.case_version }
+                        : { id: CASE_ID },
+                    error: null,
+                  };
                 },
               }),
             };
+            return chain;
           },
         };
       }
@@ -522,6 +542,106 @@ describe("completeMerchantContactOperatorFiling idempotency", () => {
     expect(
       timelineStore.entries.filter((e) => e.type === "merchant_contact_saved")[0]?.id
     ).toBe(contactIds[0]);
+  });
+
+  it("chains the intake write's own returned case_version into the client_state advance — never re-uses the pre-write caseRow.case_version, which the intake write itself already advanced", async () => {
+    const intake = retailIntake({ money_involved: "not sure", pay_or_order_date: "" });
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const state: MockCaseState = {
+      intake,
+      client_state: {
+        prepared_packet_approved: true,
+        approved_next_action: {
+          label: "Merchant contact",
+          href: "/justice/merchant",
+          status: "approved",
+          approved_at: "2026-06-21T00:00:10.000Z",
+        },
+      },
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-21T00:00:00.000Z",
+        updated_at: "2026-06-21T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      case_version: 5,
+    };
+
+    const supabase = createMerchantCompleteSupabase(state);
+    const result = await completeMerchantContactOperatorFiling(supabase, USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Merchant contact",
+      filedAt: "2026-06-22",
+      confirmationNumber: "e2e-merchant-chain-1",
+      contactMethod: "email" as const,
+      merchantResponseType: "refused_help" as const,
+      recipient: "Acme Retail",
+      notes: "Called support",
+    });
+
+    // If this file still reused the stale pre-write caseRow.case_version (5) for the
+    // client_state advance instead of the version the intake write itself returned (6), the mock's
+    // CAS check would reject it and this call would fail — exactly the deterministic
+    // self-inflicted 409 a prior audit found. Succeeding here proves the chaining fix.
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.advanced).toBe(true);
+    // Exactly two justice_cases writes happened (intake, then client_state) — case_version
+    // advanced by exactly 2 from where it started.
+    expect(state.case_version).toBe(7);
+  });
+
+  it("returns a conflict (never silently overwrites) when a concurrent writer advances case_version between this function's own read and its intake write", async () => {
+    const intake = retailIntake({ money_involved: "not sure", pay_or_order_date: "" });
+    const marker = merchantContactFilingTaskNotesMarker(CASE_ID);
+    const state: MockCaseState = {
+      intake,
+      client_state: {},
+      filings: [],
+      task: {
+        id: TASK_ID,
+        user_id: USER_ID,
+        case_id: CASE_ID,
+        title: "Merchant contact: Acme Retail",
+        due_date: null,
+        notes: `${marker}\ncase_id: ${CASE_ID}\ndraft:\nHi`,
+        completed_at: null,
+        created_at: "2026-06-21T00:00:00.000Z",
+        updated_at: "2026-06-21T00:00:00.000Z",
+      },
+      followUpTasks: [],
+      filingInsertCount: 0,
+      case_version: 1,
+      concurrentCaseVersionBumpOnNextRead: true,
+    };
+
+    const supabase = createMerchantCompleteSupabase(state);
+    const result = await completeMerchantContactOperatorFiling(supabase, USER_ID, {
+      caseId: CASE_ID,
+      taskId: TASK_ID,
+      destination: "Merchant contact",
+      filedAt: "2026-06-22",
+      confirmationNumber: "e2e-merchant-conflict-1",
+      contactMethod: "email" as const,
+      merchantResponseType: "refused_help" as const,
+      recipient: "Acme Retail",
+      notes: "Called support",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(409);
+    // The concurrent writer's intake is untouched — never silently overwritten.
+    expect(state.intake.already_contacted).not.toBe("yes");
   });
 
   it("threads a hasUploadedEvidenceFile value derived from real evidence rows into the advance-after-completed call (shared boundary — this path always records 'ticket' contact proof internally, so the destination outcome itself is independent of evidence, but the value passed through must still reflect real per-case rows)", async () => {
