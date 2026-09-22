@@ -584,12 +584,35 @@ async function patchJusticeCase(
   // case_version, never updated_at.
   const casToken = needsIntakeCas ? clientExpectedCaseVersion : existingRowCaseVersion;
 
-  let updateQuery = supabase.from("justice_cases").update(patch).eq("id", id).eq("user_id", userId);
-  if (casToken !== undefined) {
-    updateQuery = updateQuery.eq("case_version", casToken);
-  }
-
-  const { data, error } = await updateQuery.select(SELECT).maybeSingle();
+  // Two syntactically separate `.update(patch)` call sites — never one call site with a
+  // runtime-conditional `.eq("case_version", ...)` — so a static scan can classify each
+  // independently instead of having to prove which execution paths reach which guard. The
+  // guarded branch always carries the CAS filter inline; the unguarded branch is reached only
+  // when patch touches none of intake/client_state/archived_at (some combination of timeline,
+  // case_label, payment_dispute_draft) and is a single, explicitly reviewed, pinned exception —
+  // see REVIEWED_EXCEPTIONS in src/lib/testing/justiceCasesUpdateGuard.ts — never a silent
+  // fallthrough.
+  const { data, error } = casToken !== undefined
+    ? await supabase
+        .from("justice_cases")
+        .update(patch)
+        .eq("id", id)
+        .eq("user_id", userId)
+        .eq("case_version", casToken)
+        .select(SELECT)
+        .maybeSingle()
+    : // Reviewed exception: patch contains only some combination of timeline, case_label, and/or
+      // payment_dispute_draft. timeline's own server-side merge (mergeCaseTimelineEntries) is
+      // conflict-free regardless of staleness; case_label and payment_dispute_draft are plain
+      // last-write-wins fields with no two-values-conflict semantics — none of the three need a
+      // case_version CAS. See justiceCasesUpdateGuard.ts REVIEWED_EXCEPTIONS.
+      await supabase
+        .from("justice_cases")
+        .update(patch)
+        .eq("id", id)
+        .eq("user_id", userId)
+        .select(SELECT)
+        .maybeSingle();
 
   if (error) {
     console.warn("justice_cases update:", error.message);

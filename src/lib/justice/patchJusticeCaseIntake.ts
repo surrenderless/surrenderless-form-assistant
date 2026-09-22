@@ -1,66 +1,11 @@
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
-import {
-  STORAGE_INTAKE,
-  STORAGE_INTAKE_CASE_VERSION,
-  STORAGE_INTAKE_UNSAVED_DRAFT,
-  STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID,
-} from "@/lib/justice/types";
+import { recordCaseConflict, clearCaseReconciliation } from "@/lib/justice/caseReconciliationStore";
+import { readLocalIntakeCaseVersion, writeLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
+import { STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { validate as isUuid } from "uuid";
 
-/**
- * case_version paired with the intake snapshot this session last saw from the server, or null if
- * none is cached yet (fresh tab, cleared storage, or a flow that has never synced). Only ever set
- * alongside STORAGE_INTAKE by writeLocalIntakeCaseVersion — never read/written independently.
- */
-export function readLocalIntakeCaseVersion(): number | null {
-  if (typeof window === "undefined") return null;
-  const raw = sessionStorage.getItem(STORAGE_INTAKE_CASE_VERSION);
-  if (raw === null) return null;
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : null;
-}
-
-export function writeLocalIntakeCaseVersion(value: number | null): void {
-  if (typeof window === "undefined") return;
-  if (value === null) sessionStorage.removeItem(STORAGE_INTAKE_CASE_VERSION);
-  else sessionStorage.setItem(STORAGE_INTAKE_CASE_VERSION, String(value));
-}
-
-/**
- * The local draft this session was editing when a conflict/missing-version/reload-reconciliation
- * helper last detected it was stale and installed the server's fresh intake into STORAGE_INTAKE —
- * or null if there is none for `caseId` (never resolved cross-case: a stale marker from a
- * previously-edited case must not resurrect against the wrong one).
- */
-export function readUnsavedIntakeDraft(caseId: string): JusticeIntake | null {
-  if (typeof window === "undefined") return null;
-  const draftCaseId = sessionStorage.getItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID);
-  if (draftCaseId !== caseId) return null;
-  const raw = sessionStorage.getItem(STORAGE_INTAKE_UNSAVED_DRAFT);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isJusticeIntakePayload(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Durably stash `intake` (the local draft) as unreconciled for `caseId`, BEFORE any caller
- * installs server content into STORAGE_INTAKE — the sole mechanism that lets "Keep my changes"
- * survive a refresh/navigation that happens before the user has chosen. */
-export function writeUnsavedIntakeDraft(caseId: string, intake: JusticeIntake): void {
-  if (typeof window === "undefined") return;
-  sessionStorage.setItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID, caseId);
-  sessionStorage.setItem(STORAGE_INTAKE_UNSAVED_DRAFT, JSON.stringify(intake));
-}
-
-export function clearUnsavedIntakeDraft(): void {
-  if (typeof window === "undefined") return;
-  sessionStorage.removeItem(STORAGE_INTAKE_UNSAVED_DRAFT);
-  sessionStorage.removeItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID);
-}
+export { readLocalIntakeCaseVersion, writeLocalIntakeCaseVersion };
 
 export type PatchJusticeCaseIntakeResult =
   | { ok: true; intake: JusticeIntake; caseVersion: number; timeline?: unknown }
@@ -86,17 +31,18 @@ export type PatchJusticeCaseIntakeResult =
  * be staler or fresher than `intake` with no way to tell, which is exactly the pairing bug that
  * let a fresh token silently authorize an overwrite of newer server state in a prior incident.
  * Callers must refresh BOTH content and version from the server (e.g. via
- * hydrateSessionFromCaseListRow) before retrying with a freshly-derived edit — never call this
- * again with the same stale `intake` after a missing_version result.
+ * refreshLocalIntakeAndVersionFromServer, which durably records this exact `intake` as the
+ * case's reconciliation draft alongside whatever server snapshot it fetches) before retrying with
+ * a freshly-derived edit — never call this again with the same stale `intake` after a
+ * missing_version result.
  *
- * On a genuine 409 conflict — and on missing_version, before the caller's own refresh runs — this
- * durably stashes `intake` (the local draft that just failed to save) via writeUnsavedIntakeDraft
- * BEFORE adopting the fresh server intake/version into STORAGE_INTAKE for the caller to reconcile.
- * That ordering is load-bearing: a caller's follow-up refresh (or this function's own conflict
- * branch) installs server content into STORAGE_INTAKE immediately, and without the draft stashed
- * first, a page refresh landing between "conflict detected" and "user chooses" would silently lose
- * the local draft — the server snapshot would be the only thing left to hydrate from. This never
- * retries the stale write itself.
+ * On a genuine 409 conflict, this durably records BOTH sides of the reconciliation choice for
+ * `caseId` — via recordCaseConflict — BEFORE adopting the fresh server intake/version into
+ * STORAGE_INTAKE below. That ordering is load-bearing: a page refresh landing between "conflict
+ * detected" and "user chooses" must still be able to reconstruct the exact same choice from the
+ * durable per-case record alone, never from re-deriving the server side out of STORAGE_INTAKE
+ * (which is not case-scoped and could have moved on for a reason unrelated to this exact
+ * conflict). This never retries the stale write itself.
  */
 export async function patchJusticeCaseIntake(
   caseId: string,
@@ -110,10 +56,9 @@ export async function patchJusticeCaseIntake(
 
   const expectedCaseVersion = readLocalIntakeCaseVersion();
   if (expectedCaseVersion === null) {
-    // The caller's next move is refreshLocalIntakeAndVersionFromServer, which installs the
-    // server's intake into STORAGE_INTAKE — stash this local draft first so it survives a refresh
-    // that happens before the caller's reconciliation UI is resolved.
-    writeUnsavedIntakeDraft(id, intake);
+    // No server snapshot known yet, so there is nothing to durably pair this draft with here —
+    // the caller's refreshLocalIntakeAndVersionFromServer call records the full reconciliation
+    // (this exact `intake` alongside the server snapshot it fetches) once both sides are known.
     return {
       ok: false,
       reason: "missing_version",
@@ -143,8 +88,10 @@ export async function patchJusticeCaseIntake(
       | null;
     const currentCaseVersion =
       typeof conflictBody?.current?.case_version === "number" ? conflictBody.current.case_version : null;
-    // Stash the local draft BEFORE installing server content below — see the doc comment above.
-    writeUnsavedIntakeDraft(id, intake);
+    // Record both sides of the choice for THIS case BEFORE installing server content below.
+    if (currentCaseVersion !== null && isJusticeIntakePayload(conflictBody?.current?.intake)) {
+      recordCaseConflict(id, "conflict", intake, conflictBody.current.intake, currentCaseVersion);
+    }
     if (currentCaseVersion !== null) writeLocalIntakeCaseVersion(currentCaseVersion);
     if (typeof window !== "undefined" && conflictBody?.current?.intake !== undefined) {
       sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(conflictBody.current.intake));
@@ -173,8 +120,8 @@ export async function patchJusticeCaseIntake(
   if (typeof window !== "undefined") {
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
   }
-  // This case's write just succeeded — any earlier unresolved draft for it (if one existed) is
-  // moot now; the server-confirmed content above is the new canonical STORAGE_INTAKE.
-  clearUnsavedIntakeDraft();
+  // This exact case's write just succeeded — clear only ITS reconciliation record (if one
+  // existed); every other case's record is untouched, since the store is keyed per case id.
+  clearCaseReconciliation(id);
   return { ok: true, intake: data.intake, caseVersion: data.case_version, timeline: data.timeline };
 }

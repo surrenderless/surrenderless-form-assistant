@@ -1,11 +1,11 @@
 import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
-import { clearUnsavedIntakeDraft, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
+import { recordCaseConflict } from "@/lib/justice/caseReconciliationStore";
+import { writeLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import {
   STORAGE_CASE_ID,
   STORAGE_INTAKE,
-  STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID,
   STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
 } from "@/lib/justice/types";
 import {
@@ -54,15 +54,6 @@ export function isEditingActiveLocalJusticeCase(): boolean {
 export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeIntake | null {
   if (typeof window === "undefined") return null;
   if (!row.id || !isJusticeIntakePayload(row.intake)) return null;
-  // A durable unsaved-draft marker (see patchJusticeCaseIntake.ts) belonging to a DIFFERENT case
-  // than the one being hydrated here is stale — a genuine case switch, not the same conflict flow
-  // that just wrote it — so drop it rather than let it resurrect against the wrong case later.
-  // Never clear one that already matches `row.id`: that could be the exact marker a caller in this
-  // same conflict/missing_version flow just wrote moments before calling this function.
-  const existingDraftCaseId = sessionStorage.getItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID);
-  if (existingDraftCaseId && existingDraftCaseId !== row.id) {
-    clearUnsavedIntakeDraft();
-  }
   sessionStorage.setItem(STORAGE_CASE_ID, row.id);
   sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
   // Cache the case_version this intake was read at — every subsequent intake-bearing PATCH sends
@@ -166,15 +157,24 @@ export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): P
  * recovery path when a write is refused with patchJusticeCaseIntake's "missing_version" result
  * (no cached version) or when a reload needs to reconcile local session state against the server
  * rather than trusting stale sessionStorage indefinitely. Always refreshes content and version
- * together; never establishes one without the other. Returns the fresh intake, or null if the
- * case could not be loaded.
+ * together; never establishes one without the other.
+ *
+ * `localDraft` is the exact content the caller was trying to save when it hit missing_version —
+ * this durably records it (via recordCaseConflict) alongside the fresh server snapshot fetched
+ * here, BEFORE hydrateSessionFromCaseListRow installs that server content into STORAGE_INTAKE, so
+ * "Keep my changes" can survive a refresh that lands before the caller's reconciliation UI (if
+ * any) is resolved. Returns the fresh intake, or null if the case could not be loaded.
  */
 export async function refreshLocalIntakeAndVersionFromServer(
   caseId: string,
+  localDraft: JusticeIntake,
   signal?: AbortSignal
 ): Promise<{ intake: JusticeIntake; caseVersion: number } | null> {
   const row = await fetchJusticeCaseById(caseId, signal);
   if (!row) return null;
+  if (isJusticeIntakePayload(row.intake) && typeof row.case_version === "number") {
+    recordCaseConflict(caseId, "missing_version", localDraft, row.intake, row.case_version);
+  }
   const intake = hydrateSessionFromCaseListRow(row);
   if (!intake || typeof row.case_version !== "number") return null;
   return { intake, caseVersion: row.case_version };

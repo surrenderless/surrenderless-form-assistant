@@ -217,7 +217,7 @@ export async function documentMerchantContact({
       // No cached version to pair with this write — refresh both content and case_version from
       // the server before any further write is allowed, then surface the failure so the caller
       // re-derives and resubmits this documentation against the fresh baseline.
-      const refreshed = await refreshLocalIntakeAndVersionFromServer(trimmedCaseId);
+      const refreshed = await refreshLocalIntakeAndVersionFromServer(trimmedCaseId, updated);
       return {
         ok: false,
         reason: "missing_version",

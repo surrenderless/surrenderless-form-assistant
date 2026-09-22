@@ -113,9 +113,11 @@ async function commitIntakeUpdateToSessionAndServer({
   if (result.reason === "missing_version") {
     // No cached version to pair with this write — refresh both content and case_version from the
     // server together before any further attempt, rather than ever fetching just one of the two.
-    // This never touches the caller's in-memory draft (only sessionStorage) — the caller decides,
-    // via `conflict` below, whether to keep the local draft or adopt the fresh server snapshot.
-    const refreshed = await refreshLocalIntakeAndVersionFromServer(caseId);
+    // refreshLocalIntakeAndVersionFromServer durably records this exact `intake` alongside the
+    // fresh server snapshot it fetches (see caseReconciliationStore.ts), so the caller's own
+    // reconciliation UI — via `conflict` below — can survive a refresh; this never applies either
+    // side automatically.
+    const refreshed = await refreshLocalIntakeAndVersionFromServer(caseId, intake);
     saveError = "Your latest change could not be verified against the server and was not saved. Try again.";
     if (refreshed) conflict = refreshed;
   } else if (result.reason === "conflict") {

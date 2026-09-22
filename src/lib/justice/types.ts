@@ -196,19 +196,19 @@ export const STORAGE_INTAKE = "justice_intake_v1";
 export const STORAGE_INTAKE_CASE_VERSION = "justice_intake_case_version_v1";
 export const STORAGE_CASE_ID = "justice_case_id";
 /**
- * Durable "Keep my changes" backstop. A conflict/missing-version/reload-reconciliation helper
- * installs the server's fresh intake into STORAGE_INTAKE the instant it detects the local draft is
- * stale — before the user has chosen anything — so this pair preserves whatever the local draft
- * actually was (the exact content that failed to save, or the exact in-progress edit a background
- * reload found dirty) durably, scoped to the case it belongs to, until the user's explicit choice
- * resolves it: "Keep my changes" promotes this back into STORAGE_INTAKE and clears it; "Use server
- * version" discards it. A reload while unresolved must restore FROM this pair, never from
- * STORAGE_INTAKE alone — otherwise the just-installed server snapshot would be silently
- * misclassified as the user's committed content. See patchJusticeCaseIntake.ts's
- * write/read/clearUnsavedIntakeDraft.
+ * Session JSON: `Record<caseId, CaseReconciliationRecord>` — one durable "Keep my changes"
+ * backstop PER CASE, never a single shared slot. A conflict/missing-version/reload-reconciliation
+ * helper installs the server's fresh intake into STORAGE_INTAKE the instant it detects a case's
+ * local draft is stale — before the user has chosen anything — so this map preserves BOTH sides of
+ * that choice (the local draft that diverged, and the actual server snapshot/version that caused
+ * it) keyed to the exact case they belong to, until that case's own explicit choice resolves it.
+ * Because every case has its own key, switching the active case, or a completely unrelated case
+ * successfully saving, can never read or clear a DIFFERENT case's entry. See
+ * src/lib/justice/caseReconciliationStore.ts for the read/write/clear API and the "pending" vs
+ * "kept" status lifecycle — "kept" exists so a chosen-but-not-yet-saved draft is never
+ * misclassified as committed merely because STORAGE_INTAKE now holds it.
  */
-export const STORAGE_INTAKE_UNSAVED_DRAFT = "justice_intake_unsaved_draft_v1";
-export const STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID = "justice_intake_unsaved_draft_case_id_v1";
+export const STORAGE_CASE_RECONCILIATIONS = "justice_case_reconciliations_v1";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
 /** Session JSON: `Record<caseId, TimelineEntry[]>` */
 export const STORAGE_TIMELINE_V1 = "justice_timeline_v1";

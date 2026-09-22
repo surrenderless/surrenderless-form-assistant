@@ -1,15 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  clearUnsavedIntakeDraft,
-  patchJusticeCaseIntake,
-  readLocalIntakeCaseVersion,
-  readUnsavedIntakeDraft,
-  writeLocalIntakeCaseVersion,
-} from "@/lib/justice/patchJusticeCaseIntake";
-import { STORAGE_INTAKE, STORAGE_INTAKE_UNSAVED_DRAFT, STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID } from "@/lib/justice/types";
+import { patchJusticeCaseIntake, readLocalIntakeCaseVersion, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
+import { readCaseReconciliation } from "@/lib/justice/caseReconciliationStore";
+import { STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
+const OTHER_CASE_ID = "550e8400-e29b-41d4-a716-446655440099";
 
 const baseIntake: JusticeIntake = {
   company_name: "Acme",
@@ -144,7 +140,7 @@ describe("patchJusticeCaseIntake", () => {
   });
 });
 
-describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my changes must survive a refresh)", () => {
+describe("patchJusticeCaseIntake — durable per-case reconciliation (Keep my changes must survive a refresh, and never touch a different case)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -157,7 +153,7 @@ describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my
     vi.unstubAllGlobals();
   });
 
-  it("on a 409, stashes the local draft that failed to save BEFORE installing server content into STORAGE_INTAKE — recoverable via readUnsavedIntakeDraft even after STORAGE_INTAKE has moved on", async () => {
+  it("on a 409, durably records BOTH the local draft and the actual server snapshot/version for this case BEFORE installing server content into STORAGE_INTAKE", async () => {
     writeLocalIntakeCaseVersion(1);
     const localDraft = { ...baseIntake, story: "My in-progress edit" };
     const serverIntake = { ...baseIntake, company_name: "Someone else's edit" };
@@ -169,24 +165,19 @@ describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my
 
     // STORAGE_INTAKE now holds the server's content (existing, intended behavior)...
     expect(JSON.parse(sessionStorage.getItem(STORAGE_INTAKE) ?? "null")).toEqual(serverIntake);
-    // ...but the user's actual draft is NOT lost: it survives independently, keyed to this case,
-    // exactly as if a page refresh had happened right after the conflict (nothing here resets
-    // sessionStorage between the write above and this read, the same guarantee real sessionStorage
-    // gives across a same-tab refresh/navigation).
-    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(localDraft);
+    // ...but the reconciliation record durably preserves BOTH sides of the choice, keyed to this
+    // case, exactly as if a page refresh had happened right after the conflict (nothing here
+    // resets sessionStorage between the write above and this read, the same guarantee real
+    // sessionStorage gives across a same-tab refresh/navigation).
+    const record = readCaseReconciliation(CASE_ID);
+    expect(record).not.toBeNull();
+    expect(record?.status).toBe("pending");
+    expect(record?.localDraft).toEqual(localDraft);
+    expect(record?.serverIntake).toEqual(serverIntake);
+    expect(record?.serverCaseVersion).toBe(2);
   });
 
-  it("on missing_version, stashes the local draft before the caller's refresh installs server content", async () => {
-    // No cached version — patchJusticeCaseIntake refuses to write.
-    const localDraft = { ...baseIntake, story: "Typed before ever syncing a version" };
-    const result = await patchJusticeCaseIntake(CASE_ID, localDraft);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("missing_version");
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(localDraft);
-  });
-
-  it("a stashed draft is scoped to its case id — does not leak into a lookup for a different case", async () => {
+  it("a case's reconciliation record is scoped to its case id — does not leak into a lookup for a different case", async () => {
     writeLocalIntakeCaseVersion(1);
     const localDraft = { ...baseIntake, story: "Draft for case A" };
     fetchMock.mockResolvedValueOnce(
@@ -194,11 +185,11 @@ describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my
     );
     await patchJusticeCaseIntake(CASE_ID, localDraft);
 
-    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(localDraft);
-    expect(readUnsavedIntakeDraft("550e8400-e29b-41d4-a716-446655440099")).toBeNull();
+    expect(readCaseReconciliation(CASE_ID)).not.toBeNull();
+    expect(readCaseReconciliation(OTHER_CASE_ID)).toBeNull();
   });
 
-  it("repeated conflicts each overwrite the stashed draft with the NEWEST local edit, never a stale earlier one", async () => {
+  it("repeated conflicts each overwrite the record with the NEWEST local edit and server snapshot, never a stale earlier one", async () => {
     writeLocalIntakeCaseVersion(1);
     const firstDraft = { ...baseIntake, story: "First attempt" };
     const secondDraft = { ...baseIntake, story: "Second attempt, after seeing the first conflict" };
@@ -211,20 +202,22 @@ describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my
       );
 
     await patchJusticeCaseIntake(CASE_ID, firstDraft);
-    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(firstDraft);
+    expect(readCaseReconciliation(CASE_ID)?.localDraft).toEqual(firstDraft);
+    expect(readCaseReconciliation(CASE_ID)?.serverCaseVersion).toBe(2);
 
     await patchJusticeCaseIntake(CASE_ID, secondDraft);
-    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(secondDraft);
+    expect(readCaseReconciliation(CASE_ID)?.localDraft).toEqual(secondDraft);
+    expect(readCaseReconciliation(CASE_ID)?.serverCaseVersion).toBe(3);
   });
 
-  it("on success, clears any stashed draft marker for this case — nothing left to misclassify on a later reload", async () => {
+  it("on success, clears only THIS case's reconciliation record — nothing left to misclassify on a later reload", async () => {
     writeLocalIntakeCaseVersion(1);
-    // First, produce a stashed draft via a conflict...
+    // First, produce a record via a conflict...
     fetchMock.mockResolvedValueOnce(
       jsonResponse(409, { error: "conflict", current: { intake: baseIntake, case_version: 2 } })
     );
     await patchJusticeCaseIntake(CASE_ID, { ...baseIntake, story: "Will be superseded by a real save" });
-    expect(readUnsavedIntakeDraft(CASE_ID)).not.toBeNull();
+    expect(readCaseReconciliation(CASE_ID)).not.toBeNull();
 
     // ...then a subsequent save against the now-current version succeeds.
     fetchMock.mockResolvedValueOnce(
@@ -232,15 +225,28 @@ describe("patchJusticeCaseIntake — durable unsaved-draft preservation (Keep my
     );
     const result = await patchJusticeCaseIntake(CASE_ID, baseIntake);
     expect(result.ok).toBe(true);
-    expect(readUnsavedIntakeDraft(CASE_ID)).toBeNull();
+    expect(readCaseReconciliation(CASE_ID)).toBeNull();
   });
 
-  it("clearUnsavedIntakeDraft removes both the draft and its case-id marker", () => {
+  it("BLOCKING FIX: a successful save for a COMPLETELY DIFFERENT case must not clear this case's still-unresolved record", async () => {
+    // Case A gets a conflict and its record is stashed.
     writeLocalIntakeCaseVersion(1);
-    sessionStorage.setItem(STORAGE_INTAKE_UNSAVED_DRAFT, JSON.stringify(baseIntake));
-    sessionStorage.setItem(STORAGE_INTAKE_UNSAVED_DRAFT_CASE_ID, CASE_ID);
-    expect(readUnsavedIntakeDraft(CASE_ID)).toEqual(baseIntake);
-    clearUnsavedIntakeDraft();
-    expect(readUnsavedIntakeDraft(CASE_ID)).toBeNull();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(409, { error: "conflict", current: { intake: baseIntake, case_version: 2 } })
+    );
+    await patchJusticeCaseIntake(CASE_ID, { ...baseIntake, story: "A's unresolved draft" });
+    expect(readCaseReconciliation(CASE_ID)).not.toBeNull();
+
+    // A completely unrelated, successful save for a different case (case B).
+    writeLocalIntakeCaseVersion(9);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { intake: { ...baseIntake, story: "B saved" }, case_version: 10, timeline: [] })
+    );
+    const bResult = await patchJusticeCaseIntake(OTHER_CASE_ID, { ...baseIntake, story: "B's edit" });
+    expect(bResult.ok).toBe(true);
+
+    // Case A's record must be untouched.
+    expect(readCaseReconciliation(CASE_ID)).not.toBeNull();
+    expect(readCaseReconciliation(CASE_ID)?.localDraft.story).toBe("A's unresolved draft");
   });
 });

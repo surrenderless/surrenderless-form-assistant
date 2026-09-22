@@ -640,18 +640,19 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
     expect(effectMatch).not.toBeNull();
     const effectBody = effectMatch![0];
     expect(effectBody).toMatch(/areBuildJusticeIntakePartsDirty\(/);
-    // The dirty branch must stash the fresh snapshot and return — never call setParts directly in
-    // that branch, which would silently discard the in-progress local draft.
+    // The dirty branch must record the conflict and stash the banner and return — never call
+    // setParts directly in that branch, which would silently discard the in-progress local draft.
     const dirtyBranchMatch = effectBody.match(
       /if \(areBuildJusticeIntakePartsDirty\([\s\S]*?\)\) \{([\s\S]*?)\n {6}\}/
     );
     expect(dirtyBranchMatch).not.toBeNull();
     expect(dirtyBranchMatch![1]).toMatch(/setPendingCaseReconciliation\(/);
     expect(dirtyBranchMatch![1]).not.toMatch(/setParts\(/);
-    // The dirty branch must durably stash the current draft BEFORE stashing the pending
-    // reconciliation, so a refresh/navigation while the banner is unresolved can still recover it.
-    expect(dirtyBranchMatch![1]).toMatch(/writeUnsavedIntakeDraft\(/);
-    expect(dirtyBranchMatch![1].indexOf("writeUnsavedIntakeDraft(")).toBeLessThan(
+    // The dirty branch must durably record BOTH sides of the conflict (via recordCaseConflict)
+    // BEFORE stashing the pending reconciliation, so a refresh/navigation while the banner is
+    // unresolved can still recover the actual server snapshot, not stale STORAGE_INTAKE.
+    expect(dirtyBranchMatch![1]).toMatch(/recordCaseConflict\(/);
+    expect(dirtyBranchMatch![1].indexOf("recordCaseConflict(")).toBeLessThan(
       dirtyBranchMatch![1].indexOf("setPendingCaseReconciliation(")
     );
     // The clean path (after the dirty check) is the only place this effect calls setParts.
@@ -668,6 +669,14 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
     // The dirty check itself must use the ref, not the closure variable.
     expect(effectBody).toMatch(/areBuildJusticeIntakePartsDirty\(sessionBaselinePartsRef\.current, partsRef\.current\)/);
     expect(effectBody).not.toMatch(/areBuildJusticeIntakePartsDirty\(sessionBaselinePartsRef\.current, parts\)/);
+  });
+
+  it("the reload-reconciliation effect re-verifies the active case id after its async fetch resolves, before acting on the response", () => {
+    const effectMatch = pageSource.match(
+      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
+    );
+    expect(effectMatch).not.toBeNull();
+    expect(effectMatch![0]).toMatch(/stillActiveCaseId !== caseId/);
   });
 
   it("both Save buttons are disabled while a reconciliation is pending, blocking a write against a superseded local snapshot", () => {
@@ -696,42 +705,58 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
     expect(pageSource).toMatch(/function resolveCaseReconciliationUseServer\(\)/);
     expect(pageSource).toMatch(/onClick=\{resolveCaseReconciliationKeepLocal\}/);
     expect(pageSource).toMatch(/onClick=\{resolveCaseReconciliationUseServer\}/);
-    // "Keep local" never resets React state via setParts (the in-memory draft IS what's being
-    // kept — nothing to re-apply) but MUST durably promote that draft into STORAGE_INTAKE (via
-    // partsRef.current, so it survives a refresh even before the next save succeeds) and clear
-    // the now-superseded unsaved-draft marker, alongside realigning the CAS token.
+
+    // Both handlers must verify the pending banner's case id still matches the active case
+    // before touching anything — a stale banner from a case the user has switched away from
+    // must never be able to alter a DIFFERENT case's intake or CAS token.
     const keepLocalMatch = pageSource.match(
       /function resolveCaseReconciliationKeepLocal\(\) \{([\s\S]*?)\n {2}\}/
     );
     expect(keepLocalMatch).not.toBeNull();
-    expect(keepLocalMatch![1]).not.toMatch(/setParts\(/);
-    expect(keepLocalMatch![1]).toMatch(/writeLocalIntakeCaseVersion\(/);
-    expect(keepLocalMatch![1]).toMatch(/sessionStorage\.setItem\(STORAGE_INTAKE, JSON\.stringify\(buildJusticeIntakeFromParts\(partsRef\.current\)\)\)/);
-    expect(keepLocalMatch![1]).toMatch(/clearUnsavedIntakeDraft\(\)/);
+    expect(keepLocalMatch![1]).toMatch(/activeCaseIdMatchesPendingReconciliation\(\)/);
+    // The real storage-layer decision (promote draft into STORAGE_INTAKE, align CAS token, mark
+    // "kept") is delegated to the real, separately-tested commitKeepMyChanges — never
+    // reimplemented inline here.
+    expect(keepLocalMatch![1]).toMatch(/commitKeepMyChanges\(/);
+    expect(keepLocalMatch![1]).not.toMatch(/sessionStorage\.setItem\(/);
 
-    // "Use server version" must discard the unsaved-draft marker — it is the only choice allowed
-    // to replace the local draft.
     const useServerMatch = pageSource.match(
       /function resolveCaseReconciliationUseServer\(\) \{([\s\S]*?)\n {2}\}/
     );
     expect(useServerMatch).not.toBeNull();
-    expect(useServerMatch![1]).toMatch(/clearUnsavedIntakeDraft\(\)/);
-    expect(useServerMatch![1]).toMatch(/sessionStorage\.setItem\(STORAGE_INTAKE, JSON\.stringify\(serverIntake\)\)/);
+    expect(useServerMatch![1]).toMatch(/activeCaseIdMatchesPendingReconciliation\(\)/);
+    expect(useServerMatch![1]).toMatch(/commitUseServerVersion\(/);
+    expect(useServerMatch![1]).not.toMatch(/sessionStorage\.setItem\(/);
   });
 
-  it("the mount effect restores an unresolved unsaved draft (writeUnsavedIntakeDraft from a prior conflict) and re-opens the reconciliation banner, instead of silently treating the server snapshot just loaded into STORAGE_INTAKE as the user's committed content", () => {
+  it("activeCaseIdMatchesPendingReconciliation compares the banner's caseId against the current STORAGE_CASE_ID — the mechanism that makes a stale banner inert after a case switch", () => {
+    const fnMatch = pageSource.match(
+      /function activeCaseIdMatchesPendingReconciliation\(\): boolean \{([\s\S]*?)\n {2}\}/
+    );
+    expect(fnMatch).not.toBeNull();
+    expect(fnMatch![1]).toMatch(/pendingCaseReconciliation\.caseId === activeCaseId/);
+  });
+
+  it("hydrateChatFromJusticeCaseRow (the case-switch chokepoint) loads/clears React reconciliation state for the newly-active case, and restores its draft if one exists — this is what makes A's banner never leak into B", () => {
+    const start = pageSource.indexOf("async function hydrateChatFromJusticeCaseRow(freshCase: JusticeCaseListRow)");
+    expect(start).toBeGreaterThan(-1);
+    const end = pageSource.indexOf("\n  async function", start + 1);
+    expect(end).toBeGreaterThan(start);
+    const fnBody = pageSource.slice(start, end);
+    expect(fnBody).toMatch(/loadPendingReconciliationForCase\(caseId\)/);
+    expect(fnBody).toMatch(/setParts\(draftParts\)/);
+  });
+
+  it("the mount effect restores an unresolved/kept reconciliation record for the active case (via loadPendingReconciliationForCase) and re-opens the banner when pending, instead of silently treating the server snapshot just loaded into STORAGE_INTAKE as the user's committed content", () => {
     const mountEffectMatch = pageSource.match(
       /useEffect\(\(\) => \{\r?\n {4}const intake = readValidLocalJusticeIntake\(\);[\s\S]*?\n {2}\}, \[\]\);/
     );
     expect(mountEffectMatch).not.toBeNull();
     const body = mountEffectMatch![0];
-    expect(body).toMatch(/readUnsavedIntakeDraft\(caseId\)/);
-    expect(body).toMatch(/setPendingCaseReconciliation\(\{\s*\n\s*reason: "reload",\s*\n\s*serverIntake: intake,/);
-    // Restoring the draft as the working copy must happen via setParts on the draft content, not
-    // the server snapshot.
-    const draftBranchMatch = body.match(/if \(draft && serverCaseVersion !== null\) \{([\s\S]*?)\n {6}\}/);
+    expect(body).toMatch(/loadPendingReconciliationForCase\(caseId\)/);
+    const draftBranchMatch = body.match(/if \(reconciliation\) \{([\s\S]*?)\n {6}\}/);
     expect(draftBranchMatch).not.toBeNull();
-    expect(draftBranchMatch![1]).toMatch(/setParts\(justiceIntakeToBuildJusticeIntakeParts\(draft\)\)/);
+    expect(draftBranchMatch![1]).toMatch(/setParts\(draftParts\)/);
   });
 
   it("documentMerchantContact conflict/missing_version handling stashes a reconciliation snapshot instead of resyncing parts directly from session storage", () => {
