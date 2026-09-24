@@ -75,11 +75,9 @@ describe("justice_cases.update() concurrency guard (regression protection)", () 
     }
     expect([...seen].sort()).toEqual(
       [
-        "lib/justice/cancelOperatorFulfillmentTask.ts:345",
         "lib/justice/finalizePaidPreparedPacketApproval.ts:180",
         "lib/justice/operatorOwnedCaseArchive.ts:370",
         "lib/stripe/processStripeCheckoutCompletedEvent.ts:168",
-        "app/api/justice/cases/[id]/route.ts:611",
       ].sort()
     );
   });
@@ -206,7 +204,7 @@ describe("justice_cases.update() guard bypass resistance — round 3 (exception/
   const FAKE_PATH = "lib/justice/__not_a_real_file.ts";
 
   it("BLOCKING FIX: a second, unrelated, unguarded write in a REVIEWED_EXCEPTIONS file is caught (exceptions are per-line, not per-file)", () => {
-    const realExceptionPath = "lib/justice/cancelOperatorFulfillmentTask.ts";
+    const realExceptionPath = "lib/justice/finalizePaidPreparedPacketApproval.ts";
     const realContent = fs.readFileSync(path.join(SRC_DIR, realExceptionPath), "utf8");
     const tampered =
       realContent +
@@ -216,7 +214,7 @@ describe("justice_cases.update() guard bypass resistance — round 3 (exception/
     const findings = findUnguardedJusticeCasesWritesInSource(tampered, realExceptionPath);
     // The original reviewed line must still validate (0 findings there); the new unrelated line
     // must be flagged.
-    expect(findings.some((f) => f.line === 345)).toBe(false);
+    expect(findings.some((f) => f.line === 180)).toBe(false);
     expect(findings.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -349,23 +347,148 @@ describe("justice_cases.update() guard bypass resistance — round 3 (exception/
     expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
   });
 
-  it("does NOT flag the refactored real [id]/route.ts pattern: two syntactically separate call sites, one always-guarded and one pinned exception", () => {
+  it("does NOT flag the refactored real [id]/route.ts pattern: every justice_cases update requires case_version CAS unconditionally, with no exception needed", () => {
     const routePath = "app/api/justice/cases/[id]/route.ts";
     const content = fs.readFileSync(path.join(SRC_DIR, routePath), "utf8");
     const findings = findUnguardedJusticeCasesWritesInSource(content, routePath);
     expect(findings).toHaveLength(0);
   });
 
-  it("the no-cas-required exception fails closed if the argument identifier at its pinned line changes", () => {
+  it("an ordinary unguarded identifier-argument write is flagged (no ambient exception mechanism revives it)", () => {
     const src = `
       export async function save(supabase: any, id: string, userId: string, other: any) {
         return await supabase.from("justice_cases").update(other).eq("id", id).eq("user_id", userId).select().maybeSingle();
       }
     `;
-    // "other" instead of the reviewed "patch" — must not silently match the app/api/.../route.ts
-    // exception even if it were (hypothetically) pinned to this line; exercised directly via the
-    // general scanner, which has no exception for this fake file/line at all, so this is really a
-    // sanity check that an ordinary unguarded identifier-argument write is still flagged.
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
+  });
+});
+
+describe("justice_cases.update() guard bypass resistance — round 4 (computed access, cross-file factories, exception-shape tightening)", () => {
+  const FAKE_PATH = "lib/justice/__not_a_real_file.ts";
+
+  it("BLOCKING FIX: bracket/computed property access (`obj[\"update\"](...)`) on a justice_cases builder is caught", () => {
+    const src = `
+      export async function save(supabase: any, id: string, patch: any) {
+        const table = supabase.from("justice_cases");
+        return await table["update"](patch).eq("id", id).select().maybeSingle();
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
+  });
+
+  it("BLOCKING FIX: bracket/computed property access via a variable key (`obj[methodName](...)`) on a justice_cases builder is caught, even though the key isn't statically \"update\"", () => {
+    const src = `
+      export async function save(supabase: any, id: string, patch: any, methodName: string) {
+        const table = supabase.from("justice_cases");
+        return await table[methodName](patch).eq("id", id).select().maybeSingle();
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
+  });
+
+  it("does NOT flag bracket/computed access on a justice_cases builder when the key is statically provably NOT \"update\" (no false positive)", () => {
+    const src = `
+      export async function read(supabase: any, id: string) {
+        const table = supabase.from("justice_cases");
+        return await table["select"]("id").eq("id", id).maybeSingle();
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(0);
+  });
+
+  it("BLOCKING FIX: an unguarded write reached through calling an IMPORTED (cross-file) factory function is caught — this checker cannot inspect what an import returns, so it is never trusted, only flagged", () => {
+    const src = `
+      import { getCasesTable } from "./someOtherFile";
+      export async function save(supabase: any, id: string, patch: any) {
+        return await getCasesTable(supabase).update(patch).eq("id", id).select().maybeSingle();
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
+  });
+
+  it("BLOCKING FIX: a GUARDED write reached through calling an imported factory function is STILL flagged — a real case_version .eq() on the result cannot rescue an unverifiable cross-file factory", () => {
+    const src = `
+      import { getCasesTable } from "./someOtherFile";
+      export async function save(supabase: any, id: string, expectedVersion: number, patch: any) {
+        return await getCasesTable(supabase).update(patch).eq("id", id).eq("case_version", expectedVersion).select().maybeSingle();
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
+  });
+
+  it("an imported identifier's return value being chained with .update() is ALWAYS flagged, even where it is plainly unrelated to justice_cases (e.g. a logger) — this checker has no way to inspect a cross-file import's return type, so ambiguity always fails closed rather than being guessed away; this is an intentional, accepted over-approximation, not a bug", () => {
+    const src = `
+      import { buildLogger } from "./logger";
+      export async function save() {
+        return buildLogger().update("some-unrelated-thing");
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
+  });
+
+  it("does NOT flag a call to an identifier imported from a THIRD-PARTY/BUILT-IN module (e.g. Node's createHmac, which also exposes an unrelated .update()) — a real bug found while re-running this suite against the actual repo: verifyResendWebhookSignature.ts's createHmac(...).update(...) is not a justice_cases write and must not be flagged", () => {
+    const src = `
+      import { createHmac } from "node:crypto";
+      export function sign(key: string, body: string) {
+        return createHmac("sha256", key).update(body).digest("base64");
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(0);
+  });
+
+  it("does NOT flag a call to an UNRESOLVED same-file function (not proven to return a justice_cases builder) — true negative, avoids a false-positive flood on ordinary local helpers", () => {
+    const src = `
+      function buildLogger() {
+        return { update: (msg: string) => console.log(msg) };
+      }
+      export async function save() {
+        return buildLogger().update("some-unrelated-thing");
+      }
+    `;
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(0);
+  });
+
+  it("BLOCKING FIX: altering the control flow around a pinned exception's call site (wrapping it in a new conditional) does not affect the exception's own validation, but a NEW unguarded branch alongside it is caught", () => {
+    const src = `
+      export async function save(supabase: any, id: string, archivedAt: string, attackerControllableFlag: boolean) {
+        if (attackerControllableFlag) {
+          return await supabase.from("justice_cases").update({ archived_at: archivedAt }).eq("id", id).is("archived_at", null).select("id").maybeSingle();
+        }
+        return await supabase.from("justice_cases").update({ archived_at: archivedAt }).eq("id", id).select("id").maybeSingle();
+      }
+    `;
+    // Neither call site is a pinned REVIEWED_EXCEPTIONS entry in this fake file, so both must be
+    // flagged: the conditional .is()-guarded one (never a general-purpose guard) and the wholly
+    // unguarded else-branch one.
+    expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(2);
+  });
+
+  it("BLOCKING FIX: an exception file with an EXTRA, unrelated unguarded write elsewhere in the file is caught even when the pinned line itself still validates", () => {
+    const realExceptionPath = "lib/justice/operatorOwnedCaseArchive.ts";
+    const realContent = fs.readFileSync(path.join(SRC_DIR, realExceptionPath), "utf8");
+    const tampered =
+      realContent +
+      `\n\nasync function secondUnrelatedUnguardedWrite(supabase: any, id: string, patch: any) {\n` +
+      `  return await supabase.from("justice_cases").update(patch).eq("id", id).select().maybeSingle();\n` +
+      `}\n`;
+    const findings = findUnguardedJusticeCasesWritesInSource(tampered, realExceptionPath);
+    expect(findings.some((f) => f.line === 370)).toBe(false);
+    expect(findings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("BLOCKING FIX: a mismatched payload/guard field pair (guardColumn present in a pinned exception, but the write's actual argument sets a DIFFERENT single field) fails closed", () => {
+    const src = `
+      export async function save(supabase: any, id: string, paidAt: string) {
+        return await supabase
+          .from("justice_cases")
+          .update({ paid_at: paidAt })
+          .eq("id", id)
+          .is("some_other_column_entirely", null)
+          .select()
+          .maybeSingle();
+      }
+    `;
     expect(findUnguardedJusticeCasesWritesInSource(src, FAKE_PATH)).toHaveLength(1);
   });
 });

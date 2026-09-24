@@ -207,15 +207,16 @@ import {
 import { documentMerchantContact, type MerchantContactDocumentationInput } from "@/lib/justice/documentMerchantContact";
 import { patchJusticeCaseIntake, readLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
 import {
-  clearCaseReconciliation,
   commitKeepMyChanges,
   commitUseServerVersion,
-  loadCaseReconciliationBanner,
-  recordCaseConflict,
+  syncCaseReconciliationDraft,
   type CaseReconciliationBanner,
 } from "@/lib/justice/caseReconciliationStore";
-import { areBuildJusticeIntakePartsDirty } from "@/lib/justice/buildJusticeIntakePartsDirty";
-import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
+import {
+  checkForServerReconciliation,
+  recoverFromMissingVersion,
+  resolveCaseActivation,
+} from "@/lib/justice/reconciliationController";
 import {
   buildChatCapturedMerchantContactSummaryLines,
   buildMerchantContactDocumentationInputFromIntakeParts,
@@ -336,7 +337,6 @@ import {
   fetchLatestActiveJusticeCaseRow,
   fetchMostRecentlyArchivedEligibleJusticeCase,
   hydrateSessionFromCaseListRow,
-  refreshLocalIntakeAndVersionFromServer,
   restoreArchivedJusticeCaseOnServer,
   type JusticeCaseListRow,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
@@ -2729,26 +2729,41 @@ export default function JusticeChatAiPage() {
   /**
    * A fresh server intake/case_version this tab hasn't reconciled with, discovered either by the
    * passive reload-reconciliation effect or by a save attempt hitting a 409/missing-version — set
-   * ONLY when the local draft is genuinely dirty (areBuildJusticeIntakePartsDirty against
-   * sessionBaselinePartsRef). Carries the case id it belongs to (see caseReconciliationStore.ts)
-   * so every handler that acts on it can verify it still matches the currently-active case before
-   * touching STORAGE_INTAKE/case_version — a stale banner left over from a case the user has since
-   * switched away from must never be able to alter a DIFFERENT case's intake or CAS token. Never
-   * auto-applied: `parts` is left untouched until the user explicitly picks "keep my changes" or
-   * "use server version" below. Saving is blocked while this is set so a stale-content write is
-   * never attempted against the (now-superseded) cached version.
+   * ONLY when the local draft is genuinely dirty (areJusticeIntakesDirty against the reconciliation
+   * controller's own recorded baseline, never STORAGE_INTAKE). Carries the case id it belongs to
+   * (see caseReconciliationStore.ts) so every handler that acts on it can verify it still matches
+   * the currently-active case before touching STORAGE_INTAKE/case_version — a stale banner left
+   * over from a case the user has since switched away from must never be able to alter a
+   * DIFFERENT case's intake or CAS token. Never auto-applied: `parts` is left untouched until the
+   * user explicitly picks "keep my changes" or "use server version" below. Saving is blocked
+   * while this is set so a stale-content write is never attempted against the (now-superseded)
+   * cached version.
    */
   const [pendingCaseReconciliation, setPendingCaseReconciliation] = useState<CaseReconciliationBanner | null>(
     null
   );
 
-  /** Loads (or clears) the reconciliation banner for `caseId` from the durable per-case store —
-   * called on mount and on every case switch, so React state is never left referencing a case
-   * that is no longer active. */
-  function loadPendingReconciliationForCase(caseId: string): { localDraft: JusticeIntake } | null {
-    const loaded = loadCaseReconciliationBanner(caseId);
-    setPendingCaseReconciliation(loaded?.banner ?? null);
-    return loaded ? { localDraft: loaded.localDraft } : null;
+  /**
+   * THE single chokepoint that decides what `parts`/the reconciliation banner should be for
+   * `caseId` becoming (or remaining) the active case — called identically at mount and at every
+   * case switch (hydrateChatFromJusticeCaseRow), via reconciliationController.ts's
+   * resolveCaseActivation. Sets `parts`, `sessionBaselinePartsRef` (from the record's OWN
+   * recorded server snapshot when one exists — never from STORAGE_INTAKE/the local draft, which
+   * is what makes a later "Keep -> refresh -> server advances again" correctly detected as dirty
+   * instead of silently classified as clean), STORAGE_INTAKE, and the banner, all from one
+   * consistent source of truth.
+   */
+  function activateCaseReconciliationState(caseId: string, hydratedFromStorage: JusticeIntake): void {
+    const result = resolveCaseActivation(caseId, hydratedFromStorage);
+    const draftParts = justiceIntakeToBuildJusticeIntakeParts(result.localDraft);
+    sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(
+      justiceIntakeToBuildJusticeIntakeParts(result.baseline)
+    );
+    setParts(draftParts);
+    setPendingCaseReconciliation(result.banner);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(result.localDraft));
+    }
   }
   const [submissionDraftReviewOverride, setSubmissionDraftReviewOverride] = useState(false);
   const [draftPreviewExpanded, setDraftPreviewExpanded] = useState(false);
@@ -3114,26 +3129,16 @@ export default function JusticeChatAiPage() {
     const intake = hydrateSessionFromCaseListRow(freshCase);
     if (!intake) return { ok: false };
 
-    const hydratedParts = justiceIntakeToBuildJusticeIntakeParts(intake);
-    sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydratedParts);
-    setParts(hydratedParts);
+    // This case may itself carry an unresolved ("pending") or not-yet-saved ("kept") draft from
+    // an earlier conflict — activateCaseReconciliationState loads (or clears) React's
+    // reconciliation state for THIS case now, every time it becomes active, so a banner
+    // belonging to whatever case was active before can never linger and act on this one. It also
+    // sets `parts`/STORAGE_INTAKE to the record's `localDraft` when one exists — never the fresh
+    // server content `intake` just installed above — and sets sessionBaselinePartsRef from the
+    // record's own recorded server snapshot, never from `intake` itself in that case.
+    activateCaseReconciliationState(caseId, intake);
     setIsUpdatingExistingCase(true);
     setArchiveCaseError(null);
-
-    // This case may itself carry an unresolved ("pending") or not-yet-saved ("kept") draft from
-    // an earlier conflict — load (or clear) React's reconciliation state for THIS case now, every
-    // time it becomes active, so a banner belonging to whatever case was active before can never
-    // linger and act on this one. hydrateSessionFromCaseListRow above just installed this case's
-    // SERVER content into STORAGE_INTAKE/`parts`; if a record exists, its `localDraft` — never the
-    // server content — is what the user should see and keep editing.
-    const reconciliation = loadPendingReconciliationForCase(caseId);
-    if (reconciliation) {
-      const draftParts = justiceIntakeToBuildJusticeIntakeParts(reconciliation.localDraft);
-      setParts(draftParts);
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(reconciliation.localDraft));
-      }
-    }
 
     const hydratedAction = hydrateApprovedNextActionForDisplay(caseId, freshCase.client_state);
     if (hydratedAction) writeSessionApprovedNextAction(caseId, hydratedAction);
@@ -3688,7 +3693,17 @@ export default function JusticeChatAiPage() {
               intakeResult.error
             );
             if (intakeResult.reason === "missing_version") {
-              await refreshLocalIntakeAndVersionFromServer(caseId, intakeForRecipient);
+              // Centralized recovery: durably records this draft + the fetched server snapshot,
+              // validates the fetch really is this case, and installs global session pointers
+              // only if this case is still active — then install the resulting banner
+              // immediately, exactly like every other missing_version caller, rather than
+              // leaving the user with only a generic error and no Keep/Use-server choice.
+              const recovery = await recoverFromMissingVersion(caseId, intakeForRecipient, {
+                fetchCaseById: fetchJusticeCaseById,
+                getActiveCaseId: () =>
+                  typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
+              });
+              if (recovery.ok) setPendingCaseReconciliation(recovery.banner);
             }
             setTrackingSaveError(
               intakeResult.reason === "conflict"
@@ -3931,7 +3946,12 @@ export default function JusticeChatAiPage() {
           intakeResult.error
         );
         if (intakeResult.reason === "missing_version") {
-          await refreshLocalIntakeAndVersionFromServer(caseId, intake);
+          const recovery = await recoverFromMissingVersion(caseId, intake, {
+            fetchCaseById: fetchJusticeCaseById,
+            getActiveCaseId: () =>
+              typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
+          });
+          if (recovery.ok) setPendingCaseReconciliation(recovery.banner);
         }
         setTrackingSaveError(
           intakeResult.reason === "conflict"
@@ -3995,20 +4015,10 @@ export default function JusticeChatAiPage() {
       if ("reason" in result) {
         // Conflict/missing_version: the documentation just entered was NOT saved. Never resync
         // `parts` from the fresh server state here — that would silently discard it (and any
-        // other unrelated unsaved edit) the moment it's rejected. Stash the fresh snapshot for
-        // the user's own explicit choice instead.
-        if (
-          caseId &&
-          result.current &&
-          isJusticeIntakePayload(result.current.intake) &&
-          typeof result.current.caseVersion === "number"
-        ) {
-          setPendingCaseReconciliation({
-            caseId,
-            reason: result.reason,
-            serverIntake: result.current.intake,
-            serverCaseVersion: result.current.caseVersion,
-          });
+        // other unrelated unsaved edit) the moment it's rejected. documentMerchantContact already
+        // returns a ready-to-install banner (validated, case-id-tagged) — install it unconditionally.
+        if (result.current) {
+          setPendingCaseReconciliation(result.current);
         }
         setTrackingSaveError(
           result.reason === "conflict"
@@ -4545,29 +4555,24 @@ export default function JusticeChatAiPage() {
   useEffect(() => {
     const intake = readValidLocalJusticeIntake();
     if (intake) {
-      const hydrated = justiceIntakeToBuildJusticeIntakeParts(intake);
-      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
-      setParts(hydrated);
-      setIsUpdatingExistingCase(true);
-
-      // A conflict/missing-version/reload-reconciliation helper may have installed this server
-      // snapshot into STORAGE_INTAKE while this tab still had an unreconciled ("pending") or
-      // chosen-but-unsaved ("kept") draft recorded durably for this case — e.g. the user refreshed
-      // or navigated away before choosing "Keep my changes" / "Use server version", or chose
-      // "Keep" and refreshed again before the next save succeeded. Restore that draft as the
-      // working copy (and, for "pending", re-open the same choice) instead of silently treating
-      // `hydrated` (the server content just loaded above) as though it were the user's committed
-      // intake.
       const caseId =
         typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-      const reconciliation = caseId ? loadPendingReconciliationForCase(caseId) : null;
-      if (reconciliation) {
-        const draftParts = justiceIntakeToBuildJusticeIntakeParts(reconciliation.localDraft);
-        setParts(draftParts);
-        if (typeof window !== "undefined") {
-          sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(reconciliation.localDraft));
-        }
+      // activateCaseReconciliationState is the single chokepoint that decides `parts`/baseline/
+      // banner for this case — a conflict/missing-version/reload-reconciliation helper may have
+      // installed this server snapshot into STORAGE_INTAKE while this tab still had an
+      // unreconciled ("pending") or chosen-but-unsaved ("kept") draft recorded durably for this
+      // case (e.g. a refresh before choosing, or after choosing "Keep" but before the next save
+      // succeeded); it restores that draft as the working copy — and the record's OWN recorded
+      // server snapshot as the baseline, never `intake` itself in that case — instead of silently
+      // treating `intake` (the server content just loaded above) as though it were committed.
+      if (caseId) {
+        activateCaseReconciliationState(caseId, intake);
+      } else {
+        const hydrated = justiceIntakeToBuildJusticeIntakeParts(intake);
+        sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
+        setParts(hydrated);
       }
+      setIsUpdatingExistingCase(true);
     } else {
       // No committed case yet — restore a pre-commit intake draft (if any) instead. Replaces
       // (never appends to) the initial opening-greeting message, so this cannot duplicate turns.
@@ -4581,14 +4586,29 @@ export default function JusticeChatAiPage() {
     setStagedProofNotes(readStagedProofNotes());
   }, []);
 
+  // Continuously flushes the latest edit into this case's durable reconciliation record (a no-op
+  // when no record exists) — runs on every `parts` change, so a refresh, navigation, or case
+  // switch that happens ANY TIME after a banner appears (or after "Keep my changes", before the
+  // next save succeeds) always finds the user's actual latest edit, never an older snapshot
+  // captured only at the moment the record was first written.
+  useEffect(() => {
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
+    if (!caseId || !isUuid(caseId)) return;
+    syncCaseReconciliationDraft(caseId, buildJusticeIntakeFromParts(parts));
+  }, [parts]);
+
   // Reload reconciliation: sessionStorage's cached intake/case_version survives a page refresh
   // within the same tab, but nothing yet re-verifies it against the server on that reload. Runs
   // once per mount: fetch the case fresh and, only if its case_version has actually moved past
-  // what this tab cached, reconcile. A CLEAN local draft (identical to the session baseline — no
-  // unsaved edits) is safe to silently bring current. A DIRTY draft (the user has typed something
-  // since the last sync) must never be silently discarded: this stashes the fresh server snapshot
-  // in `pendingCaseReconciliation` and leaves `parts` untouched until the user explicitly resolves
-  // it via resolveCaseReconciliationKeepLocal/resolveCaseReconciliationUseServer below.
+  // what this tab cached, reconcile via reconciliationController.ts's checkForServerReconciliation
+  // — which itself re-verifies the active case AFTER the fetch resolves, so a case switch while
+  // this was in flight can never act on a response for a case no longer on screen. A CLEAN local
+  // draft (identical to the recorded baseline — no unsaved edits) is safely brought current. A
+  // DIRTY draft (the user has typed something since the last sync) is never silently discarded:
+  // this stashes the fresh server snapshot in `pendingCaseReconciliation` and leaves `parts`
+  // untouched until the user explicitly resolves it via
+  // resolveCaseReconciliationKeepLocal/resolveCaseReconciliationUseServer below.
   useEffect(() => {
     if (!isLoaded) return;
     const caseId =
@@ -4599,45 +4619,30 @@ export default function JusticeChatAiPage() {
 
     let cancelled = false;
     void (async () => {
-      const row = await fetchJusticeCaseById(caseId);
-      if (cancelled || !row) return;
-      // The active case may have changed while this fetch was in flight (a case switch) — never
-      // act on a response for a case that is no longer the one on screen.
-      const stillActiveCaseId =
-        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-      if (stillActiveCaseId !== caseId) return;
-      const serverVersion = typeof row.case_version === "number" ? row.case_version : null;
-      if (serverVersion === null || serverVersion === cachedVersion) return;
-      if (!isJusticeIntakePayload(row.intake)) return;
-
-      // Read the CURRENT draft via partsRef.current, not the closed-over `parts` — this effect's
-      // dependency array is [isLoaded] (true once, near mount), so its closure over `parts` is
-      // fixed at creation time. If the user types while fetchJusticeCaseById above is in flight, a
-      // direct `parts` read here would evaluate dirtiness against a stale (pre-edit) snapshot and
-      // could misclassify a now-genuinely-dirty draft as clean. partsRef.current (kept current on
-      // every render body execution — see its declaration) always reflects the latest value
-      // regardless of when this async callback resolves; the same pattern already used elsewhere
-      // in this file for this exact class of bug (see its other call sites below).
-      if (areBuildJusticeIntakePartsDirty(sessionBaselinePartsRef.current, partsRef.current)) {
-        // Durably record BOTH sides of this conflict for THIS case before showing the banner —
-        // never just the local draft — so a refresh before the user chooses reconstructs the
-        // actual fresh server snapshot detected here, not whatever STORAGE_INTAKE happens to hold.
-        recordCaseConflict(caseId, "reload", buildJusticeIntakeFromParts(partsRef.current), row.intake, serverVersion);
-        setPendingCaseReconciliation({
-          caseId,
-          reason: "reload",
-          serverIntake: row.intake,
-          serverCaseVersion: serverVersion,
-        });
+      const result = await checkForServerReconciliation({
+        caseId,
+        cachedVersion,
+        fetchCaseById: (id) => fetchJusticeCaseById(id),
+        getActiveCaseId: () =>
+          typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
+        // Read AFTER the fetch resolves (via partsRef.current, not the closed-over `parts` this
+        // effect's [isLoaded]-only deps would otherwise capture stale) for the freshest possible
+        // dirty-check, exactly mirroring the pattern already used elsewhere in this file for this
+        // class of bug.
+        getCurrentDraft: () => buildJusticeIntakeFromParts(partsRef.current),
+        getBaseline: () =>
+          sessionBaselinePartsRef.current ? buildJusticeIntakeFromParts(sessionBaselinePartsRef.current) : null,
+      });
+      if (cancelled) return;
+      if (result.kind === "conflict") {
+        setPendingCaseReconciliation(result.banner);
         return;
       }
-
-      clearCaseReconciliation(caseId);
-      const fresh = hydrateSessionFromCaseListRow(row);
-      if (!fresh || cancelled) return;
-      const freshParts = justiceIntakeToBuildJusticeIntakeParts(fresh);
-      setParts(freshParts);
-      sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
+      if (result.kind === "synced") {
+        const freshParts = justiceIntakeToBuildJusticeIntakeParts(result.freshIntake);
+        setParts(freshParts);
+        sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(freshParts);
+      }
     })();
     return () => {
       cancelled = true;
@@ -6587,15 +6592,11 @@ export default function JusticeChatAiPage() {
       // that knows a save was just attempted.
       if (commitResult.serverPersisted) {
         setCaseUpdateSaveError(null);
-      } else if (commitResult.conflict && commitResult.caseId) {
+      } else if (commitResult.conflict) {
         // The user just attempted to save real content and it was refused — never silently
-        // overwrite `parts` with the server's snapshot; stash it and let them explicitly choose.
-        setPendingCaseReconciliation({
-          caseId: commitResult.caseId,
-          reason: "conflict",
-          serverIntake: commitResult.conflict.intake,
-          serverCaseVersion: commitResult.conflict.caseVersion,
-        });
+        // overwrite `parts` with the server's snapshot. commitIntakeToSessionAndServer already
+        // returns a ready-to-install banner (validated, case-id-tagged) — install it unconditionally.
+        setPendingCaseReconciliation(commitResult.conflict);
         setCaseUpdateSaveError(commitResult.saveError ?? null);
       } else {
         setCaseUpdateSaveError(commitResult.saveError ?? null);

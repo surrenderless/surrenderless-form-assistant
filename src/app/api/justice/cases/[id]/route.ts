@@ -264,8 +264,19 @@ async function patchJusticeCase(
   // updated_at: a release audit proved a wall-clock timestamp can repeat across genuinely
   // sequential writes (empirically, roughly a third to half of racing-writer trials against real
   // Postgres produced a silent lost update with no sleep involved), which a plain integer counter
-  // under row-level locking cannot do. timeline never needs this (see mergeCaseTimelineEntries
-  // above) since its server-side merge is append-safe regardless of staleness.
+  // under row-level locking cannot do.
+  //
+  // Every OTHER patch shape (timeline/case_label/payment_dispute_draft-only, with none of
+  // intake/client_state/archived_at present) still gets a real case_version CAS below — the
+  // weaker but still real "self-read-then-write" guard already used for client_state/archived_at
+  // patches, extended uniformly to every remaining case. This was previously skipped for a pure
+  // timeline-only patch on the theory that mergeCaseTimelineEntries' per-id dedup made it
+  // "conflict-free regardless of staleness" — a release audit proved that claim false: the merge
+  // is a plain in-memory function with no database interaction of its own, so two concurrent
+  // timeline-only writers reading the same stale snapshot and both committing will have the
+  // SECOND commit unconditionally replace the column, silently losing the first writer's entry
+  // despite the merge's per-id dedup (the merge never sees what it didn't read). There is no
+  // "no-CAS-required" exception anywhere in this route anymore — every write is guarded.
   const needsIntakeCas = Object.prototype.hasOwnProperty.call(patch, "intake");
   let clientExpectedCaseVersion: number | undefined;
   if (needsIntakeCas) {
@@ -459,11 +470,13 @@ async function patchJusticeCase(
         }
       }
     }
-  } else if (needsIntakeCas || Object.prototype.hasOwnProperty.call(patch, "timeline")) {
+  } else {
     // Neither client_state nor archived_at is present, so none of the escalation-specific
-    // machinery above applies — but intake still needs its compare-and-swap token, and timeline
-    // (if present) still needs the current row to merge against, so a minimal, narrowly-scoped
-    // read happens here instead of the full escalation-validation read above.
+    // machinery above applies — but EVERY remaining patch shape still needs a real case_version
+    // CAS token (intake's own client-supplied one for needsIntakeCas, or this fresh self-read for
+    // everything else — timeline/case_label/payment_dispute_draft), and timeline (if present)
+    // still needs the current row to merge against, so a minimal, narrowly-scoped read happens
+    // here instead of the full escalation-validation read above.
     if (isMockCase) {
       const mockRow = buildPlaywrightMockCaseGetResponse(id);
       existingRowTimeline = mockRow.timeline;
@@ -502,12 +515,10 @@ async function patchJusticeCase(
     existingClientState = undefined;
     existingArchivedAt = undefined;
   }
-  if (!needsEscalationValidation && !needsIntakeCas) {
-    // A pure timeline-only patch never needs the compare-and-swap — merging (see
-    // mergeCaseTimelineEntries) is safe regardless of how stale case_version is; only intake and
-    // client_state/archived_at have genuine two-values-conflict semantics that need it.
-    existingRowCaseVersion = undefined;
-  }
+  // existingRowCaseVersion is now ALWAYS a real number by this point for every reachable patch
+  // shape (the escalation-validation read above covers client_state/archived_at; the `else`
+  // branch's minimal read covers every other shape, including a pure timeline/case_label/
+  // payment_dispute_draft-only patch) — there is no remaining "skip the CAS" opt-out.
 
   // Task reconciliation happens BEFORE the terminal client_state is persisted, not after: if
   // reconciliation fails, the write must not proceed at all — a persisted terminal action with a
@@ -578,41 +589,30 @@ async function patchJusticeCase(
 
   // The CAS token guarding this write: for intake, it is ALWAYS the client-supplied
   // expected_case_version (real end-to-end optimistic concurrency — see needsIntakeCas above),
-  // never a value this request read for itself. For client_state/archived_at-only patches (no
-  // intake in this request), the pre-existing weaker guard — a compare-and-swap on whatever this
-  // request itself just read — still applies unchanged. Either way the column compared is
-  // case_version, never updated_at.
+  // never a value this request read for itself. For every other patch shape (client_state,
+  // archived_at, timeline, case_label, payment_dispute_draft), it is the case_version this
+  // request itself just read, immediately before this write — a real compare-and-swap, not a
+  // client-supplied one, but still a genuine guard against the exact database row this write is
+  // about to touch. Either way the column compared is case_version, never updated_at. There is
+  // exactly one `.update(patch)` call site in this route, and it is ALWAYS guarded — no
+  // conditional, no exception.
   const casToken = needsIntakeCas ? clientExpectedCaseVersion : existingRowCaseVersion;
+  if (casToken === undefined) {
+    // Unreachable given the reads above always populate one of the two sources for every
+    // reachable patch shape — fails loudly rather than silently falling through to an unguarded
+    // write if that invariant is ever broken by a future change.
+    console.warn("justice_cases update: no case_version CAS token available", id);
+    return NextResponse.json({ error: "Could not verify the current case version." }, { status: 500 });
+  }
 
-  // Two syntactically separate `.update(patch)` call sites — never one call site with a
-  // runtime-conditional `.eq("case_version", ...)` — so a static scan can classify each
-  // independently instead of having to prove which execution paths reach which guard. The
-  // guarded branch always carries the CAS filter inline; the unguarded branch is reached only
-  // when patch touches none of intake/client_state/archived_at (some combination of timeline,
-  // case_label, payment_dispute_draft) and is a single, explicitly reviewed, pinned exception —
-  // see REVIEWED_EXCEPTIONS in src/lib/testing/justiceCasesUpdateGuard.ts — never a silent
-  // fallthrough.
-  const { data, error } = casToken !== undefined
-    ? await supabase
-        .from("justice_cases")
-        .update(patch)
-        .eq("id", id)
-        .eq("user_id", userId)
-        .eq("case_version", casToken)
-        .select(SELECT)
-        .maybeSingle()
-    : // Reviewed exception: patch contains only some combination of timeline, case_label, and/or
-      // payment_dispute_draft. timeline's own server-side merge (mergeCaseTimelineEntries) is
-      // conflict-free regardless of staleness; case_label and payment_dispute_draft are plain
-      // last-write-wins fields with no two-values-conflict semantics — none of the three need a
-      // case_version CAS. See justiceCasesUpdateGuard.ts REVIEWED_EXCEPTIONS.
-      await supabase
-        .from("justice_cases")
-        .update(patch)
-        .eq("id", id)
-        .eq("user_id", userId)
-        .select(SELECT)
-        .maybeSingle();
+  const { data, error } = await supabase
+    .from("justice_cases")
+    .update(patch)
+    .eq("id", id)
+    .eq("user_id", userId)
+    .eq("case_version", casToken)
+    .select(SELECT)
+    .maybeSingle();
 
   if (error) {
     console.warn("justice_cases update:", error.message);

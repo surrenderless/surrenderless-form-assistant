@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchJusticeCaseById,
   hydrateSessionFromCaseListRow,
   isEditingActiveLocalJusticeCase,
-  refreshLocalIntakeAndVersionFromServer,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
 import { readCaseReconciliation, writeCaseReconciliation } from "@/lib/justice/caseReconciliationStore";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
@@ -124,7 +125,7 @@ describe("hydrateSessionFromCaseListRow — per-case reconciliation is structura
   });
 });
 
-describe("refreshLocalIntakeAndVersionFromServer — durably records both sides of a missing_version reconciliation", () => {
+describe("recoverFromMissingVersion — the centralized missing_version recovery path — durably records both sides of the reconciliation", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -137,14 +138,21 @@ describe("refreshLocalIntakeAndVersionFromServer — durably records both sides 
     vi.unstubAllGlobals();
   });
 
-  it("records localDraft alongside the fetched server snapshot/version BEFORE installing server content into STORAGE_INTAKE", async () => {
+  it("records localDraft alongside the fetched server snapshot/version, and returns an install-ready banner", async () => {
     const localDraft = { ...validIntake, story: "Local edit that hit missing_version" };
     const serverIntake = { ...validIntake, story: "Real current server content" };
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: UUID, intake: serverIntake, case_version: 7 }));
 
-    const result = await refreshLocalIntakeAndVersionFromServer(UUID, localDraft);
+    sessionStorage.setItem(STORAGE_CASE_ID, UUID);
+    const result = await recoverFromMissingVersion(UUID, localDraft, {
+      fetchCaseById: fetchJusticeCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
 
-    expect(result).toEqual({ intake: serverIntake, caseVersion: 7 });
+    expect(result).toEqual({
+      ok: true,
+      banner: { caseId: UUID, reason: "missing_version", serverIntake, serverCaseVersion: 7 },
+    });
     const record = readCaseReconciliation(UUID);
     expect(record).not.toBeNull();
     expect(record?.reason).toBe("missing_version");
@@ -155,8 +163,29 @@ describe("refreshLocalIntakeAndVersionFromServer — durably records both sides 
 
   it("does not record anything when the case cannot be fetched", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(404, {}));
-    const result = await refreshLocalIntakeAndVersionFromServer(UUID, validIntake);
-    expect(result).toBeNull();
+    const result = await recoverFromMissingVersion(UUID, validIntake, {
+      fetchCaseById: fetchJusticeCaseById,
+      getActiveCaseId: () => UUID,
+    });
+    expect(result).toEqual({ ok: false, reason: "not_found" });
     expect(readCaseReconciliation(UUID)).toBeNull();
+  });
+
+  it("BLOCKING FIX (round 4, item 4): resolving after the active case has switched away still records the reconciliation (never lost) but does NOT install server content into the now-inactive-for-this-recovery global session pointers", async () => {
+    const serverIntake = { ...validIntake, story: "server content for the case that lost the race" };
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: UUID, intake: serverIntake, case_version: 4 }));
+
+    // By the time this resolves, the user has already switched to OTHER_UUID.
+    sessionStorage.setItem(STORAGE_CASE_ID, OTHER_UUID);
+    const result = await recoverFromMissingVersion(UUID, validIntake, {
+      fetchCaseById: fetchJusticeCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+
+    expect(result.ok).toBe(true);
+    // The record is still durably stored under UUID's own key — never lost, just not the active view.
+    expect(readCaseReconciliation(UUID)?.serverIntake).toEqual(serverIntake);
+    // STORAGE_INTAKE was never touched for the now-inactive case.
+    expect(sessionStorage.getItem(STORAGE_INTAKE)).toBeNull();
   });
 });

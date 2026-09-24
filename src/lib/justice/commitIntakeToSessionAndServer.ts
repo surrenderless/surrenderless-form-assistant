@@ -9,7 +9,9 @@ import {
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
 import { patchJusticeCaseIntake, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
-import { refreshLocalIntakeAndVersionFromServer } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { fetchJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
+import type { CaseReconciliationBanner } from "@/lib/justice/caseReconciliationStore";
 
 export type CommitIntakeMode = "create" | "update";
 
@@ -24,11 +26,13 @@ export type CommitIntakeResult = {
    */
   saveError?: string;
   /**
-   * Present on a genuine version conflict or a missing-cached-version recovery — the fresh
-   * server intake + case_version for the caller's OWN explicit reconciliation UI. Never applied
-   * automatically here: the caller decides whether to keep the local draft or adopt this.
+   * Present on a genuine version conflict or a missing-cached-version recovery — a ready-to-
+   * install reconciliation banner for the caller's OWN explicit UI (setPendingCaseReconciliation).
+   * Never applied automatically here: the caller decides whether to keep the local draft or
+   * adopt this. Always case-id-tagged so the caller can verify it still matches the active case
+   * before installing it.
    */
-  conflict?: { intake: JusticeIntake; caseVersion: number };
+  conflict?: CaseReconciliationBanner;
 };
 
 export type ShouldRouteToChatAiAfterIntakeCommitInput = {
@@ -111,19 +115,27 @@ async function commitIntakeUpdateToSessionAndServer({
   let saveError = "Your latest change could not be saved. Try again.";
   let conflict: CommitIntakeResult["conflict"];
   if (result.reason === "missing_version") {
-    // No cached version to pair with this write — refresh both content and case_version from the
-    // server together before any further attempt, rather than ever fetching just one of the two.
-    // refreshLocalIntakeAndVersionFromServer durably records this exact `intake` alongside the
-    // fresh server snapshot it fetches (see caseReconciliationStore.ts), so the caller's own
-    // reconciliation UI — via `conflict` below — can survive a refresh; this never applies either
-    // side automatically.
-    const refreshed = await refreshLocalIntakeAndVersionFromServer(caseId, intake);
+    // No cached version to pair with this write — recoverFromMissingVersion is the ONE
+    // centralized recovery path: it durably records this exact `intake` alongside the fresh
+    // server snapshot it fetches, validates the fetched row really is this case, and only
+    // installs global session pointers if this case is still the active one by the time the
+    // fetch resolves. Always returns a ready-to-install banner on success, so the caller below
+    // never has to conditionally decide whether it's "complete enough" to show.
+    const recovery = await recoverFromMissingVersion(caseId, intake, {
+      fetchCaseById: fetchJusticeCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null,
+    });
     saveError = "Your latest change could not be verified against the server and was not saved. Try again.";
-    if (refreshed) conflict = refreshed;
+    if (recovery.ok) conflict = recovery.banner;
   } else if (result.reason === "conflict") {
     saveError = "This case was updated elsewhere. Your latest change was not saved — reload and retry.";
     if (isJusticeIntakePayload(result.current.intake) && typeof result.current.caseVersion === "number") {
-      conflict = { intake: result.current.intake, caseVersion: result.current.caseVersion };
+      conflict = {
+        caseId,
+        reason: "conflict",
+        serverIntake: result.current.intake,
+        serverCaseVersion: result.current.caseVersion,
+      };
     }
   }
   // Never auto-retry or auto-overwrite: `conflict` (when present) is handed back for the

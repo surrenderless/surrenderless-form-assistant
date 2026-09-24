@@ -164,8 +164,9 @@ describe("documentMerchantContact — conflict/missing_version propagation (neve
     if (result.ok) return;
     expect("reason" in result && result.reason).toBe("conflict");
     if (!("reason" in result) || result.reason !== "conflict") return;
-    expect(result.current.caseVersion).toBe(2);
-    expect((result.current.intake as JusticeIntake).company_name).toBe("Someone else's edit");
+    expect(result.current).toBeDefined();
+    expect(result.current?.serverCaseVersion).toBe(2);
+    expect((result.current?.serverIntake as JusticeIntake).company_name).toBe("Someone else's edit");
   });
 
   it("on missing_version, refreshes from the server and returns ok:false with the refreshed snapshot as `current` — never silently reports success", async () => {
@@ -191,7 +192,7 @@ describe("documentMerchantContact — conflict/missing_version propagation (neve
     if (result.ok) return;
     expect("reason" in result && result.reason).toBe("missing_version");
     if (!("reason" in result) || result.reason !== "missing_version") return;
-    expect(result.current?.caseVersion).toBe(7);
+    expect(result.current?.serverCaseVersion).toBe(7);
   });
 
   it("on success, returns ok:true with the server-confirmed intake, and caches the new case_version for the next save", async () => {

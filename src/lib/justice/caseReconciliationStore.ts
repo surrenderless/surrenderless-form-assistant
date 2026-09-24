@@ -1,5 +1,5 @@
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
-import { writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
+import { writeLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
 import { STORAGE_CASE_RECONCILIATIONS, STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
 
@@ -153,6 +153,20 @@ export function loadCaseReconciliationBanner(
           }
         : null,
   };
+}
+
+/**
+ * Keeps a case's already-existing record's `localDraft` continuously current as the user keeps
+ * editing after a banner has appeared (or after "Keep my changes", before the next save
+ * succeeds) — without this, a refresh, navigation, or case switch during that window would
+ * restore the OLDER snapshot captured when the record was first written, silently discarding
+ * every keystroke since. A pure no-op when no record exists for this case (nothing pending to
+ * keep in sync) — this never CREATES a record; only recordCaseConflict/commitKeepMyChanges do.
+ */
+export function syncCaseReconciliationDraft(caseId: string, latestDraft: JusticeIntake): void {
+  const existing = readCaseReconciliation(caseId);
+  if (!existing) return;
+  writeCaseReconciliation(caseId, { ...existing, localDraft: latestDraft });
 }
 
 /**

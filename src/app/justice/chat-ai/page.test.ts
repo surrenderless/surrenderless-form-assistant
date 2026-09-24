@@ -633,50 +633,46 @@ describe("chat-ai page cancelled-checkout acknowledgment", () => {
 });
 
 describe("chat-ai reload/conflict reconciliation never silently discards an unsaved draft", () => {
-  it("the reload-reconciliation effect checks dirty state via areBuildJusticeIntakePartsDirty before ever deciding what to do with the fresh server row", () => {
+  it("the reload-reconciliation effect delegates the dirty check, the conflict recording, and the active-case re-verification entirely to reconciliationController.ts's checkForServerReconciliation, rather than reimplementing that logic inline", () => {
     const effectMatch = pageSource.match(
       /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
     );
     expect(effectMatch).not.toBeNull();
     const effectBody = effectMatch![0];
-    expect(effectBody).toMatch(/areBuildJusticeIntakePartsDirty\(/);
-    // The dirty branch must record the conflict and stash the banner and return — never call
-    // setParts directly in that branch, which would silently discard the in-progress local draft.
-    const dirtyBranchMatch = effectBody.match(
-      /if \(areBuildJusticeIntakePartsDirty\([\s\S]*?\)\) \{([\s\S]*?)\n {6}\}/
-    );
-    expect(dirtyBranchMatch).not.toBeNull();
-    expect(dirtyBranchMatch![1]).toMatch(/setPendingCaseReconciliation\(/);
-    expect(dirtyBranchMatch![1]).not.toMatch(/setParts\(/);
-    // The dirty branch must durably record BOTH sides of the conflict (via recordCaseConflict)
-    // BEFORE stashing the pending reconciliation, so a refresh/navigation while the banner is
-    // unresolved can still recover the actual server snapshot, not stale STORAGE_INTAKE.
-    expect(dirtyBranchMatch![1]).toMatch(/recordCaseConflict\(/);
-    expect(dirtyBranchMatch![1].indexOf("recordCaseConflict(")).toBeLessThan(
-      dirtyBranchMatch![1].indexOf("setPendingCaseReconciliation(")
-    );
-    // The clean path (after the dirty check) is the only place this effect calls setParts.
-    const afterDirtyBranch = effectBody.slice(effectBody.indexOf(dirtyBranchMatch![0]) + dirtyBranchMatch![0].length);
-    expect(afterDirtyBranch).toMatch(/setParts\(freshParts\)/);
+    expect(effectBody).toMatch(/checkForServerReconciliation\(\{/);
+    // Dirty-check inputs are read live at call time (via partsRef.current / sessionBaselinePartsRef,
+    // never the closed-over `parts` this effect's [isLoaded]-only deps would otherwise capture
+    // stale), and passed in as callbacks the controller invokes only AFTER its own fetch resolves —
+    // never as a value snapshotted before the await.
+    expect(effectBody).toMatch(/getCurrentDraft: \(\) => buildJusticeIntakeFromParts\(partsRef\.current\)/);
+    expect(effectBody).toMatch(/getBaseline: \(\) =>/);
+    expect(effectBody).not.toMatch(/getCurrentDraft: \(\) => buildJusticeIntakeFromParts\(parts\)/);
+    // Active-case re-verification is likewise delegated — the controller re-checks getActiveCaseId()
+    // itself after its own await, not something this effect re-derives from a value captured before
+    // the fetch.
+    expect(effectBody).toMatch(/getActiveCaseId: \(\) =>/);
+    // A conflict result stashes the banner and leaves `parts` untouched — never calls setParts in
+    // that branch, which would silently discard the in-progress local draft.
+    const conflictBranchMatch = effectBody.match(/if \(result\.kind === "conflict"\) \{([\s\S]*?)\n {6}\}/);
+    expect(conflictBranchMatch).not.toBeNull();
+    expect(conflictBranchMatch![1]).toMatch(/setPendingCaseReconciliation\(result\.banner\)/);
+    expect(conflictBranchMatch![1]).not.toMatch(/setParts\(/);
+    // Only the "synced" (clean) result calls setParts, with the controller's already-verified fresh
+    // content.
+    const syncedBranchMatch = effectBody.match(/if \(result\.kind === "synced"\) \{([\s\S]*?)\n {6}\}/);
+    expect(syncedBranchMatch).not.toBeNull();
+    expect(syncedBranchMatch![1]).toMatch(/setParts\(freshParts\)/);
   });
 
-  it("the reload-reconciliation effect's dirty check reads the draft via partsRef.current, never the closed-over `parts` — the effect's deps are [isLoaded] only, so a bare `parts` read would be stale by the time the async fetch resolves", () => {
+  it("the reload-reconciliation effect bails out early (via a `cancelled` flag set in its cleanup function) if the component unmounts/re-runs before the controller's fetch resolves — never applying a stale response", () => {
     const effectMatch = pageSource.match(
       /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
     );
     expect(effectMatch).not.toBeNull();
     const effectBody = effectMatch![0];
-    // The dirty check itself must use the ref, not the closure variable.
-    expect(effectBody).toMatch(/areBuildJusticeIntakePartsDirty\(sessionBaselinePartsRef\.current, partsRef\.current\)/);
-    expect(effectBody).not.toMatch(/areBuildJusticeIntakePartsDirty\(sessionBaselinePartsRef\.current, parts\)/);
-  });
-
-  it("the reload-reconciliation effect re-verifies the active case id after its async fetch resolves, before acting on the response", () => {
-    const effectMatch = pageSource.match(
-      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
-    );
-    expect(effectMatch).not.toBeNull();
-    expect(effectMatch![0]).toMatch(/stillActiveCaseId !== caseId/);
+    expect(effectBody).toMatch(/let cancelled = false;/);
+    expect(effectBody).toMatch(/if \(cancelled\) return;/);
+    expect(effectBody).toMatch(/cancelled = true;/);
   });
 
   it("both Save buttons are disabled while a reconciliation is pending, blocking a write against a superseded local snapshot", () => {
@@ -737,26 +733,42 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
     expect(fnMatch![1]).toMatch(/pendingCaseReconciliation\.caseId === activeCaseId/);
   });
 
-  it("hydrateChatFromJusticeCaseRow (the case-switch chokepoint) loads/clears React reconciliation state for the newly-active case, and restores its draft if one exists — this is what makes A's banner never leak into B", () => {
+  it("hydrateChatFromJusticeCaseRow (the case-switch chokepoint) delegates to activateCaseReconciliationState for the newly-active case — this is what makes A's banner never leak into B", () => {
     const start = pageSource.indexOf("async function hydrateChatFromJusticeCaseRow(freshCase: JusticeCaseListRow)");
     expect(start).toBeGreaterThan(-1);
     const end = pageSource.indexOf("\n  async function", start + 1);
     expect(end).toBeGreaterThan(start);
     const fnBody = pageSource.slice(start, end);
-    expect(fnBody).toMatch(/loadPendingReconciliationForCase\(caseId\)/);
-    expect(fnBody).toMatch(/setParts\(draftParts\)/);
+    expect(fnBody).toMatch(/activateCaseReconciliationState\(caseId, intake\)/);
   });
 
-  it("the mount effect restores an unresolved/kept reconciliation record for the active case (via loadPendingReconciliationForCase) and re-opens the banner when pending, instead of silently treating the server snapshot just loaded into STORAGE_INTAKE as the user's committed content", () => {
+  it("activateCaseReconciliationState is the single chokepoint: it resolves activation via the real reconciliationController, sets the baseline from the record's OWN server snapshot (never STORAGE_INTAKE/local draft directly), and installs the banner/draft into React state + STORAGE_INTAKE", () => {
+    const start = pageSource.indexOf("function activateCaseReconciliationState(caseId: string, hydratedFromStorage: JusticeIntake): void {");
+    expect(start).toBeGreaterThan(-1);
+    const end = pageSource.indexOf("\n  }", start);
+    expect(end).toBeGreaterThan(start);
+    const fnBody = pageSource.slice(start, end);
+    expect(fnBody).toMatch(/resolveCaseActivation\(caseId, hydratedFromStorage\)/);
+    expect(fnBody).toMatch(/sessionBaselinePartsRef\.current = [\s\S]*?result\.baseline/);
+    expect(fnBody).toMatch(/setParts\(draftParts\)/);
+    expect(fnBody).toMatch(/setPendingCaseReconciliation\(result\.banner\)/);
+  });
+
+  it("the mount effect restores an unresolved/kept reconciliation record for the active case (via activateCaseReconciliationState) instead of silently treating the server snapshot just loaded into STORAGE_INTAKE as the user's committed content", () => {
     const mountEffectMatch = pageSource.match(
       /useEffect\(\(\) => \{\r?\n {4}const intake = readValidLocalJusticeIntake\(\);[\s\S]*?\n {2}\}, \[\]\);/
     );
     expect(mountEffectMatch).not.toBeNull();
     const body = mountEffectMatch![0];
-    expect(body).toMatch(/loadPendingReconciliationForCase\(caseId\)/);
-    const draftBranchMatch = body.match(/if \(reconciliation\) \{([\s\S]*?)\n {6}\}/);
-    expect(draftBranchMatch).not.toBeNull();
-    expect(draftBranchMatch![1]).toMatch(/setParts\(draftParts\)/);
+    expect(body).toMatch(/activateCaseReconciliationState\(caseId, intake\)/);
+  });
+
+  it("a dedicated effect continuously flushes every `parts` change into the active case's durable reconciliation record (syncCaseReconciliationDraft) — a no-op when no record exists, but never stale once a banner/kept-draft exists", () => {
+    const syncEffectMatch = pageSource.match(
+      /useEffect\(\(\) => \{\r?\n {4}const caseId =[\s\S]*?syncCaseReconciliationDraft\([\s\S]*?\n {2}\}, \[parts\]\);/
+    );
+    expect(syncEffectMatch).not.toBeNull();
+    expect(syncEffectMatch![0]).toMatch(/syncCaseReconciliationDraft\(caseId, buildJusticeIntakeFromParts\(parts\)\)/);
   });
 
   it("documentMerchantContact conflict/missing_version handling stashes a reconciliation snapshot instead of resyncing parts directly from session storage", () => {

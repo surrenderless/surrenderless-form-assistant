@@ -353,7 +353,9 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
       // Paid so this describe block's first-approval-transition patches (merchantClientState)
       // exercise owned-filing-ensure behavior, not the separate payment gate (covered on its own
       // in rejectUnpaidPreparedPacketApprovalPatch.test.ts and the "payment gating" block below).
-      data: { client_state: {}, archived_at: null, paid_at: "2026-01-01T00:00:00.000Z", intake },
+      // case_version is a real, NOT NULL column on every actual row — every client_state/
+      // archived_at patch now gets a real self-read CAS token, so the mock must supply one too.
+      data: { client_state: {}, archived_at: null, case_version: 1, paid_at: "2026-01-01T00:00:00.000Z", intake },
       error: null,
     });
     mockTasksSelect.mockResolvedValue({ data: [], error: null });
@@ -473,6 +475,7 @@ describe("PATCH /api/justice/cases/[id] owned filing ensure", () => {
       data: {
         client_state: fallbackApprovedClientState,
         archived_at: null,
+        case_version: 1,
         updated_at: "2026-01-01T00:00:00.000Z",
         paid_at: "2026-01-01T00:00:00.000Z",
         intake,
@@ -625,6 +628,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       data: {
         client_state: merchantClientState,
         archived_at: null,
+        case_version: 1,
         updated_at: "2026-01-01T00:00:00.000Z",
         paid_at: "2026-01-01T00:00:00.000Z",
         intake: resolvedIntake,
@@ -1068,6 +1072,7 @@ describe("PATCH /api/justice/cases/[id] merchant-resolved terminal transition fr
       data: {
         client_state: merchantClientState,
         archived_at: null,
+        case_version: 1,
         updated_at: "2026-01-01T00:00:00.000Z",
         paid_at: "2026-01-01T00:00:00.000Z",
         intake: resolvedIntake,
@@ -1417,7 +1422,7 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
 
   it("allows the same approval transition once paid_at is set", async () => {
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { client_state: {}, archived_at: null, paid_at: "2026-08-01T00:00:00.000Z", intake },
+      data: { client_state: {}, archived_at: null, case_version: 1, paid_at: "2026-08-01T00:00:00.000Z", intake },
       error: null,
     });
     mockCaseUpdateMaybeSingle.mockResolvedValue({
@@ -1490,6 +1495,7 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
       data: {
         client_state: {},
         archived_at: null,
+        case_version: 1,
         paid_at: "2026-08-01T00:00:00.000Z",
         intake: intakeNoRecipient,
       },
@@ -1523,7 +1529,7 @@ describe("PATCH /api/justice/cases/[id] payment gating", () => {
 
   it("never blocks a case that is already approved/in-progress, even while unpaid", async () => {
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { client_state: merchantClientState, archived_at: null, paid_at: null },
+      data: { client_state: merchantClientState, archived_at: null, case_version: 1, paid_at: null },
       error: null,
     });
     mockCaseUpdateMaybeSingle.mockResolvedValue({
@@ -1626,7 +1632,7 @@ describe("PATCH /api/justice/cases/[id] follow-up clearing — multiple simultan
     vi.mocked(getUserOr401).mockReturnValue(USER_ID);
     followUpTasksStore = [];
     mockCaseSelectMaybeSingle.mockResolvedValue({
-      data: { client_state: merchantFollowUpNeededClientState, archived_at: null },
+      data: { client_state: merchantFollowUpNeededClientState, archived_at: null, case_version: 1 },
       error: null,
     });
     mockTasksSelect.mockResolvedValue({ data: [], error: null });
@@ -1715,6 +1721,7 @@ describe("PATCH /api/justice/cases/[id] follow-up clearing — multiple simultan
           approved_next_action: { follow_up_needed: true },
         },
         archived_at: null,
+        case_version: 1,
       },
       error: null,
     });
@@ -1859,13 +1866,30 @@ describe("PATCH /api/justice/cases/[id] — intake compare-and-swap and safe tim
     expect(res.status).toBe(200);
   });
 
-  it("a pure timeline-only PATCH is never CAS-gated — an unrelated stale case_version does not block it", async () => {
+  it("a pure timeline-only PATCH IS case_version-CAS-gated on a fresh self-read — a concurrent writer that advanced case_version since this request's own read rejects it with 409, never silently overwriting", async () => {
     mockCaseSelectMaybeSingle.mockResolvedValue({
       data: { case_version: 1, timeline: [] },
       error: null,
     });
-    // Armed with a gate that would reject ANY case_version filter — proves none was attached.
-    mockCaseUpdateCasGate = { expectedCaseVersion: 999 };
+    // The REAL current row (per the gate) has already moved past what this request's own
+    // pre-write read saw — a genuine concurrent writer, not a client-supplied stale token.
+    mockCaseUpdateCasGate = { expectedCaseVersion: 2 };
+
+    const res = await PATCH(
+      buildPatchRequest({ timeline: [{ id: "e1", case_id: CASE_ID, type: "task_added", label: "L", ts: "2026-01-01T00:00:00.000Z" }] }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdateMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("a pure timeline-only PATCH succeeds when this request's fresh self-read case_version still matches the real current value", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { case_version: 1, timeline: [] },
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedCaseVersion: 1 };
 
     const res = await PATCH(
       buildPatchRequest({ timeline: [{ id: "e1", case_id: CASE_ID, type: "task_added", label: "L", ts: "2026-01-01T00:00:00.000Z" }] }),
@@ -1873,6 +1897,38 @@ describe("PATCH /api/justice/cases/[id] — intake compare-and-swap and safe tim
     );
 
     expect(res.status).toBe(200);
+    expect(mockCaseUpdatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ timeline: expect.arrayContaining([expect.objectContaining({ id: "e1" })]) })
+    );
+  });
+
+  it("a case_label-only PATCH is likewise case_version-CAS-gated — no remaining field is exempt", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { case_version: 1, timeline: [] },
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedCaseVersion: 2 };
+
+    const res = await PATCH(buildPatchRequest({ case_label: "My case" }), routeContext());
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdateMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("a payment_dispute_draft-only PATCH is likewise case_version-CAS-gated", async () => {
+    mockCaseSelectMaybeSingle.mockResolvedValue({
+      data: { case_version: 1, timeline: [] },
+      error: null,
+    });
+    mockCaseUpdateCasGate = { expectedCaseVersion: 2 };
+
+    const res = await PATCH(
+      buildPatchRequest({ payment_dispute_draft: { payment_method: "credit_card" } }),
+      routeContext()
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockCaseUpdateMaybeSingle).not.toHaveBeenCalled();
   });
 
   it("a stale client-submitted timeline that omits a newer, server-appended entry does not erase that entry — it survives in the merged write", async () => {

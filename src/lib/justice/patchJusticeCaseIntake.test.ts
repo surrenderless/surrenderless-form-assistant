@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { patchJusticeCaseIntake, readLocalIntakeCaseVersion, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
 import { readCaseReconciliation } from "@/lib/justice/caseReconciliationStore";
-import { STORAGE_INTAKE } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 const CASE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -89,6 +89,7 @@ describe("patchJusticeCaseIntake", () => {
   });
 
   it("on success, stores the NEW case_version returned by the server for the next write (sequential saves advance the token)", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_ID);
     writeLocalIntakeCaseVersion(3);
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, { intake: baseIntake, case_version: 4, timeline: [] }))
@@ -106,6 +107,7 @@ describe("patchJusticeCaseIntake", () => {
   });
 
   it("on conflict (409), never retries the write itself, and reconciles by adopting the server's fresh state", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_ID);
     writeLocalIntakeCaseVersion(1);
     const freshIntake = { ...baseIntake, company_name: "Someone else's edit" };
     fetchMock.mockResolvedValueOnce(
@@ -154,6 +156,7 @@ describe("patchJusticeCaseIntake — durable per-case reconciliation (Keep my ch
   });
 
   it("on a 409, durably records BOTH the local draft and the actual server snapshot/version for this case BEFORE installing server content into STORAGE_INTAKE", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_ID);
     writeLocalIntakeCaseVersion(1);
     const localDraft = { ...baseIntake, story: "My in-progress edit" };
     const serverIntake = { ...baseIntake, company_name: "Someone else's edit" };
@@ -248,5 +251,28 @@ describe("patchJusticeCaseIntake — durable per-case reconciliation (Keep my ch
     // Case A's record must be untouched.
     expect(readCaseReconciliation(CASE_ID)).not.toBeNull();
     expect(readCaseReconciliation(CASE_ID)?.localDraft.story).toBe("A's unresolved draft");
+  });
+
+  it("BLOCKING FIX (round 4, item 8): a PATCH resolving for a case that is no longer the active one still durably records the per-case reconciliation, but never writes the now-inactive case's content into the GLOBAL STORAGE_INTAKE/cached case_version pointers", async () => {
+    // Case A's request is in flight; before it resolves, the user has already switched to case B.
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_ID);
+    writeLocalIntakeCaseVersion(1);
+    const serverIntake = { ...baseIntake, company_name: "Someone else's concurrent edit" };
+    fetchMock.mockImplementationOnce(async () => {
+      sessionStorage.setItem(STORAGE_CASE_ID, OTHER_CASE_ID);
+      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify({ ...baseIntake, story: "B's own content" }));
+      return jsonResponse(409, { error: "conflict", current: { intake: serverIntake, case_version: 2 } });
+    });
+
+    await patchJusticeCaseIntake(CASE_ID, { ...baseIntake, story: "A's draft, resolving after the switch" });
+
+    // A's reconciliation record is still durably written — never lost.
+    const record = readCaseReconciliation(CASE_ID);
+    expect(record?.serverIntake).toEqual(serverIntake);
+    expect(record?.serverCaseVersion).toBe(2);
+    // But B's global session pointers are completely untouched by A's late-resolving PATCH.
+    expect(sessionStorage.getItem(STORAGE_CASE_ID)).toBe(OTHER_CASE_ID);
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_INTAKE) ?? "null")).toEqual({ ...baseIntake, story: "B's own content" });
+    expect(readLocalIntakeCaseVersion()).toBe(1); // unchanged — A's late conflict never overwrote it
   });
 });

@@ -3,8 +3,8 @@ import { patchJusticeCaseIntake, readLocalIntakeCaseVersion } from "@/lib/justic
 import {
   fetchJusticeCaseById,
   hydrateSessionFromCaseListRow,
-  refreshLocalIntakeAndVersionFromServer,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
 import {
   clearCaseReconciliation,
   commitKeepMyChanges,
@@ -19,7 +19,7 @@ import type { JusticeIntake } from "@/lib/justice/types";
 /**
  * End-to-end scenario regressions for the per-case reconciliation state machine, exercising the
  * REAL exported implementation (patchJusticeCaseIntake, hydrateSessionFromCaseListRow,
- * refreshLocalIntakeAndVersionFromServer, and every caseReconciliationStore function) directly —
+ * recoverFromMissingVersion, and every caseReconciliationStore function) directly —
  * no hand-rolled page simulation class and no source-text regex mirror. Only the thin React
  * glue that calls these functions (setParts/setPendingCaseReconciliation) is left to page.tsx
  * itself, and that wiring is covered separately by structural checks in page.test.ts.
@@ -229,11 +229,22 @@ describe("Reconciliation scenarios — real implementation, no PageSim", () => {
     expect(row?.case_version).toBe(3);
   });
 
-  it("sanity: refreshLocalIntakeAndVersionFromServer (the real missing_version recovery path) records the full reconciliation", async () => {
+  it("sanity: recoverFromMissingVersion (the real, centralized missing_version recovery path) records the full reconciliation and returns an install-ready banner", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
     const localDraft = intake({ story: "draft that hit missing_version" });
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: CASE_A, intake: intake({ story: "server" }), case_version: 9 }));
-    const refreshed = await refreshLocalIntakeAndVersionFromServer(CASE_A, localDraft);
-    expect(refreshed).toEqual({ intake: intake({ story: "server" }), caseVersion: 9 });
+    const recovery = await recoverFromMissingVersion(CASE_A, localDraft, {
+      fetchCaseById: fetchJusticeCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(recovery.ok).toBe(true);
+    if (!recovery.ok) throw new Error("expected recovery.ok");
+    expect(recovery.banner).toEqual({
+      caseId: CASE_A,
+      reason: "missing_version",
+      serverIntake: intake({ story: "server" }),
+      serverCaseVersion: 9,
+    });
     expect(readCaseReconciliation(CASE_A)?.localDraft).toEqual(localDraft);
     clearCaseReconciliation(CASE_A);
   });

@@ -1,9 +1,17 @@
 import { isJusticeIntakePayload } from "@/lib/justice/caseApiValidation";
 import { recordCaseConflict, clearCaseReconciliation } from "@/lib/justice/caseReconciliationStore";
 import { readLocalIntakeCaseVersion, writeLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
-import { STORAGE_INTAKE } from "@/lib/justice/types";
+import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { validate as isUuid } from "uuid";
+
+/** True when `id` is still the active case — global session pointers (STORAGE_CASE_ID,
+ * STORAGE_INTAKE, the cached case_version) must never be written for a case the user has since
+ * navigated away from, even though this PATCH was legitimately in flight for it. */
+function isStillActiveCase(id: string): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(STORAGE_CASE_ID)?.trim() === id;
+}
 
 export { readLocalIntakeCaseVersion, writeLocalIntakeCaseVersion };
 
@@ -30,11 +38,10 @@ export type PatchJusticeCaseIntakeResult =
  * silently fetching one via GET and pairing it with `intake` — that GET's content could already
  * be staler or fresher than `intake` with no way to tell, which is exactly the pairing bug that
  * let a fresh token silently authorize an overwrite of newer server state in a prior incident.
- * Callers must refresh BOTH content and version from the server (e.g. via
- * refreshLocalIntakeAndVersionFromServer, which durably records this exact `intake` as the
- * case's reconciliation draft alongside whatever server snapshot it fetches) before retrying with
- * a freshly-derived edit — never call this again with the same stale `intake` after a
- * missing_version result.
+ * Callers must route through reconciliationController.ts's recoverFromMissingVersion (which
+ * durably records this exact `intake` as the case's reconciliation draft alongside whatever
+ * server snapshot it fetches) before retrying with a freshly-derived edit — never call this again
+ * with the same stale `intake` after a missing_version result.
  *
  * On a genuine 409 conflict, this durably records BOTH sides of the reconciliation choice for
  * `caseId` — via recordCaseConflict — BEFORE adopting the fresh server intake/version into
@@ -43,6 +50,13 @@ export type PatchJusticeCaseIntakeResult =
  * durable per-case record alone, never from re-deriving the server side out of STORAGE_INTAKE
  * (which is not case-scoped and could have moved on for a reason unrelated to this exact
  * conflict). This never retries the stale write itself.
+ *
+ * Both the 409 and success branches install their fresh content into the GLOBAL STORAGE_INTAKE/
+ * cached-case_version pointers only if `caseId` is STILL the active case by the time this PATCH
+ * resolves (isStillActiveCase) — an in-flight request for a case the user has since switched
+ * away from must never revert those pointers back to it. The per-case reconciliation record
+ * (recordCaseConflict/clearCaseReconciliation) is written/cleared unconditionally either way —
+ * it is safe regardless of which case is active, since it is scoped by case id, not a shared slot.
  */
 export async function patchJusticeCaseIntake(
   caseId: string,
@@ -92,9 +106,11 @@ export async function patchJusticeCaseIntake(
     if (currentCaseVersion !== null && isJusticeIntakePayload(conflictBody?.current?.intake)) {
       recordCaseConflict(id, "conflict", intake, conflictBody.current.intake, currentCaseVersion);
     }
-    if (currentCaseVersion !== null) writeLocalIntakeCaseVersion(currentCaseVersion);
-    if (typeof window !== "undefined" && conflictBody?.current?.intake !== undefined) {
-      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(conflictBody.current.intake));
+    if (isStillActiveCase(id)) {
+      if (currentCaseVersion !== null) writeLocalIntakeCaseVersion(currentCaseVersion);
+      if (typeof window !== "undefined" && conflictBody?.current?.intake !== undefined) {
+        sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(conflictBody.current.intake));
+      }
     }
     return {
       ok: false,
@@ -116,12 +132,15 @@ export async function patchJusticeCaseIntake(
     return { ok: false, reason: "invalid_response", error: "Unexpected response saving intake." };
   }
 
-  writeLocalIntakeCaseVersion(data.case_version);
-  if (typeof window !== "undefined") {
-    sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
+  if (isStillActiveCase(id)) {
+    writeLocalIntakeCaseVersion(data.case_version);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
+    }
   }
   // This exact case's write just succeeded — clear only ITS reconciliation record (if one
-  // existed); every other case's record is untouched, since the store is keyed per case id.
+  // existed); every other case's record is untouched, since the store is keyed per case id. Safe
+  // regardless of which case is currently active (scoped by id, not a shared slot).
   clearCaseReconciliation(id);
   return { ok: true, intake: data.intake, caseVersion: data.case_version, timeline: data.timeline };
 }

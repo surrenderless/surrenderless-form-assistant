@@ -53,6 +53,10 @@ const MAX_OPERATOR_NOTE = 2000;
 
 const RPC_NAME = "cancel_operator_fulfillment_task";
 
+/** Bounded read-recompute-write retry bound for persisting a proposed next action after
+ * cancellation — mirrors appendCaseTimelineEntry's MAX_APPEND_ATTEMPTS. */
+const RECOMPUTE_NEXT_ACTION_MAX_ATTEMPTS = 5;
+
 /**
  * Maps each fulfillment destination's approved-action href to the notes-marker matcher/builder
  * for that destination. Only these nine destinations are cancellable here; follow-up/response-
@@ -324,43 +328,72 @@ async function recomputeApprovedNextActionAfterCancellation(
     return clientStateAfterCancel;
   }
 
-  const nextClientState: Record<string, unknown> = {
-    ...clientStateAfterCancel,
-    approved_next_action: buildApprovedNextActionTarget(prepared),
-  };
+  const proposedAction = buildApprovedNextActionTarget(prepared);
 
-  // Reviewed exception to the case_version-CAS rule (see justiceTimelineAppend.ts and
-  // updateClientStateIfUnchanged.ts for the general pattern): the authoritative state change
-  // (clearing approved_next_action) already committed atomically inside the RPC above. This is a
-  // purely best-effort, self-limiting follow-up that only ever WRITES the one field it read as
-  // null — the .is("client_state->approved_next_action", null) filter is itself a real
-  // compare-and-swap on exactly that field, verified by a real Postgres round trip, and rejects
-  // the write the instant a concurrent writer sets a different action first (see
-  // cancelOperatorFulfillmentTask.test.ts: "does not overwrite a concurrently-set
-  // approved_next_action"). A CAS miss here falls back to `clientStateAfterCancel` unchanged —
-  // never retried, never treated as a cancellation failure — which is exactly the fail-safe this
-  // narrow guard is designed to produce.
-  const { data: updatedCase, error: updateErr } = await supabase
-    .from("justice_cases")
-    .update({ client_state: nextClientState })
-    .eq("id", caseId)
-    .eq("user_id", userId)
-    .is("client_state->approved_next_action", null)
-    .select("client_state")
-    .maybeSingle();
+  // The authoritative state change (clearing approved_next_action) already committed atomically
+  // inside the RPC above — this is a best-effort follow-up. It is NOT a narrow single-field write:
+  // it replaces the entire client_state object, so it needs a REAL case_version CAS, re-read fresh
+  // on every attempt and recomputed from that fresh state — never from the (by now possibly stale)
+  // clientStateAfterCancel snapshot — so a concurrent writer's change to any OTHER client_state
+  // field survives instead of being silently reverted to what this function read minutes earlier.
+  // A narrow `.is("client_state->approved_next_action", null)` guard alone cannot provide this: it
+  // only proves approved_next_action is still unset, not that nothing else in client_state changed
+  // (see cancelOperatorFulfillmentTask.test.ts: "a concurrent writer's change to an unrelated
+  // client_state field is never silently reverted by this write").
+  for (let attempt = 1; attempt <= RECOMPUTE_NEXT_ACTION_MAX_ATTEMPTS; attempt++) {
+    const { data: freshRow, error: freshErr } = await supabase
+      .from("justice_cases")
+      .select("client_state, case_version")
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .maybeSingle();
 
-  if (updateErr) {
-    console.warn(
-      "cancelOperatorFulfillmentTask: could not persist proposed next action",
-      updateErr.message
-    );
-    return clientStateAfterCancel;
+    if (freshErr || !freshRow) {
+      console.warn(
+        "cancelOperatorFulfillmentTask: could not re-read case before persisting proposed next action",
+        freshErr?.message ?? "not found"
+      );
+      return clientStateAfterCancel;
+    }
+
+    const freshClientState = (freshRow.client_state ?? {}) as Record<string, unknown>;
+    if (freshClientState.approved_next_action !== undefined) {
+      // Someone else has already set (or is mid-way through setting) an action since we decided
+      // to propose one — never clobber; leave it exactly as it now is.
+      return freshClientState;
+    }
+
+    const nextClientState: Record<string, unknown> = {
+      ...freshClientState,
+      approved_next_action: proposedAction,
+    };
+
+    const { data: updatedCase, error: updateErr } = await supabase
+      .from("justice_cases")
+      .update({ client_state: nextClientState })
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .eq("case_version", freshRow.case_version as number)
+      .select("client_state")
+      .maybeSingle();
+
+    if (updateErr) {
+      console.warn(
+        "cancelOperatorFulfillmentTask: could not persist proposed next action",
+        updateErr.message
+      );
+      return clientStateAfterCancel;
+    }
+    if (updatedCase) {
+      return nextClientState;
+    }
+    // CAS miss — a concurrent writer advanced case_version between the read and write above.
+    // Loop: re-read fresh client_state + case_version and recompute from that current state.
   }
-  if (!updatedCase) {
-    // Lost a race to a concurrent client_state write; leave whatever it set in place rather
-    // than guess at merging with it.
-    return clientStateAfterCancel;
-  }
 
-  return nextClientState;
+  console.warn(
+    "cancelOperatorFulfillmentTask: exhausted retries on case_version conflict persisting proposed next action",
+    caseId
+  );
+  return clientStateAfterCancel;
 }

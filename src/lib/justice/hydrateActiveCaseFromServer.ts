@@ -1,5 +1,4 @@
 import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
-import { recordCaseConflict } from "@/lib/justice/caseReconciliationStore";
 import { writeLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -152,35 +151,9 @@ export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): P
   return { activeRows, archivedRows };
 }
 
-/**
- * GET a specific case fresh and hydrate session (intake + case_version + timeline) from it — the
- * recovery path when a write is refused with patchJusticeCaseIntake's "missing_version" result
- * (no cached version) or when a reload needs to reconcile local session state against the server
- * rather than trusting stale sessionStorage indefinitely. Always refreshes content and version
- * together; never establishes one without the other.
- *
- * `localDraft` is the exact content the caller was trying to save when it hit missing_version —
- * this durably records it (via recordCaseConflict) alongside the fresh server snapshot fetched
- * here, BEFORE hydrateSessionFromCaseListRow installs that server content into STORAGE_INTAKE, so
- * "Keep my changes" can survive a refresh that lands before the caller's reconciliation UI (if
- * any) is resolved. Returns the fresh intake, or null if the case could not be loaded.
- */
-export async function refreshLocalIntakeAndVersionFromServer(
-  caseId: string,
-  localDraft: JusticeIntake,
-  signal?: AbortSignal
-): Promise<{ intake: JusticeIntake; caseVersion: number } | null> {
-  const row = await fetchJusticeCaseById(caseId, signal);
-  if (!row) return null;
-  if (isJusticeIntakePayload(row.intake) && typeof row.case_version === "number") {
-    recordCaseConflict(caseId, "missing_version", localDraft, row.intake, row.case_version);
-  }
-  const intake = hydrateSessionFromCaseListRow(row);
-  if (!intake || typeof row.case_version !== "number") return null;
-  return { intake, caseVersion: row.case_version };
-}
-
-/** GET a single owned case by id for chat hydrate after selection/restore. */
+/** GET a single owned case by id for chat hydrate after selection/restore. Also the fetch
+ * dependency injected into reconciliationController.ts's recoverFromMissingVersion — that
+ * function is the ONE centralized missing_version recovery path; do not build a parallel one. */
 export async function fetchJusticeCaseById(
   caseId: string,
   signal?: AbortSignal

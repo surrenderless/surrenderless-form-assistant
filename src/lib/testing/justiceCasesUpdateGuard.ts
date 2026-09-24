@@ -4,96 +4,83 @@ import ts from "typescript";
 
 /**
  * AST-based regression guard: every `supabase.from("justice_cases").update(...)` call site in the
- * app must either carry a real case_version CAS filter (`.eq("case_version", ...)`, chained
- * directly or attached to the same query-builder variable in a later statement, as in
- * api/justice/cases/[id]/route.ts) or be an EXACT, pinned, shape-validated entry in
- * REVIEWED_EXCEPTIONS below — never a whole-file exemption, and never a bare `.is(col, null)`
- * accepted on its own say-so.
+ * app must carry a real case_version CAS filter (`.eq("case_version", ...)`, chained directly or
+ * attached to the same query-builder variable in a LATER, UNCONDITIONAL statement, as in
+ * api/justice/cases/[id]/route.ts) — UNLESS it is an EXACT, pinned, shape-validated single-field
+ * "narrow-is-guard" entry in REVIEWED_EXCEPTIONS below, whose `.is(col, null)` guard column is
+ * required to be exactly the one field the write's object-literal argument touches. There is no
+ * other exception mechanism: no whole-file exemption, no "no CAS required" carve-out, and no
+ * general-purpose acceptance of `.is()` for an unlisted call site.
  *
- * History: this replaced an earlier regex/text-window scanner proven bypassable by a misleading
- * trailing comment, incidental whitespace before `(`, or a table-name constant. A second-round
- * AST version fixed those but was itself proven bypassable by (a) REVIEWED_EXCEPTIONS skipping the
- * ENTIRE FILE rather than the one reviewed line — letting a second, unrelated, unguarded write in
- * the same file through for free — and (b) never even considering a destructured
- * (`const { update } = ...`) or bound/aliased (`table.update.bind(...)`) reference, since both use
- * a bare Identifier callee rather than a `.update` PropertyAccessExpression. This version:
- *   - pins every exception to an EXACT file+line, and re-validates its payload shape and guard
- *     column against the live source every run — a tampered or moved exception FAILS CLOSED
- *     (reported as a finding) rather than silently continuing to pass;
- *   - never accepts `.is(col, null)` as a general-purpose guard for an unlisted call site — only
- *     for a "narrow-is-guard" exception whose object-literal argument's key set is validated to
- *     equal exactly the approved field(s);
- *   - fails closed (always reports a finding, no exception mechanism) on any destructured
- *     (`const { update } = ...`) or non-immediately-called (bound/aliased) reference to `.update`
- *     resolving to justice_cases, since neither can be reliably traced to a guarded call site;
- *   - resolves query-builder-returning helper functions defined in the same file (e.g.
- *     `function getCasesTable(supabase) { return supabase.from("justice_cases"); }`), so an
- *     `.update(...)` chained onto a call to such a helper is scanned exactly like an inline
- *     `.from("justice_cases").update(...)` would be;
- *   - resolves query-builder aliases (the object a chain is built on assigned to a variable and
- *     continued later) and same-file table-name string constants, and is immune to "helper
- *     extraction" (moving an update into a differently-named function) by construction, since
- *     every `.update(...)` call site in the file is visited regardless of which function contains
- *     it.
- *
- * Known limitation (documented, not silently assumed away): resolution is same-file only. A write
- * reached only through a cross-FILE factory (a helper defined in a DIFFERENT module) would not be
- * traced. No such pattern exists anywhere in this codebase today — if one is introduced, extend
- * the resolver rather than treat this comment as a substitute for doing so.
+ * History: round 1 (regex/text-window) was proven bypassable by a misleading trailing comment,
+ * incidental whitespace, or a table-name constant. Round 2 (AST-based) fixed those but was proven
+ * bypassable by REVIEWED_EXCEPTIONS exempting the entire file, `.is()` being accepted for ANY call
+ * site, never considering destructured/bound references, and a guard applied on only one
+ * conditional branch still counting as "guarded". Round 3 fixed the first three and added
+ * path-completeness checking for reassignment-based guards, but (a) trusted a CROSS-FILE
+ * query-builder-returning helper function with no way to verify it at all (same-file helpers were
+ * already correctly re-verified via their own `return` statement), (b) never considered
+ * computed/bracket (`obj["update"]`) access, and (c) a "no-cas-required" exception existed at all,
+ * whose safety depended on a control-flow invariant (which fields could reach that branch) the
+ * checker could not itself verify — proven by tampering the real route's upstream condition while
+ * leaving the pinned line unchanged and the exception still validating. That route was refactored
+ * to require case_version CAS unconditionally for every remaining patch shape, removing the need
+ * for a "no-cas-required" exception at all, and cancelOperatorFulfillmentTask.ts was rewritten to
+ * use a real case_version CAS retry loop instead of its narrow `.is()` guard, removing that
+ * exception too. This version:
+ *   - has exactly ONE exception kind (narrow-is-guard), each entry pinned to an EXACT file+line
+ *     and re-validated against the live source every run — a tampered, moved, or reshaped
+ *     exception FAILS CLOSED (reported as a finding), never silently continues to pass;
+ *   - requires a narrow-is-guard's approvedField to be a SINGLE field, and guardColumn to be
+ *     EXACTLY that field (not merely a JSON sub-path within it) — a write that replaces a whole
+ *     object (like client_state) while only guarding one JSON key inside it can never qualify,
+ *     closing the class of bug where the guard checks less than the write touches;
+ *   - never accepts `.is(col, null)` as a general-purpose guard for an unlisted call site;
+ *   - fails closed on destructured (`const { update } = ...`) and non-immediately-called
+ *     (bound/aliased) `.update` references;
+ *   - fails closed on computed/bracket access (`obj["update"](...)`, `obj[nameVar](...)`) —
+ *     detected and always reported, never resolved/trusted;
+ *   - fails closed on `.update(...)` called through the result of calling an identifier imported
+ *     from ANOTHER FILE IN THIS PROJECT (`someImportedFactory(...).update(...)`) — a cross-file
+ *     query-builder factory this checker has no way to inspect, so it is never resolved/trusted,
+ *     only flagged. This is deliberately scoped to same-project imports (relative or `@/*`
+ *     path-alias) — a third-party/Node-built-in import (e.g. `createHmac`, which also exposes an
+ *     unrelated `.update()`) is excluded, since it can never be a justice_cases factory and
+ *     flagging it would only be noise, not a closed gap. A SAME-file helper
+ *     function is still resolved (not blindly trusted): its own `return` statement is re-verified
+ *     against this exact resolver every run, exactly like an inline `.from("justice_cases")`
+ *     chain would be — this is what "helper extraction" (moving a write into a differently-named
+ *     function) cannot evade, and remains fully covered;
+ *   - resolves query-builder aliases (the object a chain is built on assigned to a plain variable
+ *     via `let q = supabase.from(...)`) and same-file table-name string constants.
  */
 
 const TARGET_TABLE = "justice_cases";
 
 /**
- * A write validated only by an exact `.is("<col>", null)` at-most-once filter, because the
- * update()'s object-literal argument is verified (every run) to contain ONLY `approvedFields` as
- * its top-level keys — never a general write with an incidental unrelated `.is()` tacked on.
+ * The ONLY exception kind: a write validated by an exact `.is("<col>", null)` at-most-once filter,
+ * where `approvedField` is proven (every run) to be the single top-level key the update()'s
+ * object-literal argument sets, and `guardColumn` is required to be EXACTLY `approvedField` — not
+ * a JSON path within a larger object the write also replaces. A write that touches more than one
+ * field, or whose guard checks something narrower than the whole value being written, can never
+ * validate as this kind of exception.
  */
-type NarrowIsGuardException = {
+export type ReviewedException = {
   kind: "narrow-is-guard";
   file: string;
   /** 1-indexed line where the `.update(` call begins — pins this exception to one exact site. */
   line: number;
-  approvedFields: readonly string[];
+  approvedField: string;
   guardColumn: string;
   reason: string;
 };
 
-/**
- * A write validated to need no case_version/is() guard at all, because the update()'s argument at
- * this EXACT line is verified (every run) to still be the specific identifier reviewed — not an
- * object literal whose shape this checker can itself re-verify (the value is built up
- * dynamically), so this kind of exception is a narrower guarantee (line-pinned + argument-identity
- * checked) than narrow-is-guard, not a blanket "trust the comment" exemption.
- */
-type NoCasRequiredException = {
-  kind: "no-cas-required";
-  file: string;
-  line: number;
-  argumentIdentifier: string;
-  reason: string;
-};
-
-export type ReviewedException = NarrowIsGuardException | NoCasRequiredException;
-
 export const REVIEWED_EXCEPTIONS: readonly ReviewedException[] = [
-  {
-    kind: "narrow-is-guard",
-    file: "lib/justice/cancelOperatorFulfillmentTask.ts",
-    line: 345,
-    approvedFields: ["client_state"],
-    guardColumn: "client_state->approved_next_action",
-    reason:
-      "Narrow CAS on the exact field this best-effort follow-up writes; the authoritative " +
-      "cancellation already committed atomically via the cancel_operator_fulfillment_task RPC. " +
-      'See cancelOperatorFulfillmentTask.test.ts: "does not overwrite a concurrently-set ' +
-      'approved_next_action".',
-  },
   {
     kind: "narrow-is-guard",
     file: "lib/justice/finalizePaidPreparedPacketApproval.ts",
     line: 180,
-    approvedFields: ["orphan_recovery_confirmed_at"],
+    approvedField: "orphan_recovery_confirmed_at",
     guardColumn: "orphan_recovery_confirmed_at",
     reason: "At-most-once marker write, best-effort, never touches intake/client_state.",
   },
@@ -101,7 +88,7 @@ export const REVIEWED_EXCEPTIONS: readonly ReviewedException[] = [
     kind: "narrow-is-guard",
     file: "lib/justice/operatorOwnedCaseArchive.ts",
     line: 370,
-    approvedFields: ["archived_at"],
+    approvedField: "archived_at",
     guardColumn: "archived_at",
     reason:
       "At-most-once transition, re-reads and reports idempotently on a CAS miss rather than " +
@@ -111,21 +98,9 @@ export const REVIEWED_EXCEPTIONS: readonly ReviewedException[] = [
     kind: "narrow-is-guard",
     file: "lib/stripe/processStripeCheckoutCompletedEvent.ts",
     line: 168,
-    approvedFields: ["paid_at"],
+    approvedField: "paid_at",
     guardColumn: "paid_at",
     reason: "At-most-once transition guarding against a redelivered Stripe webhook.",
-  },
-  {
-    kind: "no-cas-required",
-    file: "app/api/justice/cases/[id]/route.ts",
-    line: 611,
-    argumentIdentifier: "patch",
-    reason:
-      "Reached only when patch touches none of intake/client_state/archived_at — some " +
-      "combination of timeline (conflict-free server-side merge via mergeCaseTimelineEntries " +
-      "regardless of staleness), case_label, and payment_dispute_draft (plain last-write-wins " +
-      "fields, no two-values-conflict semantics). The CAS-protected branch immediately above " +
-      "handles every other case.",
   },
 ];
 
@@ -153,14 +128,20 @@ function resolveStringLiteral(
   return null;
 }
 
-/** True when `expr`'s call chain (following same-file identifier aliases of the query-builder
- * object itself, and same-file helper functions that return a `.from("justice_cases")` chain)
- * ultimately roots at `.from("justice_cases")`. */
+/**
+ * True when `expr`'s call chain (following same-file identifier aliases of the query-builder
+ * object itself, same-file table-name string constants, and calls to a same-file function proven
+ * — via `helperNames`, see collectJusticeCasesReturningHelperNames — to itself return a
+ * justice_cases query builder) ultimately roots at `.from("justice_cases")`. A call to an
+ * identifier NOT in `helperNames` (an unresolved same-file function, or any imported/cross-file
+ * identifier) is never resolved here — callers handle that class of indirection separately, and
+ * fail closed on it rather than "resolving and trusting" it.
+ */
 function resolvesToJusticeCasesFrom(
   expr: ts.Expression,
   stringLocals: ReadonlyMap<string, ts.Expression>,
   builderLocals: ReadonlyMap<string, ts.Expression>,
-  helperNames: ReadonlySet<string>,
+  helperNames: ReadonlySet<string> = new Set(),
   depth = 0
 ): boolean {
   if (depth > 12) return false;
@@ -187,6 +168,112 @@ function resolvesToJusticeCasesFrom(
     if (init) return resolvesToJusticeCasesFrom(init, stringLocals, builderLocals, helperNames, depth + 1);
   }
   return false;
+}
+
+/** Same-file functions (function declarations, or `const x = (...) => ...` / `function expr`
+ * bindings) whose body directly `return`s something `resolvesToJusticeCasesFrom` proves resolves
+ * to a justice_cases query builder. Computed once per file per scan (never cached across runs) so
+ * it is re-verified every time, not "trusted" — this is what keeps same-file helper-extraction
+ * fully covered: calling one of these, then `.update(...)`, is scanned exactly like an inline
+ * `.from("justice_cases")...update(...)` chain would be. Deliberately shallow (does not resolve a
+ * helper that itself only calls ANOTHER same-file helper) — an unresolved case falls through to
+ * the caller's fail-closed handling for calls through an unrecognized identifier, so this can only
+ * ever cost a human a look, never a silent bypass. */
+function collectJusticeCasesReturningHelperNames(
+  sourceFile: ts.SourceFile,
+  stringLocals: ReadonlyMap<string, ts.Expression>,
+  builderLocals: ReadonlyMap<string, ts.Expression>
+): Set<string> {
+  const names = new Set<string>();
+  const bodyResolvesToJusticeCases = (body: ts.ConciseBody): boolean => {
+    if (ts.isBlock(body)) {
+      let matched = false;
+      const findReturn = (stmt: ts.Node) => {
+        if (matched) return;
+        if (
+          ts.isReturnStatement(stmt) &&
+          stmt.expression &&
+          resolvesToJusticeCasesFrom(stmt.expression, stringLocals, builderLocals)
+        ) {
+          matched = true;
+          return;
+        }
+        // Don't attribute a NESTED function's return statements to the outer helper.
+        if (ts.isFunctionDeclaration(stmt) || ts.isFunctionExpression(stmt) || ts.isArrowFunction(stmt)) return;
+        ts.forEachChild(stmt, findReturn);
+      };
+      ts.forEachChild(body, findReturn);
+      return matched;
+    }
+    return resolvesToJusticeCasesFrom(body, stringLocals, builderLocals);
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isFunctionDeclaration(n) && n.name && n.body) {
+      if (bodyResolvesToJusticeCases(n.body)) names.add(n.name.text);
+    } else if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer &&
+      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
+    ) {
+      if (bodyResolvesToJusticeCases(n.initializer.body)) names.add(n.name.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sourceFile);
+  return names;
+}
+
+/** True for a module specifier that resolves to a file INSIDE this project (a relative import, or
+ * the project's `@/*` path-alias) — as opposed to an npm package or Node built-in. Scoping the
+ * cross-file-factory check (below) to same-project imports is deliberate: a third-party or
+ * built-in import (e.g. Node's `createHmac`, which also exposes an unrelated `.update()` method)
+ * can never be a justice_cases query-builder factory, so treating every imported identifier's
+ * `.update(` call as ambiguous would flood real findings with unrelated library usage — the actual
+ * risk this check targets is a factory DEFINED ELSEWHERE IN THIS CODEBASE that this scanner, by
+ * construction, cannot open and re-verify the way it does for same-file helpers. */
+function isSameProjectModuleSpecifier(specifier: string): boolean {
+  return specifier.startsWith(".") || specifier.startsWith("@/");
+}
+
+/** Local binding names introduced by this file's `import` statements FROM ANOTHER FILE IN THIS
+ * PROJECT (default, named — using the local/aliased name — and namespace imports; third-party/
+ * built-in module imports excluded, see isSameProjectModuleSpecifier) — used to fail closed
+ * specifically on `.update(...)` called through the result of calling one of THESE identifiers: a
+ * cross-file factory this checker has no way to inspect, so it is never resolved/trusted, only
+ * flagged. */
+function collectImportedIdentifiers(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isImportDeclaration(n) &&
+      n.importClause &&
+      ts.isStringLiteralLike(n.moduleSpecifier) &&
+      isSameProjectModuleSpecifier(n.moduleSpecifier.text)
+    ) {
+      const clause = n.importClause;
+      if (clause.name) names.add(clause.name.text);
+      if (clause.namedBindings) {
+        if (ts.isNamespaceImport(clause.namedBindings)) {
+          names.add(clause.namedBindings.name.text);
+        } else if (ts.isNamedImports(clause.namedBindings)) {
+          for (const el of clause.namedBindings.elements) names.add(el.name.text);
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sourceFile);
+  return names;
+}
+
+/** If `expr` (after unwrapping parens/await) is a call to a bare identifier (`someFunction(...)`),
+ * returns that identifier's text; otherwise null. */
+function calledIdentifierName(expr: ts.Expression): string | null {
+  if (ts.isParenthesizedExpression(expr)) return calledIdentifierName(expr.expression);
+  if (ts.isAwaitExpression(expr)) return calledIdentifierName(expr.expression);
+  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) return expr.expression.text;
+  return null;
 }
 
 /** Only a real `.eq("case_version", ...)` CAS filter counts as a general-purpose guard — `.is()`
@@ -249,10 +336,7 @@ function findEnclosingScope(node: ts.Node, sourceFile: ts.SourceFile): ts.Node {
 /** True if any ancestor of `node`, up to (but not including) `scope`, is a control-flow construct
  * that could make `node` execute on only SOME paths through `scope` — an `if`/ternary/loop/switch
  * branch. Used to reject a "guarded" reassignment that is itself conditional: reassigning `q` to a
- * guarded chain only `if (cond)` does not prove every execution path reaches a guarded write — the
- * exact shape that let a real, reviewed omission (a deliberately unguarded branch) coexist with a
- * guarded one in the same statement in a prior version of api/justice/cases/[id]/route.ts, now
- * refactored into two syntactically separate call sites specifically so this check can be sound. */
+ * guarded chain only `if (cond)` does not prove every execution path reaches a guarded write. */
 function isConditionallyReached(node: ts.Node, scope: ts.Node): boolean {
   let current: ts.Node | undefined = node.parent;
   while (current && current !== scope) {
@@ -267,11 +351,11 @@ function isConditionallyReached(node: ts.Node, scope: ts.Node): boolean {
       ts.isForOfStatement(current) ||
       ts.isWhileStatement(current) ||
       ts.isDoStatement(current) ||
-      ts.isBinaryExpression(current) &&
+      (ts.isBinaryExpression(current) &&
         (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
           current.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
           current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
-        current.right === node
+        current.right === node)
     ) {
       return true;
     }
@@ -285,9 +369,7 @@ function isConditionallyReached(node: ts.Node, scope: ts.Node): boolean {
  * production code uses, e.g.
  * `let q = X.update(patch).eq("id", id); q = q.eq("case_version", v);`.
  * A reassignment reachable only through a conditional branch does NOT count: it does not prove
- * every execution path through `scope` applies the guard before the query executes (see
- * isConditionallyReached) — the exact adversarial shape this checker must fail closed on rather
- * than treat as "guarded somewhere in this function". */
+ * every execution path through `scope` applies the guard before the query executes. */
 function scopeHasGuardedReassignment(scope: ts.Node, bindingName: string): boolean {
   let found = false;
   const visit = (n: ts.Node) => {
@@ -383,51 +465,6 @@ function collectLocals(sourceFile: ts.SourceFile): {
   return { stringLocals, builderLocals };
 }
 
-/** Same-file function declarations/expressions/arrows whose body returns an expression that
- * itself resolves to a justice_cases `.from(...)` chain — so `getCasesTable(supabase).update(...)`
- * is scanned exactly like `supabase.from("justice_cases").update(...)` would be. */
-function collectJusticeCasesReturningHelperNames(
-  sourceFile: ts.SourceFile,
-  stringLocals: ReadonlyMap<string, ts.Expression>,
-  builderLocals: ReadonlyMap<string, ts.Expression>
-): Set<string> {
-  const names = new Set<string>();
-  const emptyHelperNames: ReadonlySet<string> = new Set();
-  const bodyReturnsBuilder = (body: ts.ConciseBody | ts.Block): boolean => {
-    if (!ts.isBlock(body)) {
-      return resolvesToJusticeCasesFrom(body, stringLocals, builderLocals, emptyHelperNames);
-    }
-    let found = false;
-    const scan = (n: ts.Node) => {
-      if (found) return;
-      if (ts.isReturnStatement(n) && n.expression) {
-        if (resolvesToJusticeCasesFrom(n.expression, stringLocals, builderLocals, emptyHelperNames)) {
-          found = true;
-          return;
-        }
-      }
-      ts.forEachChild(n, scan);
-    };
-    scan(body);
-    return found;
-  };
-  const visit = (n: ts.Node) => {
-    if (ts.isFunctionDeclaration(n) && n.name && n.body) {
-      if (bodyReturnsBuilder(n.body)) names.add(n.name.text);
-    } else if (
-      ts.isVariableDeclaration(n) &&
-      ts.isIdentifier(n.name) &&
-      n.initializer &&
-      (ts.isFunctionExpression(n.initializer) || ts.isArrowFunction(n.initializer))
-    ) {
-      if (bodyReturnsBuilder(n.initializer.body)) names.add(n.name.text);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sourceFile);
-  return names;
-}
-
 function lineOf(sourceFile: ts.SourceFile, pos: number): number {
   return sourceFile.getLineAndCharacterOfPosition(pos).line + 1;
 }
@@ -456,49 +493,41 @@ function objectLiteralKeys(expr: ts.Expression): string[] | null {
   return keys;
 }
 
-function sameSet(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const setB = new Set(b);
-  return a.every((x) => setB.has(x));
-}
-
 /** Validates a matched exception against the ACTUAL call site every run — a tampered, moved, or
  * shape-changed exception fails closed (is reported as a finding), never silently continues to
  * pass just because a file+line once matched. */
 function validateException(exception: ReviewedException, update: ts.CallExpression): boolean {
   const arg = update.arguments[0];
-  if (exception.kind === "narrow-is-guard") {
-    if (!arg) return false;
-    const keys = objectLiteralKeys(arg);
-    if (!keys) return false; // not a plain object literal — cannot verify the field set
-    if (!sameSet(keys, exception.approvedFields)) return false;
-    const { outer } = walkUpChain(update);
-    if (chainContainsIsNullGuard(outer as ts.Expression, exception.guardColumn)) return true;
-    // Also allow the guard attached via a later reassignment, matching the general guard's
-    // split-across-statements support.
-    const bindingName = bindingNameOf(outer);
-    if (!bindingName) return false;
-    // Reuse the enclosing-scope reassignment scan, but for the is() guard specifically.
-    let found = false;
-    const scope = findEnclosingScope(update, update.getSourceFile());
-    const visit = (n: ts.Node) => {
-      if (found) return;
-      if (
-        ts.isBinaryExpression(n) &&
-        n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(n.left) &&
-        n.left.text === bindingName &&
-        chainContainsIsNullGuard(n.right, exception.guardColumn)
-      ) {
-        found = true;
-      }
-      ts.forEachChild(n, visit);
-    };
-    ts.forEachChild(scope, visit);
-    return found;
-  }
-  // no-cas-required
-  return Boolean(arg && ts.isIdentifier(arg) && arg.text === exception.argumentIdentifier);
+  if (!arg) return false;
+  const keys = objectLiteralKeys(arg);
+  if (!keys) return false; // not a plain object literal — cannot verify the field set
+  if (keys.length !== 1 || keys[0] !== exception.approvedField) return false;
+  if (exception.guardColumn !== exception.approvedField) return false; // defensive; should never trip given the literal table above
+  const { outer } = walkUpChain(update);
+  if (chainContainsIsNullGuard(outer as ts.Expression, exception.guardColumn)) return true;
+  // Also allow the guard attached via a later, UNCONDITIONAL reassignment, matching the general
+  // guard's split-across-statements support.
+  const bindingName = bindingNameOf(outer);
+  if (!bindingName) return false;
+  const scope = findEnclosingScope(update, update.getSourceFile());
+  let found = false;
+  const visit = (n: ts.Node) => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(n.left) &&
+      n.left.text === bindingName &&
+      chainContainsIsNullGuard(n.right, exception.guardColumn) &&
+      !isConditionallyReached(n, scope)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(scope, visit);
+  return found;
 }
 
 /**
@@ -514,6 +543,7 @@ export function findUnguardedJusticeCasesWritesInSource(
   const sourceFile = ts.createSourceFile(relPath, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const { stringLocals, builderLocals } = collectLocals(sourceFile);
   const helperNames = collectJusticeCasesReturningHelperNames(sourceFile, stringLocals, builderLocals);
+  const importedIdentifiers = collectImportedIdentifiers(sourceFile);
   const exceptionsForFile = REVIEWED_EXCEPTIONS.filter((e) => e.file === relPath);
 
   function pushFindingAt(pos: number, detail: string) {
@@ -547,15 +577,41 @@ export function findUnguardedJusticeCasesWritesInSource(
         pushFindingAt(n.getStart(sourceFile), "`.update` referenced without being called immediately (bound/aliased) on a justice_cases query builder — cannot be traced to a guarded call site");
       }
     }
+    // Fail closed: computed/bracket access (`obj["update"](...)` or `obj[nameVar](...)`) on
+    // something that resolves to justice_cases — an ElementAccessExpression is never resolved or
+    // trusted, only ever flagged, when its property name is the literal "update" or is not
+    // statically provable to be something else.
+    if (ts.isElementAccessExpression(n) && resolvesToJusticeCasesFrom(n.expression, stringLocals, builderLocals, helperNames)) {
+      const key = n.argumentExpression;
+      const isProvablyNotUpdate = ts.isStringLiteralLike(key) && key.text !== "update";
+      if (!isProvablyNotUpdate) {
+        pushFindingAt(n.getStart(sourceFile), "computed/bracket property access on a justice_cases query builder — cannot be statically verified as guarded (or as anything other than `update`)");
+      }
+    }
     if (ts.isCallExpression(n)) {
       const callee = n.expression;
       if (ts.isPropertyAccessExpression(callee) && callee.name.text === "update") {
-        if (resolvesToJusticeCasesFrom(callee.expression, stringLocals, builderLocals, helperNames)) {
+        const updateNamePos = callee.name.getStart(sourceFile);
+        const line = lineOf(sourceFile, updateNamePos);
+        const calledIdent = calledIdentifierName(callee.expression);
+        if (calledIdent !== null && !helperNames.has(calledIdent)) {
+          // `.update(...)` reached through a function call this scanner cannot resolve as a
+          // same-file justice_cases-returning helper. Fail closed ONLY on an imported (cross-file)
+          // identifier — a factory this checker has no way to inspect. An unresolved same-file
+          // function call is left alone (true negative): collectJusticeCasesReturningHelperNames
+          // already re-verifies, every run, every same-file function whose return statement
+          // actually resolves to justice_cases, so failing here would only ever be re-flagging an
+          // already-proven-unrelated local call, not closing a real gap.
+          if (importedIdentifiers.has(calledIdent)) {
+            pushFindingAt(
+              updateNamePos,
+              `\`.update\` called on the result of calling imported identifier \`${calledIdent}\` — a cross-file factory this checker cannot inspect; never resolved/trusted, always flagged`
+            );
+          }
+        } else if (resolvesToJusticeCasesFrom(callee.expression, stringLocals, builderLocals, helperNames)) {
           // The `.update` NAME token's own line, not the CallExpression's overall start (which,
           // for a fluent chain, is wherever the chain's root expression begins — often several
           // lines earlier) and not the argument list's line either.
-          const updateNamePos = callee.name.getStart(sourceFile);
-          const line = lineOf(sourceFile, updateNamePos);
           const exception = exceptionsForFile.find((e) => e.line === line);
           if (exception) {
             if (!validateException(exception, n)) {
@@ -594,7 +650,6 @@ export function findUnguardedJusticeCasesWritesInSource(
 export function sourceHasJusticeCasesUpdateAtLine(content: string, relPath: string, line: number): boolean {
   const sourceFile = ts.createSourceFile(relPath, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const { stringLocals, builderLocals } = collectLocals(sourceFile);
-  const helperNames = collectJusticeCasesReturningHelperNames(sourceFile, stringLocals, builderLocals);
   let found = false;
   const visit = (n: ts.Node) => {
     if (found) return;
@@ -604,7 +659,7 @@ export function sourceHasJusticeCasesUpdateAtLine(content: string, relPath: stri
         ts.isPropertyAccessExpression(callee) &&
         callee.name.text === "update" &&
         lineOf(sourceFile, callee.name.getStart(sourceFile)) === line &&
-        resolvesToJusticeCasesFrom(callee.expression, stringLocals, builderLocals, helperNames)
+        resolvesToJusticeCasesFrom(callee.expression, stringLocals, builderLocals)
       ) {
         found = true;
         return;

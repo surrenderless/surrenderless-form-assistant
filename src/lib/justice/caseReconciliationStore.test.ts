@@ -6,6 +6,7 @@ import {
   loadCaseReconciliationBanner,
   readCaseReconciliation,
   recordCaseConflict,
+  syncCaseReconciliationDraft,
   writeCaseReconciliation,
 } from "@/lib/justice/caseReconciliationStore";
 import { readLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
@@ -186,6 +187,40 @@ describe("caseReconciliationStore — per-case durability and isolation", () => 
     it("returns null and does nothing when there is no record to resolve", () => {
       const result = commitUseServerVersion(CASE_A);
       expect(result).toBeNull();
+    });
+  });
+
+  describe("syncCaseReconciliationDraft", () => {
+    it("is a no-op when there is no record for the case (typing before any conflict/missing_version has ever occurred)", () => {
+      syncCaseReconciliationDraft(CASE_A, intake({ story: "typed with no record yet" }));
+      expect(readCaseReconciliation(CASE_A)).toBeNull();
+    });
+
+    it("BLOCKING FIX (round 4, item 2): keeps localDraft continuously current while a banner is pending — typing AFTER the conflict is recorded is never lost", () => {
+      recordCaseConflict(CASE_A, "conflict", intake({ story: "draft at conflict time" }), intake({ story: "server" }), 5);
+      syncCaseReconciliationDraft(CASE_A, intake({ story: "typed more after the banner appeared" }));
+      const record = readCaseReconciliation(CASE_A);
+      expect(record?.localDraft.story).toBe("typed more after the banner appeared");
+      // Everything else about the record is untouched by a draft sync.
+      expect(record?.status).toBe("pending");
+      expect(record?.serverIntake).toEqual(intake({ story: "server" }));
+      expect(record?.serverCaseVersion).toBe(5);
+    });
+
+    it("BLOCKING FIX (round 4, item 2): keeps localDraft continuously current after 'Keep my changes' too — typing after Keep, before the next save succeeds, is never lost", () => {
+      recordCaseConflict(CASE_A, "conflict", intake({ story: "old draft" }), intake({ story: "server" }), 5);
+      commitKeepMyChanges(CASE_A, intake({ story: "kept draft" }));
+      syncCaseReconciliationDraft(CASE_A, intake({ story: "typed more after clicking Keep" }));
+      const record = readCaseReconciliation(CASE_A);
+      expect(record?.status).toBe("kept");
+      expect(record?.localDraft.story).toBe("typed more after clicking Keep");
+    });
+
+    it("never creates a record for a DIFFERENT case, and never touches an unrelated case's own record", () => {
+      recordCaseConflict(CASE_B, "reload", intake({ story: "B's draft" }), intake(), 2);
+      syncCaseReconciliationDraft(CASE_A, intake({ story: "typed in case A, which has no record" }));
+      expect(readCaseReconciliation(CASE_A)).toBeNull();
+      expect(readCaseReconciliation(CASE_B)?.localDraft.story).toBe("B's draft");
     });
   });
 });

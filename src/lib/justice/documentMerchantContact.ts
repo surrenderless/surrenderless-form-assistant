@@ -8,7 +8,9 @@ import {
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
-import { refreshLocalIntakeAndVersionFromServer } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { fetchJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
+import type { CaseReconciliationBanner } from "@/lib/justice/caseReconciliationStore";
 
 const FTC_MOCK_COMPLETED_KEY = "justice_ftc_mock_completed";
 
@@ -147,15 +149,16 @@ export type DocumentMerchantContactResult =
       ok: false;
       reason: "conflict";
       error: string;
-      current: { intake: unknown; caseVersion: number | null };
+      /** Ready-to-install reconciliation banner for the caller's own explicit UI. */
+      current?: CaseReconciliationBanner;
     }
   | {
       ok: false;
       reason: "missing_version";
       error: string;
-      /** Present when the refresh this triggers succeeds — the caller's reconciliation point,
-       * same shape as the conflict case, so both can share one UI. */
-      current?: { intake: JusticeIntake; caseVersion: number };
+      /** Present when the centralized recovery this triggers succeeds — the caller's
+       * reconciliation point, same shape as the conflict case, so both can share one UI. */
+      current?: CaseReconciliationBanner;
     };
 
 /** Persist merchant/company contact documentation (session, timeline, optional server PATCH). */
@@ -206,23 +209,35 @@ export async function documentMerchantContact({
       // caller silently discard whatever the winning writer persisted. The helper has already
       // adopted the fresh server intake/version into session storage — propagate the conflict as
       // the caller's own reconciliation point instead of returning ok:true.
-      return {
-        ok: false,
-        reason: "conflict",
-        error: result.error,
-        current: { intake: result.current.intake, caseVersion: result.current.caseVersion },
-      };
+      const conflictIntake = result.current.intake;
+      const conflictVersion = result.current.caseVersion;
+      const current: CaseReconciliationBanner | undefined =
+        conflictIntake && typeof conflictVersion === "number" && typeof conflictIntake === "object"
+          ? {
+              caseId: trimmedCaseId,
+              reason: "conflict",
+              serverIntake: conflictIntake as JusticeIntake,
+              serverCaseVersion: conflictVersion,
+            }
+          : undefined;
+      return { ok: false, reason: "conflict", error: result.error, ...(current ? { current } : {}) };
     }
     if (result.reason === "missing_version") {
-      // No cached version to pair with this write — refresh both content and case_version from
-      // the server before any further write is allowed, then surface the failure so the caller
+      // No cached version to pair with this write — recoverFromMissingVersion is the ONE
+      // centralized recovery path (durably records this draft + the fetched server snapshot,
+      // validates the fetched row really is this case, and only installs global session
+      // pointers if this case is still active) before surfacing the failure so the caller
       // re-derives and resubmits this documentation against the fresh baseline.
-      const refreshed = await refreshLocalIntakeAndVersionFromServer(trimmedCaseId, updated);
+      const recovery = await recoverFromMissingVersion(trimmedCaseId, updated, {
+        fetchCaseById: fetchJusticeCaseById,
+        getActiveCaseId: () =>
+          typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
+      });
       return {
         ok: false,
         reason: "missing_version",
         error: result.error,
-        ...(refreshed ? { current: refreshed } : {}),
+        ...(recovery.ok ? { current: recovery.banner } : {}),
       };
     }
     // request_failed / invalid_response: transient/network failure, not a version conflict. The
