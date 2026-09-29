@@ -1,4 +1,4 @@
-# Apply-and-verify procedure — 2 remaining migrations (#5, #6); #1–#4 already applied to Production
+# Apply-and-verify procedure — all 6 migrations applied to Production; Step 9 (deploy) pending
 
 This procedure is for the person merging/deploying this branch to run manually against the
 **Production** Supabase project, in this exact order, **before** the corresponding application
@@ -6,17 +6,22 @@ code reaches Production. Nothing in this repository applies migrations automatic
 no Vercel build hook) — this document exists because that automation does not exist, not to
 document a step someone else will run for you.
 
-**Already applied to Production — confirmed committed with exact history rows. Do not rerun:**
+**All 6 migrations applied to Production — confirmed committed with exact history rows. Do not
+rerun any of them.** The commands under each step below are preserved as historical /
+disaster-recovery reference (e.g. rebuilding this schema from scratch, or applying this same
+migration set to a different environment) — they are not actionable against this Production
+project going forward.
 
 1. `20260916120000_justice_case_payments_intended_action.sql` — history row `20260916120000 / justice_case_payments_intended_action`
 2. `20260916130000_justice_case_tasks_dedupe_key.sql` — history row `20260916130000 / justice_case_tasks_dedupe_key`
 3. `20260916140000_justice_cases_orphan_recovery_confirmed_at.sql` — history row `20260916140000 / justice_cases_orphan_recovery_confirmed_at`
 4. `20260917110000_justice_cases_case_version.sql` — history row `20260917110000 / justice_cases_case_version`
+5. `20260917120000_justice_case_audit_events.sql` — history row `20260917120000 / justice_case_audit_events`
+6. `20260928000000_justice_case_audit_events_grants_hardening.sql` — history row `20260928000000 / justice_case_audit_events_grants_hardening`
 
-**Remaining, in required order:**
-
-5. `20260917120000_justice_case_audit_events.sql`
-6. `20260928000000_justice_case_audit_events_grants_hardening.sql`
+**Only Step 9 (deploying the application code) remains pending.** Step 8 (final code/schema
+agreement check) has already been run against Production and passed — see Step 8 below for the
+recorded result.
 
 Migrations #1–#5 are additive only (new nullable/defaulted columns, new indexes, one backfill
 `UPDATE` scoped by a precise `WHERE`, one `DO $$ ... $$` pre-flight check, #4's new trigger, and
@@ -204,12 +209,16 @@ where event_object_table = 'justice_cases' and trigger_name = 'bump_justice_case
 -- Expect: 1 row.
 ```
 
-## Step 6 — apply migration #5 (justice_case_audit_events table + repair_orphaned_paid_case_approval_intake RPC)
+## Step 6 — apply migration #5 (justice_case_audit_events table + repair_orphaned_paid_case_approval_intake RPC) — ✅ COMPLETED
 
-**Pending.** As noted above, raw `psql -f <file>` never records migration history on its own. The
-block below applies the migration file verbatim, records the exact history row, runs every
-required assertion (structural, ACL, and an end-to-end RPC smoke test scoped to a `SAVEPOINT`), and
-commits only if every one of them passes — all inside **one transaction**:
+Confirmed committed with history row `20260917120000 / justice_case_audit_events`, including a
+clean pass of every structural, ACL, and RPC smoke-test assertion below. **Do not rerun against
+this Production project.** The block below is preserved as historical / disaster-recovery
+reference (e.g. rebuilding this schema from scratch, or applying this migration to a different
+environment): as noted above, raw `psql -f <file>` never records migration history on its own, so
+it applies the migration file verbatim, records the exact history row, runs every required
+assertion (structural, ACL, and an end-to-end RPC smoke test scoped to a `SAVEPOINT`), and commits
+only if every one of them passes — all inside **one transaction**:
 
 ```sh
 psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
@@ -372,9 +381,12 @@ block; it is safe to re-run (the migration file's own `if not exists`/`create or
 the history insert's `on conflict do nothing`, and the savepoint-scoped smoke test are all
 idempotent).
 
-## Step 7 — apply migration #6 (justice_case_audit_events / repair_orphaned_paid_case_approval_intake grants hardening)
+## Step 7 — apply migration #6 (justice_case_audit_events / repair_orphaned_paid_case_approval_intake grants hardening) — ✅ COMPLETED
 
-**Pending.** Must run **after** Step 6. Same pattern as Step 6 — apply verbatim, record the exact
+Confirmed committed with history row `20260928000000 / justice_case_audit_events_grants_hardening`,
+including a clean pass of both ACL assertions below. **Do not rerun against this Production
+project.** The block below is preserved as historical / disaster-recovery reference. It was run
+after Step 6, per the required order — same pattern as Step 6: apply verbatim, record the exact
 history row, verify, commit only if everything passes, all in one transaction:
 
 ```sh
@@ -465,11 +477,25 @@ That would mean something other than `ALTER DEFAULT PRIVILEGES` is granting thes
 (e.g. a manual grant added directly in the dashboard after #6 ran), which this procedure cannot
 diagnose on its own.
 
-## Step 8 — final code/schema agreement check
+## Step 8 — final code/schema agreement check — ✅ COMPLETED, PASSED
+
+**Already run against Production. Result: all six fields returned `"ok"`:**
+
+```json
+{
+  "payments": "ok",
+  "tasks": "ok",
+  "cases": "ok",
+  "case_version": "ok",
+  "audit_events": "ok",
+  "repair_rpc": "ok"
+}
+```
 
 Confirm the application code's expectations match what is now live, using the service-role
 credentials the app itself uses (catches an RLS/grant gap a raw `psql` superuser session would
-never surface):
+never surface). The command below is preserved as historical / disaster-recovery reference — not
+actionable again against this Production project unless a future schema change needs re-checking:
 
 ```sh
 NEXT_PUBLIC_SUPABASE_URL=<production-url> \
@@ -514,6 +540,9 @@ procedure exists to catch is still present — do not deploy the application cod
 clean.
 
 ## Step 9 — only now, deploy the application code
+
+**Pending — not yet done.** All prerequisites are satisfied (migrations #1–#6 committed, Step 8
+passed clean) — this is the one remaining step.
 
 Merge/deploy as normal. Do not run this procedure again for the same migrations — re-running
 Step 6 or Step 7 is safe (both are idempotent, as noted above) but unnecessary once Step 8 passes.
