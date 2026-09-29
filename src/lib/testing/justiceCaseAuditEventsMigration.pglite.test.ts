@@ -625,6 +625,134 @@ describe("repair_orphaned_paid_case_approval_intake — atomic intake correction
 });
 
 /**
+ * Regression coverage for a real Production incident caught before it shipped: a real Supabase
+ * project pre-configures schema-wide DEFAULT PRIVILEGES (via ALTER DEFAULT PRIVILEGES, set up
+ * once by the provisioning roles postgres and supabase_admin, applied BEFORE any of this repo's
+ * own migrations run) — confirmed empirically against the real Production project to grant
+ * service_role, anon, AND authenticated full privileges (including UPDATE, DELETE, TRUNCATE) on
+ * every newly created table in schema public. The migration's own `grant select, insert ... to
+ * service_role` only ADDS a privilege; it never narrows one a default grant already conferred, so
+ * without an explicit `revoke all ... from public, anon, authenticated, service_role` first, this
+ * table was fully mutable/erasable by service_role — and even by anon/authenticated — despite its
+ * entire design depending on being append-only.
+ *
+ * The "immutability is enforced by privilege" test above (in the main describe block) passes
+ * using this file's normal bootstrapSupabaseStubs() fixture ONLY because that fixture never
+ * models this default-privilege mechanism — service_role there has nothing beyond what this
+ * migration's own GRANT explicitly gives it, so the bug is invisible to it. This describe block
+ * builds its own, separate fixture that DOES inject the same schema-wide default privileges the
+ * real project has, so this exact class of gap cannot silently reappear undetected. Deleting
+ * either `revoke all ...` line from the migration reproduces the original failure in every test
+ * below (empirically verified: reverting the migration's fix fails all 3 of these tests).
+ */
+describe("justice_case_audit_events migration — REVOKE must actually narrow real Supabase's schema-wide default privileges", () => {
+  let db: PGlite;
+  const PRIV_CASE_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(`
+      do $$
+      begin
+        if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+        if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+        if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role bypassrls; end if;
+      end $$;
+      create schema if not exists auth;
+      create or replace function auth.uid() returns uuid as $$
+        select null::uuid;
+      $$ language sql stable;
+    `);
+    // The exact mechanism confirmed against real Production: schema-wide default privileges on
+    // both tables and functions, set up BEFORE any of our own migrations ever create anything —
+    // matching real Supabase project provisioning order exactly. bootstrapSupabaseStubs() above
+    // deliberately does NOT do this, which is why the same test can pass there and fail here.
+    await db.exec(`
+      alter default privileges in schema public grant all on tables to service_role, anon, authenticated;
+      alter default privileges in schema public grant execute on functions to service_role, anon, authenticated;
+    `);
+    for (const sql of readAllMigrations()) {
+      await db.exec(stripUnsupportedStatements(sql));
+    }
+  });
+
+  afterAll(async () => {
+    await db.close();
+  });
+
+  it("the complete direct ACL on justice_case_audit_events is exactly service_role={INSERT,SELECT}, and anon/authenticated/PUBLIC have nothing — checked via aclexplode so EVERY privilege type (including REFERENCES, TRIGGER, and MAINTAIN, not just the ones a hand-picked has_table_privilege list would think to ask about) is covered, not just the four/five this incident happened to involve", async () => {
+    // Deliberately NOT filtered to a hand-picked grantee list: aclexplode returns every entry in
+    // the real ACL, so a same-role privilege this test's author didn't think to enumerate (or a
+    // wholly unexpected extra grantee, e.g. from a future migration mistake) still surfaces here.
+    // The table owner's own implicit entry (added automatically once the ACL is materialized by
+    // the migration's REVOKE/GRANT) is real and expected — this test asserts nothing about it,
+    // only about the four specific grantees the app's own safety model actually depends on.
+    const r = await db.query<{ grantee: string; privilege_type: string }>(`
+      select coalesce(r.rolname, 'PUBLIC') as grantee, a.privilege_type
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      cross join lateral aclexplode(c.relacl) as a(grantor, grantee, privilege_type, is_grantable)
+      left join pg_roles r on r.oid = a.grantee
+      where c.relname = 'justice_case_audit_events' and n.nspname = 'public'
+      order by grantee, privilege_type
+    `);
+    const byGrantee = new Map<string, string[]>();
+    for (const row of r.rows) {
+      if (!byGrantee.has(row.grantee)) byGrantee.set(row.grantee, []);
+      byGrantee.get(row.grantee)!.push(row.privilege_type);
+    }
+    expect((byGrantee.get("service_role") ?? []).sort()).toEqual(["INSERT", "SELECT"]);
+    expect(byGrantee.get("anon")).toBeUndefined();
+    expect(byGrantee.get("authenticated")).toBeUndefined();
+    expect(byGrantee.get("PUBLIC")).toBeUndefined();
+  });
+
+  it("the complete direct ACL on repair_orphaned_paid_case_approval_intake is exactly service_role={EXECUTE}, and anon/authenticated/PUBLIC have nothing — checked via aclexplode on the function's own ACL, resolved by its exact regprocedure signature", async () => {
+    const r = await db.query<{ grantee: string; privilege_type: string }>(`
+      select coalesce(r.rolname, 'PUBLIC') as grantee, a.privilege_type
+      from pg_proc p
+      cross join lateral aclexplode(p.proacl) as a(grantor, grantee, privilege_type, is_grantable)
+      left join pg_roles r on r.oid = a.grantee
+      where p.oid = 'public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text)'::regprocedure
+      order by grantee, privilege_type
+    `);
+    const byGrantee = new Map<string, string[]>();
+    for (const row of r.rows) {
+      if (!byGrantee.has(row.grantee)) byGrantee.set(row.grantee, []);
+      byGrantee.get(row.grantee)!.push(row.privilege_type);
+    }
+    expect(byGrantee.get("service_role")).toEqual(["EXECUTE"]);
+    expect(byGrantee.get("anon")).toBeUndefined();
+    expect(byGrantee.get("authenticated")).toBeUndefined();
+    expect(byGrantee.get("PUBLIC")).toBeUndefined();
+  });
+
+  it("service_role can still actually insert an audit row end to end under this fixture, and still genuinely cannot UPDATE or DELETE it — privileges are real, not merely reported", async () => {
+    await db.exec(`set role service_role;`);
+    try {
+      await db.query(`insert into justice_cases (id, user_id, intake) values ($1, $2, '{}'::jsonb)`, [
+        PRIV_CASE_ID,
+        "priv_test_user",
+      ]);
+      await db.query(
+        `insert into justice_case_audit_events (case_id, user_id, event_type, idempotency_key, actor)
+         values ($1, $2, 'test', 'priv_test_key', 'priv_test_actor')`,
+        [PRIV_CASE_ID, "priv_test_user"]
+      );
+      await expect(
+        db.query(`update justice_case_audit_events set actor = 'tampered' where idempotency_key = 'priv_test_key'`)
+      ).rejects.toThrow(/permission denied/i);
+      await expect(
+        db.query(`delete from justice_case_audit_events where idempotency_key = 'priv_test_key'`)
+      ).rejects.toThrow(/permission denied/i);
+    } finally {
+      await db.exec(`reset role;`);
+      await db.query(`delete from justice_cases where id = $1`, [PRIV_CASE_ID]);
+    }
+  });
+});
+
+/**
  * Real-Postgres proof for the exact database mechanism api/justice/cases/[id]/route.ts's PATCH
  * handler (and every other justice_cases CAS call site — updateClientStateIfUnchanged, used by
  * all ten complete*OperatorFiling.ts files, finalizePaidPreparedPacketApproval.ts, and route.ts's

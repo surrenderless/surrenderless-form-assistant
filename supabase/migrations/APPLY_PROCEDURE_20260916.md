@@ -1,4 +1,4 @@
-# Apply-and-verify procedure — 5 pending migrations (not yet applied to Production)
+# Apply-and-verify procedure — 2 remaining migrations (#5, #6); #1–#4 already applied to Production
 
 This procedure is for the person merging/deploying this branch to run manually against the
 **Production** Supabase project, in this exact order, **before** the corresponding application
@@ -6,23 +6,54 @@ code reaches Production. Nothing in this repository applies migrations automatic
 no Vercel build hook) — this document exists because that automation does not exist, not to
 document a step someone else will run for you.
 
-Pending migrations, in required order:
+**Already applied to Production — confirmed committed with exact history rows. Do not rerun:**
 
-1. `20260916120000_justice_case_payments_intended_action.sql`
-2. `20260916130000_justice_case_tasks_dedupe_key.sql`
-3. `20260916140000_justice_cases_orphan_recovery_confirmed_at.sql`
-4. `20260917110000_justice_cases_case_version.sql`
+1. `20260916120000_justice_case_payments_intended_action.sql` — history row `20260916120000 / justice_case_payments_intended_action`
+2. `20260916130000_justice_case_tasks_dedupe_key.sql` — history row `20260916130000 / justice_case_tasks_dedupe_key`
+3. `20260916140000_justice_cases_orphan_recovery_confirmed_at.sql` — history row `20260916140000 / justice_cases_orphan_recovery_confirmed_at`
+4. `20260917110000_justice_cases_case_version.sql` — history row `20260917110000 / justice_cases_case_version`
+
+**Remaining, in required order:**
+
 5. `20260917120000_justice_case_audit_events.sql`
+6. `20260928000000_justice_case_audit_events_grants_hardening.sql`
 
-All five are additive only (new nullable/defaulted columns, new indexes, one backfill `UPDATE`
-scoped by a precise `WHERE`, one `DO $$ ... $$` pre-flight check, #4's new trigger, and #5's new
-table + function). None of them drop or rename a column, alter a type, or change any existing
-constraint. Each is individually safe to apply on its own — the order above matters only because
-#1 must exist before the checkout/webhook code paths it supports go live, #2's pre-flight check
-should run before you rely on the constraint it creates, #4 must exist before #5 (whose RPC takes
-`p_expected_case_version` and reads/writes `justice_cases.case_version`), and #5's RPC must exist
-before the repair-intake application code (which calls it exclusively — it no longer writes
-justice_cases directly for that flow) reaches Production.
+Migrations #1–#5 are additive only (new nullable/defaulted columns, new indexes, one backfill
+`UPDATE` scoped by a precise `WHERE`, one `DO $$ ... $$` pre-flight check, #4's new trigger, and
+#5's new table + function). None of them drop or rename a column, alter a type, or change any
+existing constraint. #6 is a pure, idempotent `REVOKE ALL` / `GRANT` re-application — it creates
+nothing and drops nothing, only narrows privileges on objects #5 already created. #4 had to exist
+before #5 (whose RPC takes `p_expected_case_version` and reads/writes `justice_cases.case_version`)
+— already satisfied, since both are committed. #5's RPC must exist before the repair-intake
+application code (which calls it exclusively — it no longer writes justice_cases directly for that
+flow) reaches Production, and #6 must run **after** #5 specifically — it revokes/re-grants
+privileges on `justice_case_audit_events` and `repair_orphaned_paid_case_approval_intake`, both
+created by #5, and fails loudly ("relation/function does not exist") if run against a project
+where #5 hasn't landed yet.
+
+**#6 exists because a release audit caught something #5's own `grant select, insert ...` never
+accounted for: this Supabase project pre-configures schema-wide `ALTER DEFAULT PRIVILEGES`, set up
+once by the provisioning roles `postgres` and `supabase_admin` before any of this repo's own
+migrations ever run, that grant `service_role` — and, on this project, even `anon`/`authenticated`
+— full privileges (including `UPDATE`, `DELETE`, `TRUNCATE`) on every newly created table in schema
+`public`. A bare `GRANT` only ADDS a privilege; it can never narrow one a default grant already
+conferred, so #5's original content left the supposedly-immutable audit table fully
+mutable/erasable. Unlike #1's payment-webhook break, skipping #6 fails SILENTLY — nothing in the
+application errors, logs, or otherwise announces that the audit table isn't actually
+append-only — so its own verification below must be run and read carefully, not skipped as "just
+another idempotent grant."** #6 is also the correct place to fix this even if #5 was already
+applied somewhere under its original content: Supabase's migration tooling
+(`supabase migration up` / `db push`) tracks "applied" by version number alone in
+`supabase_migrations.schema_migrations`, never by re-diffing file content, so an environment that
+already recorded #5's version would silently skip a content-only edit to that file forever — #6,
+as its own new version, is what actually reaches that environment.
+
+**Important — raw `psql -f <file>` does not record migration history.** Running a migration file
+with a bare `psql "$PGURL" -f <file>.sql` executes that file's own SQL and nothing else — it does
+**not** insert a row into `supabase_migrations.schema_migrations`. Every apply step below therefore
+wraps the file's content in an explicit transaction that also inserts and verifies the exact
+history row, and commits only once every required assertion passes — never a bare `-f` invocation
+on its own.
 
 **Every `justice_cases` optimistic-concurrency check in the application layer — the consumer
 intake PATCH, the operator repair-intake RPC, and `updateClientStateIfUnchanged` (used by all ten
@@ -44,7 +75,9 @@ webhook, not only orphan-recovery ones. If the application code deploys before m
 applied, every payment webhook fails with a real Postgres "column does not exist" error, Stripe
 retries and gets the identical failure, and **no consumer can complete a paid checkout at all**
 until the migration lands. Migrations must be applied first, and confirmed present, before this
-code is live in Production.
+code is live in Production. (#1 is already applied — this reasoning is preserved here because it's
+still why schema-first mattered, and it applies identically to why #5/#6 must land before any
+application code depending on them.)
 
 ## Step 0 — capture the target database
 
@@ -60,28 +93,17 @@ Confirm the output is the Production database before proceeding. If in doubt, st
 Supabase project ref against `JUSTICE_SUPABASE_SMOKE_ALLOWED_PROJECT_REF` / the dashboard URL
 before running anything below.
 
-## Step 1 — pre-flight: does the schema already disagree with the code on this branch?
+## Step 1 — pre-flight duplicate-task check (historical — already satisfied)
 
-Run this **before** applying anything, to catch a code/schema incompatibility instead of letting
-migration #2's own guard (see step 3) surface it as a mid-migration failure:
-
-This is the **canonical remediation query** — used here, reused verbatim at step 3, and safe to
-run at any time regardless of whether migration #2 has been applied yet: it derives the stable
-task marker from `notes` itself (the same first-line convention every managed-task builder
-writes, and the same expression the migration's own backfill uses) rather than the `dedupe_key`
-column migration #2 creates, so it never depends on that column existing. It also never selects
-the `notes` column itself — every managed task's notes body embeds consumer complaint/draft text,
-so selecting it here would print that content to whatever terminal or log captures this session.
-Only the short marker prefix (e.g. `state_ag_filing_queue:<uuid>`) and row identifiers are
-selected — never PII, never complaint content.
+This check protected migration #2's own pre-flight guard (a `DO $$ ... $$` block inside that
+migration that raises a named exception if the backfill finds more than one open task sharing a
+dedupe_key). Migration #2 is now committed — it could not have committed if this condition were
+true, since its own guard would have raised and rolled back the whole file. **No longer actionable
+for the migrations remaining below** (#5/#6 have nothing to do with `justice_case_tasks` dedupe
+keys); kept here only so a future reader understands what #2's own internal guard was checking
+against, without needing to dig through this file's git history:
 
 ```sql
--- Any existing duplicate OPEN managed task for the same case+destination? (the exact race
--- migration #2 closes with a unique index — if this already happened in Production, both rows
--- are real work and must be resolved by a human, never auto-merged by a migration.) Matches only
--- rows whose first line of notes ends with ":<that row's own case_id>" — the fixed convention
--- every managed-task builder writes — so an ordinary personal reminder task can never be
--- misclassified as a duplicate.
 select split_part(notes, chr(10), 1) as marker, count(*) as open_count, array_agg(id) as task_ids
 from justice_case_tasks
 where completed_at is null
@@ -89,16 +111,14 @@ where completed_at is null
   and split_part(notes, chr(10), 1) like ('%:' || case_id::text)
 group by split_part(notes, chr(10), 1)
 having count(*) > 1;
--- Expect: 0 rows. If this returns anything, stop and resolve the duplicates first (see step 3).
+-- Expect (still, on an ongoing basis, now enforced by #2's own unique index rather than by this
+-- manual check): 0 rows.
 ```
 
-## Step 2 — apply migration #1 (justice_case_payments intended-action columns)
+## Step 2 — migration #1 (justice_case_payments intended-action columns) — ✅ COMPLETED
 
-```sh
-psql "$PGURL" -f supabase/migrations/20260916120000_justice_case_payments_intended_action.sql
-```
-
-Verify:
+Confirmed committed with history row `20260916120000 / justice_case_payments_intended_action`.
+**Do not rerun.** Read-only, safe to re-run any time purely to reconfirm current state:
 
 ```sql
 select column_name, is_nullable, data_type
@@ -108,15 +128,28 @@ where table_name = 'justice_case_payments'
 -- Expect: 2 rows, both nullable, both text.
 ```
 
-## Step 3 — apply migration #2 (justice_case_tasks dedupe_key + unique index)
+## Step 3 — migration #2 (justice_case_tasks dedupe_key + unique index) — ✅ COMPLETED on this Production project
 
-```sh
-psql "$PGURL" -f supabase/migrations/20260916130000_justice_case_tasks_dedupe_key.sql
+Confirmed committed with history row `20260916130000 / justice_case_tasks_dedupe_key`. **Do not
+rerun against this Production project.** Read-only, safe to re-run any time purely to reconfirm
+current state:
+
+```sql
+select column_name from information_schema.columns
+where table_name = 'justice_case_tasks' and column_name = 'dedupe_key';
+-- Expect: 1 row.
+
+select indexname from pg_indexes
+where tablename = 'justice_case_tasks' and indexname = 'idx_justice_case_tasks_open_dedupe_key';
+-- Expect: 1 row.
 ```
 
-This migration contains its own pre-flight guard (a `DO $$ ... $$` block) that raises a named,
-readable exception — not a raw duplicate-key error — if the backfill step finds more than one
-open task sharing a dedupe_key. **If it fails with that exception:**
+**Reference only — for a fresh/different environment that has not yet applied this migration**
+(this repository's own migration set is reused as-is for local dev, CI, and any future project;
+this section is not actionable for the Production project this document otherwise tracks): this
+migration contains its own pre-flight guard (a `DO $$ ... $$` block) that raises a named, readable
+exception — not a raw duplicate-key error — if the backfill step finds more than one open task
+sharing a dedupe_key. **If it fails with that exception:**
 
 The whole migration file runs as a single transaction, so the failure above has already rolled
 back the `ALTER TABLE ... ADD COLUMN dedupe_key` from earlier in the same file — the column does
@@ -140,34 +173,10 @@ then complete the redundant one(s) through the normal application flow (or a del
 true duplicate with no independent progress). Re-run this migration only after the query above
 returns zero rows.
 
-Verify after a successful apply:
+## Step 4 — migration #3 (justice_cases orphan_recovery_confirmed_at) — ✅ COMPLETED
 
-```sql
-select column_name from information_schema.columns
-where table_name = 'justice_case_tasks' and column_name = 'dedupe_key';
--- Expect: 1 row.
-
-select indexname from pg_indexes
-where tablename = 'justice_case_tasks' and indexname = 'idx_justice_case_tasks_open_dedupe_key';
--- Expect: 1 row.
-
--- Sanity: the index actually rejects a real duplicate.
-begin;
-insert into justice_case_tasks (user_id, case_id, title, notes, dedupe_key)
-values ('smoke_test', (select id from justice_cases limit 1), 'smoke', 'smoke', '__apply_procedure_smoke_test__');
-insert into justice_case_tasks (user_id, case_id, title, notes, dedupe_key)
-values ('smoke_test', (select id from justice_cases limit 1), 'smoke', 'smoke', '__apply_procedure_smoke_test__');
--- Expect: the second insert fails with a unique_violation on idx_justice_case_tasks_open_dedupe_key.
-rollback;
-```
-
-## Step 4 — apply migration #3 (justice_cases orphan_recovery_confirmed_at)
-
-```sh
-psql "$PGURL" -f supabase/migrations/20260916140000_justice_cases_orphan_recovery_confirmed_at.sql
-```
-
-Verify:
+Confirmed committed with history row `20260916140000 / justice_cases_orphan_recovery_confirmed_at`.
+**Do not rerun.** Read-only, safe to re-run any time purely to reconfirm current state:
 
 ```sql
 select column_name, is_nullable from information_schema.columns
@@ -179,13 +188,10 @@ where tablename = 'justice_cases' and indexname = 'idx_justice_cases_orphan_reco
 -- Expect: 1 row.
 ```
 
-## Step 5 — apply migration #4 (justice_cases.case_version + bump_justice_cases_case_version trigger)
+## Step 5 — migration #4 (justice_cases.case_version + bump_justice_cases_case_version trigger) — ✅ COMPLETED
 
-```sh
-psql "$PGURL" -f supabase/migrations/20260917110000_justice_cases_case_version.sql
-```
-
-Verify:
+Confirmed committed with history row `20260917110000 / justice_cases_case_version`. **Do not
+rerun.** Read-only, safe to re-run any time purely to reconfirm current state:
 
 ```sql
 select column_name, is_nullable, data_type, column_default
@@ -196,74 +202,270 @@ where table_name = 'justice_cases' and column_name = 'case_version';
 select trigger_name from information_schema.triggers
 where event_object_table = 'justice_cases' and trigger_name = 'bump_justice_cases_case_version';
 -- Expect: 1 row.
-
--- Sanity: the trigger actually increments by exactly 1 on a real UPDATE, and does so even when
--- updated_at does not change (proves this is not secretly timestamp-based).
-begin;
-insert into justice_cases (id, user_id, intake) values (gen_random_uuid(), 'apply_procedure_smoke_test', '{"smoke": true}'::jsonb);
-select case_version from justice_cases where user_id = 'apply_procedure_smoke_test';
--- Expect: 1.
-update justice_cases set intake = '{"smoke": true, "edited": true}'::jsonb where user_id = 'apply_procedure_smoke_test';
-select case_version from justice_cases where user_id = 'apply_procedure_smoke_test';
--- Expect: 2.
-rollback;
 ```
 
 ## Step 6 — apply migration #5 (justice_case_audit_events table + repair_orphaned_paid_case_approval_intake RPC)
 
+**Pending.** As noted above, raw `psql -f <file>` never records migration history on its own. The
+block below applies the migration file verbatim, records the exact history row, runs every
+required assertion (structural, ACL, and an end-to-end RPC smoke test scoped to a `SAVEPOINT`), and
+commits only if every one of them passes — all inside **one transaction**:
+
 ```sh
-psql "$PGURL" -f supabase/migrations/20260917120000_justice_case_audit_events.sql
-```
+psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
 
-This adds an immutable, append-only audit table and the atomic RPC the operator repair-intake
-endpoint now calls exclusively (it no longer writes `justice_cases.intake` or `.timeline`
-directly). Verify both the table's existence AND its restricted grants — the whole point of this
-table is that no role can alter or erase a row once inserted, so confirm that structurally, not
-just that it exists:
+\i supabase/migrations/20260917120000_justice_case_audit_events.sql
 
-```sql
-select column_name from information_schema.columns
-where table_name = 'justice_case_audit_events' and column_name = 'idempotency_key';
--- Expect: 1 row.
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260917120000', 'justice_case_audit_events')
+on conflict (version) do nothing;
 
-select indexname from pg_indexes
-where tablename = 'justice_case_audit_events' and indexname = 'idx_justice_case_audit_events_idempotency_key';
--- Expect: 1 row (this is what makes an exact retry dedupe instead of duplicating).
+-- Structural + history assertions
+DO $outer$
+DECLARE
+  col_count int;
+  idx_count int;
+  hist_name text;
+BEGIN
+  SELECT count(*) INTO col_count
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'justice_case_audit_events' AND column_name = 'idempotency_key';
+  IF col_count <> 1 THEN
+    RAISE EXCEPTION 'Verification failed: expected 1 public.justice_case_audit_events.idempotency_key column, found %', col_count;
+  END IF;
 
-select grantee, privilege_type from information_schema.role_table_grants
-where table_name = 'justice_case_audit_events'
-order by grantee, privilege_type;
--- Expect: exactly service_role / SELECT and service_role / INSERT — no UPDATE, no DELETE, for
--- any role. If either appears, immutability is not actually enforced — stop and investigate
--- before proceeding; do not rely on this procedure's own re-application to fix a manual grant
--- someone added directly in the dashboard.
+  SELECT count(*) INTO idx_count
+  FROM pg_indexes
+  WHERE schemaname = 'public' AND tablename = 'justice_case_audit_events'
+    AND indexname = 'idx_justice_case_audit_events_idempotency_key';
+  IF idx_count <> 1 THEN
+    RAISE EXCEPTION 'Verification failed: expected 1 idx_justice_case_audit_events_idempotency_key index, found %', idx_count;
+  END IF;
 
-select routine_name from information_schema.routines
-where routine_name = 'repair_orphaned_paid_case_approval_intake';
--- Expect: 1 row.
+  SELECT name INTO hist_name FROM supabase_migrations.schema_migrations WHERE version = '20260917120000';
+  IF hist_name IS DISTINCT FROM 'justice_case_audit_events' THEN
+    RAISE EXCEPTION 'Verification failed: expected history row version=20260917120000 name=justice_case_audit_events, found name=%', hist_name;
+  END IF;
+END $outer$;
 
--- Sanity: the atomic RPC works end to end against a real (non-production-data) row, and an exact
--- retry does not duplicate the audit event. Never run this against a real case_id.
-begin;
+-- Table ACL: exactly service_role/INSERT and service_role/SELECT, nothing for anon/authenticated/
+-- PUBLIC. NOT information_schema.role_table_grants — a real release audit proved that view can
+-- silently omit PUBLIC-related grants; aclexplode(pg_class.relacl) is the real, complete ACL.
+DO $acl_table$
+DECLARE
+  service_role_privs text[];
+BEGIN
+  SELECT array_agg(a.privilege_type ORDER BY a.privilege_type) INTO service_role_privs
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(c.relacl) AS a(grantor, grantee, privilege_type, is_grantable)
+  LEFT JOIN pg_roles r ON r.oid = a.grantee
+  WHERE c.relname = 'justice_case_audit_events' AND n.nspname = 'public'
+    AND coalesce(r.rolname, 'PUBLIC') = 'service_role';
+  IF service_role_privs IS DISTINCT FROM ARRAY['INSERT', 'SELECT'] THEN
+    RAISE EXCEPTION 'IMMUTABILITY CHECK FAILED: expected service_role={INSERT,SELECT} on justice_case_audit_events, found %', service_role_privs;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN LATERAL aclexplode(c.relacl) AS a(grantor, grantee, privilege_type, is_grantable)
+    LEFT JOIN pg_roles r ON r.oid = a.grantee
+    WHERE c.relname = 'justice_case_audit_events' AND n.nspname = 'public'
+      AND coalesce(r.rolname, 'PUBLIC') IN ('anon', 'authenticated', 'PUBLIC')
+  ) THEN
+    RAISE EXCEPTION 'IMMUTABILITY CHECK FAILED: anon, authenticated, or PUBLIC has some direct grant on justice_case_audit_events';
+  END IF;
+END $acl_table$;
+
+-- Function ACL: exactly service_role/EXECUTE, nothing for anon/authenticated/PUBLIC.
+DO $acl_func$
+DECLARE
+  service_role_privs text[];
+BEGIN
+  SELECT array_agg(a.privilege_type ORDER BY a.privilege_type) INTO service_role_privs
+  FROM pg_proc p
+  CROSS JOIN LATERAL aclexplode(p.proacl) AS a(grantor, grantee, privilege_type, is_grantable)
+  LEFT JOIN pg_roles r ON r.oid = a.grantee
+  WHERE p.oid = 'public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text)'::regprocedure
+    AND coalesce(r.rolname, 'PUBLIC') = 'service_role';
+  IF service_role_privs IS DISTINCT FROM ARRAY['EXECUTE'] THEN
+    RAISE EXCEPTION 'Verification failed: expected service_role={EXECUTE} on repair_orphaned_paid_case_approval_intake, found %', service_role_privs;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p
+    CROSS JOIN LATERAL aclexplode(p.proacl) AS a(grantor, grantee, privilege_type, is_grantable)
+    LEFT JOIN pg_roles r ON r.oid = a.grantee
+    WHERE p.oid = 'public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text)'::regprocedure
+      AND coalesce(r.rolname, 'PUBLIC') IN ('anon', 'authenticated', 'PUBLIC')
+  ) THEN
+    RAISE EXCEPTION 'Verification failed: anon, authenticated, or PUBLIC has EXECUTE on repair_orphaned_paid_case_approval_intake';
+  END IF;
+END $acl_func$;
+
+-- End-to-end RPC smoke test, scoped to a SAVEPOINT — this is already inside the one outer
+-- transaction that must COMMIT at the end, so a nested "begin;...rollback;" here would NOT behave
+-- as an independent transaction the way it would in its own standalone psql session; a SAVEPOINT
+-- is the correct way to run a test that must not persist without disturbing the outer commit.
+-- Never run this against a real case_id.
+DO $precheck$
+BEGIN
+  IF EXISTS (SELECT 1 FROM justice_cases WHERE user_id = 'apply_procedure_smoke_test')
+     OR EXISTS (SELECT 1 FROM justice_case_audit_events WHERE actor = 'apply_procedure_smoke_test_operator') THEN
+    RAISE EXCEPTION 'PRECHECK FAILED: smoke-test markers already in use before the test started';
+  END IF;
+END $precheck$;
+
+SAVEPOINT smoke_test;
+
 insert into justice_cases (id, user_id, intake) values (gen_random_uuid(), 'apply_procedure_smoke_test', '{"smoke": true}'::jsonb);
 insert into justice_case_tasks (user_id, case_id, title, notes)
 select 'apply_procedure_smoke_test', id, 'smoke', 'orphaned_paid_case_approval_queue:' || id::text
 from justice_cases where user_id = 'apply_procedure_smoke_test';
-select repair_orphaned_paid_case_approval_intake(
-  (select id from justice_cases where user_id = 'apply_procedure_smoke_test'),
-  (select id from justice_case_tasks where user_id = 'apply_procedure_smoke_test'),
-  'apply_procedure_smoke_test',
-  (select case_version from justice_cases where user_id = 'apply_procedure_smoke_test'),
-  '{"smoke": true, "corrected": true}'::jsonb,
-  'apply_procedure_smoke_test_operator'
-);
--- Expect: a jsonb row with status = "applied".
-select count(*) from justice_case_audit_events where actor = 'apply_procedure_smoke_test_operator';
--- Expect: 1.
-rollback;
+
+DO $invariant$
+DECLARE
+  v_case_id uuid;
+  v_task_id uuid;
+  v_case_version bigint;
+  v_result jsonb;
+  v_audit_count int;
+BEGIN
+  SELECT id, case_version INTO v_case_id, v_case_version FROM justice_cases WHERE user_id = 'apply_procedure_smoke_test';
+  SELECT id INTO v_task_id FROM justice_case_tasks WHERE user_id = 'apply_procedure_smoke_test';
+
+  SELECT repair_orphaned_paid_case_approval_intake(
+    v_case_id, v_task_id, 'apply_procedure_smoke_test', v_case_version,
+    '{"smoke": true, "corrected": true}'::jsonb, 'apply_procedure_smoke_test_operator'
+  ) INTO v_result;
+
+  IF (v_result ->> 'status') IS DISTINCT FROM 'applied' THEN
+    RAISE EXCEPTION 'INVARIANT CHECK FAILED: expected RPC status=applied, got % (full result: %)', v_result ->> 'status', v_result;
+  END IF;
+
+  SELECT count(*) INTO v_audit_count FROM justice_case_audit_events WHERE actor = 'apply_procedure_smoke_test_operator';
+  IF v_audit_count <> 1 THEN
+    RAISE EXCEPTION 'INVARIANT CHECK FAILED: expected exactly 1 audit event for the smoke-test actor, found %', v_audit_count;
+  END IF;
+END $invariant$;
+
+ROLLBACK TO SAVEPOINT smoke_test;
+
+DO $cleanup_check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM justice_cases WHERE user_id = 'apply_procedure_smoke_test')
+     OR EXISTS (SELECT 1 FROM justice_case_audit_events WHERE actor = 'apply_procedure_smoke_test_operator') THEN
+    RAISE EXCEPTION 'CLEANUP CHECK FAILED: smoke-test rows still present after ROLLBACK TO SAVEPOINT';
+  END IF;
+END $cleanup_check$;
+
+COMMIT;
+SQL
 ```
 
-## Step 7 — final code/schema agreement check
+If any assertion raises, `ON_ERROR_STOP=1` aborts the script before `COMMIT` is ever reached, and
+Postgres rolls back the entire open transaction automatically — the migration DDL, the history
+row, and any smoke-test data all disappear together. Fix the underlying issue and re-run the whole
+block; it is safe to re-run (the migration file's own `if not exists`/`create or replace` guards,
+the history insert's `on conflict do nothing`, and the savepoint-scoped smoke test are all
+idempotent).
+
+## Step 7 — apply migration #6 (justice_case_audit_events / repair_orphaned_paid_case_approval_intake grants hardening)
+
+**Pending.** Must run **after** Step 6. Same pattern as Step 6 — apply verbatim, record the exact
+history row, verify, commit only if everything passes, all in one transaction:
+
+```sh
+psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+
+\i supabase/migrations/20260928000000_justice_case_audit_events_grants_hardening.sql
+
+insert into supabase_migrations.schema_migrations (version, name)
+values ('20260928000000', 'justice_case_audit_events_grants_hardening')
+on conflict (version) do nothing;
+
+DO $hist$
+DECLARE
+  hist_name text;
+BEGIN
+  SELECT name INTO hist_name FROM supabase_migrations.schema_migrations WHERE version = '20260928000000';
+  IF hist_name IS DISTINCT FROM 'justice_case_audit_events_grants_hardening' THEN
+    RAISE EXCEPTION 'Verification failed: expected history row version=20260928000000 name=justice_case_audit_events_grants_hardening, found name=%', hist_name;
+  END IF;
+END $hist$;
+
+-- Identical ACL assertions as Step 6 above — #6 is idempotent, so these must show the exact same
+-- result whether #5 already had the fix (this is then a no-op) or #6 is what actually applies it.
+DO $acl_table$
+DECLARE
+  service_role_privs text[];
+BEGIN
+  SELECT array_agg(a.privilege_type ORDER BY a.privilege_type) INTO service_role_privs
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(c.relacl) AS a(grantor, grantee, privilege_type, is_grantable)
+  LEFT JOIN pg_roles r ON r.oid = a.grantee
+  WHERE c.relname = 'justice_case_audit_events' AND n.nspname = 'public'
+    AND coalesce(r.rolname, 'PUBLIC') = 'service_role';
+  IF service_role_privs IS DISTINCT FROM ARRAY['INSERT', 'SELECT'] THEN
+    RAISE EXCEPTION 'IMMUTABILITY CHECK FAILED: expected service_role={INSERT,SELECT} on justice_case_audit_events, found %', service_role_privs;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN LATERAL aclexplode(c.relacl) AS a(grantor, grantee, privilege_type, is_grantable)
+    LEFT JOIN pg_roles r ON r.oid = a.grantee
+    WHERE c.relname = 'justice_case_audit_events' AND n.nspname = 'public'
+      AND coalesce(r.rolname, 'PUBLIC') IN ('anon', 'authenticated', 'PUBLIC')
+  ) THEN
+    RAISE EXCEPTION 'IMMUTABILITY CHECK FAILED: anon, authenticated, or PUBLIC has some direct grant on justice_case_audit_events';
+  END IF;
+END $acl_table$;
+
+DO $acl_func$
+DECLARE
+  service_role_privs text[];
+BEGIN
+  SELECT array_agg(a.privilege_type ORDER BY a.privilege_type) INTO service_role_privs
+  FROM pg_proc p
+  CROSS JOIN LATERAL aclexplode(p.proacl) AS a(grantor, grantee, privilege_type, is_grantable)
+  LEFT JOIN pg_roles r ON r.oid = a.grantee
+  WHERE p.oid = 'public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text)'::regprocedure
+    AND coalesce(r.rolname, 'PUBLIC') = 'service_role';
+  IF service_role_privs IS DISTINCT FROM ARRAY['EXECUTE'] THEN
+    RAISE EXCEPTION 'Verification failed: expected service_role={EXECUTE} on repair_orphaned_paid_case_approval_intake, found %', service_role_privs;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p
+    CROSS JOIN LATERAL aclexplode(p.proacl) AS a(grantor, grantee, privilege_type, is_grantable)
+    LEFT JOIN pg_roles r ON r.oid = a.grantee
+    WHERE p.oid = 'public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text)'::regprocedure
+      AND coalesce(r.rolname, 'PUBLIC') IN ('anon', 'authenticated', 'PUBLIC')
+  ) THEN
+    RAISE EXCEPTION 'Verification failed: anon, authenticated, or PUBLIC has EXECUTE on repair_orphaned_paid_case_approval_intake';
+  END IF;
+END $acl_func$;
+
+COMMIT;
+SQL
+```
+
+If any assertion raises, `ON_ERROR_STOP=1` aborts the script before `COMMIT`, and Postgres rolls
+back the entire transaction — nothing is applied or recorded. Fix the underlying issue and re-run;
+safe to re-run (idempotent `REVOKE`/`GRANT`, `on conflict do nothing` history insert).
+
+**If either ACL check still fails after Step 7 completes and commits:** stop entirely — do not
+proceed to Step 8, and do not deploy application code that relies on this table's immutability.
+That would mean something other than `ALTER DEFAULT PRIVILEGES` is granting these roles access
+(e.g. a manual grant added directly in the dashboard after #6 ran), which this procedure cannot
+diagnose on its own.
+
+## Step 8 — final code/schema agreement check
 
 Confirm the application code's expectations match what is now live, using the service-role
 credentials the app itself uses (catches an RLS/grant gap a raw `psql` superuser session would
@@ -295,11 +497,12 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.
     cases: e3?.message ?? "ok",
     case_version: e4?.message ?? "ok",
     audit_events: e5?.message ?? "ok",
-    // A real "function does not exist" / grant error here means Step 6 was skipped, the grant is
-    // missing, or the function still has the old (uuid, uuid, text, timestamptz, jsonb, text)
-    // signature. A clean call returning task_conflict (no such task) is expected and fine — it
-    // proves the function is callable end to end with the new signature, not that this fake id
-    // resolved to anything.
+    // A real "function does not exist" / permission-denied error here means Step 6 (migration #5,
+    // which creates the function) was skipped, Step 7 (migration #6, which grants EXECUTE) was
+    // skipped or didn't take effect, or the function still has the old
+    // (uuid, uuid, text, timestamptz, jsonb, text) signature. A clean call returning task_conflict
+    // (no such task) is expected and fine — it proves the function is callable end to end with the
+    // new signature and correct grants, not that this fake id resolved to anything.
     repair_rpc: e6?.message ?? "ok",
   });
 })();
@@ -310,8 +513,7 @@ Expect every field to print `"ok"`. Any error here means the code/schema incompa
 procedure exists to catch is still present — do not deploy the application code until this prints
 clean.
 
-## Step 8 — only now, deploy the application code
+## Step 9 — only now, deploy the application code
 
 Merge/deploy as normal. Do not run this procedure again for the same migrations — re-running
-steps 3/4/5/6 is safe (all four migrations use `if not exists` / `create or replace` guards
-throughout) but unnecessary once step 7 passes.
+Step 6 or Step 7 is safe (both are idempotent, as noted above) but unnecessary once Step 8 passes.

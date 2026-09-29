@@ -35,12 +35,28 @@ create index if not exists idx_justice_case_audit_events_case_id_created_at
   on public.justice_case_audit_events (case_id, created_at);
 
 alter table public.justice_case_audit_events enable row level security;
--- No RLS policies are defined for any role: anon/authenticated get zero access (neither read nor
--- write) via PostgREST. service_role's access is governed purely by the GRANTs below.
+-- No RLS policies are defined for any role: anon/authenticated get zero row-level access via
+-- PostgREST regardless of table-level grants. service_role's access — and, defensively, every
+-- other role's — is governed explicitly by the GRANTs below, never left to whatever a project's
+-- schema-wide ALTER DEFAULT PRIVILEGES happens to hand out to a brand-new table.
 
+-- A real release audit proved this is not hypothetical: Supabase provisions this project with
+-- schema-wide default privileges (via ALTER DEFAULT PRIVILEGES, set up once by the provisioning
+-- roles postgres and supabase_admin, independent of and applied BEFORE any of this repo's own
+-- migrations run) that grant service_role, anon, AND authenticated full privileges — including
+-- UPDATE, DELETE, and TRUNCATE — on every newly created table in schema public. A bare GRANT only
+-- ADDS a privilege; it can never narrow one a default grant already conferred, so the original
+-- `grant select, insert ... to service_role` below left this table fully mutable/erasable by
+-- service_role (and even by anon/authenticated) despite this table's entire design depending on
+-- it being append-only. REVOKE ALL first, unconditionally, from every role that could plausibly
+-- hold such a default grant, then GRANT back exactly the two privileges this table's append-only
+-- design requires — this is what actually enforces immutability; the GRANT statement alone did
+-- not. REVOKE ALL (the bare keyword, not an enumerated list) covers every privilege type
+-- applicable to a table in this Postgres version, including MAINTAIN (added in Postgres 17).
+revoke all on public.justice_case_audit_events from public, anon, authenticated, service_role;
 grant select, insert on public.justice_case_audit_events to service_role;
--- Deliberately no `update`/`delete` grant to any role, including service_role: immutability here
--- is enforced by Postgres privileges, not application discipline.
+-- Deliberately no `update`/`delete`/`truncate` grant to any role, including service_role:
+-- immutability here is enforced by Postgres privileges, not application discipline.
 
 -- Atomic operator repair of a case's stored intake plus its durable audit event: both commit in
 -- one transaction, or neither does. The concurrency token is justice_cases.case_version — a
@@ -251,5 +267,8 @@ comment on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid,
 
 -- Postgres grants EXECUTE to PUBLIC by default; lock this down to the service role the app already
 -- uses for every operator/admin write, matching cancel_operator_fulfillment_task's precedent.
-revoke all on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text) from public;
+-- Same lesson as the table GRANTs above: revoke from every role that could plausibly hold a
+-- schema-wide default EXECUTE privilege on functions, not just PUBLIC, before granting back only
+-- to service_role.
+revoke all on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text) from public, anon, authenticated, service_role;
 grant execute on function public.repair_orphaned_paid_case_approval_intake(uuid, uuid, text, bigint, jsonb, text) to service_role;
