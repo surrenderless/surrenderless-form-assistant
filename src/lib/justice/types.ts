@@ -183,7 +183,32 @@ export type JusticeCaseClientState = {
 };
 
 export const STORAGE_INTAKE = "justice_intake_v1";
+/**
+ * Last known justice_cases.case_version for the active case's intake — the sole
+ * optimistic-concurrency token every intake-bearing PATCH to /api/justice/cases/[id] must send as
+ * expected_case_version. case_version is a monotonic integer bumped by exactly 1 on every UPDATE
+ * by a database trigger; it is set ONLY alongside STORAGE_INTAKE (create response, a server
+ * hydrate, a successful patch, or a 409 conflict's fresh server state) and is never touched by a
+ * purely-local edit to STORAGE_INTAKE, so it always represents "the version the current intake
+ * content was actually derived from" — never a freshly re-fetched value paired with unrelated
+ * local content. updated_at is display/sort only and must never be used here.
+ */
+export const STORAGE_INTAKE_CASE_VERSION = "justice_intake_case_version_v1";
 export const STORAGE_CASE_ID = "justice_case_id";
+/**
+ * Session JSON: `Record<caseId, CaseReconciliationRecord>` — one durable "Keep my changes"
+ * backstop PER CASE, never a single shared slot. A conflict/missing-version/reload-reconciliation
+ * helper installs the server's fresh intake into STORAGE_INTAKE the instant it detects a case's
+ * local draft is stale — before the user has chosen anything — so this map preserves BOTH sides of
+ * that choice (the local draft that diverged, and the actual server snapshot/version that caused
+ * it) keyed to the exact case they belong to, until that case's own explicit choice resolves it.
+ * Because every case has its own key, switching the active case, or a completely unrelated case
+ * successfully saving, can never read or clear a DIFFERENT case's entry. See
+ * src/lib/justice/caseReconciliationStore.ts for the read/write/clear API and the "pending" vs
+ * "kept" status lifecycle — "kept" exists so a chosen-but-not-yet-saved draft is never
+ * misclassified as committed merely because STORAGE_INTAKE now holds it.
+ */
+export const STORAGE_CASE_RECONCILIATIONS = "justice_case_reconciliations_v1";
 export const STORAGE_FTC_MANUAL_UNLOCK = "justice_ftc_manual_unlock";
 /** Session JSON: `Record<caseId, TimelineEntry[]>` */
 export const STORAGE_TIMELINE_V1 = "justice_timeline_v1";

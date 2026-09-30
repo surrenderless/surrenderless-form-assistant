@@ -130,6 +130,7 @@ function buildPlaywrightMockCaseBaseline(caseId: string): PlaywrightMockCaseCrea
     client_state: null,
     created_at: PLAYWRIGHT_MOCK_CASE_HYDRATION_TIMESTAMP,
     updated_at: PLAYWRIGHT_MOCK_CASE_HYDRATION_TIMESTAMP,
+    case_version: 1,
     archived_at: null,
     case_label: null,
     // Fixed non-null, matching the server's own treatment of mock/E2E cases as already paid
@@ -172,6 +173,9 @@ function applyPlaywrightMockCaseHydrationPatch(
       ? { case_label: patch.case_label ?? null }
       : {}),
     updated_at: PLAYWRIGHT_MOCK_CASE_HYDRATION_UPDATED_TIMESTAMP,
+    // Mirrors bump_justice_cases_case_version: increments by exactly 1 on every write,
+    // unconditionally, regardless of the (fixed, non-advancing) mock timestamp above.
+    case_version: current.case_version + 1,
   };
 }
 

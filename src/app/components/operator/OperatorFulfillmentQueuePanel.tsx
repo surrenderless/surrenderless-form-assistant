@@ -48,6 +48,15 @@ export type SupersededLaneReviewInput = {
   notes: string;
 };
 
+export type OrphanedPaidCaseApprovalReviewInput = {
+  href: string;
+};
+
+export type OrphanedPaidCaseApprovalIntakeRepairInput = {
+  intake: unknown;
+  caseVersion: number;
+};
+
 const CONTACT_METHOD_OPTIONS: { value: ContactMethod; label: string }[] = [
   { value: "email", label: "Email" },
   { value: "chat", label: "Chat" },
@@ -91,6 +100,8 @@ function stepLabel(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Follow-up response review";
     case "superseded_lane_review":
       return "Superseded-lane response review";
+    case "orphaned_paid_case_approval":
+      return "Paid case approval review";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -122,6 +133,8 @@ function recordFormTitle(step: OperatorFulfillmentQueueItem["step"]): string {
       return "Record follow-up response review";
     case "superseded_lane_review":
       return "Record superseded-lane response review";
+    case "orphaned_paid_case_approval":
+      return "Resolve paid case approval review";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -184,6 +197,8 @@ function canonicalDestinationForStep(step: OperatorFulfillmentQueueItem["step"])
       return "Follow-up response review";
     case "superseded_lane_review":
       return "Superseded-lane response review";
+    case "orphaned_paid_case_approval":
+      return "Paid case approval review";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -545,6 +560,179 @@ function SupersededLaneReviewForm({
   );
 }
 
+function OrphanedPaidCaseApprovalInvalidIntakeForm({
+  item,
+  saving,
+  onSubmit,
+}: {
+  item: OperatorFulfillmentQueueItem;
+  saving: boolean;
+  onSubmit: (
+    input: OrphanedPaidCaseApprovalIntakeRepairInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const rawIntake = item.orphaned_paid_case_approval_invalid_intake?.raw_intake;
+  const caseVersion = item.orphaned_paid_case_approval_invalid_intake?.case_version ?? 0;
+  const [text, setText] = useState(() => {
+    try {
+      return JSON.stringify(rawIntake ?? {}, null, 2);
+    } catch {
+      return "{}";
+    }
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      setError("Not valid JSON.");
+      return;
+    }
+    setError(null);
+    const result = await onSubmit({ intake: parsed, caseVersion });
+    if (!result.ok) setError(result.error);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 space-y-3">
+      <div className="space-y-2 rounded-lg border border-red-200/90 bg-red-50/70 p-3 dark:border-red-800 dark:bg-red-950/30">
+        <p className="text-xs font-medium text-red-950 dark:text-red-100">
+          Paid case has invalid intake data
+        </p>
+        <p className="text-[11px] leading-relaxed text-red-900/90 dark:text-red-100/90">
+          This case was paid, but its stored intake fails validation, so Surrenderless cannot
+          compute what action to approve. Review the raw intake below, correct it, and save — the
+          review can then be finalized normally once intake is valid.
+        </p>
+      </div>
+      <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300">
+        Raw intake (JSON)
+        <textarea
+          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 font-mono text-xs dark:border-neutral-600 dark:bg-neutral-950"
+          rows={14}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          disabled={saving}
+        />
+      </label>
+      {error ? (
+        <p className="text-sm text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving}
+        className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900"
+      >
+        {saving ? "Saving…" : "Save corrected intake"}
+      </button>
+    </form>
+  );
+}
+
+function OrphanedPaidCaseApprovalReviewForm({
+  item,
+  saving,
+  onSubmit,
+}: {
+  item: OperatorFulfillmentQueueItem;
+  saving: boolean;
+  onSubmit: (
+    input: OrphanedPaidCaseApprovalReviewInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+}) {
+  const workspace = item.orphaned_paid_case_approval_workspace;
+  const options = [
+    ...(workspace?.durable_intended_href &&
+    !workspace.eligible_actions.some((a) => a.href === workspace.durable_intended_href)
+      ? [
+          {
+            href: workspace.durable_intended_href,
+            label: workspace.durable_intended_label || workspace.durable_intended_href,
+          },
+        ]
+      : []),
+    ...(workspace?.eligible_actions ?? []),
+  ];
+  const [href, setHref] = useState(workspace?.durable_intended_href || options[0]?.href || "");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!href) {
+      setError("Select an action to approve.");
+      return;
+    }
+    setError(null);
+    const result = await onSubmit({ href });
+    if (!result.ok) setError(result.error);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 space-y-3">
+      <div className="space-y-2 rounded-lg border border-amber-200/90 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+        <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+          {recordFormTitle(item.step)}
+        </p>
+        <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-100/90">
+          This case was paid but Surrenderless could not automatically determine which action to
+          approve. Review the evidence below and select the correct action. Only server-validated
+          eligible actions can be chosen.
+        </p>
+        {workspace?.durable_intended_href ? (
+          <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-100/90">
+            Recorded payment intent: {workspace.durable_intended_label || workspace.durable_intended_href}
+          </p>
+        ) : null}
+      </div>
+      <OperatorWorkspaceEvidenceInventory evidence={item.evidence ?? []} />
+      <fieldset className="space-y-2">
+        <legend className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
+          Action to approve
+        </legend>
+        {options.length === 0 ? (
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">
+            No eligible actions are currently available for this case.
+          </p>
+        ) : null}
+        {options.map((opt) => (
+          <label
+            key={opt.href}
+            className="flex cursor-pointer items-center gap-2 text-sm text-neutral-800 dark:text-neutral-200"
+          >
+            <input
+              type="radio"
+              name={`orphaned-paid-case-approval-${item.task_id}`}
+              value={opt.href}
+              checked={href === opt.href}
+              onChange={() => setHref(opt.href)}
+              disabled={saving}
+            />
+            {opt.label}
+            {opt.href === workspace?.durable_intended_href ? " (recorded payment intent)" : ""}
+          </label>
+        ))}
+      </fieldset>
+      {error ? (
+        <p className="text-sm text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={saving || options.length === 0}
+        className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900"
+      >
+        {saving ? "Finalizing…" : "Finalize approval"}
+      </button>
+    </form>
+  );
+}
+
 export type CancelTaskResult = { ok: true } | { ok: false; error: string };
 
 function CancelFulfillmentTaskControl({
@@ -636,6 +824,8 @@ export function OperatorFulfillmentQueuePanel({
   onRecordComplete,
   onCompleteResponseReview,
   onCompleteSupersededLaneReview,
+  onFinalizeOrphanedPaidCaseApproval,
+  onRepairOrphanedPaidCaseApprovalIntake,
   onCancelTask,
 }: {
   items: OperatorFulfillmentQueueItem[];
@@ -653,13 +843,22 @@ export function OperatorFulfillmentQueuePanel({
     item: OperatorFulfillmentQueueItem,
     input: SupersededLaneReviewInput
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onFinalizeOrphanedPaidCaseApproval: (
+    item: OperatorFulfillmentQueueItem,
+    input: OrphanedPaidCaseApprovalReviewInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onRepairOrphanedPaidCaseApprovalIntake: (
+    item: OperatorFulfillmentQueueItem,
+    input: OrphanedPaidCaseApprovalIntakeRepairInput
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   onCancelTask?: (item: OperatorFulfillmentQueueItem, note: string) => Promise<CancelTaskResult>;
 }) {
   if (items.length === 0) {
     return (
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         No queued merchant contact, FTC, BBB, DOT, FCC, payment dispute, CFPB, State AG, demand
-        letter, follow-up response-review, or superseded-lane response-review tasks right now.
+        letter, follow-up response-review, superseded-lane response-review, or paid case approval
+        review tasks right now.
       </p>
     );
   }
@@ -792,6 +991,24 @@ export function OperatorFulfillmentQueuePanel({
                 />
               );
             }
+            if (panelKind === "orphaned_paid_case_approval_review") {
+              if (item.orphaned_paid_case_approval_invalid_intake) {
+                return (
+                  <OrphanedPaidCaseApprovalInvalidIntakeForm
+                    item={item}
+                    saving={savingTaskId === item.task_id}
+                    onSubmit={(input) => onRepairOrphanedPaidCaseApprovalIntake(item, input)}
+                  />
+                );
+              }
+              return (
+                <OrphanedPaidCaseApprovalReviewForm
+                  item={item}
+                  saving={savingTaskId === item.task_id}
+                  onSubmit={(input) => onFinalizeOrphanedPaidCaseApproval(item, input)}
+                />
+              );
+            }
             return (
               <>
                 {item.draft_excerpt ? (
@@ -809,7 +1026,8 @@ export function OperatorFulfillmentQueuePanel({
           })()}
           {onCancelTask &&
           item.step !== "follow_up_response_review" &&
-          item.step !== "superseded_lane_review" ? (
+          item.step !== "superseded_lane_review" &&
+          item.step !== "orphaned_paid_case_approval" ? (
             <CancelFulfillmentTaskControl
               item={item}
               cancelling={cancellingTaskId === item.task_id}

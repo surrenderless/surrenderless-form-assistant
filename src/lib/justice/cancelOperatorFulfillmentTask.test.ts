@@ -18,6 +18,7 @@ type MockCase = {
   client_state: Record<string, unknown>;
   timeline: unknown[];
   intake?: JusticeIntake;
+  case_version?: number;
 };
 
 /** Contacted retail intake with both payment-dispute and downstream destinations eligible. */
@@ -241,14 +242,21 @@ function createMockSupabase(state: MockState): SupabaseClient {
       if (table === "justice_cases") {
         return {
           // Only reachable from recomputeApprovedNextActionAfterCancellation, after the atomic
-          // RPC has already committed — never part of the primary cancel write itself.
+          // RPC has already committed — never part of the primary cancel write itself. Serves
+          // BOTH the ("intake") read and the ("client_state, case_version") fresh-read inside the
+          // CAS retry loop — the mock ignores the actual column list, so the returned row is a
+          // superset covering whichever fields the caller asked for.
           select: () => ({
             eq: (_col: string, id: string) => ({
               eq: (_col2: string, uid: string) => ({
                 maybeSingle: async () => ({
                   data:
                     state.case && state.case.id === id && state.case.user_id === uid
-                      ? { intake: state.case.intake }
+                      ? {
+                          intake: state.case.intake,
+                          client_state: state.case.client_state,
+                          case_version: state.case.case_version ?? 1,
+                        }
                       : null,
                   error: null,
                 }),
@@ -257,34 +265,37 @@ function createMockSupabase(state: MockState): SupabaseClient {
           }),
           update: (patch: Record<string, unknown>) => {
             state.updateCalls.push({ table, patch });
-            return {
-              eq: (_col: string, id: string) => ({
-                eq: (_col2: string, uid: string) => ({
-                  is: () => ({
-                    select: () => ({
-                      maybeSingle: async () => {
-                        const current = state.case;
-                        const matches =
-                          current &&
-                          current.id === id &&
-                          current.user_id === uid &&
-                          current.client_state.approved_next_action === undefined;
-                        if (!matches) {
-                          // The `.is(...)` guard did not match live data — simulates a lost
-                          // race against a concurrent client_state write.
-                          return { data: null, error: null };
-                        }
-                        state.case = {
-                          ...current,
-                          client_state: patch.client_state as Record<string, unknown>,
-                        };
-                        return { data: { client_state: state.case.client_state }, error: null };
-                      },
-                    }),
-                  }),
-                }),
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
+              },
+              select: () => ({
+                maybeSingle: async () => {
+                  const current = state.case;
+                  const currentVersion = current?.case_version ?? 1;
+                  const matches =
+                    current &&
+                    current.id === filters.id &&
+                    current.user_id === filters.user_id &&
+                    filters.case_version === currentVersion;
+                  if (!matches) {
+                    // The case_version CAS filter did not match live data — simulates a lost
+                    // race against a concurrent client_state write (which, per the real
+                    // bump_justice_cases_case_version trigger, always advances case_version).
+                    return { data: null, error: null };
+                  }
+                  state.case = {
+                    ...current,
+                    client_state: patch.client_state as Record<string, unknown>,
+                    case_version: currentVersion + 1,
+                  };
+                  return { data: { client_state: state.case.client_state }, error: null };
+                },
               }),
             };
+            return chain;
           },
         };
       }
@@ -601,13 +612,17 @@ describe("cancellation followed by chat reload (post-cancel next-action recomput
       return {
         ...real,
         update: (patch: Record<string, unknown>) => {
-          // A concurrent writer sets a different approved_next_action just before our guarded
-          // update runs, so the live .is("client_state->approved_next_action", null) check fails.
+          // A concurrent writer sets a different approved_next_action AFTER our fresh
+          // read-before-write but BEFORE our CAS-guarded update commits — real Postgres would
+          // advance case_version via the bump_justice_cases_case_version trigger when that
+          // writer's own UPDATE commits, so this must too, or the simulation would not be
+          // faithful to what actually defeats the CAS filter.
           if (state.case) {
             state.case.client_state = {
               ...state.case.client_state,
               approved_next_action: { href: "/justice/state-ag", status: "approved" },
             };
+            state.case.case_version = (state.case.case_version ?? 1) + 1;
           }
           return realUpdate(patch);
         },
@@ -623,6 +638,63 @@ describe("cancellation followed by chat reload (post-cancel next-action recomput
     expect(
       (state.case?.client_state.approved_next_action as { href?: string } | undefined)?.href
     ).toBe("/justice/state-ag");
+  });
+
+  it("BLOCKING FIX (round 4, item 6): a concurrent writer's change to an UNRELATED client_state field (not approved_next_action) is never silently reverted — the old narrow .is() guard could not see it; the full case_version CAS + fresh-read recompute does", async () => {
+    const state = freshState({
+      case: {
+        id: CASE_ID,
+        user_id: USER_ID,
+        client_state: approvedPaymentDisputeClientState(),
+        timeline: [],
+        intake: multiDestinationRetailIntake(),
+        case_version: 1,
+      },
+    });
+
+    const supabase = createMockSupabase(state);
+    const originalFrom = supabase.from.bind(supabase);
+    let concurrentWriteApplied = false;
+    (supabase as unknown as { from: typeof supabase.from }).from = ((table: string) => {
+      const real = originalFrom(table);
+      if (table !== "justice_cases") return real;
+      const realSelect = (real as { select: (cols: string) => unknown }).select;
+      return {
+        ...real,
+        select: (cols: string) => {
+          // A concurrent, totally unrelated write (e.g. a different operator action) lands
+          // right after the RPC commits, changing prepared_packet_approved — NOT
+          // approved_next_action — and, per the real bump_justice_cases_case_version trigger,
+          // advancing case_version. Applied once, on the first re-read this function performs
+          // after the RPC (its "intake" read), so the fresh-read-before-write inside the retry
+          // loop sees this concurrent state, exactly like a real race would land.
+          if (!concurrentWriteApplied && state.case) {
+            concurrentWriteApplied = true;
+            state.case = {
+              ...state.case,
+              client_state: { ...state.case.client_state, prepared_packet_approved: false },
+              case_version: (state.case.case_version ?? 1) + 1,
+            };
+          }
+          return (realSelect as (c: string) => unknown)(cols);
+        },
+      };
+    }) as typeof supabase.from;
+
+    const result = await cancelOperatorFulfillmentTask(supabase, { taskId: TASK_ID });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The concurrent writer's prepared_packet_approved: false survives — never reverted back to
+    // true (its value in the stale RPC-time snapshot) — because the fresh-read-before-write
+    // recomputes nextClientState from the CURRENT client_state, not the snapshot captured when
+    // the RPC first ran.
+    expect(state.case?.client_state.prepared_packet_approved).toBe(false);
+    // And our own proposed next action still gets persisted — this isn't just "give up on
+    // conflict", it's "preserve what changed, still apply what we came here to do".
+    expect(
+      (state.case?.client_state.approved_next_action as { href?: string } | undefined)?.href
+    ).toBeTruthy();
   });
 });
 

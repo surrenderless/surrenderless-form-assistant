@@ -1,4 +1,5 @@
 import { isJusticeIntakePayload, parseJusticeCasesListEnvelope } from "@/lib/justice/caseApiValidation";
+import { writeLocalIntakeCaseVersion } from "@/lib/justice/intakeCaseVersionStorage";
 import { replaceTimelineForCase } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import {
@@ -20,6 +21,7 @@ export type JusticeCaseListRow = {
   client_state?: unknown;
   archived_at?: string | null;
   updated_at?: string | null;
+  case_version?: number | null;
   case_label?: string | null;
 };
 
@@ -53,6 +55,10 @@ export function hydrateSessionFromCaseListRow(row: JusticeCaseListRow): JusticeI
   if (!row.id || !isJusticeIntakePayload(row.intake)) return null;
   sessionStorage.setItem(STORAGE_CASE_ID, row.id);
   sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(row.intake));
+  // Cache the case_version this intake was read at — every subsequent intake-bearing PATCH sends
+  // this back as expected_case_version (see patchJusticeCaseIntake), so a fresh hydration
+  // establishes a genuine, never-substituted starting point for optimistic concurrency.
+  writeLocalIntakeCaseVersion(typeof row.case_version === "number" ? row.case_version : null);
   const serverTimeline = Array.isArray(row.timeline) ? (row.timeline as TimelineEntry[]) : [];
   replaceTimelineForCase(row.id, serverTimeline);
   if (
@@ -145,7 +151,9 @@ export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): P
   return { activeRows, archivedRows };
 }
 
-/** GET a single owned case by id for chat hydrate after selection/restore. */
+/** GET a single owned case by id for chat hydrate after selection/restore. Also the fetch
+ * dependency injected into reconciliationController.ts's recoverFromMissingVersion — that
+ * function is the ONE centralized missing_version recovery path; do not build a parallel one. */
 export async function fetchJusticeCaseById(
   caseId: string,
   signal?: AbortSignal

@@ -26,6 +26,7 @@ import { taskNotesMatchMerchantContactFilingMarker } from "@/lib/justice/merchan
 import { taskNotesMatchPaymentDisputeFilingMarker } from "@/lib/justice/paymentDisputeFilingTask";
 import { taskNotesMatchStateAgFilingMarker } from "@/lib/justice/stateAgFilingTask";
 import { taskNotesMatchFollowUpResponseReviewMarker } from "@/lib/justice/followUpResponseReviewTask";
+import { taskNotesMatchOrphanedPaidCaseApprovalMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
 import {
   appendOperatorAlertSentMarker,
   hasOperatorAlertBeenSent,
@@ -51,10 +52,13 @@ function clampLen(s: string, max: number): string {
 type OwnedFilingKind = "bbb" | "ftc" | "fcc";
 
 /**
- * All 10 destinations the ordinary (non-automated-fallback) queue alert covers: the 9 owned
- * escalation filing/contact destinations, plus follow_up_response_review — the operator's own
+ * All 11 destinations the ordinary (non-automated-fallback) queue alert covers: the 9 owned
+ * escalation filing/contact destinations; follow_up_response_review — the operator's own
  * resolved/no_resolution/further_escalation decision task, not a filing at all, but just as
- * capable of silently stalling a case forever if nothing ever re-alerts on it.
+ * capable of silently stalling a case forever if nothing ever re-alerts on it; and
+ * orphaned_paid_case_approval — a paid case whose approval could not be automatically finalized
+ * (see reconcileOrphanedPaidCaseApprovals.ts) and needs a human to pick the right action, reusing
+ * this same alerting mechanism rather than a separate one-shot notice.
  */
 type AllDestinationKind =
   | OwnedFilingKind
@@ -65,7 +69,8 @@ type AllDestinationKind =
   | "payment_dispute"
   | "fcc"
   | "dot"
-  | "follow_up_response_review";
+  | "follow_up_response_review"
+  | "orphaned_paid_case_approval";
 
 type OwnedDeliveryRecord = {
   delivery_state: "queued" | "submitting" | "failed" | "filed";
@@ -129,7 +134,7 @@ type QueueAlertDestination = {
 };
 
 /**
- * All 10 destinations the ordinary-queue alert covers (see AllDestinationKind). BBB/FTC markers
+ * All 11 destinations the ordinary-queue alert covers (see AllDestinationKind). BBB/FTC markers
  * match regardless of whether an owned-filing delivery block is present — the caller excludes
  * tasks that have one, since those are either being (or were) handled by the automated pipeline
  * and are covered by DESTINATIONS above instead.
@@ -188,6 +193,15 @@ const QUEUE_ALERT_DESTINATIONS: QueueAlertDestination[] = [
     reasonText:
       "No automated resolution decision is possible — this case is awaiting an operator's response-review outcome (resolved, no resolution, or further escalation).",
     timelineAwaitingLabel: "Follow-up response review awaiting an operator decision",
+  },
+  {
+    kind: "orphaned_paid_case_approval",
+    destinationLabel: "Paid case approval review",
+    taskMarkerMatches: taskNotesMatchOrphanedPaidCaseApprovalMarker,
+    subjectActionNoun: "approval review",
+    reasonText:
+      "This case was paid but Surrenderless could not automatically determine and finalize which action to approve — an operator must review the case and approve the correct action manually.",
+    timelineAwaitingLabel: "Paid case awaiting manual approval review",
   },
 ];
 
@@ -459,12 +473,13 @@ export type ReconcileOperatorFallbackAlertsOptions = {
  *    all converge to `delivery_state: "failed"`). FCC has no live execution path yet (dry-run
  *    only), so this phase currently never actually fires for FCC in production — it exists so
  *    the wiring is ready once a real harness lands.
- * 2. Ordinary open operator-fulfillment work across all 10 QUEUE_ALERT_DESTINATIONS: the 9
+ * 2. Ordinary open operator-fulfillment work across all 11 QUEUE_ALERT_DESTINATIONS: the 9
  *    escalation filing/contact destinations that never had an automated filing attempted at all
  *    (every case in the default product mode — owned BBB/FTC/FCC autofill off, or any of the
  *    other 6 destinations, which have no automated path) — plus follow_up_response_review, the
- *    operator's own resolved/no_resolution/further_escalation decision task, which isn't a filing
- *    but stalls a case just as permanently if nothing ever re-alerts on it.
+ *    operator's own resolved/no_resolution/further_escalation decision task, and
+ *    orphaned_paid_case_approval, a paid case whose approval could not be auto-finalized. Neither
+ *    is a filing, but both stall a case just as permanently if nothing ever re-alerts on them.
  *    Escalates immediate -> 24h -> 72h, then keeps re-alerting every further 72h indefinitely
  *    (numbered "overdue reminder #1", #2, ...) for as long as the task remains genuinely open —
  *    there is no cutoff after which a stalled task goes silent. Stops the moment the task is
@@ -733,7 +748,7 @@ export async function reconcileOperatorFallbackAlerts(
 
       if (archivedCaseIds.has(caseId)) {
         // Only count/report this as a skip if the task would otherwise have been alertable at
-        // all (matches one of the 10 QUEUE_ALERT_DESTINATIONS) — an archived case's unrelated open task (e.g.
+        // all (matches one of the 11 QUEUE_ALERT_DESTINATIONS) — an archived case's unrelated open task (e.g.
         // a plain personal reminder) was never going to be scanned or alerted either way.
         const cfgForArchived = QUEUE_ALERT_DESTINATIONS.find((d) => d.taskMarkerMatches(task.notes, caseId));
         if (cfgForArchived) {

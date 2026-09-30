@@ -994,18 +994,28 @@ export default function JusticeCasesPage() {
     setSavingLabelId(id);
     try {
       const trimmed = (labelDraftById[id] ?? "").trim();
-      const res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ case_label: trimmed.length > 0 ? trimmed : null }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { case_label?: string | null };
-        const nextLabel = data.case_label ?? null;
-        setCases((prev) => prev?.map((c) => (c.id === id ? { ...c, case_label: nextLabel } : c)) ?? prev);
-        setLabelDraftById((d) => ({ ...d, [id]: nextLabel?.trim() ? nextLabel : "" }));
-      } else {
+      // The server CAS-guards this write (a fresh self-read case_version) — a genuine concurrent
+      // writer can make it lose the race and come back 409; a bounded retry (re-sending the same
+      // label; the server re-reads fresh state each attempt) is sufficient to recover from that.
+      const MAX_ATTEMPTS = 3;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ case_label: trimmed.length > 0 ? trimmed : null }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { case_label?: string | null };
+          const nextLabel = data.case_label ?? null;
+          setCases((prev) => prev?.map((c) => (c.id === id ? { ...c, case_label: nextLabel } : c)) ?? prev);
+          setLabelDraftById((d) => ({ ...d, [id]: nextLabel?.trim() ? nextLabel : "" }));
+          break;
+        }
+        if (res.status === 409 && attempt < MAX_ATTEMPTS) {
+          continue;
+        }
         console.warn("justice cases: save label failed", res.status);
+        break;
       }
     } catch (e) {
       console.warn("justice cases: save label error", e);

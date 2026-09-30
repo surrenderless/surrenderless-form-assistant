@@ -115,25 +115,43 @@ export function applyServerTimelineFromResponse(caseId: string, payload: unknown
   replaceTimelineForCase(caseId, timeline as TimelineEntry[]);
 }
 
+const SYNC_TIMELINE_MAX_ATTEMPTS = 3;
+
+/**
+ * The server now CAS-guards every justice_cases write, including a pure timeline-only patch (a
+ * fresh self-read case_version, re-read immediately before the write — see [id]/route.ts) — a
+ * genuine concurrent writer can make this PATCH lose the race and come back 409. That is not a
+ * failure to give up on: the local sessionStorage timeline (readTimeline(caseId), already the
+ * source of truth this function sends) is unaffected either way, and the server's own merge
+ * (mergeCaseTimelineEntries) re-reads fresh state on every attempt, so simply retrying the same
+ * PATCH is sufficient — no client-side recomputation needed.
+ */
 export async function syncCaseTimelineToServer(caseId: string): Promise<void> {
   if (!caseId || typeof window === "undefined") return;
-  try {
-    const timeline = readTimeline(caseId);
-    const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ timeline }),
-    });
-    if (res.ok) {
-      const payload = (await res.json()) as { timeline?: unknown };
-      if (Array.isArray(payload.timeline)) {
-        replaceTimelineForCase(caseId, payload.timeline as TimelineEntry[]);
+  for (let attempt = 1; attempt <= SYNC_TIMELINE_MAX_ATTEMPTS; attempt++) {
+    try {
+      const timeline = readTimeline(caseId);
+      const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeline }),
+      });
+      if (res.ok) {
+        const payload = (await res.json()) as { timeline?: unknown };
+        if (Array.isArray(payload.timeline)) {
+          replaceTimelineForCase(caseId, payload.timeline as TimelineEntry[]);
+        }
+        return;
       }
-    } else {
+      if (res.status === 409 && attempt < SYNC_TIMELINE_MAX_ATTEMPTS) {
+        continue;
+      }
       console.warn("justice: PATCH /api/justice/cases/[id] (timeline) failed", res.status);
+      return;
+    } catch (e) {
+      console.warn("justice: PATCH /api/justice/cases/[id] (timeline) error", e);
+      return;
     }
-  } catch (e) {
-    console.warn("justice: PATCH /api/justice/cases/[id] (timeline) error", e);
   }
 }
 

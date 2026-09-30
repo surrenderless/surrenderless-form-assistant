@@ -161,32 +161,44 @@ export async function preparePaymentDisputeChecklist({
   });
 
   if (isLoaded && isSignedIn && caseId) {
-    try {
-      const timeline = readTimeline(caseId);
-      const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payment_dispute_draft: draft, timeline }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          payment_dispute_draft?: unknown;
-          timeline?: unknown;
-        };
-        if (data.payment_dispute_draft != null) {
-          sessionStorage.setItem(
-            STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
-            JSON.stringify(data.payment_dispute_draft)
-          );
+    // The server CAS-guards this write (a fresh self-read case_version) — a genuine concurrent
+    // writer can make it lose the race and come back 409. savePaymentDisputeDraftToSession above
+    // already made the draft durable locally regardless, so a bounded retry (re-sending the same
+    // draft/timeline; the server re-reads fresh state on each attempt) is sufficient.
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const timeline = readTimeline(caseId);
+        const res = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ payment_dispute_draft: draft, timeline }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            payment_dispute_draft?: unknown;
+            timeline?: unknown;
+          };
+          if (data.payment_dispute_draft != null) {
+            sessionStorage.setItem(
+              STORAGE_PAYMENT_DISPUTE_CHECKLIST_DRAFT_V1,
+              JSON.stringify(data.payment_dispute_draft)
+            );
+          }
+          if (Array.isArray(data.timeline)) {
+            replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+          }
+          break;
         }
-        if (Array.isArray(data.timeline)) {
-          replaceTimelineForCase(caseId, data.timeline as TimelineEntry[]);
+        if (res.status === 409 && attempt < MAX_ATTEMPTS) {
+          continue;
         }
-      } else {
         console.warn(`${logLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
+        break;
+      } catch (e) {
+        console.warn(`${logLabel}: PATCH /api/justice/cases/[id] error`, e);
+        break;
       }
-    } catch (e) {
-      console.warn(`${logLabel}: PATCH /api/justice/cases/[id] error`, e);
     }
   }
 

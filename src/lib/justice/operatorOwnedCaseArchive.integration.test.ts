@@ -42,6 +42,7 @@ type MockState = {
   client_state: Record<string, unknown>;
   task: JusticeCaseTaskRow;
   patchedArchivedAt: string | null;
+  case_version?: number;
 };
 
 function createSupabase(state: MockState): SupabaseClient {
@@ -59,23 +60,52 @@ function createSupabase(state: MockState): SupabaseClient {
                     intake: { company_name: "Acme" },
                     client_state: state.client_state,
                     archived_at: state.archived_at,
+                    case_version: state.case_version ?? 1,
+                    timeline: [],
                   },
                   error: null,
                 }),
               }),
             }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: () => ({
-              eq: async () => {
-                if (typeof patch.archived_at === "string") {
-                  state.archived_at = patch.archived_at;
-                  state.patchedArchivedAt = patch.archived_at;
-                }
-                return { error: null };
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
               },
-            }),
-          }),
+              is: (col: string, val: null) => {
+                filters[col] = val;
+                return chain;
+              },
+              select: () => ({
+                maybeSingle: async () => {
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "archived_at") &&
+                    filters.archived_at === null &&
+                    state.archived_at !== null
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  const currentVersion = state.case_version ?? 1;
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                    filters.case_version !== currentVersion
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  if (typeof patch.archived_at === "string") {
+                    state.archived_at = patch.archived_at;
+                    state.patchedArchivedAt = patch.archived_at;
+                  }
+                  state.case_version = currentVersion + 1;
+                  return { data: { id: CASE_ID }, error: null };
+                },
+              }),
+            };
+            return chain;
+          },
         };
       }
       if (table === "justice_case_tasks") {

@@ -11,9 +11,20 @@ function sortByTs(entries: TimelineEntry[]): TimelineEntry[] {
   return [...entries].sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
+const MAX_APPEND_ATTEMPTS = 5;
+
 /**
- * Appends one timeline entry to the case in DB. Uses `entry.id` for idempotent dedupe (safe if handler retries).
- * Returns the full sorted timeline after update, or null on failure.
+ * Appends one timeline entry to the case in DB. Uses `entry.id` for idempotent dedupe (safe if
+ * handler retries). Returns the full sorted timeline after update, or null on failure.
+ *
+ * case_version-guarded with a bounded read-merge-write retry: an unconditional read-then-write
+ * here would let two concurrent appends (e.g. two operator actions, or a consumer PATCH racing an
+ * automated flow) silently lose one entry — the second write's merge would be computed from the
+ * same stale `timeline` the first one started from, overwriting the first append instead of
+ * combining with it. Every retry re-reads fresh timeline + case_version and recomputes the merge
+ * from that fresh state — never resubmits the array computed on a prior attempt — so this is
+ * "recompute against current state and try again," not the stale-content auto-retry this
+ * codebase otherwise forbids.
  */
 export async function appendCaseTimelineEntry(
   supabase: SupabaseClient,
@@ -27,46 +38,59 @@ export async function appendCaseTimelineEntry(
     ts?: string;
   }
 ): Promise<TimelineEntry[] | null> {
-  const { data: row, error: fetchErr } = await supabase
-    .from("justice_cases")
-    .select("timeline")
-    .eq("id", caseId)
-    .eq("user_id", userId)
-    .maybeSingle();
+  const ts = entry.ts ?? new Date().toISOString();
 
-  if (fetchErr || !row) {
-    console.warn("justice timeline append: load case", fetchErr?.message ?? "not found");
-    return null;
+  for (let attempt = 1; attempt <= MAX_APPEND_ATTEMPTS; attempt++) {
+    const { data: row, error: fetchErr } = await supabase
+      .from("justice_cases")
+      .select("timeline, case_version")
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (fetchErr || !row) {
+      console.warn("justice timeline append: load case", fetchErr?.message ?? "not found");
+      return null;
+    }
+
+    let timeline = normalizeTimeline(row.timeline);
+    if (timeline.some((e) => e.id === entry.id)) {
+      return sortByTs(timeline);
+    }
+
+    const newEntry: TimelineEntry = {
+      id: entry.id,
+      case_id: caseId,
+      type: entry.type,
+      label: entry.label,
+      ts,
+      ...(entry.detail !== undefined && entry.detail !== "" ? { detail: entry.detail } : {}),
+    };
+
+    timeline = sortByTs([...timeline, newEntry]);
+
+    const { data: updated, error: upErr } = await supabase
+      .from("justice_cases")
+      .update({ timeline })
+      .eq("id", caseId)
+      .eq("user_id", userId)
+      .eq("case_version", row.case_version as number)
+      .select("id")
+      .maybeSingle();
+
+    if (upErr) {
+      console.warn("justice timeline append: update", upErr.message);
+      return null;
+    }
+    if (updated) {
+      return timeline;
+    }
+    // CAS miss — a concurrent writer advanced case_version between the read and write above.
+    // Loop: re-read fresh timeline + case_version and recompute the merge from that.
   }
 
-  let timeline = normalizeTimeline(row.timeline);
-  if (timeline.some((e) => e.id === entry.id)) {
-    return sortByTs(timeline);
-  }
-
-  const newEntry: TimelineEntry = {
-    id: entry.id,
-    case_id: caseId,
-    type: entry.type,
-    label: entry.label,
-    ts: entry.ts ?? new Date().toISOString(),
-    ...(entry.detail !== undefined && entry.detail !== "" ? { detail: entry.detail } : {}),
-  };
-
-  timeline = sortByTs([...timeline, newEntry]);
-
-  const { error: upErr } = await supabase
-    .from("justice_cases")
-    .update({ timeline })
-    .eq("id", caseId)
-    .eq("user_id", userId);
-
-  if (upErr) {
-    console.warn("justice timeline append: update", upErr.message);
-    return null;
-  }
-
-  return timeline;
+  console.warn("justice timeline append: exhausted retries on case_version conflict", caseId);
+  return null;
 }
 
 /** Latest persisted timeline for a case (sorted by ts). */

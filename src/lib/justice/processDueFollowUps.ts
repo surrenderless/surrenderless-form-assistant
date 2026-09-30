@@ -282,6 +282,12 @@ async function ensureOwnedFilingTasksForClientState(
 export const FOLLOW_UP_RESPONSE_REVIEW_ENSURE_RETRYABLE_ERROR =
   "Case updated but the follow-up response review task could not be created. Retry to finish handoff.";
 
+/** Retriable when the case_version CAS-guarded client_state write is refused because a
+ * concurrent writer (a consumer PATCH, an operator action) advanced the case in between the read
+ * and this write — never overwritten; the next cron pass re-reads fresh state and retries. */
+export const DUE_FOLLOW_UP_CASE_VERSION_CONFLICT_RETRYABLE_ERROR =
+  "Case was updated concurrently. Retry to finish follow-up handoff.";
+
 async function ensureResponseReviewTaskForDueFollowUp(
   supabase: SupabaseClient,
   userId: string,
@@ -384,7 +390,7 @@ export async function processDueFollowUps(
 
     const { data: caseRow, error: caseErr } = await supabase
       .from("justice_cases")
-      .select("id, user_id, intake, client_state, archived_at, payment_dispute_draft")
+      .select("id, user_id, intake, client_state, archived_at, payment_dispute_draft, case_version")
       .eq("id", caseId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -628,16 +634,34 @@ export async function processDueFollowUps(
       continue;
     }
 
-    const { error: patchErr } = await supabase
+    // case_version-guarded: an unconditional write here could silently clobber a concurrent
+    // consumer/operator write landing between the read above and this write. A CAS miss is
+    // pushed as failed_retryable (not skipped) so the next cron pass re-reads fresh state and
+    // retries, instead of losing this due follow-up's processing to a race.
+    const { data: patchedRow, error: patchErr } = await supabase
       .from("justice_cases")
       .update({ client_state: plan.clientState })
       .eq("id", caseId)
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .eq("case_version", caseRow.case_version)
+      .select("id")
+      .maybeSingle();
 
     if (patchErr) {
       console.warn("process due follow-ups: patch client_state", patchErr.message);
       results.push({ case_id: caseId, task_id: task.id, kind: "skipped", reason: "invalid" });
       skippedCount += 1;
+      continue;
+    }
+    if (!patchedRow) {
+      console.warn("process due follow-ups: case_version CAS conflict", caseId);
+      results.push({
+        case_id: caseId,
+        task_id: task.id,
+        kind: "failed_retryable",
+        error: DUE_FOLLOW_UP_CASE_VERSION_CONFLICT_RETRYABLE_ERROR,
+      });
+      failedRetryableCount += 1;
       continue;
     }
 

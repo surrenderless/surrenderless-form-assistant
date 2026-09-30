@@ -84,9 +84,23 @@ async function patchMockCase(
   }
 ): Promise<void> {
   const caseId = CHAT_AI_LADDER_CONTINUITY_E2E_CASE_ID;
+  // This PATCH always carries intake, which requires a real expected_case_version precondition
+  // (see patchJusticeCaseIntake.ts) — establish the current version with a GET immediately before
+  // writing. Unlike the real client, this helper talks to the route directly and must always
+  // fetch its own fresh version this way rather than relying on any cached snapshot.
+  const getRes = await page.request.get(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+  if (!getRes.ok()) {
+    throw new Error(`Failed to read mock case before patch (${getRes.status()}): ${await getRes.text()}`);
+  }
+  const current = (await getRes.json()) as { case_version?: number };
+  if (typeof current.case_version !== "number") {
+    throw new Error("Mock case GET response is missing case_version");
+  }
+
   const patchRes = await page.request.patch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
     data: {
       intake: data.intake ?? buildPlaywrightMockE2eCaseIntake(),
+      expected_case_version: current.case_version,
       timeline: data.timeline ?? buildCaseStartedTimeline(caseId),
       ...(data.client_state ? { client_state: data.client_state } : {}),
       ...(Object.prototype.hasOwnProperty.call(data, "payment_dispute_draft")

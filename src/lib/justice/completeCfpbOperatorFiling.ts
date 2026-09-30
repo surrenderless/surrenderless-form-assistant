@@ -115,7 +115,7 @@ export async function completeCfpbOperatorFiling(
 
   const { data: caseRow, error: caseErr } = await supabase
     .from("justice_cases")
-    .select("intake, client_state, timeline, updated_at")
+    .select("intake, client_state, timeline, case_version")
     .eq("id", caseId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -292,7 +292,7 @@ export async function completeCfpbOperatorFiling(
     const casResult = await updateClientStateIfUnchanged(supabase, {
       caseId,
       userId,
-      expectedUpdatedAt: caseRow.updated_at,
+      expectedCaseVersion: caseRow.case_version,
       clientState,
     });
     if (!casResult.ok) {

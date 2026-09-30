@@ -8,6 +8,7 @@ import {
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
 import type { JusticeCaseFilingRow } from "@/lib/justice/filings";
+import { insertManagedFulfillmentTaskConflictSafe } from "@/lib/justice/managedFulfillmentTaskDedupe";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeApprovedNextAction, JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { appendCaseTimelineEntry } from "@/server/justiceTimelineAppend";
@@ -311,31 +312,30 @@ export async function ensureDemandLetterFilingTask(
   const title = buildDemandLetterFilingTaskTitle(intake);
   const notes = buildDemandLetterFilingTaskNotes(caseId, intake);
 
-  const { data, error } = await supabase
-    .from("justice_case_tasks")
-    .insert({
-      user_id: userId,
-      case_id: caseId,
-      title,
-      notes,
-    })
-    .select(TASK_SELECT)
-    .single();
+  const insertResult = await insertManagedFulfillmentTaskConflictSafe(supabase, {
+    userId,
+    caseId,
+    marker,
+    title,
+    notes,
+  });
 
-  if (error) {
-    console.warn("justice demand letter filing task: insert", error.message);
+  if (!insertResult.ok) {
+    console.warn("justice demand letter filing task: insert", insertResult.error);
     return { task: null, timeline: null, created: false };
   }
 
-  const task = data as JusticeCaseTaskRow;
-  const timeline = await appendCaseTimelineEntry(supabase, userId, caseId, {
-    id: `justice_task_add:${task.id}`,
-    type: "task_added",
-    label: "Demand letter queued",
-    detail: task.title,
-  });
+  const task = insertResult.task;
+  const timeline = insertResult.created
+    ? await appendCaseTimelineEntry(supabase, userId, caseId, {
+        id: `justice_task_add:${task.id}`,
+        type: "task_added",
+        label: "Demand letter queued",
+        detail: task.title,
+      })
+    : null;
 
-  return { task, timeline, created: true };
+  return { task, timeline, created: insertResult.created };
 }
 
 const BOUNCE_TITLE_PREFIX_PATTERN = /^\[Needs manual follow-up[^\]]*\]\s*/;

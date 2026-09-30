@@ -9,7 +9,7 @@ import {
 import type { TimelineEntry } from "@/lib/justice/types";
 
 type Row = { id: string; user_id: string; case_id: string; notes: string; created_at: string };
-type CaseRow = { id: string; user_id: string; timeline: TimelineEntry[] };
+type CaseRow = { id: string; user_id: string; timeline: TimelineEntry[]; case_version: number };
 
 type Store = {
   filings: Row[];
@@ -84,19 +84,20 @@ function makeSupabase(store: Store): SupabaseClient {
   };
 
   // justice_cases timeline reads/writes go through appendCaseTimelineEntry, which does its own
-  // select().eq().eq().maybeSingle() then update().eq().eq() — reuse the same builder shape.
+  // select("timeline, case_version").eq().eq().maybeSingle() then a case_version-guarded
+  // update().eq().eq().eq("case_version",X).select().maybeSingle() — reuse the same builder shape.
   const patchedFrom = (table: string) => {
     if (table !== "justice_cases") return from(table);
-    const state: { op: "select" | "update"; filters: Record<string, string>; update: Record<string, unknown> | null } = {
-      op: "select",
-      filters: {},
-      update: null,
-    };
+    const state: {
+      op: "select" | "update";
+      filters: Record<string, string | number>;
+      update: Record<string, unknown> | null;
+    } = { op: "select", filters: {}, update: null };
     const builder: Record<string, unknown> = {
       select() {
         return builder;
       },
-      eq(col: string, val: string) {
+      eq(col: string, val: string | number) {
         state.filters[col] = val;
         return builder;
       },
@@ -104,21 +105,30 @@ function makeSupabase(store: Store): SupabaseClient {
         const row = store.cases.find(
           (c) => c.id === state.filters.id && c.user_id === state.filters.user_id
         );
-        return Promise.resolve({ data: row ? { timeline: row.timeline } : null, error: null });
+        if (state.op === "update") {
+          if (!row) return Promise.resolve({ data: null, error: null });
+          if (store.failUpdate) return Promise.resolve({ data: null, error: { message: "update down" } });
+          // Faithful CAS simulation: an .eq("case_version", X) filter only matches when X equals
+          // the row's current value.
+          if (
+            state.filters.case_version !== undefined &&
+            row.case_version !== state.filters.case_version
+          ) {
+            return Promise.resolve({ data: null, error: null });
+          }
+          row.timeline = (state.update as Record<string, unknown>).timeline as TimelineEntry[];
+          row.case_version += 1;
+          return Promise.resolve({ data: { id: row.id }, error: null });
+        }
+        return Promise.resolve({
+          data: row ? { timeline: row.timeline, case_version: row.case_version } : null,
+          error: null,
+        });
       },
       update(payload: Record<string, unknown>) {
         state.op = "update";
         state.update = payload;
         return builder;
-      },
-      then(onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) {
-        if (state.op === "update") {
-          const row = store.cases.find(
-            (c) => c.id === state.filters.id && c.user_id === state.filters.user_id
-          );
-          if (row) row.timeline = (state.update as Record<string, unknown>).timeline as TimelineEntry[];
-        }
-        return Promise.resolve({ data: null, error: null }).then(onF, onR);
       },
     };
     return builder;
@@ -209,7 +219,7 @@ function baseStore(overrides: Partial<Store> = {}): Store {
       },
     ],
     tasks: [],
-    cases: [{ id: "case-1", user_id: "owner-case-1", timeline: [] }],
+    cases: [{ id: "case-1", user_id: "owner-case-1", timeline: [], case_version: 1 }],
     ...overrides,
   };
 }

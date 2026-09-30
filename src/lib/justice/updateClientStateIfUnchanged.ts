@@ -8,19 +8,23 @@ export type UpdateClientStateIfUnchangedResult =
   | { ok: false; error: string; status: number };
 
 /**
- * Writes justice_cases.client_state only if the row's updated_at still matches
- * expectedUpdatedAt (the value read alongside client_state before this write was computed).
- * justice_cases has a BEFORE UPDATE trigger that stamps updated_at on every write, so any
- * concurrent writer (a chat PATCH racing an operator filing completion, or two operator
- * completions racing each other) changes updated_at first — the loser's compare-and-swap
- * matches zero rows instead of silently clobbering the winner's client_state.
+ * Writes justice_cases.client_state only if the row's case_version still matches
+ * expectedCaseVersion (the value read alongside client_state before this write was computed).
+ * case_version is a monotonic integer, incremented by exactly 1 on every UPDATE by a BEFORE
+ * UPDATE trigger (bump_justice_cases_case_version) — never updated_at, a wall-clock timestamp a
+ * release audit proved can repeat across genuinely sequential writes (empirically producing a
+ * silent lost update in roughly a third to half of racing-writer trials against real Postgres,
+ * with no sleep involved). Any concurrent writer (a chat PATCH racing an operator filing
+ * completion, or two operator completions racing each other) advances case_version first — the
+ * loser's compare-and-swap matches zero rows instead of silently clobbering the winner's
+ * client_state.
  */
 export async function updateClientStateIfUnchanged(
   supabase: SupabaseClient,
   params: {
     caseId: string;
     userId: string;
-    expectedUpdatedAt: string;
+    expectedCaseVersion: number;
     clientState: Record<string, unknown>;
   }
 ): Promise<UpdateClientStateIfUnchangedResult> {
@@ -29,7 +33,7 @@ export async function updateClientStateIfUnchanged(
     .update({ client_state: params.clientState })
     .eq("id", params.caseId)
     .eq("user_id", params.userId)
-    .eq("updated_at", params.expectedUpdatedAt)
+    .eq("case_version", params.expectedCaseVersion)
     .select("id")
     .maybeSingle();
 

@@ -40,6 +40,12 @@ import {
 } from "@/lib/justice/followUpResponseReviewTask";
 import { followUpTaskOwnerHref } from "@/lib/justice/followUpCaseTask";
 import { taskNotesMatchAnyOperatorFulfillmentMarker } from "@/lib/justice/operatorEvidenceFileAccess";
+import { taskNotesMatchOrphanedPaidCaseApprovalMarker } from "@/lib/justice/orphanedPaidCaseApprovalTask";
+import {
+  computeEligibleOrphanedPaidCaseApprovalActions,
+  type EligibleOrphanedPaidCaseApprovalAction,
+} from "@/lib/justice/orphanedPaidCaseApprovalResolution";
+import { findDurableIntendedActionForCase } from "@/lib/justice/durablePaymentIntendedAction";
 import { mapOperatorFulfillmentQueueEvidenceRow } from "@/lib/justice/operatorFulfillmentQueueEvidence";
 import { justiceEvidenceRowHasUploadedFile } from "@/lib/justice/evidence";
 import {
@@ -101,7 +107,16 @@ export type OperatorFulfillmentStep =
   | "ftc"
   | "bbb"
   | "follow_up_response_review"
-  | "superseded_lane_review";
+  | "superseded_lane_review"
+  | "orphaned_paid_case_approval";
+
+/** An orphaned-paid-case-approval review's server-validated options — never an arbitrary href. */
+export type OrphanedPaidCaseApprovalWorkspace = {
+  eligible_actions: EligibleOrphanedPaidCaseApprovalAction[];
+  /** The durably-recorded, metadata-bound action the case's own payment was for, if any. */
+  durable_intended_href: string | null;
+  durable_intended_label: string | null;
+};
 
 export type OperatorFulfillmentQueueItem = {
   case_id: string;
@@ -143,6 +158,19 @@ export type OperatorFulfillmentQueueItem = {
    * recorded against the wrong lane's row.
    */
   owner_href?: string;
+  /** Present only for orphaned-paid-case-approval review — server-validated resolution options. */
+  orphaned_paid_case_approval_workspace?: OrphanedPaidCaseApprovalWorkspace;
+  /**
+   * Present only for an orphaned-paid-case-approval review flagged with reason invalid_intake —
+   * the case's own stored intake fails validation, so no eligible-action set can be computed at
+   * all. Carries the raw (untyped, possibly malformed) intake so an operator can inspect and
+   * submit a corrected one via /api/operator/orphaned-paid-case-approvals/repair-intake, the only
+   * way this specific review can ever become actionable. case_version is the case row's
+   * case_version (a monotonic integer, never a timestamp) at the moment this was read — the
+   * repair-intake endpoint requires it back unchanged as an optimistic-concurrency guard against
+   * a lost update.
+   */
+  orphaned_paid_case_approval_invalid_intake?: { raw_intake: unknown; case_version: number };
 };
 
 /** Aggregate response-SLA metrics for the operator fulfillment queue. */
@@ -191,6 +219,7 @@ export type OperatorFulfillmentPanelKind =
   | "payment_dispute_workspace"
   | "follow_up_response_review"
   | "superseded_lane_review"
+  | "orphaned_paid_case_approval_review"
   | "record_form";
 
 /** UI branching for /operator/fulfillment — keeps workspace panels scoped by step. */
@@ -209,6 +238,7 @@ export function resolveOperatorFulfillmentPanelKind(
     | "payment_dispute_workspace"
   >
 ): OperatorFulfillmentPanelKind {
+  if (item.step === "orphaned_paid_case_approval") return "orphaned_paid_case_approval_review";
   if (item.step === "state_ag" && item.state_ag_workspace) return "state_ag_workspace";
   if (item.step === "cfpb" && item.cfpb_workspace) return "cfpb_workspace";
   if (item.step === "fcc" && item.fcc_workspace) return "fcc_workspace";
@@ -242,7 +272,8 @@ export function operatorFulfillmentStepLoadsCaseEvidence(step: OperatorFulfillme
     step === "merchant_contact" ||
     step === "payment_dispute" ||
     step === "follow_up_response_review" ||
-    step === "superseded_lane_review"
+    step === "superseded_lane_review" ||
+    step === "orphaned_paid_case_approval"
   );
 }
 
@@ -314,6 +345,20 @@ export function classifyOpenOperatorTask(
       consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
       draft_excerpt: truncateDraft(parseSupersededLaneReviewTaskDraft(task.notes)),
       owner_href: ownerHref,
+      evidence: [],
+    };
+  }
+
+  if (taskNotesMatchOrphanedPaidCaseApprovalMarker(task.notes, caseId)) {
+    return {
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "orphaned_paid_case_approval",
+      task_title: task.title?.trim() || "Paid case needs manual approval review",
+      company_name: intake.company_name.trim() || "Consumer case",
+      consumer_us_state: intake.consumer_us_state?.trim().toUpperCase() || null,
+      draft_excerpt: "",
       evidence: [],
     };
   }
@@ -531,7 +576,7 @@ export async function listOperatorFulfillmentQueue(
   const caseIds = [...new Set(operatorTasks.map((task) => task.case_id.trim()).filter(Boolean))];
   const { data: caseRows, error: casesErr } = await supabase
     .from("justice_cases")
-    .select("id, user_id, intake, archived_at")
+    .select("id, user_id, intake, archived_at, case_version")
     .in("id", caseIds);
 
   if (casesErr) {
@@ -539,20 +584,59 @@ export async function listOperatorFulfillmentQueue(
     return [];
   }
 
-  const intakeByCaseId = new Map<string, JusticeIntake>();
+  const rawCaseByCaseId = new Map<
+    string,
+    { archived_at: string | null; intake: unknown; case_version: number }
+  >();
   for (const row of caseRows ?? []) {
+    rawCaseByCaseId.set(String(row.id).trim(), {
+      archived_at: (row.archived_at as string | null) ?? null,
+      intake: row.intake,
+      case_version: row.case_version as number,
+    });
+  }
+
+  const intakeByCaseId = new Map<string, JusticeIntake>();
+  for (const [caseId, row] of rawCaseByCaseId) {
     if (row.archived_at) continue;
     if (!isJusticeIntakePayload(row.intake)) continue;
-    intakeByCaseId.set(String(row.id).trim(), row.intake as JusticeIntake);
+    intakeByCaseId.set(caseId, row.intake as JusticeIntake);
   }
 
   const items: OperatorFulfillmentQueueItem[] = [];
   for (const task of operatorTasks) {
     const caseId = task.case_id.trim();
     const intake = intakeByCaseId.get(caseId);
-    if (!intake) continue;
-    const item = classifyOpenOperatorTask(task, intake);
-    if (item) items.push({ ...item, created_at: task.created_at ?? null });
+    if (intake) {
+      const item = classifyOpenOperatorTask(task, intake);
+      if (item) items.push({ ...item, created_at: task.created_at ?? null });
+      continue;
+    }
+
+    // No valid intake for this case — every other step is correctly excluded here (it could
+    // never render), but an orphaned_paid_case_approval task flagged invalid_intake exists
+    // PRECISELY because intake is invalid. Excluding it here would make the one case that most
+    // needs an operator's attention permanently invisible, with no way to ever recover it.
+    // Archived cases stay excluded, matching every other step's existing behavior.
+    const raw = rawCaseByCaseId.get(caseId);
+    if (!raw || raw.archived_at) continue;
+    if (!taskNotesMatchOrphanedPaidCaseApprovalMarker(task.notes, caseId)) continue;
+    items.push({
+      case_id: caseId,
+      case_owner_user_id: task.user_id.trim(),
+      task_id: task.id,
+      step: "orphaned_paid_case_approval",
+      task_title: task.title?.trim() || "Paid case needs manual approval review",
+      company_name: "Consumer case (intake invalid)",
+      consumer_us_state: null,
+      draft_excerpt: "",
+      evidence: [],
+      created_at: task.created_at ?? null,
+      orphaned_paid_case_approval_invalid_intake: {
+        raw_intake: raw.intake,
+        case_version: raw.case_version,
+      },
+    });
   }
 
   const workspaceCaseIds = [
@@ -603,11 +687,45 @@ export async function listOperatorFulfillmentQueue(
     }
   }
 
+  // Only for items that will actually reach the workspace-attaching branch below (valid intake)
+  // — an invalid-intake orphaned_paid_case_approval item returns early via `if (!intake) return
+  // item;` and never needs a durable-intent lookup at all.
+  const orphanedApprovalCaseIds = items
+    .filter((item) => item.step === "orphaned_paid_case_approval" && intakeByCaseId.has(item.case_id))
+    .map((item) => item.case_id);
+  const durableIntentByCaseId = new Map<string, { href: string; label: string } | null>();
+  if (orphanedApprovalCaseIds.length > 0) {
+    const durableIntents = await Promise.all(
+      [...new Set(orphanedApprovalCaseIds)].map(async (caseId) => [
+        caseId,
+        await findDurableIntendedActionForCase(supabase, caseId),
+      ] as const)
+    );
+    for (const [caseId, durable] of durableIntents) {
+      durableIntentByCaseId.set(caseId, durable);
+    }
+  }
+
   return items.map((item) => {
     const intake = intakeByCaseId.get(item.case_id);
     if (!intake) return item;
     const task = operatorTasks.find((t) => t.id === item.task_id);
     const evidence = evidenceByCaseId.get(item.case_id) ?? [];
+
+    if (item.step === "orphaned_paid_case_approval") {
+      const durable = durableIntentByCaseId.get(item.case_id) ?? null;
+      return {
+        ...item,
+        evidence,
+        orphaned_paid_case_approval_workspace: {
+          eligible_actions: computeEligibleOrphanedPaidCaseApprovalActions(intake, {
+            hasUploadedEvidenceFile: hasUploadedEvidenceFileByCaseId.get(item.case_id) ?? false,
+          }),
+          durable_intended_href: durable?.href ?? null,
+          durable_intended_label: durable?.label ?? null,
+        },
+      };
+    }
 
     if (item.step === "state_ag" && item.state_ag_workspace) {
       return {

@@ -40,6 +40,7 @@ describe("justice Supabase migrations grant service_role explicit table privileg
     expect(discoveredJusticeTables).toEqual(
       [
         "justice_cases",
+        "justice_case_audit_events",
         "justice_case_chat_messages",
         "justice_case_evidence",
         "justice_case_filings",
@@ -74,5 +75,18 @@ describe("justice Supabase migrations grant service_role explicit table privileg
 
   it("never disables row level security on any table", () => {
     expect(combined).not.toMatch(/disable row level security/i);
+  });
+
+  it("never grants update or delete to any role on the immutable audit table", () => {
+    // Anchored to a line actually starting with the `grant` keyword (not merely containing the
+    // substring "grant"/"granted", which this migration's own explanatory comments do).
+    const auditGrants = (combined.match(/^\s*grant\b[^;]*;/gim) ?? []).filter((statement) =>
+      /\bpublic\.justice_case_audit_events\b/i.test(statement)
+    );
+    expect(auditGrants.length).toBeGreaterThan(0);
+    for (const statement of auditGrants) {
+      expect(statement).not.toMatch(/\bupdate\b/i);
+      expect(statement).not.toMatch(/\bdelete\b/i);
+    }
   });
 });

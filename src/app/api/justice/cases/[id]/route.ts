@@ -50,6 +50,7 @@ import {
   type ManualActionTrackingFiling,
 } from "@/lib/justice/handlingTrackingProgress";
 import { completeMerchantContactFilingTaskIfOpen } from "@/lib/justice/merchantContactFilingTask";
+import { mergeCaseTimelineEntries } from "@/lib/justice/mergeCaseTimelineEntries";
 import { resolveHasUploadedEvidenceFile } from "@/lib/justice/resolveHasUploadedEvidenceFile";
 import type { JusticeCaseTaskRow } from "@/lib/justice/tasks";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
@@ -93,13 +94,14 @@ type CaseResponse = {
   client_state: unknown;
   created_at: string;
   updated_at: string;
+  case_version: number;
   archived_at: string | null;
   case_label: string | null;
   paid_at: string | null;
 };
 
 const SELECT =
-  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, archived_at, case_label, paid_at" as const;
+  "id, intake, timeline, payment_dispute_draft, client_state, created_at, updated_at, case_version, archived_at, case_label, paid_at" as const;
 
 function isValidArchivedAt(value: unknown): value is string | null {
   if (value === null) return true;
@@ -250,10 +252,48 @@ async function patchJusticeCase(
   const needsEscalationValidation =
     Object.prototype.hasOwnProperty.call(patch, "client_state") ||
     Object.prototype.hasOwnProperty.call(patch, "archived_at");
+  // intake needs true end-to-end optimistic concurrency, not merely a compare-and-swap on
+  // whatever this request happens to read for itself: a consumer PATCH carrying only
+  // {intake, timeline} (the shape every intake-continuity caller actually sends) must fail if it
+  // was built from data that went stale BEFORE this request was even sent — something a
+  // server-side read performed during this same request can never detect, since it has no way to
+  // know what the client actually saw. The client must therefore supply the version it read
+  // (expected_case_version) and the write is guarded against exactly that value, never a value
+  // this request read for itself. The token is case_version (a monotonic integer, bumped by
+  // exactly 1 on every UPDATE — see 20260917110000_justice_cases_case_version.sql), never
+  // updated_at: a release audit proved a wall-clock timestamp can repeat across genuinely
+  // sequential writes (empirically, roughly a third to half of racing-writer trials against real
+  // Postgres produced a silent lost update with no sleep involved), which a plain integer counter
+  // under row-level locking cannot do.
+  //
+  // Every OTHER patch shape (timeline/case_label/payment_dispute_draft-only, with none of
+  // intake/client_state/archived_at present) still gets a real case_version CAS below — the
+  // weaker but still real "self-read-then-write" guard already used for client_state/archived_at
+  // patches, extended uniformly to every remaining case. This was previously skipped for a pure
+  // timeline-only patch on the theory that mergeCaseTimelineEntries' per-id dedup made it
+  // "conflict-free regardless of staleness" — a release audit proved that claim false: the merge
+  // is a plain in-memory function with no database interaction of its own, so two concurrent
+  // timeline-only writers reading the same stale snapshot and both committing will have the
+  // SECOND commit unconditionally replace the column, silently losing the first writer's entry
+  // despite the merge's per-id dedup (the merge never sees what it didn't read). There is no
+  // "no-CAS-required" exception anywhere in this route anymore — every write is guarded.
+  const needsIntakeCas = Object.prototype.hasOwnProperty.call(patch, "intake");
+  let clientExpectedCaseVersion: number | undefined;
+  if (needsIntakeCas) {
+    const raw = b.expected_case_version;
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+      return NextResponse.json(
+        { error: "expected_case_version is required and must be a non-negative integer when updating intake" },
+        { status: 400 }
+      );
+    }
+    clientExpectedCaseVersion = raw;
+  }
 
   let existingClientState: unknown;
   let existingArchivedAt: string | null | undefined;
-  let existingRowUpdatedAt: string | undefined;
+  let existingRowCaseVersion: number | undefined;
+  let existingRowTimeline: unknown;
   let existingIntake: JusticeIntake | null | undefined;
   // Mock/E2E cases have no real Stripe-backed payment record — treated as already paid so the
   // payment gate never interferes with the Playwright pipeline.
@@ -271,6 +311,7 @@ async function patchJusticeCase(
       const mockRow = buildPlaywrightMockCaseGetResponse(id);
       existingClientState = mockRow.client_state;
       existingArchivedAt = mockRow.archived_at;
+      existingRowTimeline = mockRow.timeline;
       validationTasks = buildPlaywrightMockJusticeTasksGetResponse(id, userId) as JusticeCaseTaskRow[];
       validationFilings = buildPlaywrightMockJusticeFilingsGetResponse(id).map((row) => ({
         destination: row.destination,
@@ -282,7 +323,7 @@ async function patchJusticeCase(
 
       const { data: existingRow, error: existingErr } = await supabaseForValidation
         .from("justice_cases")
-        .select("client_state, archived_at, updated_at, paid_at, intake")
+        .select("client_state, archived_at, case_version, paid_at, intake, timeline")
         .eq("id", id)
         .eq("user_id", userId)
         .maybeSingle();
@@ -297,7 +338,8 @@ async function patchJusticeCase(
 
       existingClientState = existingRow.client_state;
       existingArchivedAt = existingRow.archived_at as string | null;
-      existingRowUpdatedAt = existingRow.updated_at as string;
+      existingRowCaseVersion = existingRow.case_version as number;
+      existingRowTimeline = existingRow.timeline;
       existingPaidAt = existingRow.paid_at as string | null;
       existingIntake = existingRow.intake as JusticeIntake | null;
 
@@ -428,6 +470,38 @@ async function patchJusticeCase(
         }
       }
     }
+  } else {
+    // Neither client_state nor archived_at is present, so none of the escalation-specific
+    // machinery above applies — but EVERY remaining patch shape still needs a real case_version
+    // CAS token (intake's own client-supplied one for needsIntakeCas, or this fresh self-read for
+    // everything else — timeline/case_label/payment_dispute_draft), and timeline (if present)
+    // still needs the current row to merge against, so a minimal, narrowly-scoped read happens
+    // here instead of the full escalation-validation read above.
+    if (isMockCase) {
+      const mockRow = buildPlaywrightMockCaseGetResponse(id);
+      existingRowTimeline = mockRow.timeline;
+    } else {
+      const supabaseForValidation = getSupabaseAdmin();
+      if (!supabaseForValidation) return supabaseUnavailableResponse();
+
+      const { data: existingRow, error: existingErr } = await supabaseForValidation
+        .from("justice_cases")
+        .select("case_version, timeline")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (existingErr) {
+        console.warn("justice_cases select before patch:", existingErr.message);
+        return NextResponse.json({ error: existingErr.message }, { status: 500 });
+      }
+      if (!existingRow) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+
+      existingRowCaseVersion = existingRow.case_version as number;
+      existingRowTimeline = existingRow.timeline;
+    }
   }
 
   if (isMockCase) {
@@ -441,6 +515,10 @@ async function patchJusticeCase(
     existingClientState = undefined;
     existingArchivedAt = undefined;
   }
+  // existingRowCaseVersion is now ALWAYS a real number by this point for every reachable patch
+  // shape (the escalation-validation read above covers client_state/archived_at; the `else`
+  // branch's minimal read covers every other shape, including a pure timeline/case_label/
+  // payment_dispute_draft-only patch) — there is no remaining "skip the CAS" opt-out.
 
   // Task reconciliation happens BEFORE the terminal client_state is persisted, not after: if
   // reconciliation fails, the write must not proceed at all — a persisted terminal action with a
@@ -464,20 +542,20 @@ async function patchJusticeCase(
       preWriteReconcileTimeline = taskReconcile.timeline;
 
       // Reconciliation's own writes (completing the task; appending the audit timeline entry to
-      // justice_cases.timeline) can themselves advance justice_cases.updated_at via the
-      // set_justice_cases_updated_at trigger (BEFORE UPDATE ... FOR EACH ROW, unconditional on
-      // which columns changed). The updated_at captured before reconciliation ran is now stale
+      // justice_cases.timeline) can themselves advance justice_cases.case_version via the
+      // bump_justice_cases_case_version trigger (BEFORE UPDATE ... FOR EACH ROW, unconditional on
+      // which columns changed). The case_version captured before reconciliation ran is now stale
       // by construction — not because of any concurrent writer — so the CAS-guarded write below
       // would self-invalidate every single time a real open task gets reconciled. Re-read the row
       // and compare the fields the CAS exists to protect (client_state, archived_at, intake):
       // identical means the only intervening write was our own reconciliation, so it's safe to
-      // adopt the fresh updated_at; different means a genuine concurrent writer intervened while
+      // adopt the fresh case_version; different means a genuine concurrent writer intervened while
       // we were reconciling, and this must still fail exactly as the CAS was designed to — never
       // silently clobber a real concurrent change.
-      if (existingRowUpdatedAt) {
+      if (existingRowCaseVersion !== undefined) {
         const { data: freshRow, error: freshErr } = await supabase
           .from("justice_cases")
-          .select("client_state, archived_at, updated_at, intake")
+          .select("client_state, archived_at, case_version, intake")
           .eq("id", id)
           .eq("user_id", userId)
           .maybeSingle();
@@ -496,21 +574,45 @@ async function patchJusticeCase(
           return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
         }
 
-        existingRowUpdatedAt = freshRow.updated_at as string;
+        existingRowCaseVersion = freshRow.case_version as number;
       }
     }
   }
 
-  // When we read the row above for escalation validation, guard the write with a
-  // compare-and-swap on updated_at (stamped on every row write by a DB trigger) so a
-  // concurrent writer — an operator completing a filing at the same time — can't have its
-  // change silently clobbered by this blind update.
-  let updateQuery = supabase.from("justice_cases").update(patch).eq("id", id).eq("user_id", userId);
-  if (existingRowUpdatedAt) {
-    updateQuery = updateQuery.eq("updated_at", existingRowUpdatedAt);
+  if (Object.prototype.hasOwnProperty.call(patch, "timeline")) {
+    // Never trust the client's submitted timeline as the full truth — merge it against whatever
+    // is currently stored so a stale local copy can only ever add entries, never erase ones it
+    // simply didn't know about (e.g. a server-side audit append that happened after this client
+    // last loaded the case).
+    patch.timeline = mergeCaseTimelineEntries(existingRowTimeline, patch.timeline as TimelineEntry[]);
   }
 
-  const { data, error } = await updateQuery.select(SELECT).maybeSingle();
+  // The CAS token guarding this write: for intake, it is ALWAYS the client-supplied
+  // expected_case_version (real end-to-end optimistic concurrency — see needsIntakeCas above),
+  // never a value this request read for itself. For every other patch shape (client_state,
+  // archived_at, timeline, case_label, payment_dispute_draft), it is the case_version this
+  // request itself just read, immediately before this write — a real compare-and-swap, not a
+  // client-supplied one, but still a genuine guard against the exact database row this write is
+  // about to touch. Either way the column compared is case_version, never updated_at. There is
+  // exactly one `.update(patch)` call site in this route, and it is ALWAYS guarded — no
+  // conditional, no exception.
+  const casToken = needsIntakeCas ? clientExpectedCaseVersion : existingRowCaseVersion;
+  if (casToken === undefined) {
+    // Unreachable given the reads above always populate one of the two sources for every
+    // reachable patch shape — fails loudly rather than silently falling through to an unguarded
+    // write if that invariant is ever broken by a future change.
+    console.warn("justice_cases update: no case_version CAS token available", id);
+    return NextResponse.json({ error: "Could not verify the current case version." }, { status: 500 });
+  }
+
+  const { data, error } = await supabase
+    .from("justice_cases")
+    .update(patch)
+    .eq("id", id)
+    .eq("user_id", userId)
+    .eq("case_version", casToken)
+    .select(SELECT)
+    .maybeSingle();
 
   if (error) {
     console.warn("justice_cases update:", error.message);
@@ -518,7 +620,32 @@ async function patchJusticeCase(
   }
 
   if (!data) {
-    if (existingRowUpdatedAt) {
+    if (needsIntakeCas) {
+      // A genuine conflict (or the row no longer exists for this owner) — refetch current state
+      // so the caller can reconcile in one round trip instead of blindly retrying the same stale
+      // write. Never falls back to writing anyway.
+      const { data: currentRow } = await supabase
+        .from("justice_cases")
+        .select("intake, case_version, timeline")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!currentRow) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      return NextResponse.json(
+        {
+          error: CLIENT_STATE_UPDATE_CONFLICT_ERROR,
+          current: {
+            intake: currentRow.intake,
+            case_version: currentRow.case_version,
+            timeline: currentRow.timeline,
+          },
+        },
+        { status: 409 }
+      );
+    }
+    if (casToken !== undefined) {
       return NextResponse.json({ error: CLIENT_STATE_UPDATE_CONFLICT_ERROR }, { status: 409 });
     }
     return NextResponse.json({ error: "Not found" }, { status: 404 });

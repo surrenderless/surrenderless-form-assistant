@@ -79,9 +79,23 @@ export async function seedPlaywrightMockCaseForRealBbbChatAutofill(
 
   await resetPlaywrightMockCaseForRealBbbChatAutofill(page);
 
+  // This PATCH carries intake, which requires a real expected_case_version precondition (see
+  // patchJusticeCaseIntake.ts) — establish the current version with a GET immediately before
+  // writing. Unlike the real client, this helper talks to the route directly and must always
+  // fetch its own fresh version this way rather than relying on any cached snapshot.
+  const getRes = await page.request.get(`/api/justice/cases/${encodeURIComponent(caseId)}`);
+  if (!getRes.ok()) {
+    throw new Error(`Failed to read mock case before seed patch (${getRes.status()}): ${await getRes.text()}`);
+  }
+  const current = (await getRes.json()) as { case_version?: number };
+  if (typeof current.case_version !== "number") {
+    throw new Error("Mock case GET response is missing case_version");
+  }
+
   const patchRes = await page.request.patch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
     data: {
       intake,
+      expected_case_version: current.case_version,
       timeline: buildRealBbbChatAutofillE2eTimeline(caseId),
       client_state: buildRealBbbChatAutofillE2eClientState(),
     },

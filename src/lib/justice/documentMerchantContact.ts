@@ -7,6 +7,10 @@ import {
 } from "@/lib/justice/timeline";
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
+import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
+import { fetchJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
+import type { CaseReconciliationBanner } from "@/lib/justice/caseReconciliationStore";
 
 const FTC_MOCK_COMPLETED_KEY = "justice_ftc_mock_completed";
 
@@ -140,7 +144,22 @@ export type DocumentMerchantContactParams = {
 
 export type DocumentMerchantContactResult =
   | { ok: true; updatedIntake: JusticeIntake }
-  | { ok: false; contactDateError?: string; contactProofError?: string };
+  | { ok: false; contactDateError?: string; contactProofError?: string }
+  | {
+      ok: false;
+      reason: "conflict";
+      error: string;
+      /** Ready-to-install reconciliation banner for the caller's own explicit UI. */
+      current?: CaseReconciliationBanner;
+    }
+  | {
+      ok: false;
+      reason: "missing_version";
+      error: string;
+      /** Present when the centralized recovery this triggers succeeds — the caller's
+       * reconciliation point, same shape as the conflict case, so both can share one UI. */
+      current?: CaseReconciliationBanner;
+    };
 
 /** Persist merchant/company contact documentation (session, timeline, optional server PATCH). */
 export async function documentMerchantContact({
@@ -174,41 +193,63 @@ export async function documentMerchantContact({
     applyMerchantContactTimelineEvents(trimmedCaseId, updated);
   }
 
-  let finalIntake = updated;
-
   if (isLoaded && isSignedIn && trimmedCaseId) {
-    try {
-      const timeline = readTimeline(trimmedCaseId);
-      const res = await fetch(`/api/justice/cases/${encodeURIComponent(trimmedCaseId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intake: updated, timeline }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          intake?: JusticeIntake;
-          timeline?: unknown;
-        };
-        if (data.intake) {
-          finalIntake = data.intake;
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(data.intake));
-          }
-        }
-        if (Array.isArray(data.timeline)) {
-          replaceTimelineForCase(trimmedCaseId, data.timeline as TimelineEntry[]);
-        }
-      } else {
-        console.warn(`${logLabel}: PATCH /api/justice/cases/[id] failed`, res.status);
+    const timeline = readTimeline(trimmedCaseId);
+    const result = await patchJusticeCaseIntake(trimmedCaseId, updated, { timeline });
+    if (result.ok) {
+      if (Array.isArray(result.timeline)) {
+        replaceTimelineForCase(trimmedCaseId, result.timeline as TimelineEntry[]);
       }
-    } catch (e) {
-      console.warn(`${logLabel}: PATCH /api/justice/cases/[id] error`, e);
+      await logMerchantContactSavedEvent(input.merchantResponseType, trimmedCaseId || null);
+      return { ok: true, updatedIntake: result.intake };
     }
+    if (result.reason === "conflict") {
+      // Never claim success on a 409: the locally-computed `updated` intake was paired with a
+      // case_version the server has already moved past, so treating it as saved would let the
+      // caller silently discard whatever the winning writer persisted. The helper has already
+      // adopted the fresh server intake/version into session storage — propagate the conflict as
+      // the caller's own reconciliation point instead of returning ok:true.
+      const conflictIntake = result.current.intake;
+      const conflictVersion = result.current.caseVersion;
+      const current: CaseReconciliationBanner | undefined =
+        conflictIntake && typeof conflictVersion === "number" && typeof conflictIntake === "object"
+          ? {
+              caseId: trimmedCaseId,
+              reason: "conflict",
+              serverIntake: conflictIntake as JusticeIntake,
+              serverCaseVersion: conflictVersion,
+            }
+          : undefined;
+      return { ok: false, reason: "conflict", error: result.error, ...(current ? { current } : {}) };
+    }
+    if (result.reason === "missing_version") {
+      // No cached version to pair with this write — recoverFromMissingVersion is the ONE
+      // centralized recovery path (durably records this draft + the fetched server snapshot,
+      // validates the fetched row really is this case, and only installs global session
+      // pointers if this case is still active) before surfacing the failure so the caller
+      // re-derives and resubmits this documentation against the fresh baseline.
+      const recovery = await recoverFromMissingVersion(trimmedCaseId, updated, {
+        fetchCaseById: fetchJusticeCaseById,
+        getActiveCaseId: () =>
+          typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
+      });
+      return {
+        ok: false,
+        reason: "missing_version",
+        error: result.error,
+        ...(recovery.ok ? { current: recovery.banner } : {}),
+      };
+    }
+    // request_failed / invalid_response: transient/network failure, not a version conflict. The
+    // documentation stays local (already written to STORAGE_INTAKE above) until the next save
+    // attempt, which still uses the same still-valid cached version.
+    console.warn(`${logLabel}: PATCH /api/justice/cases/[id] ${result.reason}`, result.error);
+    return { ok: true, updatedIntake: updated };
   }
 
   await logMerchantContactSavedEvent(input.merchantResponseType, trimmedCaseId || null);
 
-  return { ok: true, updatedIntake: finalIntake };
+  return { ok: true, updatedIntake: updated };
 }
 
 /** Read case id from session when running in the browser. */

@@ -159,6 +159,7 @@ type CaseState = {
   intake: JusticeIntake;
   client_state: Record<string, unknown>;
   timeline?: TimelineEntry[];
+  case_version?: number;
 };
 
 type QueryBuilder = {
@@ -281,25 +282,45 @@ function makeSupabase(store: { tasks: JusticeCaseTaskRow[]; caseState: CaseState
                     archived_at: null,
                     payment_dispute_draft: null,
                     timeline: store.caseState.timeline ?? [],
+                    case_version: store.caseState.case_version ?? 1,
                   },
                   error: null,
                 }),
               }),
             }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: () => ({
-              eq: async () => {
-                if (patch.client_state) {
-                  store.caseState.client_state = patch.client_state as Record<string, unknown>;
-                }
-                if (patch.timeline) {
-                  store.caseState.timeline = patch.timeline as TimelineEntry[];
-                }
-                return { error: null };
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, val: unknown) => {
+                filters[col] = val;
+                return chain;
               },
-            }),
-          }),
+              select: () => ({
+                maybeSingle: async () => {
+                  const currentVersion = store.caseState.case_version ?? 1;
+                  // Faithful CAS simulation: an .eq("case_version", X) filter only matches when X
+                  // equals the row's current value — mirrors real PostgREST rejecting a
+                  // stale-token update.
+                  if (
+                    Object.prototype.hasOwnProperty.call(filters, "case_version") &&
+                    filters.case_version !== currentVersion
+                  ) {
+                    return { data: null, error: null };
+                  }
+                  if (patch.client_state) {
+                    store.caseState.client_state = patch.client_state as Record<string, unknown>;
+                  }
+                  if (patch.timeline) {
+                    store.caseState.timeline = patch.timeline as TimelineEntry[];
+                  }
+                  store.caseState.case_version = currentVersion + 1;
+                  return { data: { id: CASE_ID }, error: null };
+                },
+              }),
+            };
+            return chain;
+          },
         };
       }
       if (table === "justice_case_evidence") {
@@ -821,7 +842,16 @@ describe("processDueFollowUps — a superseded lane's own due follow-up is proce
             ...real,
             update: () => ({
               eq: () => ({
-                eq: async () => ({ error: { message: "timeline update failed" } }),
+                eq: () => ({
+                  eq: () => ({
+                    select: () => ({
+                      maybeSingle: async () => ({
+                        data: null,
+                        error: { message: "timeline update failed" },
+                      }),
+                    }),
+                  }),
+                }),
               }),
             }),
           } as unknown as ReturnType<SupabaseClient["from"]>;
