@@ -3,6 +3,7 @@ import {
   fetchJusticeCaseById,
   hydrateSessionFromCaseListRow,
   isEditingActiveLocalJusticeCase,
+  lookupJusticeCaseById,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
 import { readCaseReconciliation, writeCaseReconciliation } from "@/lib/justice/caseReconciliationStore";
@@ -82,6 +83,56 @@ describe("isEditingActiveLocalJusticeCase", () => {
   });
 });
 
+describe("lookupJusticeCaseById — distinguishes CONFIRMED not-found/not-owned (404) from a transient failure", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns ok:true with the row on a 200", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: UUID, intake: validIntake, case_version: 3 }));
+    const result = await lookupJusticeCaseById(UUID);
+    expect(result).toEqual({ ok: true, row: { id: UUID, intake: validIntake, case_version: 3 } });
+  });
+
+  it("returns notFound:true on a 404 — the server's confirmed not-found/not-owned result", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: "Not found" }));
+    const result = await lookupJusticeCaseById(UUID);
+    expect(result).toEqual({ ok: false, notFound: true });
+  });
+
+  it("returns notFound:false on a 500 — a transient failure, never conflated with a confirmed 404", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: "Internal error" }));
+    const result = await lookupJusticeCaseById(UUID);
+    expect(result).toEqual({ ok: false, notFound: false });
+  });
+
+  it("returns notFound:false when fetch itself throws (network failure/offline)", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+    const result = await lookupJusticeCaseById(UUID);
+    expect(result).toEqual({ ok: false, notFound: false });
+  });
+
+  it("returns notFound:false on an invalid case id, without ever calling fetch", async () => {
+    const result = await lookupJusticeCaseById("not-a-uuid");
+    expect(result).toEqual({ ok: false, notFound: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetchJusticeCaseById collapses BOTH not-found and transient failures to null (its documented, narrower contract) — not-found/transient distinction is only exposed via lookupJusticeCaseById", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(404, {}));
+    expect(await fetchJusticeCaseById(UUID)).toBeNull();
+    fetchMock.mockResolvedValueOnce(jsonResponse(500, {}));
+    expect(await fetchJusticeCaseById(UUID)).toBeNull();
+  });
+});
+
 describe("hydrateSessionFromCaseListRow — per-case reconciliation is structurally isolated (no cross-case clearing needed)", () => {
   beforeEach(() => {
     stubSessionStorage();
@@ -145,7 +196,7 @@ describe("recoverFromMissingVersion — the centralized missing_version recovery
 
     sessionStorage.setItem(STORAGE_CASE_ID, UUID);
     const result = await recoverFromMissingVersion(UUID, localDraft, {
-      fetchCaseById: fetchJusticeCaseById,
+      lookupCaseById: lookupJusticeCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
     });
 
@@ -161,13 +212,33 @@ describe("recoverFromMissingVersion — the centralized missing_version recovery
     expect(record?.serverCaseVersion).toBe(7);
   });
 
-  it("does not record anything when the case cannot be fetched", async () => {
+  it("reports a CONFIRMED not_found (server 404) and does not record anything", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(404, {}));
     const result = await recoverFromMissingVersion(UUID, validIntake, {
-      fetchCaseById: fetchJusticeCaseById,
+      lookupCaseById: lookupJusticeCaseById,
       getActiveCaseId: () => UUID,
     });
     expect(result).toEqual({ ok: false, reason: "not_found" });
+    expect(readCaseReconciliation(UUID)).toBeNull();
+  });
+
+  it("reports a distinct 'transient' reason (never 'not_found') on a 5xx failure, so a caller never treats a server error as a confirmed ownership negative", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(500, {}));
+    const result = await recoverFromMissingVersion(UUID, validIntake, {
+      lookupCaseById: lookupJusticeCaseById,
+      getActiveCaseId: () => UUID,
+    });
+    expect(result).toEqual({ ok: false, reason: "transient" });
+    expect(readCaseReconciliation(UUID)).toBeNull();
+  });
+
+  it("reports a distinct 'transient' reason on a network error (fetch throws), never 'not_found'", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+    const result = await recoverFromMissingVersion(UUID, validIntake, {
+      lookupCaseById: lookupJusticeCaseById,
+      getActiveCaseId: () => UUID,
+    });
+    expect(result).toEqual({ ok: false, reason: "transient" });
     expect(readCaseReconciliation(UUID)).toBeNull();
   });
 
@@ -178,7 +249,7 @@ describe("recoverFromMissingVersion — the centralized missing_version recovery
     // By the time this resolves, the user has already switched to OTHER_UUID.
     sessionStorage.setItem(STORAGE_CASE_ID, OTHER_UUID);
     const result = await recoverFromMissingVersion(UUID, validIntake, {
-      fetchCaseById: fetchJusticeCaseById,
+      lookupCaseById: lookupJusticeCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
     });
 

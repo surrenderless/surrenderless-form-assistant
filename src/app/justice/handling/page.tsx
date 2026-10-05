@@ -61,6 +61,7 @@ import type {
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_INTAKE } from "@/lib/justice/types";
 import { useRedirectConsumerActiveCaseOffLegacyLadderPage } from "@/lib/justice/useRedirectConsumerActiveCaseOffLegacyLadderPage";
+import { useClearJusticeSessionOnIdentityChange } from "@/lib/justice/useClearJusticeSessionOnIdentityChange";
 import {
   findOpenStateAgFilingTask,
   hasStateAgFilingRecord,
@@ -1798,6 +1799,7 @@ function ApprovedPacketActionCaseCard({
 }
 
 export default function JusticeHandlingWorkbenchPage() {
+  useClearJusticeSessionOnIdentityChange();
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const [cases, setCases] = useState<CaseRow[] | null>(null);
