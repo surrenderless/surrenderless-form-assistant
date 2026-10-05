@@ -146,6 +146,129 @@ export async function checkForServerReconciliation(params: {
   return { kind: "synced", freshIntake: row.intake };
 }
 
+export type InitialCaseValidationResult =
+  | { kind: "confirmed" }
+  | { kind: "not-found" }
+  | { kind: "retry" }
+  | { kind: "stale" };
+
+/**
+ * Authoritatively validates a cached case against the CURRENTLY signed-in user before a caller
+ * is allowed to hydrate/render any of its content, on initial page load — the fix for the stale
+ * cross-account Justice session disclosure. Unlike checkForServerReconciliation (which only ever
+ * runs when a case_version happens to already be cached, to detect server-side drift on an
+ * ALREADY-trusted case) and unlike the identity-change marker (a fast, best-effort pre-emptive
+ * clear that a broken/older deployment can leave in an incorrect "already matches" state for a
+ * tab that predates it), this function must be called for EVERY cached case on initial load,
+ * unconditionally — no case_version gate, no identity-marker shortcut. Those two mechanisms are
+ * both best-effort optimizations; this is the one authoritative check a caller may rely on.
+ *
+ * `{ kind: "confirmed" }` — the server confirms the current user owns this exact case id. The
+ * caller's ALREADY-cached local intake (never the fetched row's content) is safe to hydrate: the
+ * local draft may contain newer edits than the server, and ownership — not content — is all this
+ * check establishes.
+ * `{ kind: "not-found" }` — a CONFIRMED 404 (not owned / doesn't exist). The caller must clear the
+ * entire local Justice session and reset to a clean state. Never render the cached content first.
+ * `{ kind: "retry" }` — a transient failure (network error, abort, non-404 non-ok status). The
+ * caller must neither hydrate NOR clear: preserve the cache, surface a neutral retry state.
+ * `{ kind: "stale" }` — the active case changed while this check was in flight (a case switch, or
+ * a fresh intake commit). This specific result no longer applies to anything on screen — the
+ * caller must never clear or install anything directly from it — but it must not be treated as
+ * "nothing left to do" either: see resolveInitialCaseValidationAction, which turns this into a
+ * re-validation of whatever IS active now, so a caller can never get stuck waiting on a result
+ * that will never arrive for the case actually on screen.
+ */
+export async function validateInitialCachedCase(params: {
+  caseId: string;
+  lookupCaseById: (caseId: string) => Promise<JusticeCaseLookupResult>;
+  getActiveCaseId: () => string | null;
+}): Promise<InitialCaseValidationResult> {
+  const result = await params.lookupCaseById(params.caseId);
+  if (params.getActiveCaseId() !== params.caseId) return { kind: "stale" };
+
+  if (result.ok && result.row.id === params.caseId) {
+    return { kind: "confirmed" };
+  }
+  if (!result.ok && result.notFound) {
+    return { kind: "not-found" };
+  }
+  // Covers both a genuinely transient failure (notFound: false) and the defensive case of a 200
+  // whose row id doesn't match what was requested — neither is a confirmed result, so neither may
+  // be trusted or treated as a confirmed negative.
+  return { kind: "retry" };
+}
+
+/**
+ * Whether a cached case id/intake pair is even something that needs the authoritative check
+ * above — pure and parameterized so the caller's `useState` initializer can hold a FIXED value
+ * identical on the server and on the client's own hydration pass (the fix for a real server/
+ * client hydration mismatch: reading sessionStorage inside a useState initializer returns a
+ * different value on the client's hydration render than on the server, since `window` exists
+ * synchronously there before any effect runs). This must only ever be called from inside an
+ * effect — never from a render-time initializer — so whether there is something to validate is
+ * always determined strictly after hydration, never during it.
+ */
+export function hasValidatableCachedCase(
+  caseId: string | null | undefined,
+  intake: JusticeIntake | null,
+  isUuid: (value: string) => boolean
+): boolean {
+  const trimmed = caseId?.trim() ?? "";
+  return Boolean(intake) && Boolean(trimmed) && isUuid(trimmed);
+}
+
+/**
+ * Whether initial case validation may even start yet. Starting the authoritative lookup before
+ * Clerk's client session is ready risks an unauthenticated request — the server would 401, which
+ * collapses into the same "retry" bucket as a genuine transient failure, stranding the user on a
+ * manual-retry screen for a problem that isn't real and will resolve itself the moment sign-in
+ * finishes. The caller must put both isLoaded and isSignedIn in the effect's dependency array so
+ * validation is automatically (re)triggered the moment either becomes true, rather than only ever
+ * running once up front.
+ */
+export function shouldStartInitialCaseValidation(params: {
+  isLoaded: boolean;
+  isSignedIn: boolean;
+}): boolean {
+  return params.isLoaded && params.isSignedIn;
+}
+
+export type InitialCaseValidationAction =
+  | { action: "hydrate" }
+  | { action: "clear-and-reset" }
+  | { action: "show-retry" }
+  | { action: "revalidate" };
+
+/**
+ * Turns a validateInitialCachedCase result (plus a freshness re-check performed strictly AFTER
+ * the lookup resolves) into exactly what the caller must do next. This is the liveness fix: a
+ * caller that treated "stale" as "nothing left to do" would leave its own pending/loading state
+ * stuck forever once the originally-requested case stopped being the active one, since nothing
+ * else would ever resolve or re-trigger it. Both "stale" (the active case itself changed) and a
+ * "confirmed" result that no longer has fresh intake to hydrate, or is no longer for the active
+ * case by the time this runs (e.g. a concurrent write, or a switch that raced the re-check inside
+ * validateInitialCachedCase itself), resolve to the SAME "revalidate" action — re-running
+ * validation from scratch always converges on whatever case is actually active, never leaves the
+ * caller waiting on a result that can never arrive for it.
+ */
+export function resolveInitialCaseValidationAction(
+  result: InitialCaseValidationResult,
+  freshness: { hasFreshIntake: boolean; stillActive: boolean }
+): InitialCaseValidationAction {
+  switch (result.kind) {
+    case "stale":
+      return { action: "revalidate" };
+    case "confirmed":
+      return freshness.hasFreshIntake && freshness.stillActive
+        ? { action: "hydrate" }
+        : { action: "revalidate" };
+    case "not-found":
+      return { action: "clear-and-reset" };
+    case "retry":
+      return { action: "show-retry" };
+  }
+}
+
 export type MissingVersionRecoveryResult =
   | { ok: true; banner: CaseReconciliationBanner }
   | { ok: false; reason: "not_found" | "id_mismatch" | "invalid_response" | "transient" };

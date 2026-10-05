@@ -635,7 +635,7 @@ describe("chat-ai page cancelled-checkout acknowledgment", () => {
 describe("chat-ai reload/conflict reconciliation never silently discards an unsaved draft", () => {
   it("the reload-reconciliation effect delegates the dirty check, the conflict recording, and the active-case re-verification entirely to reconciliationController.ts's checkForServerReconciliation, rather than reimplementing that logic inline", () => {
     const effectMatch = pageSource.match(
-      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
+      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded, initialCaseCheck\]\);/
     );
     expect(effectMatch).not.toBeNull();
     const effectBody = effectMatch![0];
@@ -666,7 +666,7 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
 
   it("the reload-reconciliation effect bails out early (via a `cancelled` flag set in its cleanup function) if the component unmounts/re-runs before the controller's fetch resolves — never applying a stale response", () => {
     const effectMatch = pageSource.match(
-      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded\]\);/
+      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded, initialCaseCheck\]\);/
     );
     expect(effectMatch).not.toBeNull();
     const effectBody = effectMatch![0];
@@ -756,11 +756,89 @@ describe("chat-ai reload/conflict reconciliation never silently discards an unsa
 
   it("the mount effect restores an unresolved/kept reconciliation record for the active case (via activateCaseReconciliationState) instead of silently treating the server snapshot just loaded into STORAGE_INTAKE as the user's committed content", () => {
     const mountEffectMatch = pageSource.match(
-      /useEffect\(\(\) => \{\r?\n {4}const intake = readValidLocalJusticeIntake\(\);[\s\S]*?\n {2}\}, \[\]\);/
+      /useLayoutEffect\(\(\) => \{\r?\n {4}if \(!shouldStartInitialCaseValidation[\s\S]*?validateInitialCachedCase\([\s\S]*?\n {2}\}, \[isLoaded, isSignedIn, initialCaseCheckAttempt, resetActiveChatTranscriptState\]\);/
     );
     expect(mountEffectMatch).not.toBeNull();
     const body = mountEffectMatch![0];
-    expect(body).toMatch(/activateCaseReconciliationState\(caseId, intake\)/);
+    expect(body).toMatch(/activateCaseReconciliationState\(caseId, freshIntake as JusticeIntake\)/);
+  });
+
+  it("REGRESSION (stale cross-account Justice session, Production incident): the mount effect authoritatively validates ANY cached case before hydrating it — never gated on a cached case_version existing, and never short-circuited by the identity-change marker already matching", () => {
+    const mountEffectMatch = pageSource.match(
+      /useLayoutEffect\(\(\) => \{\r?\n {4}if \(!shouldStartInitialCaseValidation[\s\S]*?validateInitialCachedCase\([\s\S]*?\n {2}\}, \[isLoaded, isSignedIn, initialCaseCheckAttempt, resetActiveChatTranscriptState\]\);/
+    );
+    expect(mountEffectMatch).not.toBeNull();
+    const body = mountEffectMatch![0];
+    // The ONLY gate on whether validation runs (besides auth readiness) is
+    // hasValidatableCachedCase("is there a cached case id and valid intake") — never
+    // readLocalIntakeCaseVersion()/cachedVersion (that gate exists on the SEPARATE reload-drift
+    // check below, which must never be this fix's only line of defense).
+    expect(body).toMatch(/hasValidatableCachedCase\(caseId, intake, isUuid\)/);
+    expect(body).not.toMatch(/readLocalIntakeCaseVersion/);
+    expect(body).not.toMatch(/cachedVersion/);
+    // Never reads/branches on the identity-change marker — a broken/older deployment leaving that
+    // marker already set to the current user must not let this effect skip validation.
+    expect(body).not.toMatch(/STORAGE_LAST_KNOWN_CLERK_USER_ID/);
+    expect(body).not.toMatch(/syncJusticeSessionIdentity/);
+    // The result + a fresh post-await re-check are funneled through the single pure decision
+    // function — never a parallel, ad hoc re-implementation of its branching inline.
+    expect(body).toMatch(/resolveInitialCaseValidationAction\(result, \{/);
+    expect(body).toMatch(/hasFreshIntake: Boolean\(freshIntake\)/);
+    expect(body).toMatch(/stillActive,?\s*\}\)/);
+    // Confirmed-not-found ("clear-and-reset") clears the full session and resets to a clean state.
+    const clearBranch = body.match(/if \(action\.action === "clear-and-reset"\) \{([\s\S]*?)\n {6}\}/);
+    expect(clearBranch).not.toBeNull();
+    expect(clearBranch![1]).toMatch(/clearLocalJusticeSession\(\)/);
+    expect(clearBranch![1]).toMatch(/setParts\(defaultBuildJusticeIntakeParts\(\)\)/);
+    expect(clearBranch![1]).toMatch(/resetActiveChatTranscriptState\(\)/);
+    // A transient failure ("show-retry") neither hydrates nor clears — only flips to the neutral
+    // retry state.
+    expect(body).toMatch(/setInitialCaseCheck\("retry"\)/);
+    expect(body).not.toMatch(/"show-retry"[\s\S]{0,80}clearLocalJusticeSession/);
+    // "revalidate" (covering both a late "stale" result and a confirmed-but-no-longer-fresh/
+    // active one) never installs or clears anything directly — it only re-triggers.
+    const revalidateBranch = body.match(/if \(action\.action === "revalidate"\) \{([\s\S]*?)\n {6}\}/);
+    expect(revalidateBranch).not.toBeNull();
+    expect(revalidateBranch![1]).toMatch(/setInitialCaseCheckAttempt\(\(n\) => n \+ 1\)/);
+    expect(revalidateBranch![1]).not.toMatch(/setParts|setIsUpdatingExistingCase|clearLocalJusticeSession/);
+  });
+
+  it("REGRESSION: the reload-drift check is gated on initialCaseCheck === \"clear\" — it must never run before (or race) the initial authoritative validation above settling", () => {
+    const effectMatch = pageSource.match(
+      /\/\/ Reload reconciliation:[\s\S]*?\n {2}\}, \[isLoaded, initialCaseCheck\]\);/
+    );
+    expect(effectMatch).not.toBeNull();
+    expect(effectMatch![0]).toMatch(/if \(initialCaseCheck !== "clear"\) return;/);
+  });
+
+  it("REGRESSION (SSR/hydration): initialCaseCheck's useState initializer is a FIXED literal, identical on the server and the client's own hydration render — never a function that branches on `typeof window`/reads sessionStorage, which would return a different value during hydration than during SSR", () => {
+    expect(pageSource).toMatch(
+      /const \[initialCaseCheck, setInitialCaseCheck\] = useState<"pending" \| "clear" \| "retry">\("clear"\);/
+    );
+  });
+
+  it("REGRESSION (SSR/hydration): the actual cached-case check only ever happens inside a useLayoutEffect — never inside a useState initializer, so it only ever runs post-hydration, on the client, never during the render React must reconcile against SSR output", () => {
+    const stateLine = pageSource.indexOf(
+      'const [initialCaseCheck, setInitialCaseCheck] = useState<"pending" | "clear" | "retry">("clear");'
+    );
+    expect(stateLine).toBeGreaterThan(-1);
+    const layoutEffectMatch = pageSource.match(
+      /useLayoutEffect\(\(\) => \{\r?\n {4}if \(!shouldStartInitialCaseValidation/
+    );
+    expect(layoutEffectMatch).not.toBeNull();
+    expect(layoutEffectMatch!.index).toBeGreaterThan(stateLine);
+  });
+
+  it("REGRESSION: the page renders a neutral loading state while pending and a neutral retry control on a transient failure — never the normal case-bearing body", () => {
+    const pendingGate = pageSource.match(
+      /if \(initialCaseCheck === "pending"\) \{([\s\S]*?)\n {2}\}/
+    );
+    expect(pendingGate).not.toBeNull();
+    expect(pendingGate![1]).toMatch(/Loading…/);
+
+    const retryGate = pageSource.match(/if \(initialCaseCheck === "retry"\) \{([\s\S]*?)\n {2}\}/);
+    expect(retryGate).not.toBeNull();
+    expect(retryGate![1]).toMatch(/onClick=\{retryInitialCaseCheck\}/);
   });
 
   it("a dedicated effect continuously flushes every `parts` change into the active case's durable reconciliation record (syncCaseReconciliationDraft) — a no-op when no record exists, but never stale once a banner/kept-draft exists", () => {

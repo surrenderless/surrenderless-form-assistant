@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { validate as isUuid } from "uuid";
 import {
   areJusticeIntakesDirty,
   checkForServerReconciliation,
+  hasValidatableCachedCase,
   recoverFromMissingVersion,
   resolveCaseActivation,
+  resolveInitialCaseValidationAction,
+  shouldStartInitialCaseValidation,
+  validateInitialCachedCase,
 } from "@/lib/justice/reconciliationController";
 import {
   commitKeepMyChanges,
@@ -382,5 +387,199 @@ describe("hydrateSessionFromCaseListRow sanity (used internally by checkForServe
     const result = hydrateSessionFromCaseListRow({ id: CASE_A, intake: intake({ story: "hydrated" }), case_version: 7 });
     expect(result).toEqual(intake({ story: "hydrated" }));
     expect(readLocalIntakeCaseVersion()).toBe(7);
+  });
+});
+
+describe("validateInitialCachedCase — the fix for the stale cross-account Justice session disclosure", () => {
+  beforeEach(() => {
+    stubSessionStorage();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("REGRESSION (exact Production failure): a stale cached case with NO cached case_version, whose identity marker was already incorrectly set to the current user by the broken deployment, is still authoritatively checked against the server and cleared on a confirmed 404", async () => {
+    // This models the exact reported incident: STORAGE_CASE_ID/STORAGE_INTAKE cached before the
+    // identity-change fix ever existed, no case_version ever cached for it, and
+    // STORAGE_LAST_KNOWN_CLERK_USER_ID already written to the CURRENT user by the broken
+    // deployment's own (buggy) first-write. None of that may ever be consulted by this function —
+    // it has no case_version parameter and no identity-marker parameter at all; it exists
+    // precisely because those two signals are not trustworthy enough on their own.
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const lookupCaseById = vi.fn().mockResolvedValue({ ok: false, notFound: true });
+
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+
+    expect(result).toEqual({ kind: "not-found" });
+    expect(lookupCaseById).toHaveBeenCalledWith(CASE_A);
+  });
+
+  it("confirms ownership and returns 'confirmed' on a legitimate 200 for the current user", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: true, row: { id: CASE_A, intake: intake(), case_version: 3 } }),
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(result).toEqual({ kind: "confirmed" });
+  });
+
+  it("reports 'not-found' on a confirmed 404 while this case is still the active one", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: true }),
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(result).toEqual({ kind: "not-found" });
+  });
+
+  it("REGRESSION: a transient failure (network/5xx) reports 'retry', never 'not-found' — recoverable local work must never be erased on a failure that proves nothing about ownership", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: false }),
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(result).toEqual({ kind: "retry" });
+  });
+
+  it("REGRESSION: a defensive id-mismatch on an otherwise-ok response is treated as 'retry' (never trusted, never a confirmed negative) rather than 'confirmed'", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: true, row: { id: CASE_B, intake: intake(), case_version: 1 } }),
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(result).toEqual({ kind: "retry" });
+  });
+
+  it("REGRESSION (case-switch race): reports 'stale' when the active case has changed by the time the lookup resolves — a late response for A must never clear or install anything once the user has switched to B", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const lookupCaseById = vi.fn().mockImplementation(async () => {
+      // By the time this resolves, the user has switched to case B.
+      sessionStorage.setItem(STORAGE_CASE_ID, CASE_B);
+      return { ok: false, notFound: true };
+    });
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(result).toEqual({ kind: "stale" });
+    // B's session pointer is untouched by A's late-resolving validation.
+    expect(sessionStorage.getItem(STORAGE_CASE_ID)).toBe(CASE_B);
+  });
+
+  it("REGRESSION (case-switch race): a late CONFIRMED-OWNED response for A is still reported 'stale' once B is active — ownership of A proves nothing about what should be on screen now", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const lookupCaseById = vi.fn().mockImplementation(async () => {
+      sessionStorage.setItem(STORAGE_CASE_ID, CASE_B);
+      return { ok: true, row: { id: CASE_A, intake: intake(), case_version: 5 } };
+    });
+    const result = await validateInitialCachedCase({
+      caseId: CASE_A,
+      lookupCaseById,
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+    });
+    expect(result).toEqual({ kind: "stale" });
+  });
+});
+
+describe("hasValidatableCachedCase — SSR/hydration correction: the decision of whether to validate must live in an effect, never a useState initializer", () => {
+  it("is true for a valid UUID case id with non-null intake", () => {
+    expect(hasValidatableCachedCase(CASE_A, intake(), isUuid)).toBe(true);
+  });
+
+  it("is false when there is no intake", () => {
+    expect(hasValidatableCachedCase(CASE_A, null, isUuid)).toBe(false);
+  });
+
+  it("is false when the case id is not a valid UUID", () => {
+    expect(hasValidatableCachedCase("not-a-uuid", intake(), isUuid)).toBe(false);
+  });
+
+  it("is false when the case id is null/undefined/empty", () => {
+    expect(hasValidatableCachedCase(null, intake(), isUuid)).toBe(false);
+    expect(hasValidatableCachedCase(undefined, intake(), isUuid)).toBe(false);
+    expect(hasValidatableCachedCase("", intake(), isUuid)).toBe(false);
+    expect(hasValidatableCachedCase("   ", intake(), isUuid)).toBe(false);
+  });
+
+  it("is deterministic regardless of surrounding whitespace in the case id", () => {
+    expect(hasValidatableCachedCase(`  ${CASE_A}  `, intake(), isUuid)).toBe(true);
+  });
+});
+
+describe("shouldStartInitialCaseValidation — Clerk readiness: never start the authoritative lookup before the client session is actually ready", () => {
+  it("is false while Clerk has not finished loading, even if already (optimistically) signed in", () => {
+    expect(shouldStartInitialCaseValidation({ isLoaded: false, isSignedIn: true })).toBe(false);
+  });
+
+  it("is false once loaded but not signed in", () => {
+    expect(shouldStartInitialCaseValidation({ isLoaded: true, isSignedIn: false })).toBe(false);
+  });
+
+  it("is false while both are still unresolved", () => {
+    expect(shouldStartInitialCaseValidation({ isLoaded: false, isSignedIn: false })).toBe(false);
+  });
+
+  it("REGRESSION: is true only once BOTH isLoaded and isSignedIn are true — this is what makes signing in automatically (re)trigger validation instead of leaving an early unauthenticated attempt stuck in manual-retry", () => {
+    expect(shouldStartInitialCaseValidation({ isLoaded: true, isSignedIn: true })).toBe(true);
+  });
+});
+
+describe("resolveInitialCaseValidationAction — liveness: a 'stale' or now-stale-by-the-time-it-resolves 'confirmed' result must never leave the caller permanently waiting", () => {
+  it("maps a confirmed result with fresh intake on the still-active case to 'hydrate'", () => {
+    const action = resolveInitialCaseValidationAction(
+      { kind: "confirmed" },
+      { hasFreshIntake: true, stillActive: true }
+    );
+    expect(action).toEqual({ action: "hydrate" });
+  });
+
+  it("maps 'not-found' to 'clear-and-reset' regardless of freshness/active-ness inputs", () => {
+    const action = resolveInitialCaseValidationAction(
+      { kind: "not-found" },
+      { hasFreshIntake: true, stillActive: true }
+    );
+    expect(action).toEqual({ action: "clear-and-reset" });
+  });
+
+  it("maps 'retry' (transient failure) to 'show-retry'", () => {
+    const action = resolveInitialCaseValidationAction(
+      { kind: "retry" },
+      { hasFreshIntake: true, stillActive: true }
+    );
+    expect(action).toEqual({ action: "show-retry" });
+  });
+
+  it("REGRESSION (liveness): maps 'stale' to 'revalidate' — never a dead-end the caller could get stuck on", () => {
+    const action = resolveInitialCaseValidationAction(
+      { kind: "stale" },
+      { hasFreshIntake: false, stillActive: false }
+    );
+    expect(action).toEqual({ action: "revalidate" });
+  });
+
+  it("REGRESSION (liveness): a 'confirmed' result with NO fresh intake by the time the re-check runs maps to 'revalidate', never 'hydrate' with nothing to hydrate", () => {
+    const action = resolveInitialCaseValidationAction(
+      { kind: "confirmed" },
+      { hasFreshIntake: false, stillActive: true }
+    );
+    expect(action).toEqual({ action: "revalidate" });
+  });
+
+  it("REGRESSION (liveness): a 'confirmed' result for a case that is no longer the active one by the time the re-check runs maps to 'revalidate', never installing content for a case no longer on screen", () => {
+    const action = resolveInitialCaseValidationAction(
+      { kind: "confirmed" },
+      { hasFreshIntake: true, stillActive: false }
+    );
+    expect(action).toEqual({ action: "revalidate" });
   });
 });
