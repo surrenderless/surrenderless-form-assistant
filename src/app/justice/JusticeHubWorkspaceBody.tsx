@@ -41,6 +41,8 @@ import {
 } from "@/lib/justice/handlingTrackingProgress";
 import { hasPendingHumanFulfillmentEscalation } from "@/lib/justice/escalationLadderResolution";
 import { readValidLocalJusticeIntake } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { clearLocalJusticeSession } from "@/lib/justice/clearLocalJusticeSession";
+import { useClearJusticeSessionOnIdentityChange } from "@/lib/justice/useClearJusticeSessionOnIdentityChange";
 import {
   CONSUMER_ACTIVE_CASE_RESUME_CHAT_AI_HREF,
   resolveConsumerActiveCaseChecklistDraftReviewNavigate,
@@ -323,6 +325,7 @@ function readSnapshotFromLocalSession(): CurrentCaseSnapshot | null {
 }
 
 export default function JusticeHubWorkspaceBody() {
+  useClearJusticeSessionOnIdentityChange();
   const { isLoaded, isSignedIn } = useAuth();
   const [snapshot, setSnapshot] = useState<CurrentCaseSnapshot | null>(null);
   const [evidenceCount, setEvidenceCount] = useState<number | null>(null);
@@ -354,7 +357,10 @@ export default function JusticeHubWorkspaceBody() {
           const caseRes = await fetch(`/api/justice/cases/${encodeURIComponent(caseId)}`, {
             signal,
           });
-          if (!signal?.aborted && caseRes.ok) {
+          if (signal?.aborted) {
+            return;
+          }
+          if (caseRes.ok) {
             const data = (await caseRes.json()) as { client_state?: unknown };
             // data.client_state was successfully loaded, so its result is authoritative here —
             // including an absent approved_next_action — and must not fall back to the pre-fetch
@@ -362,9 +368,23 @@ export default function JusticeHubWorkspaceBody() {
             const hydrated = hydrateApprovedNextActionForDisplay(caseId, data.client_state);
             if (hydrated) writeSessionApprovedNextAction(caseId, hydrated);
             setSnapshot(buildCurrentCaseSnapshot(caseId, nextSnapshot.intake, hydrated));
+          } else if (caseRes.status === 404) {
+            // CONFIRMED not-found/not-owned by the authoritative server check — this tab's cached
+            // snapshot belongs to a different account (or the case is genuinely gone). Never keep
+            // rendering it: clear the stale snapshot AND the entire local Justice session, rather
+            // than silently falling through and leaving nextSnapshot on screen.
+            clearLocalJusticeSession();
+            setSnapshot(null);
+            setEvidenceCount(null);
+            setFilings([]);
+            setTasks([]);
+            setHubReadinessLoading(false);
+            return;
           }
+          // Any other non-ok status (5xx, etc.) is a transient failure, not a confirmed negative
+          // result — intentionally falls through and keeps the session snapshot untouched.
         } catch {
-          // keep session snapshot
+          // Network/transient failure — keep session snapshot, never erase recoverable local work.
         }
       }
 

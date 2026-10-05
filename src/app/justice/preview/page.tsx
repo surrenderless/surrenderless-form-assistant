@@ -30,6 +30,7 @@ import type {
   JusticeDestination,
 } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
+import { useClearJusticeSessionOnIdentityChange } from "@/lib/justice/useClearJusticeSessionOnIdentityChange";
 import {
   approvedNextActionStatusLabel,
   hydrateApprovedNextActionForDisplay,
@@ -66,6 +67,7 @@ function previewEvidenceTypeLabel(t: string): string {
 }
 
 export default function JusticePreviewPage() {
+  useClearJusticeSessionOnIdentityChange();
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const { status: hydrationStatus, intake } = useJusticeActionPageHydration();

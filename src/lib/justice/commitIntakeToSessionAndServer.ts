@@ -9,7 +9,7 @@ import {
   replaceTimelineForCase,
 } from "@/lib/justice/timeline";
 import { patchJusticeCaseIntake, writeLocalIntakeCaseVersion } from "@/lib/justice/patchJusticeCaseIntake";
-import { fetchJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { lookupJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
 import type { CaseReconciliationBanner } from "@/lib/justice/caseReconciliationStore";
 
@@ -122,7 +122,7 @@ async function commitIntakeUpdateToSessionAndServer({
     // fetch resolves. Always returns a ready-to-install banner on success, so the caller below
     // never has to conditionally decide whether it's "complete enough" to show.
     const recovery = await recoverFromMissingVersion(caseId, intake, {
-      fetchCaseById: fetchJusticeCaseById,
+      lookupCaseById: lookupJusticeCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null,
     });
     saveError = "Your latest change could not be verified against the server and was not saved. Try again.";

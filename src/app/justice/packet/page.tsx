@@ -63,6 +63,7 @@ import type {
 import { STORAGE_FTC_MANUAL_UNLOCK } from "@/lib/justice/types";
 import { STORAGE_CASE_ID } from "@/lib/justice/types";
 import { isBasicCaseInfoReadyForEscalation } from "@/lib/justice/caseReadiness";
+import { useClearJusticeSessionOnIdentityChange } from "@/lib/justice/useClearJusticeSessionOnIdentityChange";
 import { readTimeline, applyServerTimelineFromResponse } from "@/lib/justice/timeline";
 import { useJusticeActionPageHydration } from "@/lib/justice/useJusticeActionPageHydration";
 import {
@@ -390,6 +391,7 @@ const PRINT_STYLES = `
 `;
 
 export default function JusticePacketPage() {
+  useClearJusticeSessionOnIdentityChange();
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const { status: hydrationStatus, intake } = useJusticeActionPageHydration();

@@ -133,6 +133,10 @@ describe("checkForServerReconciliation", () => {
     return { id: CASE_A, intake: intake(), case_version: 2, ...overrides };
   }
 
+  function okLookup(r: JusticeCaseListRow) {
+    return vi.fn().mockResolvedValue({ ok: true, row: r });
+  }
+
   it("BLOCKING FIX (round 4, item 1): Keep -> refresh -> server advances AGAIN — the second reload check correctly reports a NEW conflict (dirty against the ORIGINAL recorded server snapshot), never silently syncing the kept draft as though it matched", async () => {
     // Case A: an earlier conflict was recorded and then Keep was chosen.
     recordCaseConflict(CASE_A, "conflict", intake({ story: "pre-keep draft" }), intake({ story: "server v2" }), 2);
@@ -145,11 +149,11 @@ describe("checkForServerReconciliation", () => {
 
     // Now the server has advanced AGAIN, to v3, while the user's kept draft is still just sitting
     // there unsaved.
-    const fetchCaseById = vi.fn().mockResolvedValue(row({ intake: intake({ story: "server v3" }), case_version: 3 }));
+    const lookupCaseById = okLookup(row({ intake: intake({ story: "server v3" }), case_version: 3 }));
     const result = await checkForServerReconciliation({
       caseId: CASE_A,
       cachedVersion: 2,
-      fetchCaseById,
+      lookupCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
       getCurrentDraft: () => intake({ story: "kept draft" }),
       getBaseline: () => activation.baseline,
@@ -168,11 +172,11 @@ describe("checkForServerReconciliation", () => {
 
   it("a CLEAN draft (matches the baseline exactly — no unsaved edits) is safely synced: clears any record and installs the fresh server content", async () => {
     sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
-    const fetchCaseById = vi.fn().mockResolvedValue(row({ intake: intake({ story: "server v2" }), case_version: 2 }));
+    const lookupCaseById = okLookup(row({ intake: intake({ story: "server v2" }), case_version: 2 }));
     const result = await checkForServerReconciliation({
       caseId: CASE_A,
       cachedVersion: 1,
-      fetchCaseById,
+      lookupCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
       getCurrentDraft: () => intake({ story: "baseline" }),
       getBaseline: () => intake({ story: "baseline" }),
@@ -187,15 +191,15 @@ describe("checkForServerReconciliation", () => {
     sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(intake({ story: "B's own content" })));
     let getActiveCaseIdCalls = 0;
-    const fetchCaseById = vi.fn().mockImplementation(async () => {
+    const lookupCaseById = vi.fn().mockImplementation(async () => {
       // By the time this resolves, the user has switched to case B.
       sessionStorage.setItem(STORAGE_CASE_ID, CASE_B);
-      return row({ intake: intake({ story: "server v2 for A" }), case_version: 2 });
+      return { ok: true, row: row({ intake: intake({ story: "server v2 for A" }), case_version: 2 }) };
     });
     const result = await checkForServerReconciliation({
       caseId: CASE_A,
       cachedVersion: 1,
-      fetchCaseById,
+      lookupCaseById,
       getActiveCaseId: () => {
         getActiveCaseIdCalls++;
         return sessionStorage.getItem(STORAGE_CASE_ID);
@@ -212,12 +216,38 @@ describe("checkForServerReconciliation", () => {
     expect(readCaseReconciliation(CASE_A)).toBeNull();
   });
 
-  it("is a no-op when the fetched row is null (case not found/fetch failed)", async () => {
+  it("REGRESSION (stale cross-account case disclosure): reports 'not-found' on a CONFIRMED 404 while this case is still active — this is what a caller uses to clear stale cached case/intake/parts state", async () => {
     sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
     const result = await checkForServerReconciliation({
       caseId: CASE_A,
       cachedVersion: 1,
-      fetchCaseById: vi.fn().mockResolvedValue(null),
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: true }),
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+      getCurrentDraft: () => intake(),
+      getBaseline: () => intake(),
+    });
+    expect(result).toEqual({ kind: "not-found" });
+  });
+
+  it("REGRESSION: a TRANSIENT failure (network/5xx) is reported as 'no-op', never 'not-found' — recoverable local work must never be erased on a failure that proves nothing about ownership", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
+    const result = await checkForServerReconciliation({
+      caseId: CASE_A,
+      cachedVersion: 1,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: false }),
+      getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
+      getCurrentDraft: () => intake(),
+      getBaseline: () => intake(),
+    });
+    expect(result).toEqual({ kind: "no-op" });
+  });
+
+  it("a CONFIRMED 404 for a case the user has already switched away from is still a no-op, never 'not-found' — a late-resolving lookup for A must not clear B's state just because A is gone", async () => {
+    sessionStorage.setItem(STORAGE_CASE_ID, CASE_B);
+    const result = await checkForServerReconciliation({
+      caseId: CASE_A,
+      cachedVersion: 1,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: true }),
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
       getCurrentDraft: () => intake(),
       getBaseline: () => intake(),
@@ -230,7 +260,7 @@ describe("checkForServerReconciliation", () => {
     const result = await checkForServerReconciliation({
       caseId: CASE_A,
       cachedVersion: 1,
-      fetchCaseById: vi.fn().mockResolvedValue(row({ id: CASE_B, case_version: 2 })),
+      lookupCaseById: okLookup(row({ id: CASE_B, case_version: 2 })),
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
       getCurrentDraft: () => intake(),
       getBaseline: () => intake(),
@@ -244,7 +274,7 @@ describe("checkForServerReconciliation", () => {
     const result = await checkForServerReconciliation({
       caseId: CASE_A,
       cachedVersion: 2,
-      fetchCaseById: vi.fn().mockResolvedValue(row({ case_version: 2 })),
+      lookupCaseById: okLookup(row({ case_version: 2 })),
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
       getCurrentDraft: () => intake(),
       getBaseline: () => intake(),
@@ -265,9 +295,11 @@ describe("recoverFromMissingVersion", () => {
   it("BLOCKING FIX (round 4, item 3): centralizes missing_version recovery — records the durable reconciliation and returns an install-ready banner every caller receives identically", async () => {
     sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
     const localDraft = intake({ story: "draft that hit missing_version" });
-    const fetchCaseById = vi.fn().mockResolvedValue({ id: CASE_A, intake: intake({ story: "server" }), case_version: 6 });
+    const lookupCaseById = vi
+      .fn()
+      .mockResolvedValue({ ok: true, row: { id: CASE_A, intake: intake({ story: "server" }), case_version: 6 } });
     const result = await recoverFromMissingVersion(CASE_A, localDraft, {
-      fetchCaseById,
+      lookupCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
     });
     expect(result).toEqual({
@@ -278,27 +310,37 @@ describe("recoverFromMissingVersion", () => {
   });
 
   it("BLOCKING FIX (round 4, item 7): fails closed as id_mismatch when the fetched row's id does not exactly match the requested case — never installs or records under the wrong assumption", async () => {
-    const fetchCaseById = vi.fn().mockResolvedValue({ id: CASE_B, intake: intake(), case_version: 3 });
+    const lookupCaseById = vi.fn().mockResolvedValue({ ok: true, row: { id: CASE_B, intake: intake(), case_version: 3 } });
     const result = await recoverFromMissingVersion(CASE_A, intake(), {
-      fetchCaseById,
+      lookupCaseById,
       getActiveCaseId: () => CASE_A,
     });
     expect(result).toEqual({ ok: false, reason: "id_mismatch" });
     expect(readCaseReconciliation(CASE_A)).toBeNull();
   });
 
-  it("fails closed as not_found when the case cannot be fetched", async () => {
+  it("fails closed as not_found on a CONFIRMED 404", async () => {
     const result = await recoverFromMissingVersion(CASE_A, intake(), {
-      fetchCaseById: vi.fn().mockResolvedValue(null),
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: true }),
       getActiveCaseId: () => CASE_A,
     });
     expect(result).toEqual({ ok: false, reason: "not_found" });
   });
 
-  it("fails closed as invalid_response when the fetched row's intake/case_version don't validate", async () => {
-    const fetchCaseById = vi.fn().mockResolvedValue({ id: CASE_A, intake: { not: "a valid intake" }, case_version: 3 });
+  it("REGRESSION: reports 'transient' (never 'not_found') on a transient failure — a server error must never be treated as a confirmed ownership negative", async () => {
     const result = await recoverFromMissingVersion(CASE_A, intake(), {
-      fetchCaseById,
+      lookupCaseById: vi.fn().mockResolvedValue({ ok: false, notFound: false }),
+      getActiveCaseId: () => CASE_A,
+    });
+    expect(result).toEqual({ ok: false, reason: "transient" });
+  });
+
+  it("fails closed as invalid_response when the fetched row's intake/case_version don't validate", async () => {
+    const lookupCaseById = vi
+      .fn()
+      .mockResolvedValue({ ok: true, row: { id: CASE_A, intake: { not: "a valid intake" }, case_version: 3 } });
+    const result = await recoverFromMissingVersion(CASE_A, intake(), {
+      lookupCaseById,
       getActiveCaseId: () => CASE_A,
     });
     expect(result).toEqual({ ok: false, reason: "invalid_response" });
@@ -308,13 +350,13 @@ describe("recoverFromMissingVersion", () => {
   it("BLOCKING FIX (round 4, item 8): resolving after the active case has switched to B still durably records A's reconciliation, but never installs the fetched snapshot into the now-B-owned STORAGE_INTAKE/STORAGE_CASE_ID", async () => {
     sessionStorage.setItem(STORAGE_CASE_ID, CASE_A);
     sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(intake({ story: "A's own content before the switch" })));
-    const fetchCaseById = vi.fn().mockImplementation(async () => {
+    const lookupCaseById = vi.fn().mockImplementation(async () => {
       sessionStorage.setItem(STORAGE_CASE_ID, CASE_B);
       sessionStorage.setItem(STORAGE_INTAKE, JSON.stringify(intake({ story: "B's own content after the switch" })));
-      return { id: CASE_A, intake: intake({ story: "server content for A" }), case_version: 4 };
+      return { ok: true, row: { id: CASE_A, intake: intake({ story: "server content for A" }), case_version: 4 } };
     });
     const result = await recoverFromMissingVersion(CASE_A, intake({ story: "A's draft" }), {
-      fetchCaseById,
+      lookupCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
     });
     expect(result.ok).toBe(true);

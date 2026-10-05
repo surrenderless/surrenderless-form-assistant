@@ -337,9 +337,11 @@ import {
   fetchLatestActiveJusticeCaseRow,
   fetchMostRecentlyArchivedEligibleJusticeCase,
   hydrateSessionFromCaseListRow,
+  lookupJusticeCaseById,
   restoreArchivedJusticeCaseOnServer,
   type JusticeCaseListRow,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { useClearJusticeSessionOnIdentityChange } from "@/lib/justice/useClearJusticeSessionOnIdentityChange";
 import {
   commitIntakeToSessionAndServer,
   shouldRouteToChatAiAfterIntakeCommit,
@@ -2573,6 +2575,7 @@ function ChatTrackingRecipientEmailForm({
 }
 
 export default function JusticeChatAiPage() {
+  useClearJusticeSessionOnIdentityChange();
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const { user } = useUser();
@@ -3699,7 +3702,7 @@ export default function JusticeChatAiPage() {
               // immediately, exactly like every other missing_version caller, rather than
               // leaving the user with only a generic error and no Keep/Use-server choice.
               const recovery = await recoverFromMissingVersion(caseId, intakeForRecipient, {
-                fetchCaseById: fetchJusticeCaseById,
+                lookupCaseById: lookupJusticeCaseById,
                 getActiveCaseId: () =>
                   typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
               });
@@ -3947,7 +3950,7 @@ export default function JusticeChatAiPage() {
         );
         if (intakeResult.reason === "missing_version") {
           const recovery = await recoverFromMissingVersion(caseId, intake, {
-            fetchCaseById: fetchJusticeCaseById,
+            lookupCaseById: lookupJusticeCaseById,
             getActiveCaseId: () =>
               typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
           });
@@ -4622,7 +4625,7 @@ export default function JusticeChatAiPage() {
       const result = await checkForServerReconciliation({
         caseId,
         cachedVersion,
-        fetchCaseById: (id) => fetchJusticeCaseById(id),
+        lookupCaseById: (id) => lookupJusticeCaseById(id),
         getActiveCaseId: () =>
           typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
         // Read AFTER the fetch resolves (via partsRef.current, not the closed-over `parts` this
@@ -4634,6 +4637,20 @@ export default function JusticeChatAiPage() {
           sessionBaselinePartsRef.current ? buildJusticeIntakeFromParts(sessionBaselinePartsRef.current) : null,
       });
       if (cancelled) return;
+      if (result.kind === "not-found") {
+        // CONFIRMED by the server (404) that this cached case isn't this account's (or no longer
+        // exists) — never keep editing/displaying it. Clear the entire local Justice session, not
+        // just this effect's own view of it, and reset to a clean "no active case" state. A
+        // transient failure (network error, 5xx) is reported as "no-op" instead and never reaches
+        // this branch, so recoverable local work is only ever erased on a confirmed negative.
+        clearLocalJusticeSession();
+        setParts(defaultBuildJusticeIntakeParts());
+        sessionBaselinePartsRef.current = null;
+        setIsUpdatingExistingCase(false);
+        setPendingCaseReconciliation(null);
+        resetActiveChatTranscriptState();
+        return;
+      }
       if (result.kind === "conflict") {
         setPendingCaseReconciliation(result.banner);
         return;

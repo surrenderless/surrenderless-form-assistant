@@ -3,6 +3,7 @@ import { patchJusticeCaseIntake, readLocalIntakeCaseVersion } from "@/lib/justic
 import {
   fetchJusticeCaseById,
   hydrateSessionFromCaseListRow,
+  lookupJusticeCaseById,
 } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
 import {
@@ -234,7 +235,7 @@ describe("Reconciliation scenarios — real implementation, no PageSim", () => {
     const localDraft = intake({ story: "draft that hit missing_version" });
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: CASE_A, intake: intake({ story: "server" }), case_version: 9 }));
     const recovery = await recoverFromMissingVersion(CASE_A, localDraft, {
-      fetchCaseById: fetchJusticeCaseById,
+      lookupCaseById: lookupJusticeCaseById,
       getActiveCaseId: () => sessionStorage.getItem(STORAGE_CASE_ID),
     });
     expect(recovery.ok).toBe(true);

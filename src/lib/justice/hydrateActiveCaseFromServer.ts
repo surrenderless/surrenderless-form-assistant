@@ -151,16 +151,53 @@ export async function fetchJusticeCasesForChatSelection(signal?: AbortSignal): P
   return { activeRows, archivedRows };
 }
 
-/** GET a single owned case by id for chat hydrate after selection/restore. Also the fetch
- * dependency injected into reconciliationController.ts's recoverFromMissingVersion — that
- * function is the ONE centralized missing_version recovery path; do not build a parallel one. */
+/**
+ * Outcome of looking up a single owned case by id, distinguishing a CONFIRMED not-found/not-owned
+ * result (the server's authoritative `GET /api/justice/cases/[id]` returned 404) from a transient
+ * failure (network error, abort, a non-404 non-ok status, or an unparseable body). This
+ * distinction is load-bearing: a confirmed 404 means the cached case genuinely isn't this
+ * account's, and cached case/intake/parts state must be cleared; a transient failure means nothing
+ * is known yet, and recoverable local work must be preserved untouched.
+ */
+export type JusticeCaseLookupResult =
+  | { ok: true; row: JusticeCaseListRow }
+  | { ok: false; notFound: true }
+  | { ok: false; notFound: false };
+
+/** GET a single owned case by id, distinguishing confirmed not-found/not-owned (404) from a
+ * transient failure. The fetch dependency injected into reconciliationController.ts's
+ * checkForServerReconciliation and recoverFromMissingVersion — those are the ONE centralized
+ * reload/missing-version recovery paths; do not build a parallel one. */
+export async function lookupJusticeCaseById(
+  caseId: string,
+  signal?: AbortSignal
+): Promise<JusticeCaseLookupResult> {
+  const id = caseId.trim();
+  if (!id || !isUuid(id)) return { ok: false, notFound: false };
+  let res: Response;
+  try {
+    res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, { signal });
+  } catch {
+    return { ok: false, notFound: false };
+  }
+  if (res.status === 404) return { ok: false, notFound: true };
+  if (!res.ok) return { ok: false, notFound: false };
+  try {
+    const row = (await res.json()) as JusticeCaseListRow;
+    return { ok: true, row };
+  } catch {
+    return { ok: false, notFound: false };
+  }
+}
+
+/** GET a single owned case by id, or null on ANY failure (not-found or transient alike) — for
+ * callers that only ever want "do I have a row to work with", never clearing state on a negative
+ * result themselves. Passive reload/missing-version recovery must use lookupJusticeCaseById
+ * instead so a confirmed 404 can be told apart from a transient failure. */
 export async function fetchJusticeCaseById(
   caseId: string,
   signal?: AbortSignal
 ): Promise<JusticeCaseListRow | null> {
-  const id = caseId.trim();
-  if (!id || !isUuid(id)) return null;
-  const res = await fetch(`/api/justice/cases/${encodeURIComponent(id)}`, { signal });
-  if (!res.ok) return null;
-  return (await res.json()) as JusticeCaseListRow;
+  const result = await lookupJusticeCaseById(caseId, signal);
+  return result.ok ? result.row : null;
 }

@@ -8,7 +8,7 @@ import {
 import type { JusticeIntake, TimelineEntry } from "@/lib/justice/types";
 import { STORAGE_CASE_ID, STORAGE_FTC_MANUAL_UNLOCK, STORAGE_INTAKE } from "@/lib/justice/types";
 import { patchJusticeCaseIntake } from "@/lib/justice/patchJusticeCaseIntake";
-import { fetchJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
+import { lookupJusticeCaseById } from "@/lib/justice/hydrateActiveCaseFromServer";
 import { recoverFromMissingVersion } from "@/lib/justice/reconciliationController";
 import type { CaseReconciliationBanner } from "@/lib/justice/caseReconciliationStore";
 
@@ -229,7 +229,7 @@ export async function documentMerchantContact({
       // pointers if this case is still active) before surfacing the failure so the caller
       // re-derives and resubmits this documentation against the fresh baseline.
       const recovery = await recoverFromMissingVersion(trimmedCaseId, updated, {
-        fetchCaseById: fetchJusticeCaseById,
+        lookupCaseById: lookupJusticeCaseById,
         getActiveCaseId: () =>
           typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
       });

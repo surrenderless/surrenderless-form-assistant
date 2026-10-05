@@ -6,7 +6,10 @@ import {
   recordCaseConflict,
   type CaseReconciliationBanner,
 } from "@/lib/justice/caseReconciliationStore";
-import { hydrateSessionFromCaseListRow, type JusticeCaseListRow } from "@/lib/justice/hydrateActiveCaseFromServer";
+import {
+  hydrateSessionFromCaseListRow,
+  type JusticeCaseLookupResult,
+} from "@/lib/justice/hydrateActiveCaseFromServer";
 import type { JusticeIntake } from "@/lib/justice/types";
 
 /**
@@ -85,6 +88,7 @@ export function resolveCaseActivation(
 
 export type ReloadCheckResult =
   | { kind: "no-op" }
+  | { kind: "not-found" }
   | { kind: "conflict"; banner: CaseReconciliationBanner }
   | { kind: "synced"; freshIntake: JusticeIntake };
 
@@ -96,17 +100,30 @@ export type ReloadCheckResult =
  * never touching STORAGE_CASE_ID/STORAGE_INTAKE/case_version or any React state for a case that
  * is no longer on screen. `getCurrentDraft` and `baseline` are read AFTER that re-verification
  * too, for the freshest possible dirty-check (mirrors the partsRef.current pattern, generalized).
+ *
+ * A CONFIRMED not-found/not-owned result (the server's 404, not a transient failure) is reported
+ * distinctly as `{ kind: "not-found" }` rather than folded into `"no-op"` — this is what lets a
+ * caller tell "the cached case genuinely isn't this account's, clear it" apart from "the request
+ * failed, leave recoverable local work alone". Still gated on the active case still being this
+ * one, so a stale in-flight lookup for a case the user has already switched away from can never
+ * clear the NEW active case's state.
  */
 export async function checkForServerReconciliation(params: {
   caseId: string;
   cachedVersion: number;
-  fetchCaseById: (caseId: string) => Promise<JusticeCaseListRow | null>;
+  lookupCaseById: (caseId: string) => Promise<JusticeCaseLookupResult>;
   getActiveCaseId: () => string | null;
   getCurrentDraft: () => JusticeIntake;
   getBaseline: () => JusticeIntake | null;
 }): Promise<ReloadCheckResult> {
-  const row = await params.fetchCaseById(params.caseId);
-  if (!row) return { kind: "no-op" };
+  const result = await params.lookupCaseById(params.caseId);
+  if (!result.ok) {
+    if (result.notFound && params.getActiveCaseId() === params.caseId) {
+      return { kind: "not-found" };
+    }
+    return { kind: "no-op" };
+  }
+  const row = result.row;
   if (row.id !== params.caseId) return { kind: "no-op" };
   if (params.getActiveCaseId() !== params.caseId) return { kind: "no-op" };
 
@@ -131,7 +148,7 @@ export async function checkForServerReconciliation(params: {
 
 export type MissingVersionRecoveryResult =
   | { ok: true; banner: CaseReconciliationBanner }
-  | { ok: false; reason: "not_found" | "id_mismatch" | "invalid_response" };
+  | { ok: false; reason: "not_found" | "id_mismatch" | "invalid_response" | "transient" };
 
 /**
  * THE single, centralized recovery path for patchJusticeCaseIntake's "missing_version" result —
@@ -148,18 +165,23 @@ export type MissingVersionRecoveryResult =
  * case_version pointers is gated on the active case STILL being `caseId` at that point — this is
  * what stops an in-flight recovery for case A from silently reverting the active-case pointer
  * back to A after the user has already switched to case B.
+ *
+ * `reason: "not_found"` means the server CONFIRMED this case doesn't exist / isn't this account's
+ * (a 404) -- distinct from `reason: "transient"` (network error, abort, or any other non-404
+ * failure), so a caller can clear cached case state only on the former, never the latter.
  */
 export async function recoverFromMissingVersion(
   caseId: string,
   localDraft: JusticeIntake,
   deps: {
-    fetchCaseById: (caseId: string, signal?: AbortSignal) => Promise<JusticeCaseListRow | null>;
+    lookupCaseById: (caseId: string, signal?: AbortSignal) => Promise<JusticeCaseLookupResult>;
     getActiveCaseId: () => string | null;
     signal?: AbortSignal;
   }
 ): Promise<MissingVersionRecoveryResult> {
-  const row = await deps.fetchCaseById(caseId, deps.signal);
-  if (!row) return { ok: false, reason: "not_found" };
+  const result = await deps.lookupCaseById(caseId, deps.signal);
+  if (!result.ok) return { ok: false, reason: result.notFound ? "not_found" : "transient" };
+  const row = result.row;
   if (row.id !== caseId) return { ok: false, reason: "id_mismatch" };
   if (!isJusticeIntakePayload(row.intake) || typeof row.case_version !== "number") {
     return { ok: false, reason: "invalid_response" };
