@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -214,8 +215,12 @@ import {
 } from "@/lib/justice/caseReconciliationStore";
 import {
   checkForServerReconciliation,
+  hasValidatableCachedCase,
   recoverFromMissingVersion,
   resolveCaseActivation,
+  resolveInitialCaseValidationAction,
+  shouldStartInitialCaseValidation,
+  validateInitialCachedCase,
 } from "@/lib/justice/reconciliationController";
 import {
   buildChatCapturedMerchantContactSummaryLines,
@@ -2611,6 +2616,27 @@ export default function JusticeChatAiPage() {
 
   const [parts, setParts] = useState<BuildJusticeIntakeParts>(() => defaultBuildJusticeIntakeParts());
   const [isUpdatingExistingCase, setIsUpdatingExistingCase] = useState(false);
+  /**
+   * Gates initial hydration of ANY cached case: "pending" means a cached case id exists and has
+   * not yet been authoritatively confirmed as belonging to the current signed-in user — no
+   * cached content may be hydrated/rendered while pending. "clear" means either there was nothing
+   * cached to validate, or validation has resolved (confirmed-and-hydrated, or confirmed-not-found
+   * and reset). "retry" means a transient failure (network/5xx/abort) left validation unresolved
+   * — the cache is preserved untouched, but still never exposed; a neutral retry state is shown.
+   *
+   * Always starts "clear", identically on the server and on the client's own first (hydration)
+   * render — reading sessionStorage inside this initializer would return a DIFFERENT value on
+   * the client's hydration pass than on the server (window exists synchronously on the client,
+   * before any effect runs), producing a real server/client hydration mismatch. Whether a cached
+   * case actually needs validating is instead determined inside a layout effect below, which only
+   * ever runs post-hydration on the client — never during SSR or the hydration reconciliation
+   * itself — and flips this to "pending" there, before the browser paints, if one is found. No
+   * cached content is ever read into `parts`/`isUpdatingExistingCase` before that happens, so the
+   * brief "clear" starting state never renders anything unverified — at most the default empty
+   * intake view for a layout-effect tick.
+   */
+  const [initialCaseCheck, setInitialCaseCheck] = useState<"pending" | "clear" | "retry">("clear");
+  const [initialCaseCheckAttempt, setInitialCaseCheckAttempt] = useState(0);
 
   // Seed the consumer's OWN reply email from the signed-in account's verified email so the
   // user is not unnecessarily asked for it. This only fills an empty `reply_email` (never
@@ -4555,39 +4581,133 @@ export default function JusticeChatAiPage() {
     return;
   }
 
-  useEffect(() => {
+  /**
+   * Initial-load case validation (the fix for the stale cross-account Justice session
+   * disclosure): a cached STORAGE_CASE_ID/STORAGE_INTAKE must be AUTHORITATIVELY confirmed as
+   * belonging to the current signed-in user before any of its content is hydrated into
+   * `parts`/`isUpdatingExistingCase`/the transcript. This runs unconditionally whenever a cached
+   * case id exists — never gated on a cached case_version being present (a case cached by a path
+   * that never wrote one would otherwise never be checked at all), and never short-circuited by
+   * the identity-change marker already "matching" (a broken/older deployment can leave that
+   * marker set to the CURRENT user for a tab that cached a DIFFERENT account's case before the
+   * marker ever existed — the marker is a fast best-effort pre-emptive clear, never a substitute
+   * for this authoritative check).
+   *
+   * A useLayoutEffect, not useEffect: this must settle initialCaseCheck ("clear" -> "pending")
+   * before the browser paints the mount's first frame, so the "clear" state used for the
+   * server/client hydration match (see the useState initializer above) is never actually
+   * painted when there IS a cached case to validate — only ever the SSR-identical "clear" state
+   * (safe: `parts` holds nothing cached yet either way) or the "pending" loading screen, never a
+   * flash of the former followed by a visible correction.
+   *
+   * Gated on isLoaded (Clerk auth readiness) and isSignedIn: starting the authoritative lookup
+   * before the client session is ready risks an unauthenticated request that a 401 collapses
+   * into the same "retry" bucket as a genuine transient failure, stranding the user on a manual-
+   * retry screen even though nothing is actually wrong. Both are in the dependency array, so
+   * signing in (isSignedIn flips true, e.g. after returning from Clerk's hosted sign-in) or Clerk
+   * simply finishing its own load re-runs this automatically — no manual retry needed for that.
+   */
+  useLayoutEffect(() => {
+    if (!shouldStartInitialCaseValidation({ isLoaded, isSignedIn: Boolean(isSignedIn) })) return;
+
+    const caseId =
+      typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     const intake = readValidLocalJusticeIntake();
-    if (intake) {
-      const caseId =
-        typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
-      // activateCaseReconciliationState is the single chokepoint that decides `parts`/baseline/
-      // banner for this case — a conflict/missing-version/reload-reconciliation helper may have
-      // installed this server snapshot into STORAGE_INTAKE while this tab still had an
-      // unreconciled ("pending") or chosen-but-unsaved ("kept") draft recorded durably for this
-      // case (e.g. a refresh before choosing, or after choosing "Keep" but before the next save
-      // succeeded); it restores that draft as the working copy — and the record's OWN recorded
-      // server snapshot as the baseline, never `intake` itself in that case — instead of silently
-      // treating `intake` (the server content just loaded above) as though it were committed.
-      if (caseId) {
-        activateCaseReconciliationState(caseId, intake);
-      } else {
-        const hydrated = justiceIntakeToBuildJusticeIntakeParts(intake);
-        sessionBaselinePartsRef.current = cloneBuildJusticeIntakeParts(hydrated);
-        setParts(hydrated);
+
+    if (!hasValidatableCachedCase(caseId, intake, isUuid)) {
+      // Nothing cached to validate — no cross-account risk, proceed exactly as before.
+      setInitialCaseCheck("clear");
+      if (initialCaseCheckAttempt === 0) {
+        // No committed case yet — restore a pre-commit intake draft (if any) instead. Replaces
+        // (never appends to) the initial opening-greeting message, so this cannot duplicate turns.
+        const draft = readValidIntakeDraft();
+        if (draft) {
+          setParts(draft.parts);
+          setMessages(draft.messages);
+          messagesRef.current = draft.messages;
+        }
       }
-      setIsUpdatingExistingCase(true);
-    } else {
-      // No committed case yet — restore a pre-commit intake draft (if any) instead. Replaces
-      // (never appends to) the initial opening-greeting message, so this cannot duplicate turns.
-      const draft = readValidIntakeDraft();
-      if (draft) {
-        setParts(draft.parts);
-        setMessages(draft.messages);
-        messagesRef.current = draft.messages;
-      }
+      setStagedProofNotes(readStagedProofNotes());
+      return;
     }
-    setStagedProofNotes(readStagedProofNotes());
-  }, []);
+
+    setInitialCaseCheck("pending");
+    let cancelled = false;
+    void (async () => {
+      const result = await validateInitialCachedCase({
+        caseId,
+        lookupCaseById: (id) => lookupJusticeCaseById(id),
+        getActiveCaseId: () =>
+          typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? null : null,
+      });
+      if (cancelled) return;
+
+      // Re-read fresh AFTER the await rather than trusting the `intake`/`caseId` snapshot
+      // captured before it — a concurrent write to STORAGE_INTAKE for this SAME case, or the
+      // active case moving on entirely, must never be overwritten by a now-stale snapshot.
+      const freshIntake = readValidLocalJusticeIntake();
+      const stillActive =
+        (typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "") ===
+        caseId;
+      const action = resolveInitialCaseValidationAction(result, {
+        hasFreshIntake: Boolean(freshIntake),
+        stillActive,
+      });
+
+      if (action.action === "revalidate") {
+        // Never leave the gate stuck on "pending": re-run validation from scratch. The effect's
+        // own top re-derives caseId/intake fresh from sessionStorage every time, so this
+        // naturally validates whichever case is active now, never the one just rejected.
+        setInitialCaseCheckAttempt((n) => n + 1);
+        return;
+      }
+
+      if (action.action === "hydrate") {
+        // activateCaseReconciliationState is the single chokepoint that decides `parts`/baseline/
+        // banner for this case — a conflict/missing-version/reload-reconciliation helper may have
+        // installed this server snapshot into STORAGE_INTAKE while this tab still had an
+        // unreconciled ("pending") or chosen-but-unsaved ("kept") draft recorded durably for this
+        // case (e.g. a refresh before choosing, or after choosing "Keep" but before the next save
+        // succeeded); it restores that draft as the working copy — and the record's OWN recorded
+        // server snapshot as the baseline, never `freshIntake` itself in that case — instead of
+        // silently treating `freshIntake` as though it were committed.
+        activateCaseReconciliationState(caseId, freshIntake as JusticeIntake);
+        setIsUpdatingExistingCase(true);
+        setStagedProofNotes(readStagedProofNotes());
+        setInitialCaseCheck("clear");
+        return;
+      }
+
+      if (action.action === "clear-and-reset") {
+        // CONFIRMED by the server (404) that this cached case isn't this account's (or no longer
+        // exists) — never hydrate/display it. Clear the entire local Justice session and reset to
+        // a clean "no active case" state.
+        clearLocalJusticeSession();
+        setParts(defaultBuildJusticeIntakeParts());
+        sessionBaselinePartsRef.current = null;
+        setIsUpdatingExistingCase(false);
+        setPendingCaseReconciliation(null);
+        resetActiveChatTranscriptState();
+        setInitialCaseCheck("clear");
+        return;
+      }
+
+      // action.action === "show-retry": a transient failure (network error, abort, non-404
+      // non-ok status). Never hydrate the unverified cache, but never clear it either — preserve
+      // it for a retry. `parts` stays at its default (nothing cached was ever rendered).
+      setInitialCaseCheck("retry");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, initialCaseCheckAttempt, resetActiveChatTranscriptState]);
+
+  /** Re-runs initial case validation after a transient failure — never available while a check is
+   * already pending or already resolved; only surfaced in the UI during the "retry" state. */
+  function retryInitialCaseCheck() {
+    setInitialCaseCheck("pending");
+    setInitialCaseCheckAttempt((n) => n + 1);
+  }
 
   // Continuously flushes the latest edit into this case's durable reconciliation record (a no-op
   // when no record exists) — runs on every `parts` change, so a refresh, navigation, or case
@@ -4612,8 +4732,15 @@ export default function JusticeChatAiPage() {
   // this stashes the fresh server snapshot in `pendingCaseReconciliation` and leaves `parts`
   // untouched until the user explicitly resolves it via
   // resolveCaseReconciliationKeepLocal/resolveCaseReconciliationUseServer below.
+  //
+  // Gated on initialCaseCheck === "clear": the initial-load validation above must settle first
+  // (confirmed-and-hydrated, or confirmed-not-found-and-reset) before this drift check may run.
+  // Without this gate, this effect's own fetch could race the initial validation and compute a
+  // dirty-check against `parts`/sessionBaselinePartsRef while they still sit at their pre-
+  // hydration defaults, misreporting a spurious conflict for a perfectly clean case.
   useEffect(() => {
     if (!isLoaded) return;
+    if (initialCaseCheck !== "clear") return;
     const caseId =
       typeof window !== "undefined" ? sessionStorage.getItem(STORAGE_CASE_ID)?.trim() ?? "" : "";
     if (!caseId || !isUuid(caseId)) return;
@@ -4664,7 +4791,7 @@ export default function JusticeChatAiPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLoaded]);
+  }, [isLoaded, initialCaseCheck]);
 
   /** The case id a reconciliation handler is about to act on must still be the active one — a
    * stale banner left over from a case the user has switched away from must never be able to
@@ -7468,6 +7595,41 @@ export default function JusticeChatAiPage() {
 
   if (!isSignedIn) {
     return <JusticeActionResumeSignInPrompt hasActiveCase={Boolean(activeUuidCaseId)} />;
+  }
+
+  if (initialCaseCheck === "pending") {
+    // A cached case exists and has not yet been authoritatively confirmed as belonging to the
+    // current signed-in user — never render its content (or any other page state derived from
+    // it) until that check resolves.
+    return (
+      <>
+        <Header />
+        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-500 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-400">
+          Loading…
+        </main>
+      </>
+    );
+  }
+
+  if (initialCaseCheck === "retry") {
+    // A transient failure (network error, abort, non-404 non-ok status) left validation
+    // unresolved — the cache is preserved, but still never exposed. Offer a retry rather than
+    // either showing the unverified case or discarding it.
+    return (
+      <>
+        <Header />
+        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-neutral-50 to-neutral-100/80 p-6 text-neutral-700 dark:from-neutral-950 dark:to-neutral-900 dark:text-neutral-300">
+          <p>Could not verify your case. Check your connection and try again.</p>
+          <button
+            type="button"
+            onClick={retryInitialCaseCheck}
+            className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            Retry
+          </button>
+        </main>
+      </>
+    );
   }
 
   return (
