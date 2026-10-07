@@ -2,14 +2,15 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import LegalDocumentShell from "@/app/components/LegalDocumentShell";
 import {
-  NO_AUTOMATED_FILING_DEFAULT_DISCLAIMER,
+  LEGAL_ENTITY_NAME,
   NO_GUARANTEE_DISCLAIMER,
   NOT_LEGAL_ADVICE_DISCLAIMER,
+  SUPPORT_EMAIL,
 } from "@/lib/legal/siteLegalLinks";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | Surrenderless Form Assistant",
-  description: "How Surrenderless Form Assistant collects, uses, and protects information.",
+  title: "Privacy Policy | Surrenderless",
+  description: "How Surrenderless collects, uses, shares, and protects information.",
 };
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -23,14 +24,13 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export default function PrivacyPolicyPage() {
   return (
-    <LegalDocumentShell title="Privacy Policy" lastUpdated="June 21, 2025">
+    <LegalDocumentShell title="Privacy Policy" lastUpdated="October 7, 2026">
       <Section title="Overview">
         <p>
-          This Privacy Policy describes how Surrenderless Form Assistant (&quot;Surrenderless,&quot; &quot;we,&quot;
-          &quot;us&quot;) handles information when you use this web application. Surrenderless helps you organize
-          consumer issues into structured cases, prepare drafts and checklists, and record filing-related activity. It{" "}
-          {NO_AUTOMATED_FILING_DEFAULT_DISCLAIMER} except where a clearly labeled, optional assisted workflow is
-          enabled in your deployment.
+          This Privacy Policy explains how {LEGAL_ENTITY_NAME} (&quot;Surrenderless,&quot; &quot;we,&quot;
+          &quot;us&quot;) handles information when you use Surrenderless. Surrenderless helps you pursue consumer
+          complaints and disputes through chat: we organize your case, prepare drafts, and, once you pay for a case and
+          approve a step, send messages and file complaints on your behalf.
         </p>
         <p>
           {NOT_LEGAL_ADVICE_DISCLAIMER}, and we {NO_GUARANTEE_DISCLAIMER}.
@@ -39,175 +39,138 @@ export default function PrivacyPolicyPage() {
 
       <Section title="Information we collect">
         <p>
-          <strong>Account and authentication data.</strong> Sign-in is handled through Clerk. Clerk processes
-          credentials and session information needed to authenticate you. We associate your activity in Surrenderless
-          with your authenticated user identifier.
+          <strong>Account information.</strong> Your sign-in details and email address, handled through our
+          authentication provider.
         </p>
         <p>
-          <strong>Case and intake data.</strong> When you use Consumer Justice features, we store case-related
-          information you provide or generate in the product, such as intake answers, case labels, timelines, client
-          state, payment-dispute draft fields, and related workflow status. Some information may also be mirrored
-          temporarily in your browser session or local storage to resume work on your device.
+          <strong>Case information.</strong> What you tell us in chat about your problem, such as the company involved,
+          what happened, dates, amounts, your contact details, and the outcome you want, plus the drafts, approvals,
+          timeline, and status of each case.
         </p>
         <p>
-          <strong>Evidence metadata.</strong> The product lets you save proof notes as structured metadata (for example
-          title, evidence type, optional date, and description). Surrenderless does not provide file upload storage for
-          evidence attachments in the current product; you describe proof in text fields rather than uploading files
-          through the app.
+          <strong>Evidence files.</strong> Receipts, screenshots, and other documents you upload. Files are stored
+          privately and are not publicly accessible.
         </p>
         <p>
-          <strong>Filing and handling records.</strong> You may record manual filing activity, handling requests, packet
-          approvals, and similar workflow events tied to your cases.
+          <strong>Payment information.</strong> Payment is processed by Stripe. We receive confirmation that a case was
+          paid and related payment status (such as refunds or disputes); we do not receive or store your full card number.
         </p>
         <p>
-          <strong>Automation and task logs.</strong> When you use assisted submission or form-analysis features, the
-          service may store task logs, form field mappings, and related technical metadata needed to run or retry those
-          workflows.
+          <strong>Delivery information.</strong> Records of messages we send for you, including whether they were
+          delivered, bounced, or marked as spam.
         </p>
         <p>
-          <strong>Technical and security data.</strong> We use rate limiting and related safeguards that may process
-          request metadata (such as identifiers derived from your session or IP address) to protect the service.
+          <strong>Technical information.</strong> Request metadata such as IP-derived identifiers used for security and
+          rate limiting, and basic page-view analytics.
         </p>
       </Section>
 
       <Section title="How we use information">
-        <p>We use the information above to:</p>
         <ul className="list-disc space-y-2 pl-5">
-          <li>Provide sign-in, case persistence, and Consumer Justice workflow features;</li>
-          <li>Generate drafts, previews, action plans, and checklists from your case data;</li>
-          <li>Display your saved cases, evidence notes, filings, and timeline history when you are signed in;</li>
-          <li>Run optional assisted browser workflows you initiate, and record their results in task logs;</li>
-          <li>Protect the service through authentication checks, ownership validation, and rate limits;</li>
-          <li>Improve reliability and troubleshoot errors in server logs where configured.</li>
+          <li>To run the chat, organize your case, and prepare drafts for your review;</li>
+          <li>To carry out the steps you approve, such as emailing a company or filing a complaint;</li>
+          <li>To track responses, remind you of follow-ups, and tell you about progress on your case;</li>
+          <li>To process payments and handle refund requests;</li>
+          <li>To protect the service, your account, and other users;</li>
+          <li>To troubleshoot problems and improve reliability.</li>
         </ul>
-        <p>We do not sell your personal information as part of the product behavior described in this repository.</p>
+        <p>We do not sell your personal information.</p>
+      </Section>
+
+      <Section title="When we share information">
+        <p>
+          <strong>With the recipients you approve.</strong> When you approve a step, the relevant case details and
+          evidence are sent to that recipient, such as the merchant, your bank or card issuer, or a regulator or
+          organization like the CFPB, FCC, FTC, DOT, BBB, or your state attorney general. Your email address may be
+          included so they can reply to you directly. Once received, the information is handled under that
+          recipient&apos;s own policies.
+        </p>
+        <p>
+          <strong>With our team.</strong> Surrenderless team members can see the case details and evidence they need to
+          complete the steps you approve and to review responses.
+        </p>
+        <p>
+          <strong>With service providers</strong> who process data for us only to run the service:
+        </p>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>
+            <strong>Clerk</strong> — sign-in and account management;
+          </li>
+          <li>
+            <strong>Supabase</strong> — database and private file storage for your cases and evidence;
+          </li>
+          <li>
+            <strong>OpenAI</strong> — AI processing for the chat and draft preparation;
+          </li>
+          <li>
+            <strong>Resend</strong> — sending emails on your behalf and to you;
+          </li>
+          <li>
+            <strong>Stripe</strong> — payments;
+          </li>
+          <li>
+            <strong>Vercel</strong> — hosting and basic analytics;
+          </li>
+          <li>
+            <strong>Upstash</strong> — rate limiting;
+          </li>
+          <li>
+            <strong>Browserless</strong> — browser automation, if a filing step is completed through automation.
+          </li>
+        </ul>
+        <p>We may also disclose information when required by law or to protect rights and safety.</p>
       </Section>
 
       <Section title="AI processing">
         <p>
-          Surrenderless uses third-party AI services (OpenAI) for features such as conversational intake chat, optional
-          AI-assisted submission draft text, field matching for assisted forms, and related decision assistance. When you
-          use those features, relevant portions of your case context and prompts may be sent to the AI provider to
-          generate responses.
-        </p>
-        <p>
-          AI output is used to assist drafting and workflow suggestions only. It is not legal advice and may be
-          incomplete or inaccurate. You are responsible for reviewing anything you rely on before submitting it anywhere.
-        </p>
-      </Section>
-
-      <Section title="External submission assistance">
-        <p>
-          Some workflows help you prepare or assist with submitting information on external websites. In practice
-          deployments this may include:
-        </p>
-        <ul className="list-disc space-y-2 pl-5">
-          <li>
-            Same-origin mock practice forms (for example mock FTC or BBB practice pages) used for training and testing
-            workflows;
-          </li>
-          <li>
-            Optional real Better Business Bureau complaint autofill when explicitly enabled in the deployment
-            configuration, which uses browser automation directed at the official BBB complaint URL;
-          </li>
-          <li>
-            Manual copy-and-paste preparation pages for many other destinations, where Surrenderless prepares text for
-            you to submit yourself on third-party sites.
-          </li>
-        </ul>
-        <p>
-          When assisted automation runs, form content derived from your case may be processed by browser automation
-          infrastructure (local Playwright and/or a configured Browserless endpoint) and submitted only according to
-          the workflow you start and the allowlisted destination URLs enforced by the service.
-        </p>
-        <p>
-          Third-party sites have their own privacy practices. Information you submit on external regulator, business,
-          or payment-platform sites is governed by those sites&apos; policies, not this one.
-        </p>
-      </Section>
-
-      <Section title="Service providers">
-        <p>Depending on how the application is deployed and which features you use, data may be processed by:</p>
-        <ul className="list-disc space-y-2 pl-5">
-          <li>
-            <strong>Clerk</strong> — authentication and session management;
-          </li>
-          <li>
-            <strong>Supabase</strong> — database storage for cases, evidence metadata, filings, profiles, and task logs
-            accessed through server-side API routes;
-          </li>
-          <li>
-            <strong>OpenAI</strong> — AI-assisted intake, drafting, and form-matching features;
-          </li>
-          <li>
-            <strong>Browserless</strong> (when configured) — remote browser automation for assisted form workflows;
-          </li>
-          <li>
-            <strong>Upstash Redis</strong> (when configured) — rate limiting;
-          </li>
-          <li>
-            <strong>Stripe</strong> (when configured) — payment checkout sessions if billing features are enabled in the
-            deployment.
-          </li>
-        </ul>
-        <p>
-          These providers process data on our behalf only to deliver the features above. Their handling of data is also
-          subject to their own terms and privacy policies.
+          The chat and draft preparation use OpenAI. Relevant parts of your case are sent to OpenAI to generate
+          responses. AI output can be incomplete or wrong, which is why you review each draft before approving it.
         </p>
       </Section>
 
       <Section title="Security">
         <p>
-          We use industry-standard web application practices available in this product, including authenticated API
-          routes, case ownership checks, rate limiting on sensitive automation endpoints, and URL allowlisting for
-          assisted external submission. No method of transmission or storage is completely secure; we cannot guarantee
-          absolute security.
-        </p>
-        <p>
-          Deployments may additionally use deployment-level access controls (for example HTTP basic authentication when
-          configured). You are responsible for safeguarding your account credentials and devices.
+          We use authenticated access, per-account ownership checks on every case, private file storage, and rate
+          limiting. No method of transmission or storage is completely secure, and we cannot guarantee absolute
+          security. Please keep your account credentials safe.
         </p>
       </Section>
 
       <Section title="Retention and deletion">
         <p>
-          Case data is retained in the database while your account and cases remain active unless you take action
-          available in the product. You can archive cases, which marks them with an archive timestamp and removes them
-          from active case lists while retaining the stored record according to the deployment&apos;s database
-          configuration.
+          We keep case information while your account is active and as needed to complete, track, and support your
+          cases, including after a case is archived. To ask us to delete evidence files, your account, or associated
+          case data, email {SUPPORT_EMAIL}. We may keep records we are required to
+          keep by law, such as payment records. Information already sent to a recipient on your behalf cannot be
+          recalled.
         </p>
         <p>
-          You may delete individual evidence metadata records through the evidence management features. Broader deletion
-          of all account-linked data may require actions through your authentication provider and database
-          administration for the deployment; specific retention schedules are not defined in the application code.
-        </p>
-        <p>
-          Browser session and local storage mirrors on your device can be cleared by you through browser settings or by
-          clearing site data.
+          Some in-progress chat data is also saved in your browser so you can pick up where you left off. You can clear
+          it through your browser settings.
         </p>
       </Section>
 
       <Section title="Your choices">
         <p>
-          You choose what case information to enter. Many Consumer Justice features require sign-in. You can decline to
-          use AI-assisted features where alternatives exist (for example deterministic draft previews). You can archive
-          cases and manage evidence metadata within the product.
+          You decide what to share and which steps to approve. You can ask us to stop future steps on a case at any time.
+          You can request access to, correction of, or deletion of your information by emailing {SUPPORT_EMAIL}.
         </p>
       </Section>
 
       <Section title="Changes to this policy">
         <p>
-          We may update this Privacy Policy as the product changes. The &quot;Last updated&quot; date at the top of
-          this page will reflect the latest revision. Continued use after changes become effective constitutes acceptance
-          of the updated policy.
+          We may update this Privacy Policy as the service changes. The &quot;Last updated&quot; date at the top of this
+          page shows the latest version. Continued use after changes take effect means you accept the updated policy.
         </p>
       </Section>
 
       <Section title="Contact">
         <p>
-          For privacy questions about Surrenderless Form Assistant, contact us through the support or account contact
-          options made available in your deployment or authentication provider account settings. This repository does not
-          publish a dedicated legal mailing address or privacy inbox.
+          Privacy questions and requests can be sent to{" "}
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="text-blue-600 hover:underline dark:text-blue-400">
+            {SUPPORT_EMAIL}
+          </a>
+          .
         </p>
       </Section>
     </LegalDocumentShell>

@@ -8,5 +8,8 @@ export const NOT_LEGAL_ADVICE_DISCLAIMER =
 export const NO_GUARANTEE_DISCLAIMER =
   "does not guarantee that any regulator, business, or third party will accept a complaint, filing, or dispute";
 
-export const NO_AUTOMATED_FILING_DEFAULT_DISCLAIMER =
-  "does not file or submit complaints automatically to regulators, courts, or companies";
+/** Legal entity that operates the service, named on the Terms and Privacy pages. */
+export const LEGAL_ENTITY_NAME = "Surrenderless LLC";
+
+/** Support, privacy, and refund contact shown on the legal pages. */
+export const SUPPORT_EMAIL = "surrenderlessbrands@gmail.com";
