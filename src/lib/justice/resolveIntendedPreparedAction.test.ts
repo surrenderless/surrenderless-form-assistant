@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildJusticeIntakeFromParts, defaultBuildJusticeIntakeParts } from "@/lib/justice/buildJusticeIntake";
 import { resolveIntendedPreparedAction } from "@/lib/justice/resolveIntendedPreparedAction";
@@ -26,6 +26,10 @@ function makeSupabase(store: Store): SupabaseClient {
 }
 
 describe("resolveIntendedPreparedAction", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("resolves merchant contact when the consumer has not yet contacted the merchant", async () => {
     const intake = buildJusticeIntakeFromParts({
       ...defaultBuildJusticeIntakeParts(),
@@ -98,6 +102,10 @@ describe("resolveIntendedPreparedAction", () => {
   });
 
   it("manualFtc only ever narrows eligible destinations — omitting it never fabricates a routable one that wouldn't otherwise exist", async () => {
+    // Both calls stamp approved_at from the clock; freeze it so a millisecond boundary between
+    // them can't make otherwise-identical results compare unequal.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
     const intake = buildJusticeIntakeFromParts({
       ...defaultBuildJusticeIntakeParts(),
       already_contacted: "yes",
