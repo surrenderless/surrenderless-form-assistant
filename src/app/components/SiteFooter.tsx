@@ -6,7 +6,7 @@ export default function SiteFooter() {
     <footer className="border-t border-neutral-200 bg-neutral-50 px-4 py-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
       <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-neutral-500 dark:text-neutral-500">
-          Surrenderless Form Assistant — consumer case organization and draft preparation.
+          Surrenderless — consumer complaints and disputes, handled through chat.
         </p>
         <nav aria-label="Legal" className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <Link

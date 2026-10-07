@@ -2,14 +2,15 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import LegalDocumentShell from "@/app/components/LegalDocumentShell";
 import {
-  NO_AUTOMATED_FILING_DEFAULT_DISCLAIMER,
+  LEGAL_ENTITY_NAME,
   NO_GUARANTEE_DISCLAIMER,
   NOT_LEGAL_ADVICE_DISCLAIMER,
+  SUPPORT_EMAIL,
 } from "@/lib/legal/siteLegalLinks";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | Surrenderless Form Assistant",
-  description: "Terms governing use of Surrenderless Form Assistant.",
+  title: "Terms of Service | Surrenderless",
+  description: "Terms governing use of Surrenderless.",
 };
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -23,37 +24,43 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export default function TermsOfServicePage() {
   return (
-    <LegalDocumentShell title="Terms of Service" lastUpdated="June 21, 2025">
+    <LegalDocumentShell title="Terms of Service" lastUpdated="October 7, 2026">
       <Section title="Acceptance">
         <p>
-          By accessing or using Surrenderless Form Assistant (&quot;Surrenderless,&quot; &quot;the service&quot;), you
-          agree to these Terms of Service. If you do not agree, do not use the service.
+          Surrenderless (&quot;Surrenderless,&quot; &quot;we,&quot; &quot;us,&quot; &quot;the service&quot;) is operated
+          by {LEGAL_ENTITY_NAME}. By accessing or using the service, you agree to these Terms of Service. If you do not
+          agree, do not use the service.
         </p>
       </Section>
 
       <Section title="What the service does">
         <p>
-          Surrenderless is a consumer case organization tool. It helps you capture intake information through chat and
-          forms, organize evidence metadata, preview submission drafts, build action plans, prepare filing packets, and
-          record manual or assisted filing activity.
+          Surrenderless helps you pursue a consumer complaint or dispute through chat. You describe your problem, upload
+          supporting evidence, and review the drafts we prepare. After you pay for a case and approve a step,
+          Surrenderless carries out that step for you and keeps you updated in chat.
         </p>
+        <p>Depending on your case, approved steps may include:</p>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>Emailing the merchant or company about your problem;</li>
+          <li>Emailing or contacting your bank or card issuer about a payment dispute;</li>
+          <li>
+            Filing a complaint with a regulator or organization such as the Consumer Financial Protection Bureau (CFPB),
+            Federal Communications Commission (FCC), Federal Trade Commission (FTC), U.S. Department of Transportation
+            (DOT), Better Business Bureau (BBB), or your state attorney general;
+          </li>
+          <li>Sending a demand letter to the company.</li>
+        </ul>
         <p>
-          Unless a specific workflow is clearly labeled and enabled in your deployment, Surrenderless{" "}
-          {NO_AUTOMATED_FILING_DEFAULT_DISCLAIMER}. Most regulator and business destinations are presented as manual
-          preparation and copy-and-paste workflows where you submit information yourself on third-party sites.
-        </p>
-        <p>
-          Optional assisted workflows may include same-origin mock practice forms and, when enabled in configuration,
-          bounded browser automation for certain external complaint forms (such as the official Better Business Bureau
-          complaint entry). Assisted features help populate forms you review; they do not replace your responsibility to
-          verify accuracy before submission.
+          Some steps are sent automatically by email from Surrenderless. Others are completed by a Surrenderless team
+          member on the destination&apos;s official website. After a step is completed, we track responses, remind you
+          of follow-up dates, and may suggest the next step if the problem is not resolved.
         </p>
       </Section>
 
       <Section title="Not legal advice">
         <p>
-          {NOT_LEGAL_ADVICE_DISCLAIMER}. The service provides organizational tools, drafts, checklists, and automation
-          assistance only. Nothing in the product creates an attorney-client relationship. For legal questions about
+          {NOT_LEGAL_ADVICE_DISCLAIMER}. Surrenderless is not a law firm, and our team members are not acting as your
+          lawyers. Nothing in the service creates an attorney-client relationship. For legal questions about
           your rights, remedies, or strategy, consult a qualified professional licensed in your jurisdiction.
         </p>
       </Section>
@@ -62,7 +69,7 @@ export default function TermsOfServicePage() {
         <p>
           Surrenderless {NO_GUARANTEE_DISCLAIMER}. Responses from businesses, regulators, payment processors, or other
           third parties depend on their policies and your facts. We do not warrant that drafts, AI suggestions, or
-          assisted form fills will be error-free, complete, or accepted.
+          submissions will be error-free, complete, or accepted.
         </p>
       </Section>
 
@@ -70,14 +77,11 @@ export default function TermsOfServicePage() {
         <p>You agree that you will:</p>
         <ul className="list-disc space-y-2 pl-5">
           <li>Provide accurate information to the best of your knowledge when building cases and submissions;</li>
-          <li>Review all drafts, AI output, and assisted form fills before submitting them anywhere;</li>
+          <li>Review each draft before you approve it, and tell us in chat if anything is wrong;</li>
           <li>Use the service only for lawful consumer dispute organization and related personal purposes;</li>
-          <li>Comply with the terms, policies, and submission rules of any third-party site where you file or dispute;</li>
-          <li>Maintain the security of your account credentials and notify your authentication provider if compromised;</li>
-          <li>
-            Understand that evidence notes in the product store metadata only; you are responsible for retaining actual
-            proof documents outside the app if needed.
-          </li>
+          <li>Only upload evidence you have the right to share;</li>
+          <li>Keep your own copies of important documents;</li>
+          <li>Keep your account credentials secure and tell us promptly if you believe your account was compromised.</li>
         </ul>
       </Section>
 
@@ -86,30 +90,42 @@ export default function TermsOfServicePage() {
         <ul className="list-disc space-y-2 pl-5">
           <li>Submit false, misleading, or fraudulent complaints or filings;</li>
           <li>Harass, threaten, or defame others;</li>
-          <li>Attempt to bypass authentication, ownership checks, rate limits, or URL allowlists;</li>
+          <li>Access another person&apos;s cases or attempt to bypass security or rate limits;</li>
           <li>Probe, scan, or attack the service or connected infrastructure;</li>
-          <li>Automate access except through features explicitly provided by the product;</li>
-          <li>Use assisted submission features to target destinations outside approved allowlists;</li>
+          <li>Access the service through automated means other than features we provide;</li>
           <li>Violate applicable law or third-party rights.</li>
         </ul>
         <p>We may suspend or restrict access for conduct that risks the service, other users, or third parties.</p>
       </Section>
 
-      <Section title="Assisted submission and third-party sites">
+      <Section title="Your authorization">
         <p>
-          When you start an assisted workflow, you authorize the service to process your case-derived content through
-          browser automation directed at permitted URLs. You remain the submitter of record on external sites unless
-          those sites state otherwise.
+          When you approve a step for a paid case, you authorize {LEGAL_ENTITY_NAME} to act on your behalf for that
+          step. This includes sending the approved message or submitting the approved complaint on your behalf, using the information and
+          evidence you provided for that case, and listing your contact email so the recipient can reply to you
+          directly. We do not take a step you have not approved.
         </p>
         <p>
-          Third-party websites are not controlled by Surrenderless. We are not responsible for their availability,
-          content, decisions, or data practices. Links and automation targets are provided for convenience only.
+          You confirm that the information you provide is true to the best of your knowledge. A complaint or dispute is
+          made about your own experience, and some destinations may contact you directly or require you to confirm or
+          sign something yourself. If that happens, we will tell you in chat.
+        </p>
+        <p>
+          You can ask us to stop future steps at any time by telling us in chat or emailing {SUPPORT_EMAIL}. Steps already
+          submitted before you ask may not be reversible.
+        </p>
+      </Section>
+
+      <Section title="Third-party sites and recipients">
+        <p>
+          Businesses, banks, regulators, and other recipients are not controlled by Surrenderless. We are not
+          responsible for their availability, decisions, or data practices.
         </p>
       </Section>
 
       <Section title="Payment and refunds">
         <p>
-          Surrenderless charges a one-time fee per case before Surrenderless-owned case handling begins. The exact fee
+          Surrenderless charges a one-time fee per case before we begin handling it. The exact fee
           and currency are shown to you before checkout, and payment is collected once, through Stripe Checkout, when
           you complete it. The fee is per case and does not cover any other case.
         </p>
@@ -129,20 +145,14 @@ export default function TermsOfServicePage() {
           <li>Refunds required by applicable law.</li>
         </ul>
         <p>
-          To request a refund under this policy, contact us through the account or support channel provided in the
-          service.
+          To request a refund under this policy, email {SUPPORT_EMAIL} with your account email and the case it concerns.
         </p>
       </Section>
 
       <Section title="Accounts and access">
         <p>
-          Sign-in is provided through Clerk. You must have a valid account to use signed-in features. We may modify,
-          suspend, or discontinue features with or without notice, subject to applicable law and any separate agreement
-          governing your deployment.
-        </p>
-        <p>
-          Surrenderless-owned case handling requires a one-time, per-case payment made through Stripe Checkout. See
-          &quot;Payment and refunds&quot; below for the full policy, which applies in addition to these Terms.
+          You need an account to use the service. We may modify, suspend, or discontinue features with or without
+          notice, subject to applicable law.
         </p>
       </Section>
 
@@ -189,9 +199,11 @@ export default function TermsOfServicePage() {
 
       <Section title="Contact">
         <p>
-          For questions about these Terms, contact us through the support or account contact options made available in
-          your deployment or authentication provider account settings. This repository does not publish a dedicated legal
-          mailing address or support inbox.
+          Questions about these Terms, refund requests, and requests to stop work on a case can be sent to{" "}
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="text-blue-600 hover:underline dark:text-blue-400">
+            {SUPPORT_EMAIL}
+          </a>
+          .
         </p>
       </Section>
     </LegalDocumentShell>
