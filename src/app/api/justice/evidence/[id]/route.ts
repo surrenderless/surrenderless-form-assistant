@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validate as isUuid } from "uuid";
 import { isJusticeEvidenceType } from "@/lib/justice/evidence";
 import {
+  getRequiredJusticeEvidenceBucket,
   JUSTICE_EVIDENCE_API_SELECT,
   omitEvidenceFilePathFromApiRow,
 } from "@/lib/justice/evidenceFileAccess";
@@ -28,6 +29,9 @@ function supabaseUnavailableResponse() {
 
 const SELECT = JUSTICE_EVIDENCE_API_SELECT;
 
+/** Internal only — file_path is needed to remove the stored file and is never returned. */
+const DELETE_SELECT = `${JUSTICE_EVIDENCE_API_SELECT}, file_path` as const;
+
 const MAX_TITLE = 500;
 const MAX_EVIDENCE_DATE = 200;
 const MAX_DESCRIPTION = 8000;
@@ -47,6 +51,34 @@ function clampLen(s: string, max: number): string {
 }
 
 type RouteCtx = { params: Promise<{ id: string }> };
+
+/**
+ * Best-effort removal of the private stored file after its evidence row is deleted.
+ * The row is already gone, so failures are logged rather than surfaced to the user.
+ */
+async function removeDeletedEvidenceFile(
+  supabase: SupabaseClient,
+  evidenceId: string,
+  filePath: unknown
+): Promise<void> {
+  const path = typeof filePath === "string" ? filePath.trim() : "";
+  if (!path) return;
+
+  const bucket = getRequiredJusticeEvidenceBucket();
+  if (!bucket) {
+    console.warn("justice evidence delete: bucket not configured; stored file left for", evidenceId);
+    return;
+  }
+
+  try {
+    const { error } = await supabase.storage.from(bucket).remove([path]);
+    if (error) {
+      console.warn("justice evidence delete storage:", evidenceId, error.message);
+    }
+  } catch (err) {
+    console.warn("justice evidence delete storage:", evidenceId, err);
+  }
+}
 
 export async function PATCH(req: NextRequest, context: RouteCtx) {
   const userId = getUserOr401(req);
@@ -167,7 +199,7 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
     .delete()
     .eq("id", id)
     .eq("user_id", userId)
-    .select(SELECT);
+    .select(DELETE_SELECT);
 
   if (error) {
     console.warn("justice_case_evidence delete:", error.message);
@@ -178,8 +210,11 @@ export async function DELETE(req: NextRequest, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const deletedRow = data[0] as unknown as Record<string, unknown>;
+  await removeDeletedEvidenceFile(supabase, id, deletedRow.file_path);
+
   return NextResponse.json({
     ok: true,
-    deleted: omitEvidenceFilePathFromApiRow(data[0] as unknown as Record<string, unknown>),
+    deleted: omitEvidenceFilePathFromApiRow(deletedRow),
   });
 }
